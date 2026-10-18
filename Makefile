@@ -3,7 +3,7 @@ SHELL := /bin/bash
 
 PYTEST_UNIT := -m "not integration and not e2e"
 
-.PHONY: help setup up down reset-db psql infra-check lint typecheck test test-int check fmt
+.PHONY: help setup up down reset-db psql infra-check api openapi lint typecheck test test-int check fmt
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2}'
@@ -31,6 +31,12 @@ psql: ## Open psql on the dev database
 
 infra-check: ## Verify extensions, redis and buckets
 	uv run python scripts/check_infra.py
+
+api: ## Run the API with auto-reload on :8000
+	uv run uvicorn sensei_api.app:create_app --factory --reload --port 8000
+
+openapi: ## Export the OpenAPI schema for the web client
+	uv run python scripts/export_openapi.py
 
 lint: ## Lint and format-check python and web
 	uv run ruff check .

@@ -48,6 +48,7 @@ select = ["E", "F", "I", "B", "UP", "SIM", "RUF", "ASYNC", "S", "PL", "PT", "TID
 ignore = [
     "PLR0913", # too many arguments: services take explicit dependencies
     "PLR2004", # magic values are fine in tests and thresholds are named where it matters
+    "N818",    # client-facing errors use HTTP names (NotFound, Forbidden), not *Error
 ]
 
 [tool.ruff.lint.per-file-ignores]

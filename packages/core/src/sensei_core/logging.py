@@ -20,6 +20,8 @@ from structlog.typing import EventDict, Processor, WrappedLogger
 from sensei_core.config import Settings, get_settings
 from sensei_core.redaction import redact_event
 
+_ROUTED_LOGGERS = ("uvicorn", "uvicorn.error", "uvicorn.access", "celery", "celery.task")
+
 
 def _redaction_processor(
     _logger: WrappedLogger, _method_name: str, event_dict: EventDict
@@ -81,6 +83,13 @@ def configure_logging(settings: Settings | None = None, *, force_json: bool | No
     root.handlers.clear()
     root.addHandler(handler)
     root.setLevel(settings.log_level)
+
+    # Servers and libraries that install their own handlers are routed through the same pipeline
+    # so every line is structured, contextualized and redacted.
+    for name in _ROUTED_LOGGERS:
+        routed = logging.getLogger(name)
+        routed.handlers.clear()
+        routed.propagate = True
 
 
 def get_logger(name: str | None = None) -> structlog.stdlib.BoundLogger:
