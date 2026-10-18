@@ -1,8 +1,12 @@
 """Shared pytest fixtures (loaded as a plugin from the repository's root conftest).
 
-Integration fixtures talk to the real local stack started by ``make up`` and use the
-``sensei_test`` database. Each test runs inside a transaction that is rolled back afterwards,
-so tests never see each other's data.
+Integration fixtures talk to the real local stack started by ``make up`` and use the test
+database (``SENSEI_DATABASE_TEST_NAME``). Each test runs inside a transaction that is rolled back
+afterwards, so tests never see each other's data.
+
+* ``db_session`` connects as the application role: row-level security is enforced, exactly as in
+  production.
+* ``owner_session`` connects as the schema owner, for tests that need DDL or cross-org setup.
 """
 
 from __future__ import annotations
@@ -23,11 +27,10 @@ ALEMBIC_INI = ROOT / "packages" / "core" / "alembic.ini"
 
 
 def settings_for_tests() -> Settings:
-    """Settings pointing every database URL at the test database."""
+    """Settings with every database URL pointing at the test database."""
     settings = Settings(env="test")
-    test_url = settings.database.url_test
     return settings.model_copy(
-        update={"database": settings.database.model_copy(update={"url": test_url})}
+        update={"database": settings.database.for_database(settings.database.test_name)}
     )
 
 
@@ -42,17 +45,15 @@ def run_alembic(*args: str, url: str) -> None:
 
 
 @pytest.fixture(scope="session")
-def migrated_test_db() -> str:
+def migrated_test_db() -> Settings:
     """Bring the test database to the latest schema once per test session."""
-    url = settings_for_tests().database.url.get_secret_value()
-    run_alembic("upgrade", "head", url=url)
-    return url
+    settings = settings_for_tests()
+    run_alembic("upgrade", "head", url=settings.database.migrate_url.get_secret_value())
+    return settings
 
 
-@pytest.fixture
-async def db_session(migrated_test_db: str) -> AsyncGenerator[AsyncSession]:
-    """A session whose work is always rolled back, even if the code under test commits."""
-    engine = create_async_engine(migrated_test_db)
+async def _rolled_back_session(url: str) -> AsyncGenerator[AsyncSession]:
+    engine = create_async_engine(url)
     async with engine.connect() as connection:
         outer = await connection.begin()
         maker = async_sessionmaker(
@@ -64,6 +65,21 @@ async def db_session(migrated_test_db: str) -> AsyncGenerator[AsyncSession]:
             yield session
         await outer.rollback()
     await engine.dispose()
+
+
+@pytest.fixture
+async def db_session(migrated_test_db: Settings) -> AsyncGenerator[AsyncSession]:
+    """App-role session (RLS enforced); everything is rolled back, even explicit commits."""
+    async for session in _rolled_back_session(migrated_test_db.database.url.get_secret_value()):
+        yield session
+
+
+@pytest.fixture
+async def owner_session(migrated_test_db: Settings) -> AsyncGenerator[AsyncSession]:
+    """Schema-owner session for DDL and cross-org fixtures; rolled back like ``db_session``."""
+    url = migrated_test_db.database.migrate_url.get_secret_value()
+    async for session in _rolled_back_session(url):
+        yield session
 
 
 @pytest.fixture

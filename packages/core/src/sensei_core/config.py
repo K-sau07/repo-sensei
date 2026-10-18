@@ -15,6 +15,7 @@ from typing import Literal
 
 from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from sqlalchemy.engine import make_url
 
 Environment = Literal["dev", "test", "staging", "prod"]
 
@@ -29,15 +30,40 @@ def _config(prefix: str) -> SettingsConfigDict:
 
 
 class DatabaseSettings(BaseSettings):
+    """Three roles, three URLs.
+
+    * ``url`` - the application role (``sensei_app``): row-level security is enforced.
+    * ``migrate_url`` - the schema owner: runs migrations only.
+    * ``system_url`` - ``sensei_system`` (BYPASSRLS): explicitly named maintenance tasks only.
+    """
+
     model_config = _config("SENSEI_DATABASE_")
 
-    url: SecretStr = SecretStr("postgresql+asyncpg://sensei:sensei@localhost:55432/sensei")
-    url_test: SecretStr = SecretStr(
-        "postgresql+asyncpg://sensei:sensei@localhost:55432/sensei_test"
+    url: SecretStr = SecretStr("postgresql+asyncpg://sensei_app:sensei_app@localhost:55432/sensei")
+    migrate_url: SecretStr = SecretStr("postgresql+asyncpg://sensei:sensei@localhost:55432/sensei")
+    system_url: SecretStr = SecretStr(
+        "postgresql+asyncpg://sensei_system:sensei_system@localhost:55432/sensei"
     )
+    test_name: str = "sensei_test"
+    app_password: SecretStr = SecretStr("sensei_app")
+    system_password: SecretStr = SecretStr("sensei_system")
     pool_size: int = Field(default=10, ge=1, le=200)
     max_overflow: int = Field(default=10, ge=0, le=200)
     echo: bool = False
+
+    def for_database(self, name: str) -> DatabaseSettings:
+        """The same settings with every URL pointing at database ``name``."""
+        return self.model_copy(
+            update={
+                field: SecretStr(with_database(getattr(self, field).get_secret_value(), name))
+                for field in ("url", "migrate_url", "system_url")
+            }
+        )
+
+
+def with_database(url: str, name: str) -> str:
+    """Replace the database name in a SQLAlchemy URL."""
+    return make_url(url).set(database=name).render_as_string(hide_password=False)
 
 
 class RedisSettings(BaseSettings):

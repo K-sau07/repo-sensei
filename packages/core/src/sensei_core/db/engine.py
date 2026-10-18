@@ -38,6 +38,15 @@ class Database:
         await self.engine.dispose()
 
 
+def make_system_database(settings: DatabaseSettings) -> Database:
+    """A database handle for the BYPASSRLS ``sensei_system`` role.
+
+    Only for explicitly named maintenance tasks (cross-org purges, staff tooling). Never use it to
+    serve a user request.
+    """
+    return make_database(settings, url=settings.system_url.get_secret_value())
+
+
 def make_database(settings: DatabaseSettings, *, url: str | None = None) -> Database:
     engine = create_async_engine(
         url or settings.url.get_secret_value(),

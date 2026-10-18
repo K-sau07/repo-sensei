@@ -1,7 +1,7 @@
 """Alembic environment (async).
 
-The database URL comes from settings: ``SENSEI_DATABASE_URL`` by default, or an explicit
-``-x url=...`` (used by the test suite to migrate the test database).
+Migrations always run as the schema owner: ``SENSEI_DATABASE_MIGRATE_URL`` by default, or an
+explicit ``-x url=...`` (used by the test suite to migrate the test database).
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ target_metadata = Base.metadata
 
 def _database_url() -> str:
     override = context.get_x_argument(as_dictionary=True).get("url")
-    return override or get_settings().database.url.get_secret_value()
+    return override or get_settings().database.migrate_url.get_secret_value()
 
 
 def _run(connection: Connection) -> None:
