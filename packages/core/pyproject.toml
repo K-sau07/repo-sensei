@@ -3,7 +3,12 @@ name = "sensei-core"
 version = "0.1.0"
 description = "Shared configuration, logging, database and security for repo-sensei."
 requires-python = ">=3.13"
-dependencies = []
+dependencies = [
+    "orjson>=3.11",
+    "pydantic>=2.11",
+    "pydantic-settings>=2.10",
+    "structlog>=25.4",
+]
 
 [build-system]
 requires = ["hatchling>=1.27"]
