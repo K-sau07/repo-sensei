@@ -13,6 +13,7 @@ dependencies = [
 
 [dependency-groups]
 dev = [
+    "sensei-testing",
     "pytest>=8.4",
     "pytest-asyncio>=1.0",
     "pytest-cov>=6.2",
@@ -22,7 +23,6 @@ dev = [
     "respx>=0.22",
     "freezegun>=1.5",
     "anyio>=4.9",
-    "fakeredis>=2.31",
 ]
 
 [tool.uv]
@@ -37,6 +37,7 @@ sensei-engine = { workspace = true }
 sensei-evals = { workspace = true }
 sensei-api = { workspace = true }
 sensei-workers = { workspace = true }
+sensei-testing = { workspace = true }
 
 # ---------------------------------------------------------------- ruff
 [tool.ruff]
@@ -57,7 +58,14 @@ ignore = [
 "scripts/**" = ["T201"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["sensei_core", "sensei_engine", "sensei_evals", "sensei_api", "sensei_workers"]
+known-first-party = [
+    "sensei_core",
+    "sensei_engine",
+    "sensei_evals",
+    "sensei_api",
+    "sensei_workers",
+    "sensei_testing",
+]
 
 [tool.ruff.lint.flake8-tidy-imports]
 ban-relative-imports = "all"

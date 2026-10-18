@@ -1,1 +1,1 @@
-pytest_plugins = ["sensei_core.testing"]
+pytest_plugins = ["sensei_testing"]

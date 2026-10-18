@@ -15,7 +15,7 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanE
 from sensei_api.app import create_app
 from sensei_core.config import Settings
 from sensei_core.telemetry import init_tracing
-from sensei_core.testing import settings_for_tests
+from sensei_testing import settings_for_tests
 
 exporter = InMemorySpanExporter()
 

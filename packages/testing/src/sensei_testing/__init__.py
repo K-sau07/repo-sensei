@@ -11,9 +11,10 @@ afterwards, so tests never see each other's data.
 
 from __future__ import annotations
 
-import os
 import subprocess
+import sys
 from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 import pytest
@@ -22,8 +23,19 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from sensei_core.config import Settings
 
-ROOT = Path(__file__).resolve().parents[4]
-ALEMBIC_INI = ROOT / "packages" / "core" / "alembic.ini"
+
+def _find_alembic_ini() -> Path:
+    """Locate ``packages/core/alembic.ini`` by walking up from this file."""
+    for parent in Path(__file__).resolve().parents:
+        candidate = parent / "packages" / "core" / "alembic.ini"
+        if candidate.is_file():
+            return candidate
+    msg = "could not find packages/core/alembic.ini above the sensei_testing package"
+    raise RuntimeError(msg)
+
+
+ALEMBIC_INI = _find_alembic_ini()
+ROOT = ALEMBIC_INI.parents[2]
 
 
 def settings_for_tests() -> Settings:
@@ -35,13 +47,17 @@ def settings_for_tests() -> Settings:
 
 
 def run_alembic(*args: str, url: str) -> None:
-    subprocess.run(  # noqa: S603 - fixed argv, no shell
-        ["uv", "run", "alembic", "-c", str(ALEMBIC_INI), "-x", f"url={url}", *args],  # noqa: S607
-        check=True,
+    """Run alembic with the current interpreter; on failure, surface alembic's own output."""
+    result = subprocess.run(  # noqa: S603 - fixed argv, no shell
+        [sys.executable, "-m", "alembic", "-c", str(ALEMBIC_INI), "-x", f"url={url}", *args],
+        check=False,
         cwd=ROOT,
         capture_output=True,
-        env={**os.environ},
+        text=True,
     )
+    if result.returncode != 0:
+        msg = f"alembic {' '.join(args)} failed:\n{result.stdout}\n{result.stderr}"
+        raise RuntimeError(msg)
 
 
 @pytest.fixture(scope="session")
@@ -52,7 +68,9 @@ def migrated_test_db() -> Settings:
     return settings
 
 
-async def _rolled_back_session(url: str) -> AsyncGenerator[AsyncSession]:
+@asynccontextmanager
+async def rolled_back_session(url: str) -> AsyncGenerator[AsyncSession]:
+    """A session inside an outer transaction that is always rolled back on exit."""
     engine = create_async_engine(url)
     async with engine.connect() as connection:
         outer = await connection.begin()
@@ -70,7 +88,7 @@ async def _rolled_back_session(url: str) -> AsyncGenerator[AsyncSession]:
 @pytest.fixture
 async def db_session(migrated_test_db: Settings) -> AsyncGenerator[AsyncSession]:
     """App-role session (RLS enforced); everything is rolled back, even explicit commits."""
-    async for session in _rolled_back_session(migrated_test_db.database.url.get_secret_value()):
+    async with rolled_back_session(migrated_test_db.database.url.get_secret_value()) as session:
         yield session
 
 
@@ -78,7 +96,7 @@ async def db_session(migrated_test_db: Settings) -> AsyncGenerator[AsyncSession]
 async def owner_session(migrated_test_db: Settings) -> AsyncGenerator[AsyncSession]:
     """Schema-owner session for DDL and cross-org fixtures; rolled back like ``db_session``."""
     url = migrated_test_db.database.migrate_url.get_secret_value()
-    async for session in _rolled_back_session(url):
+    async with rolled_back_session(url) as session:
         yield session
 
 

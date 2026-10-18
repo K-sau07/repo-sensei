@@ -1,0 +1,13 @@
+[project]
+name = "sensei-testing"
+version = "0.1.0"
+description = "Shared pytest fixtures for repo-sensei (development only, never deployed)."
+requires-python = ">=3.13"
+dependencies = ["sensei-core", "pytest>=8.4", "fakeredis>=2.31"]
+
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/sensei_testing"]

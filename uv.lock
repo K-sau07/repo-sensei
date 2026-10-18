@@ -9,6 +9,7 @@ members = [
     "sensei-core",
     "sensei-engine",
     "sensei-evals",
+    "sensei-testing",
     "sensei-workers",
 ]
 
@@ -1320,7 +1321,6 @@ dependencies = [
 [package.dev-dependencies]
 dev = [
     { name = "anyio" },
-    { name = "fakeredis" },
     { name = "freezegun" },
     { name = "hypothesis" },
     { name = "pyright" },
@@ -1329,6 +1329,7 @@ dev = [
     { name = "pytest-cov" },
     { name = "respx" },
     { name = "ruff" },
+    { name = "sensei-testing" },
 ]
 
 [package.metadata]
@@ -1343,7 +1344,6 @@ requires-dist = [
 [package.metadata.requires-dev]
 dev = [
     { name = "anyio", specifier = ">=4.9" },
-    { name = "fakeredis", specifier = ">=2.31" },
     { name = "freezegun", specifier = ">=1.5" },
     { name = "hypothesis", specifier = ">=6.135" },
     { name = "pyright", specifier = ">=1.1.403" },
@@ -1352,6 +1352,7 @@ dev = [
     { name = "pytest-cov", specifier = ">=6.2" },
     { name = "respx", specifier = ">=0.22" },
     { name = "ruff", specifier = ">=0.12" },
+    { name = "sensei-testing", editable = "packages/testing" },
 ]
 
 [[package]]
@@ -1493,6 +1494,23 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [{ name = "sensei-engine", editable = "packages/engine" }]
+
+[[package]]
+name = "sensei-testing"
+version = "0.1.0"
+source = { editable = "packages/testing" }
+dependencies = [
+    { name = "fakeredis" },
+    { name = "pytest" },
+    { name = "sensei-core" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "fakeredis", specifier = ">=2.31" },
+    { name = "pytest", specifier = ">=8.4" },
+    { name = "sensei-core", editable = "packages/core" },
+]
 
 [[package]]
 name = "sensei-workers"

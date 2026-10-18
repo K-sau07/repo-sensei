@@ -5,7 +5,7 @@ import pytest
 
 from sensei_api.app import create_app
 from sensei_core.config import DatabaseSettings, RedisSettings, Settings
-from sensei_core.testing import settings_for_tests
+from sensei_testing import settings_for_tests
 
 
 async def _readyz(app_settings: Settings) -> httpx.Response:
