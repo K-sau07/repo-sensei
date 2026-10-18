@@ -53,6 +53,8 @@ def make_database(settings: DatabaseSettings, *, url: str | None = None) -> Data
         pool_size=settings.pool_size,
         max_overflow=settings.max_overflow,
         pool_pre_ping=True,
+        pool_timeout=settings.connect_timeout_seconds,
+        connect_args={"timeout": settings.connect_timeout_seconds},
         echo=settings.echo,
     )
     return Database(

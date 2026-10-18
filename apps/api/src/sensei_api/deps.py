@@ -20,7 +20,11 @@ def get_database(request: Request) -> Database:
 async def get_db(
     database: Annotated[Database, Depends(get_database)],
 ) -> AsyncGenerator[AsyncSession]:
-    """One transaction per request: committed when the handler succeeds, rolled back on error."""
+    """One transaction per request: committed when the handler succeeds, rolled back on error.
+
+    Used with ``scope="function"`` (see :data:`DbSession`) so the commit happens *before* the
+    response is sent: if the commit fails, the client gets an error instead of a false success.
+    """
     async with database.session() as session:
         yield session
 
@@ -30,5 +34,5 @@ def get_redis(request: Request) -> Redis:
     return client
 
 
-DbSession = Annotated[AsyncSession, Depends(get_db)]
+DbSession = Annotated[AsyncSession, Depends(get_db, scope="function")]
 RedisClient = Annotated[Redis, Depends(get_redis)]

@@ -48,6 +48,7 @@ class DatabaseSettings(BaseSettings):
     system_password: SecretStr = SecretStr("sensei_system")
     pool_size: int = Field(default=10, ge=1, le=200)
     max_overflow: int = Field(default=10, ge=0, le=200)
+    connect_timeout_seconds: float = Field(default=5.0, gt=0)
     echo: bool = False
 
     def for_database(self, name: str) -> DatabaseSettings:
@@ -69,6 +70,8 @@ class RedisSettings(BaseSettings):
     model_config = _config("SENSEI_REDIS_")
 
     url: SecretStr = SecretStr("redis://localhost:56379/0")
+    connect_timeout_seconds: float = Field(default=2.0, gt=0)
+    timeout_seconds: float = Field(default=5.0, gt=0)
 
 
 class S3Settings(BaseSettings):

@@ -9,7 +9,11 @@ from sensei_core.config import RedisSettings
 
 def make_redis(settings: RedisSettings) -> Redis:
     return Redis.from_url(  # pyright: ignore[reportUnknownMemberType] - redis-py stub gap
-        settings.url.get_secret_value(), decode_responses=True
+        settings.url.get_secret_value(),
+        decode_responses=True,
+        socket_connect_timeout=settings.connect_timeout_seconds,
+        socket_timeout=settings.timeout_seconds,
+        health_check_interval=30,
     )
 
 

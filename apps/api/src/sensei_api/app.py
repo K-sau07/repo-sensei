@@ -51,8 +51,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         try:
             yield
         finally:
-            await redis.aclose()
-            await database.dispose()
+            # Close each resource independently so one failure cannot leak the other.
+            try:
+                await redis.aclose()
+            finally:
+                await database.dispose()
             log.info("api stopped")
 
     app = FastAPI(
