@@ -6,6 +6,7 @@ redis connectivity, and that the S3 buckets exist. Exits non-zero on any failure
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -21,6 +22,7 @@ COMPOSE = [
 MIN_PGVECTOR = (0, 8, 7)
 DATABASES = ("sensei", "sensei_test")
 BUCKETS = ("sensei-snapshots", "sensei-artifacts")
+PG_USER = os.environ.get("SENSEI_PG_USER", "sensei")
 
 
 def compose(*args: str) -> str:
@@ -45,7 +47,7 @@ def check_postgres() -> list[str]:
     problems: list[str] = []
     query = "SELECT extname || '=' || extversion FROM pg_extension ORDER BY 1"
     for database in DATABASES:
-        rows = compose_exec("postgres", "psql", "-U", "sensei", "-d", database, "-tAc", query)
+        rows = compose_exec("postgres", "psql", "-U", PG_USER, "-d", database, "-tAc", query)
         extensions = dict(line.split("=", 1) for line in rows.splitlines() if "=" in line)
         for name in ("vector", "pg_trgm", "pg_textsearch"):
             if name not in extensions:

@@ -1,3 +1,4 @@
+# Development stack only: every port is bound to localhost and credentials are dev defaults.
 name: repo-sensei
 
 services:
@@ -10,7 +11,7 @@ services:
       POSTGRES_PASSWORD: ${SENSEI_PG_PASSWORD:-sensei}
       POSTGRES_DB: sensei
     ports:
-      - "${SENSEI_PG_PORT:-55432}:5432"
+      - "127.0.0.1:${SENSEI_PG_PORT:-55432}:5432"
     volumes:
       - pgdata:/var/lib/postgresql
     healthcheck:
@@ -21,10 +22,10 @@ services:
     shm_size: 1gb
 
   redis:
-    image: redis:7-alpine
+    image: redis:7.4.7-alpine
     command: ["redis-server", "--appendonly", "yes"]
     ports:
-      - "${SENSEI_REDIS_PORT:-56379}:6379"
+      - "127.0.0.1:${SENSEI_REDIS_PORT:-56379}:6379"
     volumes:
       - redisdata:/data
     healthcheck:
@@ -35,7 +36,7 @@ services:
 
   s3:
     # SeaweedFS provides an S3-compatible API locally (production uses S3/R2).
-    image: chrislusf/seaweedfs:latest
+    image: chrislusf/seaweedfs:4.48
     entrypoint: ["/bin/sh", "-c"]
     command:
       - >-
@@ -46,7 +47,7 @@ services:
       S3_ACCESS_KEY: ${SENSEI_S3_ACCESS_KEY:-sensei}
       S3_SECRET_KEY: ${SENSEI_S3_SECRET_KEY:-sensei-dev-secret}
     ports:
-      - "${SENSEI_S3_PORT:-9000}:8333"
+      - "127.0.0.1:${SENSEI_S3_PORT:-9000}:8333"
     volumes:
       - s3data:/data
     healthcheck:
@@ -56,7 +57,7 @@ services:
       retries: 40
 
   s3-init:
-    image: amazon/aws-cli:latest
+    image: amazon/aws-cli:2.38.1
     depends_on:
       s3:
         condition: service_healthy

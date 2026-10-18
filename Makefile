@@ -13,9 +13,10 @@ setup: ## Install python + js dependencies and git hooks
 	pnpm install
 	pre-commit install --install-hooks
 
-COMPOSE := docker compose -f infra/docker-compose.yml --env-file .env
+COMPOSE := docker compose -f infra/docker-compose.yml $(if $(wildcard .env),--env-file .env,)
+PG_USER ?= $(or $(SENSEI_PG_USER),sensei)
 
-up: ## Start local infra (postgres, redis, minio) and wait until healthy
+up: ## Start local infra (postgres, redis, s3) and wait until healthy
 	$(COMPOSE) up -d --build --wait
 
 down: ## Stop local infra (keeps data)
@@ -27,7 +28,7 @@ reset-db: ## Delete the local postgres volume (asks first)
 	docker volume rm repo-sensei_pgdata || true
 
 psql: ## Open psql on the dev database
-	$(COMPOSE) exec postgres psql -U sensei -d sensei
+	$(COMPOSE) exec postgres psql -U $(PG_USER) -d sensei
 
 infra-check: ## Verify extensions, redis and buckets
 	uv run python scripts/check_infra.py

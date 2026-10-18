@@ -1,19 +1,21 @@
 # Postgres 18 with pgvector (PGDG apt), pg_trgm (contrib) and pg_textsearch (built from source).
+ARG PG_IMAGE=postgres:18.6
 ARG PG_MAJOR=18
-ARG PG_TEXTSEARCH_VERSION=v1.5.1
+# pg_textsearch v1.5.1, pinned to the release commit rather than the (movable) tag.
+ARG PG_TEXTSEARCH_COMMIT=fa142d049d08eac45a263f5abc250c8877ae076e
 
-FROM postgres:${PG_MAJOR} AS textsearch-build
+FROM ${PG_IMAGE} AS textsearch-build
 ARG PG_MAJOR
-ARG PG_TEXTSEARCH_VERSION
+ARG PG_TEXTSEARCH_COMMIT
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       build-essential git ca-certificates "postgresql-server-dev-${PG_MAJOR}" \
- && git clone --depth 1 --branch "${PG_TEXTSEARCH_VERSION}" \
-      https://github.com/timescale/pg_textsearch /tmp/pg_textsearch \
+ && git clone https://github.com/timescale/pg_textsearch /tmp/pg_textsearch \
+ && git -C /tmp/pg_textsearch checkout --detach "${PG_TEXTSEARCH_COMMIT}" \
  && make -C /tmp/pg_textsearch \
  && make -C /tmp/pg_textsearch install DESTDIR=/out
 
-FROM postgres:${PG_MAJOR}
+FROM ${PG_IMAGE}
 ARG PG_MAJOR
 RUN apt-get update \
  && apt-get install -y --no-install-recommends "postgresql-${PG_MAJOR}-pgvector" \
