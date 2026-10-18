@@ -11,8 +11,17 @@ from pydantic import BaseModel
 from sensei_api.auth import CurrentUser, RequiredSession, Sessions
 from sensei_api.deps import DbSession
 from sensei_api.errors import NotFound
+from sensei_api.orgs import OrgServiceDep
+from sensei_core.models import Role, User
+from sensei_core.orgs.service import OrgService
 
 router = APIRouter(prefix="/me", tags=["me"])
+
+
+class MyOrg(BaseModel):
+    slug: str
+    name: str
+    role: Role
 
 
 class MeResponse(BaseModel):
@@ -22,6 +31,12 @@ class MeResponse(BaseModel):
     email: str | None
     avatar_url: str | None
     is_staff: bool
+    orgs: list[MyOrg]
+    last_org_slug: str | None
+
+
+class MeUpdate(BaseModel):
+    last_org_slug: str | None = None
 
 
 class SessionInfo(BaseModel):
@@ -33,8 +48,9 @@ class SessionInfo(BaseModel):
     current: bool
 
 
-@router.get("", response_model=MeResponse)
-async def get_me(user: CurrentUser) -> MeResponse:
+async def _me(user: User, db: DbSession, orgs: OrgService) -> MeResponse:
+    memberships = await orgs.list_for_user(db, user)
+    slugs = {org.slug for org, _ in memberships}
     return MeResponse(
         id=user.id,
         login=user.login,
@@ -42,7 +58,25 @@ async def get_me(user: CurrentUser) -> MeResponse:
         email=user.email,
         avatar_url=user.avatar_url,
         is_staff=user.is_staff,
+        orgs=[MyOrg(slug=org.slug, name=org.name, role=role) for org, role in memberships],
+        last_org_slug=user.last_org_slug if user.last_org_slug in slugs else None,
     )
+
+
+@router.get("", response_model=MeResponse)
+async def get_me(user: CurrentUser, db: DbSession, orgs: OrgServiceDep) -> MeResponse:
+    return await _me(user, db, orgs)
+
+
+@router.patch("", response_model=MeResponse)
+async def update_me(
+    body: MeUpdate, user: CurrentUser, db: DbSession, orgs: OrgServiceDep
+) -> MeResponse:
+    if body.last_org_slug is not None:
+        access = await orgs.access(db, user, body.last_org_slug)  # must be a member
+        user.last_org_slug = access.org.slug
+        await db.flush()
+    return await _me(user, db, orgs)
 
 
 @router.get("/sessions", response_model=list[SessionInfo])

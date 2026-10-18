@@ -164,3 +164,22 @@ def prod_settings(**overrides: object) -> Settings:
     values: dict[str, object] = {"env": "prod", "auth": AuthSettings(token_encryption_key=key)}
     values.update(overrides)
     return Settings(**values)  # pyright: ignore[reportArgumentType]
+
+
+async def sign_in(
+    app: FastAPI, client: httpx.AsyncClient, db: AsyncSession, user: User | None = None
+) -> tuple[User, dict[str, str]]:
+    """Create a session for ``user`` (a new one if omitted), install its cookies on ``client`` and
+    return headers that satisfy the CSRF checks for unsafe requests."""
+    from sensei_api.auth import cookie_names  # noqa: PLC0415
+    from sensei_core.auth.sessions import SessionService  # noqa: PLC0415
+
+    user = user or await make_user(db)
+    service: SessionService = app.state.session_service
+    issued = await service.create(db, user, ip="127.0.0.1", user_agent="pytest")
+    session_cookie, csrf_cookie = cookie_names(app.state.settings)
+    client.cookies.clear()
+    client.cookies.set(session_cookie, issued.token)
+    client.cookies.set(csrf_cookie, issued.csrf_token)
+    headers = {"Origin": app.state.settings.web.origin, "X-CSRF-Token": issued.csrf_token}
+    return user, headers

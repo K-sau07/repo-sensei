@@ -18,6 +18,7 @@ from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from sensei_core.context import current_context
+from sensei_core.errors import DomainError
 
 _HTTP_STATUS_CODES: dict[int, str] = {
     400: "bad_request",
@@ -117,6 +118,12 @@ async def _app_error_handler(_request: Request, exc: Exception) -> JSONResponse:
     return JSONResponse(error_body(exc.code, exc.message, exc.details), status_code=exc.status_code)
 
 
+async def _domain_error_handler(_request: Request, exc: Exception) -> JSONResponse:
+    if not isinstance(exc, DomainError):  # registered only for DomainError
+        raise exc
+    return JSONResponse(error_body(exc.code, exc.message, exc.details), status_code=exc.status_code)
+
+
 async def _validation_handler(_request: Request, exc: Exception) -> JSONResponse:
     if not isinstance(exc, RequestValidationError):  # registered only for RequestValidationError
         raise exc
@@ -143,6 +150,7 @@ async def _http_handler(_request: Request, exc: Exception) -> JSONResponse:
 
 def install_error_handlers(app: FastAPI) -> None:
     app.add_exception_handler(AppError, _app_error_handler)
+    app.add_exception_handler(DomainError, _domain_error_handler)
     app.add_exception_handler(RequestValidationError, _validation_handler)
     app.add_exception_handler(StarletteHTTPException, _http_handler)
     # Unexpected exceptions are turned into the envelope by RequestIdMiddleware, which runs inside

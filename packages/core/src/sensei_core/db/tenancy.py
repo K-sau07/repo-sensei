@@ -15,10 +15,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Mapped, mapped_column
 
 ORG_SETTING = "app.org_id"
+USER_SETTING = "app.user_id"
+INVITE_SETTING = "app.invite_token_hash"
 APP_ROLE = "sensei_app"
 SYSTEM_ROLE = "sensei_system"
 
 _POLICY_EXPR = f"org_id = NULLIF(current_setting('{ORG_SETTING}', true), '')::uuid"
+_USER_EXPR = f"user_id = NULLIF(current_setting('{USER_SETTING}', true), '')::uuid"
+_INVITE_EXPR = f"token_hash = decode(NULLIF(current_setting('{INVITE_SETTING}', true), ''), 'hex')"
 
 
 class OrgScopedMixin:
@@ -41,10 +45,36 @@ def enable_org_rls_sql(table: str) -> list[str]:
     ]
 
 
+def memberships_rls_sql(table: str = "memberships") -> list[str]:
+    """Memberships: the current org's rows, plus the signed-in user's own rows in any org
+    (so "list my orgs" works before an org is chosen). Writes still require the org context."""
+    return [
+        f'ALTER TABLE "{table}" ENABLE ROW LEVEL SECURITY',
+        f'ALTER TABLE "{table}" FORCE ROW LEVEL SECURITY',
+        f'CREATE POLICY org_isolation ON "{table}" USING ({_POLICY_EXPR}) '
+        f"WITH CHECK ({_POLICY_EXPR})",
+        f'CREATE POLICY own_memberships ON "{table}" FOR SELECT USING ({_USER_EXPR})',
+    ]
+
+
+def invitations_rls_sql(table: str = "invitations") -> list[str]:
+    """Invitations: the current org's rows, plus the single row whose token hash the caller
+    presents (so an invitee can preview and accept before joining). Writes require the org."""
+    return [
+        f'ALTER TABLE "{table}" ENABLE ROW LEVEL SECURITY',
+        f'ALTER TABLE "{table}" FORCE ROW LEVEL SECURITY',
+        f'CREATE POLICY org_isolation ON "{table}" USING ({_POLICY_EXPR}) '
+        f"WITH CHECK ({_POLICY_EXPR})",
+        f'CREATE POLICY invite_by_token ON "{table}" FOR SELECT USING ({_INVITE_EXPR})',
+    ]
+
+
 def disable_org_rls_sql(table: str) -> list[str]:
     """Inverse of :func:`enable_org_rls_sql` (use in migration downgrades)."""
     return [
         f'DROP POLICY IF EXISTS org_isolation ON "{table}"',
+        f'DROP POLICY IF EXISTS own_memberships ON "{table}"',
+        f'DROP POLICY IF EXISTS invite_by_token ON "{table}"',
         f'ALTER TABLE "{table}" NO FORCE ROW LEVEL SECURITY',
         f'ALTER TABLE "{table}" DISABLE ROW LEVEL SECURITY',
     ]
@@ -55,6 +85,22 @@ async def set_org_context(session: AsyncSession, org_id: uuid.UUID) -> None:
     await session.execute(
         text("SELECT set_config(:name, :value, true)"),
         {"name": ORG_SETTING, "value": str(org_id)},
+    )
+
+
+async def set_user_context(session: AsyncSession, user_id: uuid.UUID) -> None:
+    """Let the current transaction see the signed-in user's own membership rows."""
+    await session.execute(
+        text("SELECT set_config(:name, :value, true)"),
+        {"name": USER_SETTING, "value": str(user_id)},
+    )
+
+
+async def set_invite_context(session: AsyncSession, token_hash: bytes) -> None:
+    """Let the current transaction read the one invitation matching ``token_hash``."""
+    await session.execute(
+        text("SELECT set_config(:name, :value, true)"),
+        {"name": INVITE_SETTING, "value": token_hash.hex()},
     )
 
 

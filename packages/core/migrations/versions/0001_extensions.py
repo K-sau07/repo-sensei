@@ -1,3 +1,4 @@
+# pyright: basic
 """Enable the postgres extensions the engine relies on.
 
 Revision ID: 0001

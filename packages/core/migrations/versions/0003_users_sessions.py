@@ -1,3 +1,4 @@
+# pyright: basic
 """Users, encrypted OAuth tokens and browser sessions.
 
 Revision ID: 0003

@@ -1,3 +1,4 @@
+# pyright: basic
 """Database roles for tenancy: the RLS-enforced app role and the BYPASSRLS system role.
 
 Revision ID: 0002
