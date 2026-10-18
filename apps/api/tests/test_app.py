@@ -153,3 +153,40 @@ def test_docs_only_exposed_in_dev(env: str) -> None:
 
     app = create_app(Settings(env=env))  # pyright: ignore[reportArgumentType]
     assert (app.docs_url is not None) is (env == "dev")
+
+
+async def test_http_exception_with_non_string_detail(
+    app: FastAPI, client: httpx.AsyncClient
+) -> None:
+    from fastapi import HTTPException  # noqa: PLC0415
+
+    @app.get(f"{API}/_test/odd-detail")
+    async def odd() -> None:  # pyright: ignore[reportUnusedFunction]
+        raise HTTPException(status_code=503, detail={"upstream": "down"})
+
+    response = await client.get(f"{API}/_test/odd-detail")
+    assert response.status_code == 503
+    error = response.json()["error"]
+    assert error["code"] == "dependency_unavailable"
+    assert isinstance(error["message"], str)
+
+
+async def test_dev_500s_carry_cors_headers() -> None:
+    from sensei_api.app import create_app  # noqa: PLC0415
+    from sensei_core.config import Settings, WebSettings  # noqa: PLC0415
+
+    app = create_app(Settings(env="dev", web=WebSettings(origin="http://localhost:3000")))
+
+    @app.get(f"{API}/_test/boom-cors")
+    async def boom() -> None:  # pyright: ignore[reportUnusedFunction]
+        msg = "kaboom"
+        raise RuntimeError(msg)
+
+    transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.get(
+            f"{API}/_test/boom-cors", headers={"Origin": "http://localhost:3000"}
+        )
+    assert response.status_code == 500
+    assert response.headers["access-control-allow-origin"] == "http://localhost:3000"
+    assert "x-request-id" in response.headers

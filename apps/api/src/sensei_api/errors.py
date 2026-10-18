@@ -4,13 +4,13 @@ Every error response has the shape::
 
     {"error": {"code": "...", "message": "...", "request_id": "...", "details": {...}}}
 
-``code`` values are stable, machine-readable identifiers listed in docs/build/90-reference.md.
+``code`` values are stable, machine-readable identifiers that clients may branch on.
 Stack traces are never returned to clients; unexpected errors are logged with full detail.
 """
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
@@ -30,6 +30,10 @@ _HTTP_STATUS_CODES: dict[int, str] = {
     415: "unsupported_media_type",
     422: "validation_failed",
     429: "rate_limited",
+    500: "internal_error",
+    502: "dependency_unavailable",
+    503: "dependency_unavailable",
+    504: "dependency_unavailable",
 }
 
 
@@ -128,8 +132,12 @@ async def _validation_handler(_request: Request, exc: Exception) -> JSONResponse
 async def _http_handler(_request: Request, exc: Exception) -> JSONResponse:
     if not isinstance(exc, StarletteHTTPException):  # registered only for StarletteHTTPException
         raise exc
-    code = _HTTP_STATUS_CODES.get(exc.status_code, "http_error")
-    message = exc.detail or code.replace("_", " ")
+    code = _HTTP_STATUS_CODES.get(
+        exc.status_code, "internal_error" if exc.status_code >= 500 else "http_error"
+    )
+    # Typed as str by Starlette, but callers can pass any JSON value at runtime.
+    detail = cast("object", exc.detail)
+    message = detail if isinstance(detail, str) and detail else code.replace("_", " ")
     return JSONResponse(error_body(code, message), status_code=exc.status_code, headers=exc.headers)
 
 

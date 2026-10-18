@@ -72,9 +72,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     install_error_handlers(app)
 
-    # Order matters: the last added middleware runs first. Request ids wrap everything.
+    # Order matters: the last added middleware runs first (outermost).
     app.add_middleware(GZipMiddleware, minimum_size=1024)
+    app.add_middleware(RequestIdMiddleware)
     if settings.is_dev:
+        # Outermost in dev so every response, including 500s built by RequestIdMiddleware,
+        # carries CORS headers when the API is called directly from the dev web origin.
         app.add_middleware(
             CORSMiddleware,
             allow_origins=[settings.web.origin],
@@ -83,7 +86,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             allow_headers=["*"],
             expose_headers=["x-request-id"],
         )
-    app.add_middleware(RequestIdMiddleware)
 
     app.include_router(health.router, prefix=API_PREFIX)
     # Wraps the whole middleware stack; RequestIdMiddleware tags the server span it creates.
