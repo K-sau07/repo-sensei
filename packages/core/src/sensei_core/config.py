@@ -105,7 +105,9 @@ class Settings(BaseSettings):
 
     model_config = _config("SENSEI_")
 
-    env: Environment = "dev"
+    # Safe by default: a deployment that forgets SENSEI_ENV runs with production behaviour.
+    # Local development opts in with SENSEI_ENV=dev (see .env.example).
+    env: Environment = "prod"
     service_name: str = "repo-sensei"
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
     log_json: bool | None = None  # None means: JSON everywhere except dev

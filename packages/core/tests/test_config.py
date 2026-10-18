@@ -17,9 +17,13 @@ def _isolated_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[N
     get_settings.cache_clear()
 
 
+def test_environment_defaults_to_production() -> None:
+    assert Settings().env == "prod"
+    assert Settings().use_json_logs is True
+
+
 def test_defaults_point_at_local_dev_stack() -> None:
     settings = Settings()
-    assert settings.env == "dev"
     assert settings.database.url.get_secret_value().endswith("@localhost:55432/sensei")
     assert settings.redis.url.get_secret_value() == "redis://localhost:56379/0"
     assert settings.s3.bucket_snapshots == "sensei-snapshots"
@@ -57,6 +61,7 @@ def test_secrets_are_hidden_in_repr() -> None:
 
 
 def test_json_logs_default_depends_on_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SENSEI_ENV", "dev")
     assert Settings().use_json_logs is False
     monkeypatch.setenv("SENSEI_ENV", "prod")
     assert Settings().use_json_logs is True
