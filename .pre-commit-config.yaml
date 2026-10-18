@@ -1,0 +1,58 @@
+default_install_hook_types: [pre-commit, commit-msg]
+default_stages: [pre-commit]
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+        exclude: \.md$
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-toml
+      - id: check-json
+        exclude: ^(\.vscode/|apps/web/tsconfig.*\.json$)
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: ["--maxkb=800"]
+      - id: detect-private-key
+      - id: mixed-line-ending
+        args: ["--fix=lf"]
+
+  - repo: local
+    hooks:
+      - id: no-private-paths
+        name: block private planning docs and eval data
+        language: fail
+        entry: "private paths must never be committed (docs/, evals/golden|reports|fixbench|crosslayerbench/, *.private.md)"
+        files: ^(docs/|evals/(golden|reports|fixbench|crosslayerbench)/|evals/repos\.yaml$)|\.private\.md$
+
+      - id: ruff-check
+        name: ruff check
+        language: system
+        entry: uv run --frozen ruff check --fix
+        types_or: [python, pyi]
+
+      - id: ruff-format
+        name: ruff format
+        language: system
+        entry: uv run --frozen ruff format
+        types_or: [python, pyi]
+
+      - id: prettier
+        name: prettier
+        language: system
+        entry: pnpm exec prettier --write --ignore-unknown
+        types_or: [javascript, jsx, ts, tsx, json, yaml, css, markdown]
+
+      - id: gitleaks
+        name: gitleaks (staged changes)
+        language: system
+        entry: gitleaks git --pre-commit --staged --redact --no-banner
+        pass_filenames: false
+
+      - id: commit-msg-guard
+        name: commit message and authorship guard
+        language: system
+        entry: uv run --no-project --python 3.13 python scripts/hooks/commit_msg_guard.py
+        stages: [commit-msg]

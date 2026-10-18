@@ -2,7 +2,7 @@
   "pythonVersion": "3.13",
   "venvPath": ".",
   "venv": ".venv",
-  "include": ["apps/api", "workers", "packages"],
+  "include": ["apps/api", "workers", "packages", "scripts"],
   "exclude": ["**/node_modules", "**/__pycache__", "**/.venv", "apps/web"],
   "typeCheckingMode": "strict",
   "reportMissingTypeStubs": "none"
