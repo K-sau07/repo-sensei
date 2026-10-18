@@ -92,7 +92,8 @@ class WebSettings(BaseSettings):
 class TelemetrySettings(BaseSettings):
     model_config = _config("SENSEI_")
 
-    otel_endpoint: str | None = None
+    otel_endpoint: str | None = None  # OTLP/HTTP base URL, e.g. http://localhost:4318
+    otel_console: bool = False  # print spans to stderr (local debugging)
     sentry_dsn: SecretStr | None = None
     traces_sample_rate: float = Field(default=0.0, ge=0.0, le=1.0)
 

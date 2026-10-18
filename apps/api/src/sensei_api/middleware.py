@@ -16,6 +16,7 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from sensei_api.errors import error_body
 from sensei_core.logging import get_logger
+from sensei_core.telemetry import tag_request
 
 log = get_logger(__name__)
 
@@ -58,6 +59,8 @@ class RequestIdMiddleware:
             await send(message)
 
         with structlog.contextvars.bound_contextvars(request_id=request_id):
+            # The tracing middleware wraps this one, so its server span is already active here.
+            tag_request(request_id)
             try:
                 await self.app(scope, receive, send_with_id)
             except Exception as exc:

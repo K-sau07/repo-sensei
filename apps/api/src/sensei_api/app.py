@@ -12,6 +12,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from starlette.middleware.gzip import GZipMiddleware
 
 from sensei_api import __version__
@@ -23,8 +24,10 @@ from sensei_core.config import Settings, get_settings
 from sensei_core.db import make_database
 from sensei_core.logging import configure_logging, get_logger
 from sensei_core.redis import make_redis, ping_redis
+from sensei_core.telemetry import init_telemetry, instrument_engine
 
 API_PREFIX = "/api/v1"
+SERVICE_NAME = "sensei-api"
 
 log = get_logger(__name__)
 
@@ -32,10 +35,12 @@ log = get_logger(__name__)
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or get_settings()
     configure_logging(settings)
+    init_telemetry(settings, SERVICE_NAME)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
         database = make_database(settings.database)
+        instrument_engine(database.engine)
         redis = make_redis(settings.redis)
         app.state.database = database
         app.state.redis = redis
@@ -78,4 +83,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.add_middleware(RequestIdMiddleware)
 
     app.include_router(health.router, prefix=API_PREFIX)
+    # Wraps the whole middleware stack; RequestIdMiddleware tags the server span it creates.
+    FastAPIInstrumentor.instrument_app(app)
     return app
