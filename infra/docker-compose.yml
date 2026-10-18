@@ -1,0 +1,78 @@
+name: repo-sensei
+
+services:
+  postgres:
+    build:
+      context: ./postgres
+    image: repo-sensei/postgres:18-dev
+    environment:
+      POSTGRES_USER: ${SENSEI_PG_USER:-sensei}
+      POSTGRES_PASSWORD: ${SENSEI_PG_PASSWORD:-sensei}
+      POSTGRES_DB: sensei
+    ports:
+      - "${SENSEI_PG_PORT:-55432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d sensei"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+    shm_size: 1gb
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "${SENSEI_REDIS_PORT:-56379}:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+
+  s3:
+    # SeaweedFS provides an S3-compatible API locally (production uses S3/R2).
+    image: chrislusf/seaweedfs:latest
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        printf '{"identities":[{"name":"sensei","credentials":[{"accessKey":"%s","secretKey":"%s"}],"actions":["Admin","Read","List","Tagging","Write"]}]}'
+        "$$S3_ACCESS_KEY" "$$S3_SECRET_KEY" > /tmp/s3.json &&
+        exec weed server -dir=/data -s3 -s3.port=8333 -s3.config=/tmp/s3.json
+    environment:
+      S3_ACCESS_KEY: ${SENSEI_S3_ACCESS_KEY:-sensei}
+      S3_SECRET_KEY: ${SENSEI_S3_SECRET_KEY:-sensei-dev-secret}
+    ports:
+      - "${SENSEI_S3_PORT:-9000}:8333"
+    volumes:
+      - s3data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 8333"]
+      interval: 3s
+      timeout: 3s
+      retries: 40
+
+  s3-init:
+    image: amazon/aws-cli:latest
+    depends_on:
+      s3:
+        condition: service_healthy
+    environment:
+      AWS_ACCESS_KEY_ID: ${SENSEI_S3_ACCESS_KEY:-sensei}
+      AWS_SECRET_ACCESS_KEY: ${SENSEI_S3_SECRET_KEY:-sensei-dev-secret}
+      AWS_DEFAULT_REGION: ${SENSEI_S3_REGION:-us-east-1}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        for b in sensei-snapshots sensei-artifacts; do
+        until aws --endpoint-url http://s3:8333 s3api head-bucket --bucket $$b 2>/dev/null
+        || aws --endpoint-url http://s3:8333 s3 mb s3://$$b; do sleep 1; done; done
+    restart: "no"
+
+volumes:
+  pgdata:
+  redisdata:
+  s3data:
