@@ -80,3 +80,33 @@ def test_nested_structures_are_walked() -> None:
 def test_empty_sensitive_values_are_kept_visible() -> None:
     assert redact({"token": None}) == {"token": None}
     assert redact({"token": ""}) == {"token": ""}
+
+
+def test_masks_password_in_userless_urls() -> None:
+    assert redact_text("redis://:topsecret@localhost:6379/0") == f"redis://:{MASK}@localhost:6379/0"
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        '"GET /api/v1/auth/github/callback?code=abc123&state=xyz789 HTTP/1.1" 302',
+        "https://app.example.com/invite?token=secretinvite123",
+        "https://s3.example.com/obj?X-Amz-Expires=60&signature=deadbeefcafe",
+    ],
+)
+def test_masks_secrets_in_query_strings(line: str) -> None:
+    redacted = redact_text(line)
+    for secret in ("abc123", "xyz789", "secretinvite123", "deadbeefcafe"):
+        assert secret not in redacted
+
+
+def test_usage_counters_are_not_masked() -> None:
+    usage = {"input_tokens": 120, "output_tokens": 40, "max_tokens": 1024, "tokens_out": 7}
+    assert redact(usage) == usage
+
+
+def test_very_deep_structures_are_still_redacted() -> None:
+    deep: dict[str, object] = {"value": f"token {GH_TOKEN}"}
+    for _ in range(20):
+        deep = {"nested": deep}
+    assert GH_TOKEN not in str(redact(deep))

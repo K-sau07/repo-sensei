@@ -2,7 +2,8 @@
 
 * JSON lines (orjson) outside dev, readable console output in dev.
 * Context values (request id, org, user, repo, job) are merged into every event.
-* Secrets are redacted before anything is rendered.
+* Secrets are redacted as the very last step before rendering (tracebacks included), and
+  traceback frame locals are never captured.
 * Standard-library loggers (uvicorn, celery, sqlalchemy ...) go through the same pipeline.
 """
 
@@ -40,7 +41,6 @@ def _shared_processors() -> list[Processor]:
         structlog.stdlib.add_logger_name,
         structlog.processors.TimeStamper(fmt="iso", utc=True),
         structlog.processors.StackInfoRenderer(),
-        _redaction_processor,
     ]
 
 
@@ -52,7 +52,10 @@ def configure_logging(settings: Settings | None = None, *, force_json: bool | No
     renderer: Processor
     if use_json:
         renderer = structlog.processors.JSONRenderer(serializer=_orjson_dumps)
-        exception_processor: Processor = structlog.processors.dict_tracebacks
+        # Structured tracebacks without frame locals: locals routinely hold credentials.
+        exception_processor: Processor = structlog.processors.ExceptionRenderer(
+            structlog.tracebacks.ExceptionDictTransformer(show_locals=False)
+        )
     else:
         renderer = structlog.dev.ConsoleRenderer(colors=sys.stderr.isatty())
         exception_processor = structlog.processors.format_exc_info
@@ -73,6 +76,8 @@ def configure_logging(settings: Settings | None = None, *, force_json: bool | No
         processors=[
             structlog.stdlib.ProcessorFormatter.remove_processors_meta,
             exception_processor,
+            # Redact last, after exceptions are rendered, so tracebacks are covered too.
+            _redaction_processor,
             renderer,
         ],
     )

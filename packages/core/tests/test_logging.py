@@ -51,3 +51,29 @@ def test_stdlib_loggers_go_through_pipeline(capsys: pytest.CaptureFixture[str]) 
     assert lines
     assert GH_TOKEN not in json.dumps(lines[-1])
     assert lines[-1]["level"] == "warning"
+
+
+def test_exceptions_are_redacted_and_locals_are_not_logged(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    configure_logging(Settings(env="prod"), force_json=True)
+    log = get_logger("test")
+
+    def connect() -> None:
+        github_token = GH_TOKEN  # a local that must never reach the logs
+        password = "hunter2-local-secret"  # only ever a local: must not appear anywhere
+        assert password
+        msg = f"cannot reach postgresql://u:pw-in-message@db/x using {github_token}"
+        raise ConnectionError(msg)
+
+    try:
+        connect()
+    except ConnectionError:
+        log.exception("connection failed")
+
+    output = capsys.readouterr().err
+    assert "connection failed" in output
+    assert GH_TOKEN not in output
+    assert "pw-in-message" not in output
+    assert "hunter2-local-secret" not in output
+    assert '"locals"' not in output

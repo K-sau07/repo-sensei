@@ -35,24 +35,41 @@ _VALUE_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----"),
 )
 
-# user:password@ inside URLs: keep the user, mask the password.
-_URL_CREDENTIALS_RE = re.compile(r"(?P<scheme>[a-z][a-z0-9+.\-]*://)(?P<user>[^:/@\s]+):[^@/\s]+@")
+# user:password@ inside URLs: keep the user (possibly empty, e.g. redis://:pw@host), mask the
+# password.
+_URL_CREDENTIALS_RE = re.compile(r"(?P<scheme>[a-z][a-z0-9+.\-]*://)(?P<user>[^:/@\s]*):[^@/\s]+@")
+
+# Secrets carried in query strings: OAuth codes/state, tokens, signatures, keys.
+_QUERY_SECRET_RE = re.compile(
+    r"(?P<key>[?&](?:code|state|token|access_token|refresh_token|id_token|key|api_key|"
+    r"signature|sig|secret|password|invite|share)=)[^&\s#\"']+",
+    re.IGNORECASE,
+)
+
+# Usage counters such as input_tokens / max_tokens / tokens_out are numbers, not credentials.
+_COUNTER_KEY_RE = re.compile(r"tokens|token_count|token_usage", re.IGNORECASE)
 
 
 def redact_text(text: str) -> str:
     """Mask credential-looking substrings inside free text."""
     redacted = _URL_CREDENTIALS_RE.sub(r"\g<scheme>\g<user>:" + MASK + "@", text)
+    redacted = _QUERY_SECRET_RE.sub(r"\g<key>" + MASK, redacted)
     for pattern in _VALUE_PATTERNS:
         redacted = pattern.sub(MASK, redacted)
     return redacted
 
 
+def is_sensitive_key(key: str) -> bool:
+    return bool(SENSITIVE_KEY_RE.search(key)) and not _COUNTER_KEY_RE.search(key)
+
+
 def redact(value: Any, *, key: str | None = None, _depth: int = 0) -> Any:
     """Return a redacted copy of ``value`` (dicts, lists, tuples and strings are walked)."""
-    if key is not None and SENSITIVE_KEY_RE.search(key) and value not in (None, ""):
+    if key is not None and is_sensitive_key(key) and value not in (None, ""):
         return MASK
-    if _depth > 8:
-        return value
+    if _depth > 12:
+        # Too deep to walk safely: fall back to text redaction of the whole value.
+        return redact_text(str(value))
     if isinstance(value, str):
         return redact_text(value)
     if isinstance(value, Mapping):

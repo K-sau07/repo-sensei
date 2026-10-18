@@ -4,8 +4,7 @@ Every setting comes from environment variables prefixed with ``SENSEI_`` (or a `
 the working directory). Settings are grouped by concern; each group reads a flat prefix such as
 ``SENSEI_DATABASE_URL`` or ``SENSEI_S3_ENDPOINT`` so the variable names stay short and obvious.
 
-Groups are added here as the build steps introduce them; ``docs/build/90-reference.md`` lists
-every variable.
+Groups are added here as features need them; ``.env.example`` documents every variable.
 """
 
 from __future__ import annotations
