@@ -1,0 +1,13 @@
+[project]
+name = "sensei-api"
+version = "0.1.0"
+description = "HTTP API for repo-sensei."
+requires-python = ">=3.13"
+dependencies = ["sensei-core"]
+
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/sensei_api"]
