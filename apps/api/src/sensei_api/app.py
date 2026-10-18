@@ -20,7 +20,9 @@ from sensei_api.middleware import RequestIdMiddleware
 from sensei_api.routers import health
 from sensei_api.routers.health import ReadinessCheck
 from sensei_core.config import Settings, get_settings
+from sensei_core.db import make_database
 from sensei_core.logging import configure_logging, get_logger
+from sensei_core.redis import make_redis, ping_redis
 
 API_PREFIX = "/api/v1"
 
@@ -32,10 +34,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     configure_logging(settings)
 
     @asynccontextmanager
-    async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
+    async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
+        database = make_database(settings.database)
+        redis = make_redis(settings.redis)
+        app.state.database = database
+        app.state.redis = redis
+        app.state.readiness_checks.update(
+            {"database": database.ping, "redis": lambda: ping_redis(redis)}
+        )
         log.info("api starting", env=settings.env, version=__version__)
-        yield
-        log.info("api stopped")
+        try:
+            yield
+        finally:
+            await redis.aclose()
+            await database.dispose()
+            log.info("api stopped")
 
     app = FastAPI(
         title="repo-sensei API",
