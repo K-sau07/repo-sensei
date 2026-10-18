@@ -24,6 +24,7 @@ def _config(prefix: str) -> SettingsConfigDict:
         env_prefix=prefix,
         env_file=".env",
         env_file_encoding="utf-8",
+        env_ignore_empty=True,  # `KEY=` in .env means "not set", not "empty string"
         extra="ignore",
     )
 
@@ -107,6 +108,26 @@ class AuthSettings(BaseSettings):
     cookie_secure: bool | None = None  # None means: secure everywhere except dev
 
 
+class GitHubSettings(BaseSettings):
+    """A GitHub App provides both sign-in (user authorization) and repository access."""
+
+    model_config = _config("SENSEI_GITHUB_")
+
+    app_id: int | None = None
+    app_slug: str | None = None
+    client_id: str | None = None
+    client_secret: SecretStr | None = None
+    private_key_path: str | None = None
+    webhook_secret: SecretStr | None = None
+    api_url: str = "https://api.github.com"
+    web_url: str = "https://github.com"
+    timeout_seconds: float = Field(default=10.0, gt=0)
+
+    @property
+    def oauth_configured(self) -> bool:
+        return bool(self.client_id and self.client_secret)
+
+
 class TelemetrySettings(BaseSettings):
     model_config = _config("SENSEI_")
 
@@ -133,6 +154,7 @@ class Settings(BaseSettings):
     s3: S3Settings = Field(default_factory=S3Settings)
     web: WebSettings = Field(default_factory=WebSettings)
     auth: AuthSettings = Field(default_factory=AuthSettings)
+    github: GitHubSettings = Field(default_factory=GitHubSettings)
     telemetry: TelemetrySettings = Field(default_factory=TelemetrySettings)
 
     @model_validator(mode="after")

@@ -10,6 +10,7 @@ from __future__ import annotations
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
+import httpx
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
@@ -25,6 +26,7 @@ from sensei_core.config import Settings, get_settings
 from sensei_core.db import make_database
 from sensei_core.logging import configure_logging, get_logger
 from sensei_core.redis import make_redis, ping_redis
+from sensei_core.security.crypto import TokenCipher
 from sensei_core.telemetry import init_telemetry, instrument_engine
 
 API_PREFIX = "/api/v1"
@@ -43,8 +45,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         database = make_database(settings.database)
         instrument_engine(database.engine)
         redis = make_redis(settings.redis)
+        http = httpx.AsyncClient(timeout=settings.github.timeout_seconds)
         app.state.database = database
         app.state.redis = redis
+        app.state.http = http
         app.state.readiness_checks.update(
             {"database": database.ping, "redis": lambda: ping_redis(redis)}
         )
@@ -54,9 +58,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         finally:
             # Close each resource independently so one failure cannot leak the other.
             try:
-                await redis.aclose()
+                await http.aclose()
             finally:
-                await database.dispose()
+                try:
+                    await redis.aclose()
+                finally:
+                    await database.dispose()
             log.info("api stopped")
 
     app = FastAPI(
@@ -69,6 +76,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     app.state.settings = settings
     app.state.session_service = SessionService(settings.auth)
+    app.state.token_cipher = TokenCipher.from_settings(settings.auth)
     readiness_checks: dict[str, ReadinessCheck] = {}
     app.state.readiness_checks = readiness_checks
 
