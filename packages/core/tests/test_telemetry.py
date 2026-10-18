@@ -6,6 +6,7 @@ from pydantic import SecretStr
 
 from sensei_core import telemetry
 from sensei_core.config import Settings, TelemetrySettings
+from sensei_testing import prod_settings
 
 GH_TOKEN = "ghs_" + "a1B2c3D4e5F6g7H8i9J0k1L2m3N4"
 
@@ -27,8 +28,7 @@ def test_sentry_is_noop_without_dsn(fresh_state: None) -> None:
 def test_sentry_init_is_idempotent(fresh_state: None, monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[dict[str, object]] = []
     monkeypatch.setattr(sentry_sdk, "init", lambda **kw: calls.append(kw))  # pyright: ignore[reportUnknownLambdaType, reportUnknownArgumentType]
-    settings = Settings(
-        env="prod",
+    settings = prod_settings(
         telemetry=TelemetrySettings(sentry_dsn=SecretStr("https://k@sentry.example.com/1")),
     )
     assert telemetry.init_sentry(settings, "svc") is True

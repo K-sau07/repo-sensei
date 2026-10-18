@@ -12,7 +12,7 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field, SecretStr
+from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy.engine import make_url
 
@@ -91,6 +91,22 @@ class WebSettings(BaseSettings):
     origin: str = "http://localhost:3000"
 
 
+# 32 readable bytes ("repo-sensei-dev-key-not-a-secret"): usable only in dev and test.
+DEV_TOKEN_ENCRYPTION_KEY = "cmVwby1zZW5zZWktZGV2LWtleS1ub3QtYS1zZWNyZXQ="  # noqa: S105 - public dev key
+
+
+class AuthSettings(BaseSettings):
+    model_config = _config("SENSEI_AUTH_")
+
+    # base64 of 32 random bytes. Rotate by moving the old key to *_previous and setting a new one.
+    token_encryption_key: SecretStr = SecretStr(DEV_TOKEN_ENCRYPTION_KEY)
+    token_encryption_key_previous: SecretStr | None = None
+    session_idle_days: int = Field(default=14, ge=1, le=90)
+    session_absolute_days: int = Field(default=30, ge=1, le=365)
+    session_touch_after_seconds: int = Field(default=3600, ge=60)
+    cookie_secure: bool | None = None  # None means: secure everywhere except dev
+
+
 class TelemetrySettings(BaseSettings):
     model_config = _config("SENSEI_")
 
@@ -116,7 +132,17 @@ class Settings(BaseSettings):
     redis: RedisSettings = Field(default_factory=RedisSettings)
     s3: S3Settings = Field(default_factory=S3Settings)
     web: WebSettings = Field(default_factory=WebSettings)
+    auth: AuthSettings = Field(default_factory=AuthSettings)
     telemetry: TelemetrySettings = Field(default_factory=TelemetrySettings)
+
+    @model_validator(mode="after")
+    def _refuse_dev_secrets_outside_dev(self) -> Settings:
+        if self.env in ("staging", "prod"):
+            key = self.auth.token_encryption_key.get_secret_value()
+            if key == DEV_TOKEN_ENCRYPTION_KEY:
+                msg = "SENSEI_AUTH_TOKEN_ENCRYPTION_KEY must be set to a real key outside dev/test"
+                raise ValueError(msg)
+        return self
 
     @property
     def is_dev(self) -> bool:
@@ -125,6 +151,10 @@ class Settings(BaseSettings):
     @property
     def use_json_logs(self) -> bool:
         return self.log_json if self.log_json is not None else not self.is_dev
+
+    @property
+    def secure_cookies(self) -> bool:
+        return self.auth.cookie_secure if self.auth.cookie_secure is not None else not self.is_dev
 
 
 @lru_cache(maxsize=1)

@@ -17,11 +17,14 @@ from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+import httpx
 import pytest
 from fakeredis import FakeAsyncRedis
+from fastapi import FastAPI
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from sensei_core.config import Settings
+from sensei_core.models import User
 
 
 def _find_alembic_ini() -> Path:
@@ -105,3 +108,59 @@ async def fake_redis() -> AsyncGenerator[FakeAsyncRedis]:
     client = FakeAsyncRedis(decode_responses=True)
     yield client
     await client.aclose()
+
+
+_user_counter = iter(range(1, 1_000_000))
+
+
+async def make_user(db: AsyncSession, **overrides: object) -> User:
+    """Insert a user with unique GitHub identity; any column can be overridden."""
+    n = next(_user_counter)
+    values: dict[str, object] = {
+        "github_id": 10_000_000 + n,
+        "login": f"user{n}",
+        "name": f"Test User {n}",
+        "email": f"user{n}@example.com",
+    }
+    values.update(overrides)
+    user = User(**values)
+    db.add(user)
+    await db.flush()
+    return user
+
+
+@pytest.fixture
+def api_app(migrated_test_db: Settings, db_session: AsyncSession) -> FastAPI:
+    """The real app, with every request using the rolled-back ``db_session``."""
+    from sensei_api.app import create_app  # noqa: PLC0415 - api is only needed by api tests
+    from sensei_api.deps import get_db  # noqa: PLC0415
+
+    app = create_app(migrated_test_db)
+
+    async def _test_db() -> AsyncGenerator[AsyncSession]:
+        yield db_session
+
+    app.dependency_overrides[get_db] = _test_db
+    return app
+
+
+@pytest.fixture
+async def api_client(api_app: FastAPI) -> AsyncGenerator[httpx.AsyncClient]:
+    transport = httpx.ASGITransport(app=api_app, raise_app_exceptions=False)
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        yield client
+
+
+def prod_settings(**overrides: object) -> Settings:
+    """Production-mode settings with a throwaway (non-dev) encryption key."""
+    import base64  # noqa: PLC0415
+    import os  # noqa: PLC0415
+
+    from pydantic import SecretStr  # noqa: PLC0415
+
+    from sensei_core.config import AuthSettings  # noqa: PLC0415
+
+    key = SecretStr(base64.b64encode(os.urandom(32)).decode())
+    values: dict[str, object] = {"env": "prod", "auth": AuthSettings(token_encryption_key=key)}
+    values.update(overrides)
+    return Settings(**values)  # pyright: ignore[reportArgumentType]

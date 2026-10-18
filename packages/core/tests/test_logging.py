@@ -5,9 +5,9 @@ import logging
 
 import pytest
 
-from sensei_core.config import Settings
 from sensei_core.context import bind_context, current_context
 from sensei_core.logging import configure_logging, get_logger
+from sensei_testing import prod_settings
 
 GH_TOKEN = "ghs_" + "a1B2c3D4e5F6g7H8i9J0k1L2m3N4"
 
@@ -17,7 +17,7 @@ def _json_lines(err: str) -> list[dict[str, object]]:
 
 
 def test_json_logs_include_context_and_redact(capsys: pytest.CaptureFixture[str]) -> None:
-    configure_logging(Settings(env="prod"), force_json=True)
+    configure_logging(prod_settings(), force_json=True)
     log = get_logger("test")
 
     with bind_context(request_id="req-1", org_id="org-9"):
@@ -45,7 +45,7 @@ def test_unknown_context_key_is_rejected() -> None:
 
 
 def test_stdlib_loggers_go_through_pipeline(capsys: pytest.CaptureFixture[str]) -> None:
-    configure_logging(Settings(env="prod"), force_json=True)
+    configure_logging(prod_settings(), force_json=True)
     logging.getLogger("uvicorn.error").warning("token=%s", GH_TOKEN)
     lines = _json_lines(capsys.readouterr().err)
     assert lines
@@ -56,7 +56,7 @@ def test_stdlib_loggers_go_through_pipeline(capsys: pytest.CaptureFixture[str]) 
 def test_exceptions_are_redacted_and_locals_are_not_logged(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    configure_logging(Settings(env="prod"), force_json=True)
+    configure_logging(prod_settings(), force_json=True)
     log = get_logger("test")
 
     def connect() -> None:

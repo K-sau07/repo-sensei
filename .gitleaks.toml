@@ -1,0 +1,7 @@
+# gitleaks configuration: the default ruleset plus a single, exact allowlisted value.
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Public development-only encryption key; the app refuses it outside dev/test."
+regexes = ['''cmVwby1zZW5zZWktZGV2LWtleS1ub3QtYS1zZWNyZXQ=''']

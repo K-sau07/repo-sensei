@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+import os
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -10,8 +12,12 @@ from sensei_core.config import Settings, get_settings
 
 @pytest.fixture(autouse=True)
 def _isolated_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[None]:
-    # Run from an empty directory so a developer's .env never leaks into tests.
+    # Run from an empty directory so a developer's .env never leaks into tests, with a real
+    # (non-dev) key so the production default environment is valid.
     monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv(
+        "SENSEI_AUTH_TOKEN_ENCRYPTION_KEY", base64.b64encode(os.urandom(32)).decode()
+    )
     get_settings.cache_clear()
     yield
     get_settings.cache_clear()

@@ -5,8 +5,10 @@ from __future__ import annotations
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from typing import Any, cast
 
 from sqlalchemy import text
+from sqlalchemy.engine import CursorResult, Result
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -15,6 +17,11 @@ from sqlalchemy.ext.asyncio import (
 )
 
 from sensei_core.config import DatabaseSettings
+
+
+def rowcount(result: Result[Any]) -> int:
+    """Rows affected by an UPDATE/DELETE executed through ``AsyncSession.execute``."""
+    return cast("CursorResult[Any]", result).rowcount
 
 
 @dataclass(frozen=True, slots=True)

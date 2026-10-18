@@ -150,8 +150,9 @@ def test_openapi_export_is_stable(tmp_path: Path) -> None:
 def test_docs_only_exposed_in_dev(env: str) -> None:
     from sensei_api.app import create_app  # noqa: PLC0415
     from sensei_core.config import Settings  # noqa: PLC0415
+    from sensei_testing import prod_settings  # noqa: PLC0415
 
-    app = create_app(Settings(env=env))  # pyright: ignore[reportArgumentType]
+    app = create_app(Settings(env="dev") if env == "dev" else prod_settings())
     assert (app.docs_url is not None) is (env == "dev")
 
 

@@ -44,8 +44,10 @@ ALEMBIC := uv run alembic -c packages/core/alembic.ini
 migrate: ## Apply all database migrations
 	$(ALEMBIC) upgrade head
 
+NEXT_REV = $(shell printf "%04d" $$(( $$(ls packages/core/migrations/versions/[0-9][0-9][0-9][0-9]_*.py | wc -l) + 1 )))
+
 revision: ## Create a migration: make revision m="add users"
-	$(ALEMBIC) revision --autogenerate -m "$(m)"
+	$(ALEMBIC) revision --autogenerate --rev-id $(NEXT_REV) -m "$(m)"
 
 downgrade: ## Roll back one migration
 	$(ALEMBIC) downgrade -1

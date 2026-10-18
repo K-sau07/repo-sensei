@@ -18,8 +18,9 @@ from starlette.middleware.gzip import GZipMiddleware
 from sensei_api import __version__
 from sensei_api.errors import install_error_handlers
 from sensei_api.middleware import RequestIdMiddleware
-from sensei_api.routers import health
+from sensei_api.routers import auth, health, me
 from sensei_api.routers.health import ReadinessCheck
+from sensei_core.auth.sessions import SessionService
 from sensei_core.config import Settings, get_settings
 from sensei_core.db import make_database
 from sensei_core.logging import configure_logging, get_logger
@@ -67,6 +68,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         lifespan=lifespan,
     )
     app.state.settings = settings
+    app.state.session_service = SessionService(settings.auth)
     readiness_checks: dict[str, ReadinessCheck] = {}
     app.state.readiness_checks = readiness_checks
 
@@ -88,6 +90,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
 
     app.include_router(health.router, prefix=API_PREFIX)
+    app.include_router(auth.router, prefix=API_PREFIX)
+    app.include_router(me.router, prefix=API_PREFIX)
     # Wraps the whole middleware stack; RequestIdMiddleware tags the server span it creates.
     FastAPIInstrumentor.instrument_app(app)
     return app
