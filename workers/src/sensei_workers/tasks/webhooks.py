@@ -5,13 +5,14 @@ from __future__ import annotations
 import uuid
 from datetime import timedelta
 
-from sensei_core.github.webhooks import ProcessResult, process_delivery, stale_deliveries
+from sensei_core.github.webhooks import ProcessResult, claim_stale_deliveries, process_delivery
 from sensei_core.jobs import TaskName
 from sensei_workers.app import celery_app
 from sensei_workers.base import SenseiTask
 from sensei_workers.runtime import get_runtime
 
-STALE_AFTER = timedelta(minutes=2)
+# A delivery queued this long ago and still waiting is queued again (the queue may have been down).
+STALE_AFTER = timedelta(minutes=10)
 SWEEP_LIMIT = 500
 
 
@@ -28,7 +29,9 @@ def process_github_webhook(self: SenseiTask, *, delivery_id: str) -> str | None:
 
     async def _process() -> ProcessResult:
         async with self.system_session() as db:
-            return await process_delivery(db, runtime.redis, uuid.UUID(delivery_id))
+            return await process_delivery(
+                db, runtime.redis, uuid.UUID(delivery_id), app=runtime.github_app
+            )
 
     # The delivery's status (failed, with the error) is committed before deciding on a retry.
     result = runtime.run(_process())
@@ -43,7 +46,7 @@ def sweep_webhooks(self: SenseiTask) -> int:
 
     async def _stale() -> list[uuid.UUID]:
         async with self.system_session() as db:
-            return await stale_deliveries(db, older_than=STALE_AFTER, limit=SWEEP_LIMIT)
+            return await claim_stale_deliveries(db, older_than=STALE_AFTER, limit=SWEEP_LIMIT)
 
     stale = get_runtime().run(_stale())
     for delivery_id in stale:

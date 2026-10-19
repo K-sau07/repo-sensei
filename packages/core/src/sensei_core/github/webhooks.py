@@ -22,7 +22,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol, cast
 
 from redis.asyncio import Redis
-from sqlalchemy import select
+from sqlalchemy import func, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -30,10 +30,11 @@ from sensei_core.audit import AuditAction, audit
 from sensei_core.db import rowcount
 from sensei_core.db.base import new_id
 from sensei_core.github.app import forget_installation_tokens
-from sensei_core.github.client import as_object
+from sensei_core.github.client import GitHubError, as_object
 from sensei_core.github.installations import installation_details
 from sensei_core.logging import get_logger
 from sensei_core.models import ActorType, DeliveryStatus, GitHubInstallation, WebhookDelivery
+from sensei_core.redaction import redact_text
 
 log = get_logger(__name__)
 
@@ -104,18 +105,28 @@ class WebhookDispatcher(Protocol):
     async def dispatch(self, delivery_id: uuid.UUID) -> None: ...
 
 
-async def stale_deliveries(
+async def claim_stale_deliveries(
     db: AsyncSession, *, older_than: timedelta, limit: int
 ) -> list[uuid.UUID]:
-    """Deliveries still waiting for a worker after ``older_than``, oldest first."""
-    rows = await db.scalars(
+    """Deliveries still waiting for a worker ``older_than`` after they were last queued, oldest
+    first, stamped as queued again now (so each is re-queued at most once per ``older_than``,
+    and concurrent sweeps don't pick the same rows)."""
+    waiting = (
         select(WebhookDelivery.id)
         .where(
             WebhookDelivery.status == DeliveryStatus.RECEIVED,
-            WebhookDelivery.received_at < _now() - older_than,
+            WebhookDelivery.queued_at < _now() - older_than,
         )
-        .order_by(WebhookDelivery.received_at)
+        .order_by(WebhookDelivery.queued_at)
         .limit(limit)
+        .with_for_update(skip_locked=True)
+        .scalar_subquery()
+    )
+    rows = await db.scalars(
+        update(WebhookDelivery)
+        .where(WebhookDelivery.id.in_(waiting))
+        .values(queued_at=func.now())
+        .returning(WebhookDelivery.id)
     )
     return list(rows)
 
@@ -123,11 +134,18 @@ async def stale_deliveries(
 # ---------------------------------------------------------------------- processing
 
 
+class InstallationSource(Protocol):
+    """Reads an installation as the app (``GitHubApp``)."""
+
+    async def get_installation(self, installation_id: int) -> dict[str, Any]: ...
+
+
 @dataclass(frozen=True, slots=True)
 class HandlerContext:
     db: AsyncSession  # system role: installations of every org are visible
     redis: Redis
     delivery: WebhookDelivery
+    app: InstallationSource | None = None
 
     @property
     def payload(self) -> dict[str, Any]:
@@ -141,6 +159,21 @@ class HandlerContext:
             .where(GitHubInstallation.installation_id == self.delivery.installation_id)
             .with_for_update()
         )
+
+    async def current_state(self) -> dict[str, Any] | None:
+        """The installation as GitHub describes it now, or None if it no longer exists.
+
+        Deliveries arrive in any order (retries, several workers), so handlers apply GitHub's
+        current state rather than the event's. Without an app (not configured) the payload is
+        the best we have."""
+        if self.app is None or self.delivery.installation_id is None:
+            return as_object(self.payload.get("installation"))
+        try:
+            return await self.app.get_installation(self.delivery.installation_id)
+        except GitHubError as exc:
+            if exc.status == 404:
+                return None
+            raise
 
     async def audit(self, installation: GitHubInstallation, action: AuditAction) -> None:
         sender = as_object(self.payload.get("sender")) or {}
@@ -174,70 +207,50 @@ def _now() -> datetime:
     return datetime.now(UTC)
 
 
-async def _installation_refreshed(ctx: HandlerContext) -> DeliveryStatus:
-    """``installation.created``: a link from the Setup URL may already exist; refresh it.
-    Unlinked installations are only stored: we can't know their org until an admin links them."""
-    row = await ctx.installation()
-    body = as_object(ctx.payload.get("installation"))
-    if row is not None and body is not None:
-        for name, value in installation_details(body).items():
-            setattr(row, name, value)
-        row.deleted_at = None
-    return DeliveryStatus.PROCESSED
+async def _mark_deleted(ctx: HandlerContext, row: GitHubInstallation) -> None:
+    if row.deleted_at is None:
+        row.deleted_at = _now()
+        await ctx.audit(row, AuditAction.GITHUB_INSTALL_DELETED)
 
 
 async def _installation_deleted(ctx: HandlerContext) -> DeliveryStatus:
     row = await ctx.installation()
-    if row is not None and row.deleted_at is None:
-        row.deleted_at = _now()
-        await ctx.audit(row, AuditAction.GITHUB_INSTALL_DELETED)
+    if row is not None:
+        await _mark_deleted(ctx, row)
     if ctx.delivery.installation_id is not None:
         await forget_installation_tokens(ctx.redis, ctx.delivery.installation_id)
     return DeliveryStatus.PROCESSED
 
 
-async def _installation_suspended(ctx: HandlerContext) -> DeliveryStatus:
+async def _installation_changed(ctx: HandlerContext) -> DeliveryStatus:
+    """Created, suspended, unsuspended, new permissions, repositories added or removed: bring the
+    link in line with GitHub's current state, whatever order the events came in.
+
+    Unlinked installations are only stored: their org isn't known until an admin links them."""
     row = await ctx.installation()
-    body = as_object(ctx.payload.get("installation")) or {}
-    if row is not None and row.suspended_at is None:
-        row.suspended_at = installation_details(body)["suspended_at"] or _now()
-        await ctx.audit(row, AuditAction.GITHUB_INSTALL_SUSPENDED)
+    if row is None:
+        return DeliveryStatus.PROCESSED
     if ctx.delivery.installation_id is not None:
+        # Cached tokens may carry old permissions or repositories, or belong to a suspended app.
         await forget_installation_tokens(ctx.redis, ctx.delivery.installation_id)
-    return DeliveryStatus.PROCESSED
-
-
-async def _installation_unsuspended(ctx: HandlerContext) -> DeliveryStatus:
-    row = await ctx.installation()
-    if row is not None and row.suspended_at is not None:
-        row.suspended_at = None
-        await ctx.audit(row, AuditAction.GITHUB_INSTALL_UNSUSPENDED)
-    return DeliveryStatus.PROCESSED
-
-
-async def _permissions_accepted(ctx: HandlerContext) -> DeliveryStatus:
-    row = await ctx.installation()
-    body = as_object(ctx.payload.get("installation"))
-    if row is not None and body is not None:
-        details = installation_details(body)
-        row.permissions = details["permissions"]
-        row.events = details["events"]
+    state = await ctx.current_state()
+    if state is None:  # uninstalled since: the deletion event may still be on its way
+        await _mark_deleted(ctx, row)
+        return DeliveryStatus.PROCESSED
+    was_suspended = row.suspended_at is not None
+    for name, value in installation_details(state).items():
+        setattr(row, name, value)
+    row.deleted_at = None
+    is_suspended = row.suspended_at is not None
+    if is_suspended != was_suspended:
+        action = (
+            AuditAction.GITHUB_INSTALL_SUSPENDED
+            if is_suspended
+            else AuditAction.GITHUB_INSTALL_UNSUSPENDED
+        )
+        await ctx.audit(row, action)
+    if ctx.delivery.action == "new_permissions_accepted":
         await ctx.audit(row, AuditAction.GITHUB_INSTALL_PERMISSIONS_ACCEPTED)
-    if ctx.delivery.installation_id is not None:
-        # Cached tokens carry the old permissions.
-        await forget_installation_tokens(ctx.redis, ctx.delivery.installation_id)
-    return DeliveryStatus.PROCESSED
-
-
-async def _repositories_changed(ctx: HandlerContext) -> DeliveryStatus:
-    """``installation_repositories.added|removed``: the account changed which repositories the
-    app may read. The selection mode is kept here; repositories themselves sync with repos."""
-    row = await ctx.installation()
-    selection = ctx.payload.get("repository_selection")
-    if row is not None and isinstance(selection, str):
-        row.repository_selection = selection[:16]
-    if ctx.delivery.installation_id is not None:
-        await forget_installation_tokens(ctx.redis, ctx.delivery.installation_id)
     return DeliveryStatus.PROCESSED
 
 
@@ -248,13 +261,13 @@ async def _store_only(_: HandlerContext) -> DeliveryStatus:
 
 # (event, action): handler; an action of None matches every action of that event.
 HANDLERS: dict[tuple[str, str | None], Handler] = {
-    ("installation", "created"): _installation_refreshed,
+    ("installation", "created"): _installation_changed,
     ("installation", "deleted"): _installation_deleted,
-    ("installation", "suspend"): _installation_suspended,
-    ("installation", "unsuspend"): _installation_unsuspended,
-    ("installation", "new_permissions_accepted"): _permissions_accepted,
-    ("installation_repositories", "added"): _repositories_changed,
-    ("installation_repositories", "removed"): _repositories_changed,
+    ("installation", "suspend"): _installation_changed,
+    ("installation", "unsuspend"): _installation_changed,
+    ("installation", "new_permissions_accepted"): _installation_changed,
+    ("installation_repositories", "added"): _installation_changed,
+    ("installation_repositories", "removed"): _installation_changed,
     ("push", None): _store_only,
     ("pull_request", None): _store_only,
 }
@@ -266,7 +279,13 @@ def handler_for(event: str, action: str | None) -> Handler | None:
     return HANDLERS.get((event, action)) or HANDLERS.get((event, None))
 
 
-async def process_delivery(db: AsyncSession, redis: Redis, delivery_id: uuid.UUID) -> ProcessResult:
+async def process_delivery(
+    db: AsyncSession,
+    redis: Redis,
+    delivery_id: uuid.UUID,
+    *,
+    app: InstallationSource | None = None,
+) -> ProcessResult:
     """Run the handler for one delivery, at most once to completion.
 
     The row is locked (``SKIP LOCKED``: a concurrent worker skips it), finished deliveries are
@@ -291,12 +310,12 @@ async def process_delivery(db: AsyncSession, redis: Redis, delivery_id: uuid.UUI
     else:
         try:
             async with db.begin_nested():
-                status = await handler(HandlerContext(db=db, redis=redis, delivery=delivery))
+                context = HandlerContext(db=db, redis=redis, delivery=delivery, app=app)
+                status = await handler(context)
         except Exception as exc:
             status, error = DeliveryStatus.FAILED, exc
-            delivery.error = "".join(traceback.format_exception_only(exc)).strip()[
-                :MAX_ERROR_LENGTH
-            ]
+            message = "".join(traceback.format_exception_only(exc)).strip()
+            delivery.error = redact_text(message)[:MAX_ERROR_LENGTH]
             log.warning(
                 "webhook handler failed",
                 delivery=delivery.delivery_id,

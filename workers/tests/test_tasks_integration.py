@@ -76,7 +76,7 @@ async def _age(system_db: Database, delivery_id: uuid.UUID) -> None:
     async with system_db.session() as db:
         row = await db.get(WebhookDelivery, delivery_id)
         assert row is not None
-        row.received_at = row.received_at.replace(year=row.received_at.year - 1)
+        row.queued_at = row.queued_at.replace(year=row.queued_at.year - 1)
 
 
 def test_sweep_requeues_deliveries_that_were_never_dispatched(
@@ -95,6 +95,10 @@ def test_sweep_requeues_deliveries_that_were_never_dispatched(
         assert sweep_webhooks.apply().get() >= 1
         assert {"delivery_id": str(stale)} in queued
         assert {"delivery_id": str(fresh)} not in queued
+        # Just re-queued: the next sweep leaves it alone.
+        queued.clear()
+        sweep_webhooks.apply().get()
+        assert {"delivery_id": str(stale)} not in queued
     finally:
         runtime.run(_cleanup(system_db, fresh, stale))
 

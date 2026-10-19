@@ -6,7 +6,7 @@ import enum
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import BigInteger, DateTime, Enum, String, Text, func
+from sqlalchemy import BigInteger, DateTime, Enum, Index, String, Text, func, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -32,6 +32,14 @@ class WebhookDelivery(IdMixin, Base):
     and staff read it through the system role."""
 
     __tablename__ = "webhook_deliveries"
+    __table_args__ = (
+        # The sweep looks only at deliveries still waiting for a worker.
+        Index(
+            "ix_webhook_deliveries_waiting",
+            "queued_at",
+            postgresql_where=text("status = 'received'"),
+        ),
+    )
 
     provider: Mapped[str] = mapped_column(String(16))
     delivery_id: Mapped[str] = mapped_column(String(64), unique=True)
@@ -49,4 +57,6 @@ class WebhookDelivery(IdMixin, Base):
     received_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
+    # When it was last handed to the queue (at intake, then by the sweep).
+    queued_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     processed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

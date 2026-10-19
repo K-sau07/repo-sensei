@@ -8,11 +8,14 @@ from typing import Any, cast
 
 import pytest
 from fakeredis import FakeAsyncRedis
-from sqlalchemy import select, text
+from sqlalchemy import delete, select, text
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from sensei_core.config import Settings
+from sensei_core.db import make_system_database
 from sensei_core.github import webhooks
+from sensei_core.github.client import GitHubError
 from sensei_core.github.webhooks import (
     HandlerContext,
     handler_for,
@@ -68,13 +71,13 @@ def test_bad_signatures_are_rejected(secret: str, body: bytes, header: str | Non
 @pytest.mark.parametrize(
     ("event", "action", "handler"),
     [
-        ("installation", "created", "_installation_refreshed"),
+        ("installation", "created", "_installation_changed"),
         ("installation", "deleted", "_installation_deleted"),
-        ("installation", "suspend", "_installation_suspended"),
-        ("installation", "unsuspend", "_installation_unsuspended"),
-        ("installation", "new_permissions_accepted", "_permissions_accepted"),
-        ("installation_repositories", "added", "_repositories_changed"),
-        ("installation_repositories", "removed", "_repositories_changed"),
+        ("installation", "suspend", "_installation_changed"),
+        ("installation", "unsuspend", "_installation_changed"),
+        ("installation", "new_permissions_accepted", "_installation_changed"),
+        ("installation_repositories", "added", "_installation_changed"),
+        ("installation_repositories", "removed", "_installation_changed"),
         ("push", None, "_store_only"),
         ("pull_request", "opened", "_store_only"),
         ("pull_request", "synchronize", "_store_only"),
@@ -173,12 +176,28 @@ async def _linked(db: AsyncSession) -> GitHubInstallation:
     return row
 
 
+class FakeGitHub:
+    """GitHub's current view of the installation (None: uninstalled)."""
+
+    def __init__(self, state: dict[str, Any] | None) -> None:
+        self.state = state
+
+    async def get_installation(self, installation_id: int) -> dict[str, Any]:
+        if self.state is None:
+            raise GitHubError(404, "Not Found")
+        return {**self.state, "id": installation_id}
+
+
 async def _deliver(
-    db: AsyncSession, redis: FakeAsyncRedis, event: str, payload: dict[str, Any]
+    db: AsyncSession,
+    redis: FakeAsyncRedis,
+    event: str,
+    payload: dict[str, Any],
+    app: FakeGitHub | None = None,
 ) -> tuple[WebhookDelivery, webhooks.ProcessResult]:
     row_id = await record_delivery(db, delivery_id=uuid.uuid4().hex, event=event, payload=payload)
     assert row_id is not None
-    result = await process_delivery(db, redis, row_id)
+    result = await process_delivery(db, redis, row_id, app=app)
     delivery = await db.get(WebhookDelivery, row_id, populate_existing=True)
     assert delivery is not None
     return delivery, result
@@ -253,12 +272,60 @@ async def test_new_permissions_and_repository_changes_update_the_link(
     accepted["installation"]["permissions"] = {"contents": "read", "pull_requests": "write"}
     accepted["installation"]["events"] = ["push", "pull_request"]
     await _deliver(system_session, fake_redis, "installation", accepted)
+    # The payload's installation object is the current one (its permissions included).
     added = _payload("added", repository_selection="all", repositories_added=[{"id": 1}])
+    added["installation"] = {**accepted["installation"], "repository_selection": "all"}
     await _deliver(system_session, fake_redis, "installation_repositories", added)
     await system_session.refresh(link)
     assert link.permissions == {"contents": "read", "pull_requests": "write"}
     assert link.events == ["push", "pull_request"]
     assert link.repository_selection == "all"
+
+
+@pytest.mark.integration
+async def test_events_out_of_order_still_end_in_githubs_state(
+    system_session: AsyncSession, fake_redis: FakeAsyncRedis
+) -> None:
+    """Suspended then unsuspended on GitHub, but the unsuspend is processed first."""
+    link = await _linked(system_session)
+    github = FakeGitHub(_payload()["installation"])  # now: active
+    await _deliver(system_session, fake_redis, "installation", _payload("unsuspend"), github)
+    stale = _payload("suspend")
+    stale["installation"]["suspended_at"] = "2026-10-19T10:00:00Z"
+    await _deliver(system_session, fake_redis, "installation", stale, github)
+    await system_session.refresh(link)
+    assert link.suspended_at is None  # GitHub says active, whatever the late event said
+
+    github.state = {**_payload()["installation"], "suspended_at": "2026-10-19T11:00:00Z"}
+    await _deliver(system_session, fake_redis, "installation", _payload("unsuspend"), github)
+    await system_session.refresh(link)
+    assert link.suspended_at is not None
+
+
+@pytest.mark.integration
+async def test_an_event_for_an_uninstalled_app_marks_it_deleted(
+    system_session: AsyncSession, fake_redis: FakeAsyncRedis
+) -> None:
+    link = await _linked(system_session)
+    await _deliver(
+        system_session, fake_redis, "installation", _payload("suspend"), FakeGitHub(None)
+    )
+    await system_session.refresh(link)
+    assert link.deleted_at is not None
+
+
+@pytest.mark.integration
+async def test_handler_errors_are_redacted(
+    system_session: AsyncSession, fake_redis: FakeAsyncRedis, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def leaky(_: HandlerContext) -> DeliveryStatus:
+        msg = "GET https://x.example/?token=ghs_abcdefghijklmnopqrstuvwxyz0123 failed"
+        raise RuntimeError(msg)
+
+    monkeypatch.setitem(webhooks.HANDLERS, ("installation", "deleted"), leaky)
+    delivery, _ = await _deliver(system_session, fake_redis, "installation", _payload())
+    assert delivery.error is not None
+    assert "ghs_abcdefghij" not in delivery.error
 
 
 @pytest.mark.integration
@@ -344,3 +411,32 @@ async def test_failures_are_recorded_and_retried(
 @pytest.mark.integration
 async def test_unknown_delivery(system_session: AsyncSession, fake_redis: FakeAsyncRedis) -> None:
     assert (await process_delivery(system_session, fake_redis, uuid.uuid4())).status is None
+
+
+@pytest.mark.integration
+async def test_a_delivery_held_by_one_worker_is_skipped_by_another(
+    migrated_test_db: Settings, fake_redis: FakeAsyncRedis
+) -> None:
+    """Two workers with the same delivery: the second sees the row locked and leaves it."""
+    database = make_system_database(migrated_test_db.database)
+    row_id: uuid.UUID | None = None
+    try:
+        async with database.session() as db:
+            row_id = await record_delivery(
+                db, delivery_id=f"lock-{uuid.uuid4()}", event="ping", payload={}
+            )
+        assert row_id is not None
+        async with database.session() as holder:
+            await holder.execute(
+                select(WebhookDelivery).where(WebhookDelivery.id == row_id).with_for_update()
+            )
+            async with database.session() as other:
+                skipped = await process_delivery(other, fake_redis, row_id)
+            assert skipped.status is None
+        async with database.session() as db:
+            done = await process_delivery(db, fake_redis, row_id)
+        assert done.status is DeliveryStatus.IGNORED
+    finally:
+        async with database.session() as db:
+            await db.execute(delete(WebhookDelivery).where(WebhookDelivery.id == row_id))
+        await database.dispose()
