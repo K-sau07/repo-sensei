@@ -35,14 +35,11 @@ export function SidebarContent({ org, onNavigate }: SidebarContentProps) {
         onClick={() => {
           setCommandOpen(true);
         }}
-        className="mt-1 flex h-control-md items-center gap-2 rounded-sm border border-line px-2 text-sm text-fg-muted hover:bg-surface-3 hover:text-fg focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none in-data-[sidebar=collapsed]:justify-center in-data-[sidebar=collapsed]:px-0"
+        className="mt-1 flex h-control-md items-center gap-2 rounded-sm border border-line px-2 text-sm text-fg-muted hover:bg-surface-3 hover:text-fg focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none sidebar-collapsed:justify-center sidebar-collapsed:px-0"
       >
         <Search aria-hidden className="size-4 shrink-0" />
-        <span className="flex-1 text-left in-data-[sidebar=collapsed]:sr-only">Search or ask</span>
-        <KeyHint
-          shortcut={shortcut("command").keys}
-          className="in-data-[sidebar=collapsed]:hidden"
-        />
+        <span className="flex-1 text-left sidebar-collapsed:sr-only">Search or ask</span>
+        <KeyHint shortcut={shortcut("command").keys} className="sidebar-collapsed:hidden" />
       </button>
 
       <nav aria-label="Main" className="mt-2 flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto">
@@ -53,17 +50,17 @@ export function SidebarContent({ org, onNavigate }: SidebarContentProps) {
         <section aria-labelledby="sidebar-repos" className="mt-4 flex flex-col gap-0.5">
           <h2
             id="sidebar-repos"
-            className="px-2 pb-1 text-xs font-medium text-fg-faint in-data-[sidebar=collapsed]:sr-only"
+            className="px-2 pb-1 text-xs font-medium text-fg-faint sidebar-collapsed:sr-only"
           >
             Repositories
           </h2>
           {/* Filled with live index status in P1. */}
           <Link
             href={orgPath(org, "repos")}
-            className="flex h-control-md items-center gap-2.5 rounded-sm px-2 text-sm text-fg-faint hover:bg-surface-3 hover:text-fg focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none in-data-[sidebar=collapsed]:justify-center in-data-[sidebar=collapsed]:px-0"
+            className="flex h-control-md items-center gap-2.5 rounded-sm px-2 text-sm text-fg-faint hover:bg-surface-3 hover:text-fg focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none sidebar-collapsed:justify-center sidebar-collapsed:px-0"
           >
             <FolderGit2 aria-hidden className="size-4 shrink-0" />
-            <span className="in-data-[sidebar=collapsed]:sr-only">Connect a repository</span>
+            <span className="sidebar-collapsed:sr-only">Connect a repository</span>
           </Link>
         </section>
 
@@ -95,11 +92,11 @@ export function Sidebar({ className }: { className?: string }) {
       aria-label="Sidebar"
       className={cn(
         "relative shrink-0 flex-col border-r border-line bg-surface-1",
-        "w-(--sidebar-width) in-data-[sidebar=collapsed]:w-14",
+        "w-(--sidebar-width) sidebar-collapsed:w-14",
         className,
       )}
     >
-      <div className="flex h-10 items-center justify-end px-2 in-data-[sidebar=collapsed]:justify-center">
+      <div className="flex h-10 items-center justify-end px-2 sidebar-collapsed:justify-center">
         <Tooltip>
           <TooltipTrigger
             render={

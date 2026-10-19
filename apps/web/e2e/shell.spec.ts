@@ -150,4 +150,21 @@ test.describe("on a phone", () => {
     await expect(sheet).toBeHidden();
     await expectNoAxeViolations(page);
   });
+
+  test("the sheet shows the full sidebar even when it was collapsed on a desktop", async ({
+    page,
+  }) => {
+    await page.goto("/acme");
+    await page.evaluate((key) => {
+      localStorage.setItem(key, JSON.stringify({ sidebarCollapsed: true }));
+    }, "sensei.shell.v1"); // SHELL_STORAGE_KEY in shell-store.ts
+    await page.reload();
+    await expect(page.locator("html")).toHaveAttribute("data-sidebar", "collapsed");
+    await page.getByRole("button", { name: "Open navigation" }).click();
+    const sheet = page.getByRole("dialog", { name: "Navigation" });
+    // Labels are visible text, not just screen-reader text.
+    await expect(sheet.getByText("Activity", { exact: true })).toBeVisible();
+    const box = await sheet.getByRole("link", { name: "Activity" }).boundingBox();
+    expect(box?.width).toBeGreaterThan(200);
+  });
 });

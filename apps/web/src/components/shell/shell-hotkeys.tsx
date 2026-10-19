@@ -13,8 +13,12 @@ import { useOrgSlug } from "./use-org-slug";
 export function ShellHotkeys() {
   const org = useOrgSlug();
   const router = useRouter();
-  const { setCommandOpen, setShortcutsOpen, setOrgSwitcherOpen, toggleSidebar, toggleRail } =
-    useShellStore();
+  // Actions only (stable), so this never re-renders on layout changes.
+  const setCommandOpen = useShellStore((state) => state.setCommandOpen);
+  const setShortcutsOpen = useShellStore((state) => state.setShortcutsOpen);
+  const setOrgSwitcherOpen = useShellStore((state) => state.setOrgSwitcherOpen);
+  const toggleSidebar = useShellStore((state) => state.toggleSidebar);
+  const toggleRail = useShellStore((state) => state.toggleRail);
   const handlers = useMemo(() => {
     const go = (section: OrgSection) => () => {
       router.push(orgPath(org, section));

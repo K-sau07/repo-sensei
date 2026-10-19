@@ -8,7 +8,15 @@ interface UseShortcutOptions {
   inInputs?: boolean;
 }
 
-/** Bind a registered shortcut. Plain-letter shortcuts never fire while the user is typing. */
+// Plain-key shortcuts belong to the page: not to an open dialog, menu or list someone is using.
+const OVERLAY = '[role="dialog"], [role="alertdialog"], [role="menu"], [role="listbox"]';
+
+function insideOverlay(event: KeyboardEvent): boolean {
+  return event.target instanceof Element && event.target.closest(OVERLAY) !== null;
+}
+
+/** Bind a registered shortcut. Plain-letter shortcuts never fire while the user is typing, or
+ * inside a dialog or menu. */
 export function useShortcut(
   id: ShortcutId,
   handler: () => void,
@@ -25,9 +33,11 @@ export function useShortcut(
       handler();
     },
     {
-      enabled: byCharacter
-        ? (event) => enabled && !event.metaKey && !event.ctrlKey && !event.altKey
-        : enabled,
+      enabled: (event) => {
+        if (!enabled) return false;
+        if (byCharacter && (event.metaKey || event.ctrlKey || event.altKey)) return false;
+        return inInputs || !insideOverlay(event);
+      },
       enableOnFormTags: inInputs,
       useKey: byCharacter,
       ignoreModifiers: byCharacter,

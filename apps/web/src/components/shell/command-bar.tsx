@@ -14,7 +14,7 @@ import {
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useTheme } from "next-themes";
-import { useRef, type ReactNode } from "react";
+import type { ReactNode } from "react";
 
 import { KeyHint } from "@/components/primitives/key-hint";
 import {
@@ -51,8 +51,8 @@ export function CommandBar() {
   const { resolvedTheme, setTheme } = useTheme();
   const open = useShellStore((state) => state.commandOpen);
   const setOpen = useShellStore((state) => state.setCommandOpen);
-  const { toggleSidebar, setShortcutsOpen } = useShellStore();
-  const returnFocusTo = useRef<HTMLElement | null>(null);
+  const toggleSidebar = useShellStore((state) => state.toggleSidebar);
+  const setShortcutsOpen = useShellStore((state) => state.setShortcutsOpen);
 
   const close = () => {
     setOpen(false);
@@ -108,21 +108,12 @@ export function CommandBar() {
   ];
 
   return (
-    <DialogPrimitive.Root
-      open={open}
-      onOpenChange={(next) => {
-        if (next) {
-          returnFocusTo.current =
-            document.activeElement instanceof HTMLElement ? document.activeElement : null;
-        }
-        setOpen(next);
-      }}
-    >
+    // Base UI gives focus back to whatever had it before opening (also when opened by ⌘K).
+    <DialogPrimitive.Root open={open} onOpenChange={setOpen}>
       <DialogPrimitive.Portal>
         <DialogPrimitive.Backdrop className="fixed inset-0 z-50 bg-black/30" />
         <DialogPrimitive.Popup
           aria-label="Command palette"
-          finalFocus={returnFocusTo}
           className="fixed top-[18vh] left-1/2 z-50 w-[min(640px,calc(100%-2rem))] -translate-x-1/2 overflow-hidden rounded-xl border border-line-strong glass shadow-dialog outline-none"
         >
           <DialogPrimitive.Title className="sr-only">Command palette</DialogPrimitive.Title>

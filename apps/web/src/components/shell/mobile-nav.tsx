@@ -38,7 +38,12 @@ export function MobileTopBar({ className }: { className?: string }) {
       </Button>
       <span className="truncate text-sm font-medium">{currentOrg?.name ?? org}</span>
       <Sheet open={open} onOpenChange={setOpen}>
-        <SheetContent side="left" className="w-72 p-0" showCloseButton={false}>
+        <SheetContent
+          side="left"
+          className="w-72 p-0"
+          showCloseButton={false}
+          data-sidebar="expanded"
+        >
           <SheetTitle className="sr-only">Navigation</SheetTitle>
           <SidebarContent
             org={org}

@@ -32,12 +32,12 @@ export function UserMenu() {
 
   return (
     <DropdownMenu>
-      <DropdownMenuTrigger className="flex h-control-lg w-full min-w-0 items-center gap-2 rounded-sm px-2 text-left text-sm hover:bg-surface-3 focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none in-data-[sidebar=collapsed]:justify-center in-data-[sidebar=collapsed]:px-0">
+      <DropdownMenuTrigger className="flex h-control-lg w-full min-w-0 items-center gap-2 rounded-sm px-2 text-left text-sm hover:bg-surface-3 focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none sidebar-collapsed:justify-center sidebar-collapsed:px-0">
         <Avatar className="size-6" aria-hidden>
           {user?.avatar_url && <AvatarImage src={user.avatar_url} alt="" />}
           <AvatarFallback className="text-xs">{label.charAt(0).toUpperCase()}</AvatarFallback>
         </Avatar>
-        <span className="flex-1 truncate in-data-[sidebar=collapsed]:sr-only">
+        <span className="flex-1 truncate sidebar-collapsed:sr-only">
           {label}
           <span className="sr-only">(account menu)</span>
         </span>

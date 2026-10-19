@@ -44,17 +44,14 @@ export function OrgSwitcher() {
   const name = currentOrg?.name ?? slug ?? "Choose an organization";
   return (
     <DropdownMenu open={open} onOpenChange={setOpen}>
-      <DropdownMenuTrigger className="flex h-control-lg w-full min-w-0 items-center gap-2 rounded-sm px-2 text-left text-sm font-medium hover:bg-surface-3 focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none in-data-[sidebar=collapsed]:justify-center in-data-[sidebar=collapsed]:px-0">
+      <DropdownMenuTrigger className="flex h-control-lg w-full min-w-0 items-center gap-2 rounded-sm px-2 text-left text-sm font-medium hover:bg-surface-3 focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none sidebar-collapsed:justify-center sidebar-collapsed:px-0">
         <OrgMark name={name} />
         {/* Named by its content, so the visible text is the start of the name (WCAG 2.5.3). */}
-        <span className="flex-1 truncate in-data-[sidebar=collapsed]:sr-only">
+        <span className="flex-1 truncate sidebar-collapsed:sr-only">
           {name}
           <span className="sr-only">(switch organization)</span>
         </span>
-        <ChevronsUpDown
-          aria-hidden
-          className="size-3.5 text-fg-faint in-data-[sidebar=collapsed]:hidden"
-        />
+        <ChevronsUpDown aria-hidden className="size-3.5 text-fg-faint sidebar-collapsed:hidden" />
       </DropdownMenuTrigger>
       <DropdownMenuContent className="w-60" align="start">
         <DropdownMenuGroup>

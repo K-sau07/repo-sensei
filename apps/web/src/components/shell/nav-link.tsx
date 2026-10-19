@@ -30,11 +30,11 @@ export function NavLink({ org, item, onNavigate }: NavLinkProps) {
         "transition-[color,background-color] duration-(--dur-fast) ease-out",
         "hover:bg-surface-3 hover:text-fg focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none",
         "aria-[current=page]:bg-surface-3 aria-[current=page]:text-fg",
-        "in-data-[sidebar=collapsed]:justify-center in-data-[sidebar=collapsed]:px-0",
+        "sidebar-collapsed:justify-center sidebar-collapsed:px-0",
       )}
     >
       <Icon aria-hidden className="size-4 shrink-0" />
-      <span className="truncate in-data-[sidebar=collapsed]:sr-only">{item.label}</span>
+      <span className="truncate sidebar-collapsed:sr-only">{item.label}</span>
     </Link>
   );
 }
