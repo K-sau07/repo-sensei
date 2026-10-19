@@ -90,7 +90,8 @@
   --destructive: var(--danger);
   --border: var(--line);
   --input: var(--line-strong);
-  --ring: var(--text-muted);
+  /* Components draw the ring at 50% alpha; from --text that keeps at least 3:1 on every surface. */
+  --ring: var(--text);
   --chart-1: var(--layer-ui);
   --chart-2: var(--layer-api);
   --chart-3: var(--layer-svc);
@@ -103,7 +104,7 @@
   --sidebar-accent: var(--surface-3);
   --sidebar-accent-foreground: var(--text);
   --sidebar-border: var(--line);
-  --sidebar-ring: var(--text-muted);
+  --sidebar-ring: var(--text);
 }
 
 /* ----------------------------------------------------------------- shape, size, density */

@@ -107,6 +107,19 @@
   }
 }
 
+/* LiveDot halo; only runs when motion is allowed (motion-safe). */
+@keyframes live-breathe {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 0.6;
+  }
+  50% {
+    transform: scale(2.2);
+    opacity: 0;
+  }
+}
+
 /* Glass is reserved for the command palette and floating canvas toolbars. */
 @utility glass {
   background-color: color-mix(in oklch, var(--surface-2) 80%, transparent);

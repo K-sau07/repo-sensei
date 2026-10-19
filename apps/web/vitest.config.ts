@@ -16,6 +16,21 @@ export default defineConfig({
           name: "unit",
           environment: "node",
           include: ["src/**/*.test.{ts,tsx}"],
+          exclude: ["src/**/*.browser.test.{ts,tsx}"],
+        },
+      },
+      {
+        extends: true,
+        // Hooks and components that need a real DOM (*.browser.test.tsx), in Chromium.
+        test: {
+          name: "browser",
+          include: ["src/**/*.browser.test.{ts,tsx}"],
+          browser: {
+            enabled: true,
+            headless: true,
+            provider: playwright({}),
+            instances: [{ browser: "chromium" }],
+          },
         },
       },
       {

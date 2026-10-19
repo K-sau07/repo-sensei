@@ -4,6 +4,8 @@ import { domAnimation, LazyMotion, MotionConfig } from "motion/react";
 import { ThemeProvider } from "next-themes";
 import { type ReactNode } from "react";
 
+import { TooltipProvider } from "@/components/ui/tooltip";
+
 export const THEMES = ["dark", "light"] as const;
 export const DEFAULT_THEME = "dark";
 
@@ -27,7 +29,9 @@ export function Providers({ children }: { children: ReactNode }) {
       enableSystem
       disableTransitionOnChange
     >
-      <MotionProvider>{children}</MotionProvider>
+      <MotionProvider>
+        <TooltipProvider>{children}</TooltipProvider>
+      </MotionProvider>
     </ThemeProvider>
   );
 }
