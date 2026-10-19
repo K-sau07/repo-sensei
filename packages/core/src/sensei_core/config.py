@@ -92,24 +92,36 @@ class WorkerSettings(BaseSettings):
     result_backend: SecretStr | None = None
     soft_time_limit_seconds: int = Field(default=1800, gt=0)
     time_limit_seconds: int = Field(default=2100, gt=0)
-    # Redis hands an unacknowledged task to another worker after this long, so it must exceed the
-    # longest task, and retry delays are kept below it.
+    # Redis hands an unacknowledged message to another worker this long after it was received,
+    # however long it then waits (a retry countdown) or runs. So a countdown plus the longest run
+    # must fit inside it: see max_countdown_seconds.
     visibility_timeout_seconds: int = Field(default=3600, gt=0)
     result_expires_seconds: int = Field(default=86_400, gt=0)
     max_retries: int = Field(default=5, ge=0)
     retry_backoff_seconds: float = Field(default=2.0, gt=0)
     retry_backoff_max_seconds: float = Field(default=600.0, gt=0)
+    # A running idempotent task refreshes its lock this often; a copy of the same message that
+    # finds a fresh heartbeat waits instead of running alongside it.
+    lock_heartbeat_seconds: float = Field(default=30.0, gt=0)
+    # The same attempt delivered this many times (its process died each time) is dead-lettered
+    # instead of crashing workers forever.
+    max_deliveries: int = Field(default=3, ge=1)
     # Tasks run in the caller, synchronously (tests).
     always_eager: bool = False
 
+    @property
+    def max_countdown_seconds(self) -> float:
+        """The longest retry delay that can't make Redis redeliver a task that is still running."""
+        return self.visibility_timeout_seconds - self.time_limit_seconds - 60
+
     @model_validator(mode="after")
     def _limits_are_ordered(self) -> WorkerSettings:
-        if (
-            not self.soft_time_limit_seconds
-            < self.time_limit_seconds
-            < (self.visibility_timeout_seconds)
-        ):
+        limits = (self.soft_time_limit_seconds, self.time_limit_seconds)
+        if not limits[0] < limits[1] < self.visibility_timeout_seconds:
             msg = "worker limits must satisfy soft time limit < time limit < visibility timeout"
+            raise ValueError(msg)
+        if self.max_countdown_seconds < 60:
+            msg = "the visibility timeout must exceed the time limit by at least two minutes"
             raise ValueError(msg)
         return self
 
@@ -123,6 +135,15 @@ class S3Settings(BaseSettings):
     region: str = "us-east-1"
     bucket_snapshots: str = "sensei-snapshots"
     bucket_artifacts: str = "sensei-artifacts"
+
+
+class ApiSettings(BaseSettings):
+    model_config = _config("SENSEI_API_")
+
+    # The header the platform's proxy sets to the client's address, overwriting whatever the
+    # client sent (Fly.io: "fly-client-ip"). None: the connecting peer's address. Never trust a
+    # header a client can forge, such as X-Forwarded-For's first entry.
+    client_ip_header: str | None = None
 
 
 class WebSettings(BaseSettings):
@@ -223,6 +244,7 @@ class Settings(BaseSettings):
     redis: RedisSettings = Field(default_factory=RedisSettings)
     s3: S3Settings = Field(default_factory=S3Settings)
     web: WebSettings = Field(default_factory=WebSettings)
+    api: ApiSettings = Field(default_factory=ApiSettings)
     auth: AuthSettings = Field(default_factory=AuthSettings)
     github: GitHubSettings = Field(default_factory=GitHubSettings)
     telemetry: TelemetrySettings = Field(default_factory=TelemetrySettings)

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -148,11 +149,14 @@ def test_retry_after_is_respected() -> None:
     assert retry_delay(RetryableError("later", retry_after=7), 0, WORKER, NOW) == 7
 
 
-def test_delays_stay_below_the_visibility_timeout() -> None:
+def test_a_delay_plus_the_longest_run_fits_in_the_visibility_timeout() -> None:
+    """Redis starts the visibility clock when the message is received, before the countdown."""
     far = RateLimited(NOW + timedelta(hours=3))
     delay = retry_delay(far, 0, WORKER, NOW)
     assert delay is not None
-    assert delay < WORKER.visibility_timeout_seconds
+    assert delay + WORKER.time_limit_seconds < WORKER.visibility_timeout_seconds
+    with pytest.raises(ValueError, match="at least two minutes"):
+        WorkerSettings(time_limit_seconds=3500, visibility_timeout_seconds=3600)
 
 
 # ------------------------------------------------------------------ tasks
@@ -245,19 +249,48 @@ def test_failed_work_can_run_again(app: Celery) -> None:
     assert fails_once.apply_async(kwargs={"job_id": "j1"}).get() == "done"
 
 
-def test_lock_lets_the_owner_back_in(runtime: FakeRuntime) -> None:
-    """A redelivered task keeps its id: it takes its own lock back. Another id waits it out."""
-    first = IdempotencyLock(runtime.fake, "t", "k", owner="task-1", ttl=60, done_ttl=600)
-    redelivered = IdempotencyLock(runtime.fake, "t", "k", owner="task-1", ttl=60, done_ttl=600)
-    duplicate = IdempotencyLock(runtime.fake, "t", "k", owner="task-2", ttl=60, done_ttl=600)
+def _lock(runtime: FakeRuntime, owner: str) -> IdempotencyLock:
+    return IdempotencyLock(
+        runtime.fake, "t", "k", owner=owner, ttl=60, done_ttl=600, heartbeat=0.05
+    )
+
+
+def test_a_second_copy_of_a_running_task_waits(runtime: FakeRuntime) -> None:
+    """Same task id with a live heartbeat: Redis handed out the message again while it runs."""
+    first = _lock(runtime, "task-1")
     assert first.acquire() == "acquired"
+    assert _lock(runtime, "task-1").acquire() == "running"
+    assert _lock(runtime, "task-2").acquire() == "busy"  # other work, same key
+    first.complete()
+    assert _lock(runtime, "task-2").acquire() == "done"
+    assert runtime.fake.exists(first.lock_key, first.beat_key) == 0
+
+
+def test_a_redelivery_after_a_crash_takes_over(runtime: FakeRuntime) -> None:
+    """Same task id, heartbeat gone: the process that held the lock died, leaving the lock."""
+    redelivered = _lock(runtime, "task-1")
+    runtime.fake.set(redelivered.lock_key, "task-1", ex=60)  # left behind; its heartbeat lapsed
     assert redelivered.acquire() == "acquired"
-    assert duplicate.acquire() == "busy"
-    duplicate.release()  # not the owner: the lock stays
+    assert runtime.fake.get(redelivered.beat_key) == "task-1"
+    redelivered.release()
+
+
+def test_the_heartbeat_keeps_the_lock_alive(runtime: FakeRuntime) -> None:
+    lock = _lock(runtime, "task-1")
+    lock.acquire()
+    runtime.fake.delete(lock.beat_key)
+    time.sleep(0.2)  # a few heartbeats
+    assert runtime.fake.get(lock.beat_key) == "task-1"
+    lock.release()
+    assert runtime.fake.exists(lock.beat_key) == 0
+
+
+def test_only_the_owner_releases(runtime: FakeRuntime) -> None:
+    first = _lock(runtime, "task-1")
+    first.acquire()
+    _lock(runtime, "task-2").release()
     assert runtime.fake.get(first.lock_key) == "task-1"
-    redelivered.complete()
-    assert duplicate.acquire() == "done"
-    assert runtime.fake.exists(first.lock_key) == 0
+    first.release()
 
 
 def test_system_sessions_are_only_for_system_tasks(app: Celery, runtime: FakeRuntime) -> None:

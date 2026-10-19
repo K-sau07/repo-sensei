@@ -1,12 +1,14 @@
 """At-least-once delivery with a real worker: a task whose process dies mid-run is redelivered and
-completes exactly once.
+completes exactly once; one that keeps killing its process, or hits the hard time limit, is
+dead-lettered.
 
-Runs a Celery worker subprocess against its own Redis databases (broker 11, results 12, task state
-13), so it never touches dev data.
+Each test runs a Celery worker subprocess against its own Redis databases (broker 11, results 12,
+task state 13) and the test database, so it never touches dev data.
 """
 
 from __future__ import annotations
 
+import asyncio
 import os
 import signal
 import subprocess
@@ -21,14 +23,16 @@ import pytest
 import redis
 from celery import Celery
 from pydantic import SecretStr
+from sqlalchemy import delete, select
 
 from sensei_core.config import RedisSettings, Settings, WorkerSettings, with_redis_db
+from sensei_core.db import make_system_database
 from sensei_core.jobs import make_celery
+from sensei_core.models import JobFailure
 
 pytestmark = [pytest.mark.integration, pytest.mark.slow]
 
 SUPPORT = Path(__file__).parent / "support"
-TASK = "sensei.default.test_hang_once"
 BROKER_DB, RESULTS_DB, STATE_DB = 11, 12, 13
 
 
@@ -39,101 +43,166 @@ class Stack:
     worker: subprocess.Popen[bytes]
     log: Path
 
+    def wait_for(self, check: Callable[[], bool], timeout: float, what: str) -> None:
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if check():
+                return
+            if self.worker.poll() is not None:
+                pytest.fail(f"worker exited early:\n{self.log.read_text()[-4000:]}")
+            time.sleep(0.2)
+        pytest.fail(f"timed out waiting for {what}:\n{self.log.read_text()[-4000:]}")
 
-def _wait_for(check: Callable[[], bool], timeout: float, what: str, stack: Stack) -> None:
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if check():
-            return
-        if stack.worker.poll() is not None:
-            pytest.fail(f"worker exited early:\n{stack.log.read_text()[-4000:]}")
-        time.sleep(0.2)
-    pytest.fail(f"timed out waiting for {what}:\n{stack.log.read_text()[-4000:]}")
+
+StartWorker = Callable[..., Stack]
 
 
 @pytest.fixture
-def stack(tmp_path: Path) -> Iterator[Stack]:
-    base = Settings(env="test").redis.url.get_secret_value()
+def start_worker(tmp_path: Path, migrated_test_db: Settings) -> Iterator[StartWorker]:
+    base = migrated_test_db.redis.url.get_secret_value()
     urls = {db: with_redis_db(base, db) for db in (BROKER_DB, RESULTS_DB, STATE_DB)}
     clients = [redis.Redis.from_url(url, decode_responses=True) for url in urls.values()]  # pyright: ignore[reportUnknownMemberType]
     for client in clients:
         client.flushdb()  # pyright: ignore[reportUnknownMemberType]
+    started: list[Stack] = []
 
-    env = {
-        **os.environ,
-        "SENSEI_ENV": "test",
-        "SENSEI_REDIS_URL": urls[STATE_DB],
-        "SENSEI_WORKER_BROKER_URL": urls[BROKER_DB],
-        "SENSEI_WORKER_RESULT_BACKEND": urls[RESULTS_DB],
-        "PYTHONPATH": os.pathsep.join(filter(None, [str(SUPPORT), os.environ.get("PYTHONPATH")])),
-    }
-    log = tmp_path / "worker.log"
-    with log.open("wb") as out:
-        worker = subprocess.Popen(
-            [
-                sys.executable,
-                "-m",
-                "celery",
-                "-A",
-                "redelivery_worker",
-                "worker",
-                "--pool=prefork",
-                "--concurrency=1",
-                "--queues=default",
-                "--loglevel=INFO",
-                "--without-gossip",
-                "--without-mingle",
-                "--without-heartbeat",
-            ],
-            cwd=SUPPORT,
-            env=env,
-            stdout=out,
-            stderr=subprocess.STDOUT,
-        )
-    producer = make_celery(
-        Settings(
-            env="test",
-            redis=RedisSettings(url=SecretStr(urls[STATE_DB])),
-            worker=WorkerSettings(
-                broker_url=SecretStr(urls[BROKER_DB]),
-                result_backend=SecretStr(urls[RESULTS_DB]),
+    def start(**env_overrides: str) -> Stack:
+        database = migrated_test_db.database
+        env = {
+            **os.environ,
+            "SENSEI_ENV": "test",
+            "SENSEI_REDIS_URL": urls[STATE_DB],
+            "SENSEI_WORKER_BROKER_URL": urls[BROKER_DB],
+            "SENSEI_WORKER_RESULT_BACKEND": urls[RESULTS_DB],
+            "SENSEI_DATABASE_URL": database.url.get_secret_value(),
+            "SENSEI_DATABASE_SYSTEM_URL": database.system_url.get_secret_value(),
+            "PYTHONPATH": os.pathsep.join(
+                filter(None, [str(SUPPORT), os.environ.get("PYTHONPATH")])
             ),
-        ),
-        main="redelivery-test",
-    )
-    try:
-        yield Stack(producer=producer, state=clients[2], worker=worker, log=log)
-    finally:
-        worker.send_signal(signal.SIGTERM)
+            **env_overrides,
+        }
+        log = tmp_path / f"worker-{len(started)}.log"
+        with log.open("wb") as out:
+            worker = subprocess.Popen(
+                [
+                    sys.executable,
+                    "-m",
+                    "celery",
+                    "-A",
+                    "redelivery_worker",
+                    "worker",
+                    "--pool=prefork",
+                    "--concurrency=1",
+                    "--queues=default",
+                    "--loglevel=INFO",
+                    "--without-gossip",
+                    "--without-mingle",
+                    "--without-heartbeat",
+                ],
+                cwd=SUPPORT,
+                env=env,
+                stdout=out,
+                stderr=subprocess.STDOUT,
+            )
+        producer = make_celery(
+            Settings(
+                env="test",
+                redis=RedisSettings(url=SecretStr(urls[STATE_DB])),
+                worker=WorkerSettings(
+                    broker_url=SecretStr(urls[BROKER_DB]),
+                    result_backend=SecretStr(urls[RESULTS_DB]),
+                ),
+            ),
+            main="redelivery-test",
+        )
+        stack = Stack(producer=producer, state=clients[2], worker=worker, log=log)
+        started.append(stack)
+        return stack
+
+    yield start
+
+    for stack in started:
+        stack.worker.send_signal(signal.SIGTERM)
         try:
-            worker.wait(timeout=30)
+            stack.worker.wait(timeout=30)
         except subprocess.TimeoutExpired:
-            worker.kill()
-            worker.wait()
-        producer.close()
-        for client in clients:
-            client.flushdb()  # pyright: ignore[reportUnknownMemberType]
-            client.close()
+            stack.worker.kill()
+            stack.worker.wait()
+        stack.producer.close()
+    for client in clients:
+        client.flushdb()  # pyright: ignore[reportUnknownMemberType]
+        client.close()
 
 
-def test_task_killed_mid_run_is_redelivered_and_completes_once(stack: Stack) -> None:
+def _failure(settings: Settings, task_id: str, *, remove: bool = False) -> JobFailure | None:
+    """The job_failures row for ``task_id`` (removed afterwards with ``remove``)."""
+
+    async def read() -> JobFailure | None:
+        database = make_system_database(settings.database)
+        try:
+            async with database.session() as db:
+                row = await db.scalar(select(JobFailure).where(JobFailure.task_id == task_id))
+                if remove:
+                    await db.execute(delete(JobFailure).where(JobFailure.task_id == task_id))
+                return row
+        finally:
+            await database.dispose()
+
+    return asyncio.run(read())
+
+
+def test_task_killed_mid_run_is_redelivered_and_completes_once(start_worker: StartWorker) -> None:
+    # A short heartbeat, so the redelivery doesn't wait long for the dead attempt's to lapse.
+    stack = start_worker(SENSEI_WORKER_LOCK_HEARTBEAT_SECONDS="1")
     marker = f"redelivery:{uuid.uuid4().hex}"
     kwargs = {"job_id": "job-1", "marker": marker}
-    first = stack.producer.send_task(TASK, kwargs=kwargs, queue="default")
+    first = stack.producer.send_task("sensei.default.test_hang_once", kwargs=kwargs)
 
-    _wait_for(
-        lambda: stack.state.get(f"{marker}:pid:1") is not None, 60, "the first attempt", stack
-    )
+    stack.wait_for(lambda: stack.state.get(f"{marker}:pid:1") is not None, 60, "the first attempt")
     first_pid = int(str(stack.state.get(f"{marker}:pid:1")))
     os.kill(first_pid, signal.SIGKILL)  # the pool process dies mid-task
 
-    _wait_for(lambda: stack.state.get(f"{marker}:completions") == "1", 60, "the redelivery", stack)
+    stack.wait_for(lambda: stack.state.get(f"{marker}:completions") == "1", 60, "the redelivery")
     assert stack.state.get(f"{marker}:attempts") == "2"
     assert int(str(stack.state.get(f"{marker}:pid:2"))) != first_pid  # a fresh pool process
     assert first.get(timeout=30) == "done job-1"  # same task id, finished by the redelivery
 
     # The same work enqueued again is recognized as done and skipped.
-    again = stack.producer.send_task(TASK, kwargs=kwargs, queue="default")
+    again = stack.producer.send_task("sensei.default.test_hang_once", kwargs=kwargs)
     assert again.get(timeout=30) is None
     assert stack.state.get(f"{marker}:completions") == "1"
     assert stack.state.get(f"{marker}:attempts") == "2"
+
+
+def test_a_task_that_keeps_killing_its_worker_is_dead_lettered(
+    start_worker: StartWorker, migrated_test_db: Settings
+) -> None:
+    stack = start_worker(SENSEI_WORKER_MAX_DELIVERIES="2")
+    marker = f"poison:{uuid.uuid4().hex}"
+    result = stack.producer.send_task("sensei.default.test_always_dies", kwargs={"marker": marker})
+    # Two deaths, then the third delivery is refused, dead-lettered and acknowledged.
+    stack.wait_for(lambda: _failure(migrated_test_db, result.id) is not None, 60, "the dead letter")
+    assert stack.state.get(f"{marker}:deliveries") == "2"
+    row = _failure(migrated_test_db, result.id, remove=True)
+    assert row is not None
+    assert (row.task, row.error_type) == ("sensei.default.test_always_dies", "WorkerLost")
+
+
+def test_a_hard_time_limit_kill_is_dead_lettered(
+    start_worker: StartWorker, migrated_test_db: Settings
+) -> None:
+    stack = start_worker(
+        SENSEI_WORKER_SOFT_TIME_LIMIT_SECONDS="1",
+        SENSEI_WORKER_TIME_LIMIT_SECONDS="3",
+        SENSEI_WORKER_VISIBILITY_TIMEOUT_SECONDS="300",
+    )
+    marker = f"timeout:{uuid.uuid4().hex}"
+    result = stack.producer.send_task(
+        "sensei.default.test_ignores_soft_limit", kwargs={"marker": marker}
+    )
+    stack.wait_for(lambda: stack.state.get(f"{marker}:started") == "1", 60, "the task to start")
+    stack.wait_for(lambda: _failure(migrated_test_db, result.id) is not None, 60, "the dead letter")
+    row = _failure(migrated_test_db, result.id, remove=True)
+    assert row is not None
+    assert row.error_type == "TimeLimitExceeded"
+    assert "hard time limit (3s)" in row.error

@@ -12,12 +12,17 @@ import asyncio
 from collections.abc import Coroutine
 from typing import Any, TypeVar
 
+import httpx
 import redis
 from redis.asyncio import Redis
 
 from sensei_core.config import Settings, get_settings
 from sensei_core.db import Database, make_database, make_system_database
+from sensei_core.github.app import GitHubApp
+from sensei_core.github.client import GitHubClient
+from sensei_core.github.etags import RedisETagCache
 from sensei_core.redis import make_redis
+from sensei_core.security.crypto import TokenCipher
 from sensei_core.telemetry import instrument_engine
 
 T = TypeVar("T")
@@ -31,11 +36,32 @@ class Runtime:
         self._system_database: Database | None = None
         self._redis: Redis | None = None
         self._sync_redis: redis.Redis | None = None
+        self._http: httpx.AsyncClient | None = None
+        self._github_app: GitHubApp | None = None
 
     def run(self, coro: Coroutine[Any, Any, T]) -> T:
         if self._runner is None:
             self._runner = asyncio.Runner()
-        return self._runner.run(coro)
+        try:
+            return self._runner.run(coro)
+        except BaseException:
+            # An exception raised from a signal handler (Celery's soft time limit) can leave the
+            # loop while the coroutine is still waiting on I/O. Left alone, it would resume inside
+            # the next task's run, still holding its session and locks: cancel it now.
+            self._cancel_leftovers()
+            raise
+
+    def _cancel_leftovers(self) -> None:
+        if self._runner is None:
+            return
+        loop = self._runner.get_loop()
+        if loop.is_closed() or loop.is_running():
+            return
+        pending = [task for task in asyncio.all_tasks(loop) if not task.done()]
+        for task in pending:
+            task.cancel()
+        if pending:
+            loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
 
     @property
     def database(self) -> Database:
@@ -71,8 +97,22 @@ class Runtime:
             )
         return self._sync_redis
 
+    @property
+    def github_app(self) -> GitHubApp | None:
+        """Acting as the GitHub App (None when this deployment has none configured)."""
+        if self._github_app is None and self.settings.github.app_configured:
+            cipher = TokenCipher.from_settings(self.settings.auth)
+            self._http = httpx.AsyncClient(timeout=self.settings.github.timeout_seconds)
+            client = GitHubClient(
+                self.settings.github, self._http, etags=RedisETagCache(self.redis, cipher)
+            )
+            self._github_app = GitHubApp(self.settings.github, client, self.redis, cipher)
+        return self._github_app
+
     def close(self) -> None:
         async def _close() -> None:
+            if self._http is not None:
+                await self._http.aclose()
             if self._redis is not None:
                 await self._redis.aclose()
             for database in (self._database, self._system_database):
@@ -90,6 +130,8 @@ class Runtime:
         self._database = self._system_database = None
         self._redis = None
         self._sync_redis = None
+        self._http = None
+        self._github_app = None
 
 
 _runtime: Runtime | None = None

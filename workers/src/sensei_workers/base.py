@@ -7,20 +7,26 @@ Declared on the task decorator::
 
 * ``requires``: keyword arguments that must be present (refused before running otherwise).
 * ``idempotent_on``: keyword arguments naming the unit of work. Delivery is at least once, so a
-  task can run twice; a Redis lock owned by the Celery task id lets a redelivered run (same id)
-  continue, makes a duplicate enqueue (another id) skip while the first is running, and marks the
-  work done so later duplicates skip too.
+  task can run twice. A Redis lock is owned by the Celery task id and kept alive by a heartbeat
+  while the task runs: another enqueue of the same work (another id) skips; a second copy of the
+  same message (Redis can hand it out again) waits while the heartbeat is fresh, and takes over
+  only once it has stopped (the process running it died). Finished work leaves a "done" marker
+  so later duplicates skip too.
 * ``system``: the task may open system-role sessions (row-level security bypassed). Only for
   explicitly named cross-org work; other tasks get org-scoped sessions.
 
 Failures are classified: network errors, 5xx, rate limits and :class:`RetryableError` are retried
 with exponential backoff and jitter; anything else, or running out of retries, is final and is
-written to ``job_failures``.
+written to ``job_failures`` (as are hard time-limit kills, and an attempt whose process keeps
+dying). Retry delays stay below ``max_countdown_seconds`` so Redis never redelivers a waiting or
+running task.
 """
 
 from __future__ import annotations
 
+import math
 import random
+import threading
 import uuid
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
@@ -34,6 +40,8 @@ import sqlalchemy.exc
 from billiard.einfo import ExceptionInfo
 from celery import Task
 from celery.exceptions import Retry
+from celery.worker import state as worker_state
+from celery.worker.request import Request
 from sqlalchemy import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -43,7 +51,7 @@ from sensei_core.db.tenancy import set_org_context
 from sensei_core.github.client import GitHubError, RateLimited
 from sensei_core.logging import get_logger
 from sensei_core.models import JobFailure
-from sensei_core.redaction import redact
+from sensei_core.redaction import redact, redact_text
 from sensei_workers.runtime import get_runtime
 
 log = get_logger(__name__)
@@ -89,8 +97,8 @@ def retry_delay(
 ) -> float | None:
     """Seconds until the next attempt, or None if ``exc`` should not be retried.
 
-    Capped below the broker's visibility timeout: Redis would otherwise hand a task that is still
-    waiting for its countdown to a second worker.
+    Capped so that the wait plus the longest possible run stays inside the broker's visibility
+    timeout: Redis would otherwise hand the same message to a second worker.
     """
     if not is_retryable(exc):
         return None
@@ -100,11 +108,18 @@ def retry_delay(
         wait = exc.retry_after
     else:
         wait = backoff(retries, settings)
-    return max(1.0, min(wait, settings.visibility_timeout_seconds * 0.9))
+    return max(1.0, min(wait, settings.max_countdown_seconds))
+
+
+LockState = Literal["acquired", "done", "busy", "running"]
 
 
 class IdempotencyLock:
-    """``SET NX`` lock plus a "done" marker for one unit of work, owned by a Celery task id."""
+    """``SET NX`` lock plus a "done" marker for one unit of work, owned by a Celery task id, with
+    a heartbeat key that only exists while the owner is alive.
+
+    ``acquire`` answers ``busy`` when other work holds it and ``running`` when the owner is this
+    same task id with a live heartbeat (a second copy of the message: wait, don't run)."""
 
     def __init__(
         self,
@@ -115,31 +130,67 @@ class IdempotencyLock:
         owner: str,
         ttl: int,
         done_ttl: int,
+        heartbeat: float,
     ) -> None:
         self._redis = client
         self.lock_key = f"idem:lock:{task}:{key}"
         self.done_key = f"idem:done:{task}:{key}"
+        self.beat_key = f"idem:beat:{task}:{key}"
         self._owner = owner
         self._ttl = ttl
         self._done_ttl = done_ttl
+        self._heartbeat = heartbeat
+        self.beat_ttl = max(1, math.ceil(heartbeat * 3))
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
 
-    def acquire(self) -> Literal["acquired", "done", "busy"]:
+    def acquire(self) -> LockState:
         if self._redis.exists(self.done_key):
             return "done"
         if self._redis.set(self.lock_key, self._owner, nx=True, ex=self._ttl):
+            self._start_heartbeat()
             return "acquired"
-        if self._redis.get(self.lock_key) == self._owner:
-            # Our own earlier attempt (a redelivery after the worker died, or a retry).
-            self._redis.expire(self.lock_key, self._ttl)
-            return "acquired"
-        return "busy"
+        if self._redis.get(self.lock_key) != self._owner:
+            return "busy"
+        if self._redis.exists(self.beat_key):
+            return "running"  # the same message is still being worked on elsewhere
+        # Our own attempt whose process died: take over.
+        self._redis.expire(self.lock_key, self._ttl)
+        self._start_heartbeat()
+        return "acquired"
 
     def complete(self) -> None:
         self._redis.set(self.done_key, self._owner, ex=self._done_ttl)
         self.release()
 
+    def _beat(self) -> None:
+        self._redis.set(self.beat_key, self._owner, ex=self.beat_ttl)
+        self._redis.expire(self.lock_key, self._ttl)
+
+    def _start_heartbeat(self) -> None:
+        self._beat()
+
+        def loop() -> None:
+            while not self._stop.wait(self._heartbeat):
+                try:
+                    self._beat()
+                except redis.exceptions.RedisError:
+                    log.warning("lock heartbeat failed", lock=self.lock_key)
+
+        self._thread = threading.Thread(target=loop, name="sensei-lock-heartbeat", daemon=True)
+        self._thread.start()
+
+    def _stop_heartbeat(self) -> None:
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=5)
+            self._thread = None
+        self._redis.delete(self.beat_key)
+
     def release(self) -> None:
-        """Delete the lock if we still own it (it may have expired and been taken)."""
+        """Stop the heartbeat and delete the lock if we still own it (it may have expired and
+        been taken)."""
+        self._stop_heartbeat()
         with self._redis.pipeline() as pipe:  # pyright: ignore[reportUnknownMemberType]
             try:
                 pipe.watch(self.lock_key)
@@ -184,15 +235,22 @@ class SenseiTask(_TaskBase):
             repo_id=kwargs.get("repo_id"),
             job_id=kwargs.get("job_id"),
         ):
+            if self._delivered_too_often(task_id, args, kwargs):
+                return None
             lock = self._lock(task_id, kwargs)
             if lock is not None:
                 state = lock.acquire()
+                if state == "running":
+                    log.info("same task already running; checking back later")
+                    raise self.retry(countdown=lock.beat_ttl + 1, max_retries=None)
                 if state != "acquired":
                     log.info("duplicate task skipped", reason=state)
                     return None
             try:
                 result = self.run(*args, **kwargs)
             except Retry:
+                if lock is not None:
+                    lock.release()
                 raise
             except Exception as exc:
                 if lock is not None:
@@ -202,6 +260,28 @@ class SenseiTask(_TaskBase):
             if lock is not None:
                 lock.complete()
             return result
+
+    def _delivered_too_often(
+        self, task_id: str, args: tuple[Any, ...], kwargs: dict[str, Any]
+    ) -> bool:
+        """Count deliveries of this attempt. One whose process keeps dying (out of memory, a
+        crash in native code) would otherwise come back forever; past the limit it is
+        dead-lettered and acknowledged."""
+        if self.request.is_eager:
+            return False
+        settings = get_runtime().settings.worker
+        key = f"deliveries:{task_id}:{int(self.request.retries or 0)}"
+        client = get_runtime().sync_redis
+        count = int(client.incr(key))  # pyright: ignore[reportArgumentType]
+        client.expire(key, 86_400)
+        if count <= settings.max_deliveries:
+            return False
+        error = f"the process running this task died {count - 1} times"
+        log.error("task dead-lettered after repeated worker loss", deliveries=count - 1)
+        self.record_failure(
+            task_id, args, kwargs, error_type="WorkerLost", error=error, traceback=None
+        )
+        return True
 
     def _lock(self, task_id: str, kwargs: dict[str, Any]) -> IdempotencyLock | None:
         if not self.idempotent_on:
@@ -215,6 +295,7 @@ class SenseiTask(_TaskBase):
             owner=task_id,
             ttl=settings.time_limit_seconds + 60,
             done_ttl=self.idempotency_window_seconds,
+            heartbeat=settings.lock_heartbeat_seconds,
         )
 
     def _maybe_retry(self, exc: Exception) -> None:
@@ -259,18 +340,55 @@ class SenseiTask(_TaskBase):
         kwargs: dict[str, Any],
         einfo: ExceptionInfo,
     ) -> None:
+        log.error("task failed", error_type=type(exc).__name__)
+        self.record_failure(
+            task_id,
+            args,
+            kwargs,
+            error_type=type(exc).__name__,
+            error=str(exc) or type(exc).__name__,
+            traceback=str(einfo) if einfo else None,
+        )
+
+    def on_hard_timeout(self, task_id: str, args: tuple[Any, ...], kwargs: dict[str, Any]) -> None:
+        """Called in the worker's main process when the pool process was killed at the hard time
+        limit (Celery acknowledges the message without calling ``on_failure``)."""
+        limit = get_runtime().settings.worker.time_limit_seconds
+        self.record_failure(
+            task_id,
+            args,
+            kwargs,
+            error_type="TimeLimitExceeded",
+            error=f"killed at the hard time limit ({limit}s)",
+            traceback=None,
+        )
+        lock = self._lock(task_id, kwargs)
+        if lock is not None:
+            lock.release()
+
+    def record_failure(
+        self,
+        task_id: str,
+        args: tuple[Any, ...],
+        kwargs: dict[str, Any],
+        *,
+        error_type: str,
+        error: str,
+        traceback: str | None,
+    ) -> None:
+        """Write the dead letter. Messages, tracebacks and arguments are redacted: database and
+        HTTP errors quote parameters and URLs."""
         values = {
             "task": self.name[:200],
             "task_id": str(task_id)[:64],
             "args": redact({"args": list(args), "kwargs": kwargs}),
             "org_id": _uuid_or_none(kwargs.get("org_id")),
             "repo_id": _uuid_or_none(kwargs.get("repo_id")),
-            "error_type": type(exc).__name__[:200],
-            "error": str(exc)[:MAX_TEXT] or type(exc).__name__,
-            "traceback": str(einfo)[:MAX_TEXT] if einfo else None,
+            "error_type": error_type[:200],
+            "error": redact_text(error)[:MAX_TEXT],
+            "traceback": redact_text(traceback)[:MAX_TEXT] if traceback else None,
             "attempts": int(self.request.retries or 0) + 1,
         }
-        log.error("task failed", error_type=values["error_type"], attempts=values["attempts"])
         runtime = get_runtime()
 
         async def _record() -> None:
@@ -281,3 +399,18 @@ class SenseiTask(_TaskBase):
             runtime.run(_record())
         except Exception:
             log.exception("could not record the task failure")
+
+
+class SenseiRequest(Request):
+    """Dead-letters tasks killed at the hard time limit (``SenseiTask.Request``)."""
+
+    def on_timeout(self, soft: bool, timeout: float) -> None:
+        super().on_timeout(soft, timeout)
+        if soft or worker_state.should_terminate:
+            return
+        task = self.task
+        if isinstance(task, SenseiTask):
+            task.on_hard_timeout(self.id, tuple(self.args), dict(self.kwargs))
+
+
+SenseiTask.Request = f"{SenseiRequest.__module__}:{SenseiRequest.__qualname__}"
