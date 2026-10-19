@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 import enum
 import uuid
-from typing import Any
+from typing import Any, Protocol
 
 from celery import Celery
 from kombu import Queue as KombuQueue
@@ -36,6 +36,7 @@ class Queue(enum.StrEnum):
 class TaskName(enum.StrEnum):
     PROCESS_GITHUB_WEBHOOK = "sensei.webhooks.process_github"
     SWEEP_WEBHOOKS = "sensei.webhooks.sweep"
+    PURGE_REPO = "sensei.maintenance.purge_repo"
 
 
 # Tasks go to the queue named by the second part of their name ("sensei.<queue>.<task>").
@@ -89,6 +90,30 @@ def make_celery(settings: Settings, main: str = "sensei") -> Celery:
     app = Celery(main)
     app.conf.update(celery_config(settings))
     return app
+
+
+class RepoJobs(Protocol):
+    """Background work for repositories, requested by the API."""
+
+    async def purge(self, repo_id: uuid.UUID) -> None: ...
+
+
+class CeleryRepoJobs:
+    def __init__(self, app: Celery) -> None:
+        self._app = app
+
+    async def purge(self, repo_id: uuid.UUID) -> None:
+        # The repository is already hidden (soft-deleted); if the broker is down it stays that
+        # way until purged later, so a failure here is logged, not raised.
+        try:
+            await asyncio.to_thread(
+                self._app.send_task,
+                TaskName.PURGE_REPO.value,
+                kwargs={"repo_id": str(repo_id)},
+                queue=Queue.MAINTENANCE.value,
+            )
+        except Exception:
+            log.warning("could not queue repository purge", repo=str(repo_id), exc_info=True)
 
 
 class CeleryDispatcher:

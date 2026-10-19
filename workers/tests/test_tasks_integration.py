@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Iterator
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
@@ -16,10 +17,11 @@ from sqlalchemy import delete, select
 from sensei_core.config import Settings
 from sensei_core.db import Database
 from sensei_core.github.webhooks import record_delivery
-from sensei_core.models import DeliveryStatus, JobFailure, WebhookDelivery
+from sensei_core.models import DeliveryStatus, JobFailure, Org, Repo, RepoSource, WebhookDelivery
 from sensei_workers.app import celery_app
 from sensei_workers.base import SenseiTask
 from sensei_workers.runtime import Runtime, set_runtime
+from sensei_workers.tasks.repos import purge_repo
 from sensei_workers.tasks.webhooks import process_github_webhook, sweep_webhooks
 
 pytestmark = pytest.mark.integration
@@ -136,3 +138,61 @@ def test_final_failures_are_dead_lettered(runtime: Runtime, system_db: Database)
         assert "ValueError" in row.traceback
     finally:
         runtime.run(_forget_failure(system_db, result.id))
+
+
+async def _org_with_repos(system_db: Database) -> tuple[uuid.UUID, uuid.UUID, uuid.UUID]:
+    async with system_db.session() as db:
+        org = Org(slug=f"purge-{uuid.uuid4().hex[:8]}", name="Purge")
+        db.add(org)
+        await db.flush()
+        repos = [
+            Repo(
+                org_id=org.id,
+                source=RepoSource.PUBLIC_URL,
+                github_repo_id=n,
+                owner="o",
+                name=f"r{n}",
+                full_name=f"o/r{n}",
+                slug=f"r{n}",
+                default_branch="main",
+                visibility="public",
+                deleted_at=datetime.now(UTC) if n == 1 else None,
+            )
+            for n in (1, 2)
+        ]
+        db.add_all(repos)
+        await db.flush()
+        return org.id, repos[0].id, repos[1].id
+
+
+async def _repo_ids(system_db: Database, org_id: uuid.UUID) -> set[uuid.UUID]:
+    async with system_db.session() as db:
+        return set(await db.scalars(select(Repo.id).where(Repo.org_id == org_id)))
+
+
+async def _disconnect(system_db: Database, repo_id: uuid.UUID) -> None:
+    async with system_db.session() as db:
+        repo = await db.get(Repo, repo_id)
+        assert repo is not None
+        repo.deleted_at = datetime.now(UTC)
+
+
+async def _drop_org(system_db: Database, org_id: uuid.UUID) -> None:
+    async with system_db.session() as db:
+        await db.execute(delete(Org).where(Org.id == org_id))
+
+
+def test_purge_removes_only_disconnected_repositories(
+    runtime: Runtime, system_db: Database
+) -> None:
+    org_id, disconnected, live = runtime.run(_org_with_repos(system_db))
+    try:
+        assert purge_repo.apply(kwargs={"repo_id": str(disconnected)}).get() is True
+        # A repository that is connected (again) is never purged.
+        assert purge_repo.apply(kwargs={"repo_id": str(live)}).get() is False
+        assert runtime.run(_repo_ids(system_db, org_id)) == {live}
+        # Disconnected later after all: the next purge still runs.
+        runtime.run(_disconnect(system_db, live))
+        assert purge_repo.apply(kwargs={"repo_id": str(live)}).get() is True
+    finally:
+        runtime.run(_drop_org(system_db, org_id))

@@ -33,7 +33,14 @@ from sensei_core.github.app import forget_installation_tokens
 from sensei_core.github.client import GitHubError, as_object
 from sensei_core.github.installations import installation_details
 from sensei_core.logging import get_logger
-from sensei_core.models import ActorType, DeliveryStatus, GitHubInstallation, WebhookDelivery
+from sensei_core.models import (
+    ActorType,
+    DeliveryStatus,
+    GitHubInstallation,
+    Repo,
+    RepoStatus,
+    WebhookDelivery,
+)
 from sensei_core.redaction import redact_text
 
 log = get_logger(__name__)
@@ -211,6 +218,46 @@ async def _mark_deleted(ctx: HandlerContext, row: GitHubInstallation) -> None:
     if row.deleted_at is None:
         row.deleted_at = _now()
         await ctx.audit(row, AuditAction.GITHUB_INSTALL_DELETED)
+    # Its repositories stay listed (with their history) but can't be read or indexed anymore.
+    await ctx.db.execute(
+        update(Repo)
+        .where(Repo.installation_id == row.id, Repo.deleted_at.is_(None))
+        .values(status=RepoStatus.ACCESS_LOST)
+    )
+
+
+def _repository_ids(payload: dict[str, Any], key: str) -> list[int]:
+    items = cast("list[object]", payload.get(key) or [])
+    ids = [(as_object(item) or {}).get("id") for item in items]
+    return [i for i in ids if isinstance(i, int)]
+
+
+async def _repositories_moved(ctx: HandlerContext, row: GitHubInstallation) -> None:
+    """``installation_repositories``: repositories taken out of the installation lose access;
+    ones put back (while still connected) can be indexed again."""
+    removed = _repository_ids(ctx.payload, "repositories_removed")
+    added = _repository_ids(ctx.payload, "repositories_added")
+    if removed:
+        await ctx.db.execute(
+            update(Repo)
+            .where(
+                Repo.installation_id == row.id,
+                Repo.github_repo_id.in_(removed),
+                Repo.deleted_at.is_(None),
+            )
+            .values(status=RepoStatus.ACCESS_LOST)
+        )
+    if added:
+        await ctx.db.execute(
+            update(Repo)
+            .where(
+                Repo.installation_id == row.id,
+                Repo.github_repo_id.in_(added),
+                Repo.status == RepoStatus.ACCESS_LOST,
+                Repo.deleted_at.is_(None),
+            )
+            .values(status=RepoStatus.PENDING)
+        )
 
 
 async def _installation_deleted(ctx: HandlerContext) -> DeliveryStatus:
@@ -251,6 +298,8 @@ async def _installation_changed(ctx: HandlerContext) -> DeliveryStatus:
         await ctx.audit(row, action)
     if ctx.delivery.action == "new_permissions_accepted":
         await ctx.audit(row, AuditAction.GITHUB_INSTALL_PERMISSIONS_ACCEPTED)
+    if ctx.delivery.event == "installation_repositories":
+        await _repositories_moved(ctx, row)
     return DeliveryStatus.PROCESSED
 
 

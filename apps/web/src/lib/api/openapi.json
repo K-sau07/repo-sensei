@@ -28,7 +28,10 @@
           "github.install.deleted",
           "github.install.suspended",
           "github.install.unsuspended",
-          "github.install.permissions_accepted"
+          "github.install.permissions_accepted",
+          "repo.connected",
+          "repo.settings_update",
+          "repo.disconnected"
         ],
         "title": "AuditAction",
         "type": "string"
@@ -159,6 +162,216 @@
         "title": "AuditPage",
         "type": "object"
       },
+      "AvailablePage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/AvailableRepoOut"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "page": {
+            "title": "Page",
+            "type": "integer"
+          },
+          "per_page": {
+            "title": "Per Page",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "page",
+          "per_page",
+          "total"
+        ],
+        "title": "AvailablePage",
+        "type": "object"
+      },
+      "AvailableRepoOut": {
+        "properties": {
+          "account_login": {
+            "description": "The GitHub account whose installation covers it.",
+            "title": "Account Login",
+            "type": "string"
+          },
+          "connected": {
+            "title": "Connected",
+            "type": "boolean"
+          },
+          "default_branch": {
+            "title": "Default Branch",
+            "type": "string"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "full_name": {
+            "title": "Full Name",
+            "type": "string"
+          },
+          "github_repo_id": {
+            "title": "Github Repo Id",
+            "type": "integer"
+          },
+          "language": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Language"
+          },
+          "private": {
+            "title": "Private",
+            "type": "boolean"
+          },
+          "pushed_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pushed At"
+          }
+        },
+        "required": [
+          "github_repo_id",
+          "full_name",
+          "private",
+          "default_branch",
+          "description",
+          "language",
+          "pushed_at",
+          "account_login",
+          "connected"
+        ],
+        "title": "AvailableRepoOut",
+        "type": "object"
+      },
+      "ConnectRepo": {
+        "properties": {
+          "github_repo_id": {
+            "exclusiveMinimum": 0.0,
+            "title": "Github Repo Id",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "github_repo_id"
+        ],
+        "title": "ConnectRepo",
+        "type": "object"
+      },
+      "EstimateOut": {
+        "properties": {
+          "cost_usd": {
+            "description": "Estimated one-time cost of the first full index.",
+            "title": "Cost Usd",
+            "type": "string"
+          },
+          "files": {
+            "description": "Estimated number of source files.",
+            "title": "Files",
+            "type": "integer"
+          },
+          "full_name": {
+            "title": "Full Name",
+            "type": "string"
+          },
+          "heuristic": {
+            "default": true,
+            "description": "Estimates, not measurements.",
+            "title": "Heuristic",
+            "type": "boolean"
+          },
+          "index_minutes": {
+            "title": "Index Minutes",
+            "type": "number"
+          },
+          "languages": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Languages",
+            "type": "object"
+          },
+          "private": {
+            "title": "Private",
+            "type": "boolean"
+          },
+          "size_kb": {
+            "title": "Size Kb",
+            "type": "integer"
+          },
+          "tokens": {
+            "description": "Estimated tokens to embed.",
+            "title": "Tokens",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "full_name",
+          "private",
+          "size_kb",
+          "languages",
+          "files",
+          "tokens",
+          "index_minutes",
+          "cost_usd"
+        ],
+        "title": "EstimateOut",
+        "type": "object"
+      },
+      "EstimateRequest": {
+        "properties": {
+          "github_repo_id": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Github Repo Id"
+          },
+          "url": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Url"
+          }
+        },
+        "title": "EstimateRequest",
+        "type": "object"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -189,6 +402,21 @@
           "version"
         ],
         "title": "HealthResponse",
+        "type": "object"
+      },
+      "ImportRepo": {
+        "properties": {
+          "url": {
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "url"
+        ],
+        "title": "ImportRepo",
         "type": "object"
       },
       "InstallReturn": {
@@ -740,6 +968,194 @@
           "checks"
         ],
         "title": "ReadinessResponse",
+        "type": "object"
+      },
+      "RepoOut": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "default_branch": {
+            "title": "Default Branch",
+            "type": "string"
+          },
+          "full_name": {
+            "title": "Full Name",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "languages": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "description": "Bytes of code per language, from GitHub.",
+            "title": "Languages",
+            "type": "object"
+          },
+          "last_indexed_sha": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Indexed Sha"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "owner": {
+            "title": "Owner",
+            "type": "string"
+          },
+          "settings": {
+            "$ref": "#/components/schemas/RepoSettings"
+          },
+          "size_kb": {
+            "title": "Size Kb",
+            "type": "integer"
+          },
+          "slug": {
+            "description": "The repository's name in URLs: /<org>/<slug>.",
+            "title": "Slug",
+            "type": "string"
+          },
+          "source": {
+            "$ref": "#/components/schemas/RepoSource"
+          },
+          "status": {
+            "$ref": "#/components/schemas/RepoStatus"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          },
+          "visibility": {
+            "title": "Visibility",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "slug",
+          "full_name",
+          "owner",
+          "name",
+          "source",
+          "visibility",
+          "default_branch",
+          "status",
+          "size_kb",
+          "languages",
+          "settings",
+          "last_indexed_sha",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "RepoOut",
+        "type": "object"
+      },
+      "RepoSettings": {
+        "description": "What admins can change about a connected repository.",
+        "properties": {
+          "auto_index": {
+            "default": true,
+            "title": "Auto Index",
+            "type": "boolean"
+          },
+          "ignore_globs": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 200,
+            "title": "Ignore Globs",
+            "type": "array"
+          },
+          "tracked_branches": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 20,
+            "title": "Tracked Branches",
+            "type": "array"
+          }
+        },
+        "title": "RepoSettings",
+        "type": "object"
+      },
+      "RepoSource": {
+        "enum": [
+          "github_app",
+          "public_url"
+        ],
+        "title": "RepoSource",
+        "type": "string"
+      },
+      "RepoStatus": {
+        "enum": [
+          "pending",
+          "indexing",
+          "ready",
+          "error",
+          "access_lost",
+          "archived"
+        ],
+        "title": "RepoStatus",
+        "type": "string"
+      },
+      "RepoUpdate": {
+        "properties": {
+          "auto_index": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Auto Index"
+          },
+          "ignore_globs": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ignore Globs"
+          },
+          "tracked_branches": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tracked Branches"
+          }
+        },
+        "title": "RepoUpdate",
         "type": "object"
       },
       "Role": {
@@ -1790,6 +2206,85 @@
         ]
       }
     },
+    "/api/v1/orgs/{org}/github/repos": {
+      "get": {
+        "description": "Repositories the org's GitHub installations can read (admins), marking connected ones.",
+        "operationId": "available_repos_api_v1_orgs__org__github_repos_get",
+        "parameters": [
+          {
+            "description": "Organization slug",
+            "in": "path",
+            "name": "org",
+            "required": true,
+            "schema": {
+              "description": "Organization slug",
+              "title": "Org",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "default": "",
+              "maxLength": 100,
+              "title": "Q",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "minimum": 1,
+              "title": "Page",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "per_page",
+            "required": false,
+            "schema": {
+              "default": 30,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Per Page",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AvailablePage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Available Repos",
+        "tags": [
+          "repos"
+        ]
+      }
+    },
     "/api/v1/orgs/{org}/invitations": {
       "get": {
         "operationId": "list_invitations_api_v1_orgs__org__invitations_get",
@@ -2128,6 +2623,387 @@
         "summary": "Change Member Role",
         "tags": [
           "orgs"
+        ]
+      }
+    },
+    "/api/v1/orgs/{org}/repos": {
+      "get": {
+        "description": "Connected repositories the signed-in user can read on GitHub.",
+        "operationId": "list_repos_api_v1_orgs__org__repos_get",
+        "parameters": [
+          {
+            "description": "Organization slug",
+            "in": "path",
+            "name": "org",
+            "required": true,
+            "schema": {
+              "description": "Organization slug",
+              "title": "Org",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/RepoOut"
+                  },
+                  "title": "Response List Repos Api V1 Orgs  Org  Repos Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Repos",
+        "tags": [
+          "repos"
+        ]
+      },
+      "post": {
+        "description": "Connect a repository one of the org's installations can read (admins).",
+        "operationId": "connect_repo_api_v1_orgs__org__repos_post",
+        "parameters": [
+          {
+            "description": "Organization slug",
+            "in": "path",
+            "name": "org",
+            "required": true,
+            "schema": {
+              "description": "Organization slug",
+              "title": "Org",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConnectRepo"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RepoOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Connect Repo",
+        "tags": [
+          "repos"
+        ]
+      }
+    },
+    "/api/v1/orgs/{org}/repos/estimate": {
+      "post": {
+        "description": "Size, index time and cost before connecting, by public URL or GitHub repository id.",
+        "operationId": "estimate_repo_api_v1_orgs__org__repos_estimate_post",
+        "parameters": [
+          {
+            "description": "Organization slug",
+            "in": "path",
+            "name": "org",
+            "required": true,
+            "schema": {
+              "description": "Organization slug",
+              "title": "Org",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EstimateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EstimateOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Estimate Repo",
+        "tags": [
+          "repos"
+        ]
+      }
+    },
+    "/api/v1/orgs/{org}/repos/import": {
+      "post": {
+        "description": "Import a public GitHub repository by URL (admins). Private ones answer 422\n``repo_not_public``: they connect through the GitHub App.",
+        "operationId": "import_repo_api_v1_orgs__org__repos_import_post",
+        "parameters": [
+          {
+            "description": "Organization slug",
+            "in": "path",
+            "name": "org",
+            "required": true,
+            "schema": {
+              "description": "Organization slug",
+              "title": "Org",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ImportRepo"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RepoOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Import Repo",
+        "tags": [
+          "repos"
+        ]
+      }
+    },
+    "/api/v1/orgs/{org}/repos/{repo}": {
+      "delete": {
+        "description": "Disconnect (admins): hidden at once, its data purged in the background.",
+        "operationId": "disconnect_repo_api_v1_orgs__org__repos__repo__delete",
+        "parameters": [
+          {
+            "description": "Repository slug",
+            "in": "path",
+            "name": "repo",
+            "required": true,
+            "schema": {
+              "description": "Repository slug",
+              "maxLength": 201,
+              "title": "Repo",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Organization slug",
+            "in": "path",
+            "name": "org",
+            "required": true,
+            "schema": {
+              "description": "Organization slug",
+              "title": "Org",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Disconnect Repo",
+        "tags": [
+          "repos"
+        ]
+      },
+      "get": {
+        "operationId": "get_repo_api_v1_orgs__org__repos__repo__get",
+        "parameters": [
+          {
+            "description": "Repository slug",
+            "in": "path",
+            "name": "repo",
+            "required": true,
+            "schema": {
+              "description": "Repository slug",
+              "maxLength": 201,
+              "title": "Repo",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Organization slug",
+            "in": "path",
+            "name": "org",
+            "required": true,
+            "schema": {
+              "description": "Organization slug",
+              "title": "Org",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RepoOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Repo",
+        "tags": [
+          "repos"
+        ]
+      },
+      "patch": {
+        "description": "Tracked branches, ignore patterns and automatic indexing (admins).",
+        "operationId": "update_repo_api_v1_orgs__org__repos__repo__patch",
+        "parameters": [
+          {
+            "description": "Repository slug",
+            "in": "path",
+            "name": "repo",
+            "required": true,
+            "schema": {
+              "description": "Repository slug",
+              "maxLength": 201,
+              "title": "Repo",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Organization slug",
+            "in": "path",
+            "name": "org",
+            "required": true,
+            "schema": {
+              "description": "Organization slug",
+              "title": "Org",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RepoUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RepoOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Repo",
+        "tags": [
+          "repos"
         ]
       }
     },

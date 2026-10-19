@@ -128,10 +128,26 @@ def start_worker(tmp_path: Path, migrated_test_db: Settings) -> Iterator[StartWo
         except subprocess.TimeoutExpired:
             stack.worker.kill()
             stack.worker.wait()
-        stack.producer.close()
+        _close_producer(stack.producer)
     for client in clients:
         client.flushdb()  # pyright: ignore[reportUnknownMemberType]
         client.close()
+
+
+def _close_producer(producer: Celery) -> None:
+    """Celery.close() closes the broker pool only; sending a task also subscribed to its result
+    on a Redis pub/sub connection. Close that and the result backend's client too."""
+    backend = producer.backend
+    consumer = getattr(backend, "result_consumer", None)
+    if consumer is not None:
+        consumer.stop()
+        # A result object collected later unsubscribes; on a closed pub/sub that would quietly
+        # open a new connection. With no pub/sub at all, it does nothing.
+        setattr(consumer, "_pubsub", None)  # noqa: B010 - Celery has no public way to drop it
+    client = getattr(backend, "client", None)
+    if client is not None:
+        client.connection_pool.disconnect()
+    producer.close()
 
 
 def _failure(settings: Settings, task_id: str, *, remove: bool = False) -> JobFailure | None:

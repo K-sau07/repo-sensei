@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Awaitable
+from datetime import UTC, datetime
 from typing import Any, cast
 
 import pytest
@@ -30,6 +31,9 @@ from sensei_core.models import (
     DeliveryStatus,
     GitHubInstallation,
     Org,
+    Repo,
+    RepoSource,
+    RepoStatus,
     WebhookDelivery,
 )
 
@@ -440,3 +444,58 @@ async def test_a_delivery_held_by_one_worker_is_skipped_by_another(
         async with database.session() as db:
             await db.execute(delete(WebhookDelivery).where(WebhookDelivery.id == row_id))
         await database.dispose()
+
+
+async def _connected_repo(
+    db: AsyncSession, link: GitHubInstallation, github_repo_id: int, *, deleted: bool = False
+) -> Repo:
+    repo = Repo(
+        org_id=link.org_id,
+        installation_id=link.id,
+        source=RepoSource.GITHUB_APP,
+        github_repo_id=github_repo_id,
+        owner="acme-gh",
+        name=f"r{github_repo_id}",
+        full_name=f"acme-gh/r{github_repo_id}",
+        slug=f"r{github_repo_id}",
+        default_branch="main",
+        visibility="private",
+        status=RepoStatus.READY,
+        deleted_at=datetime.now(UTC) if deleted else None,
+    )
+    db.add(repo)
+    await db.flush()
+    return repo
+
+
+@pytest.mark.integration
+async def test_uninstalling_marks_its_repositories_access_lost(
+    system_session: AsyncSession, fake_redis: FakeAsyncRedis
+) -> None:
+    link = await _linked(system_session)
+    live = await _connected_repo(system_session, link, 1)
+    gone = await _connected_repo(system_session, link, 2, deleted=True)
+    await _deliver(system_session, fake_redis, "installation", _payload())
+    await system_session.refresh(live)
+    await system_session.refresh(gone)
+    assert live.status is RepoStatus.ACCESS_LOST
+    assert gone.status is RepoStatus.READY  # disconnected repositories are left alone
+
+
+@pytest.mark.integration
+async def test_repositories_taken_out_and_put_back(
+    system_session: AsyncSession, fake_redis: FakeAsyncRedis
+) -> None:
+    link = await _linked(system_session)
+    kept = await _connected_repo(system_session, link, 1)
+    moved = await _connected_repo(system_session, link, 2)
+    removed = _payload("removed", repositories_removed=[{"id": 2}])
+    await _deliver(system_session, fake_redis, "installation_repositories", removed)
+    await system_session.refresh(kept)
+    await system_session.refresh(moved)
+    assert (kept.status, moved.status) == (RepoStatus.READY, RepoStatus.ACCESS_LOST)
+
+    added = _payload("added", repositories_added=[{"id": 2}, {"id": 3}])
+    await _deliver(system_session, fake_redis, "installation_repositories", added)
+    await system_session.refresh(moved)
+    assert moved.status is RepoStatus.PENDING  # readable again: indexing picks it back up

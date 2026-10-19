@@ -23,7 +23,7 @@ if sys.platform == "darwin":
     os.environ.setdefault("FORKED_BY_MULTIPROCESSING", "1")
 
 SERVICE_NAME = "sensei-worker"
-TASK_MODULES = ["sensei_workers.tasks.webhooks"]
+TASK_MODULES = ["sensei_workers.tasks.webhooks", "sensei_workers.tasks.repos"]
 
 settings = get_settings()
 celery_app = make_celery(settings, main=SERVICE_NAME)

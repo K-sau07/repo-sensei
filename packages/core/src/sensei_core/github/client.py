@@ -57,6 +57,11 @@ class Credential:
     header: str
     scope: str
 
+    @classmethod
+    def anonymous(cls) -> Credential:
+        """No Authorization header: public data only (60 requests an hour per IP)."""
+        return cls("", "anonymous")
+
 
 Sleep = Callable[[float], Awaitable[None]]
 Now = Callable[[], datetime]
@@ -82,6 +87,10 @@ class GitHubClient:
         self._sleep = sleep
         self._now = now
 
+    @property
+    def web_url(self) -> str:
+        return self._settings.web_url
+
     async def request(
         self,
         method: str,
@@ -92,11 +101,9 @@ class GitHubClient:
         json_body: Any = None,
     ) -> httpx.Response:
         url = path if path.startswith("http") else f"{self._settings.api_url}{path}"
-        headers = {
-            "Authorization": credential.header,
-            "Accept": "application/vnd.github+json",
-            "X-GitHub-Api-Version": API_VERSION,
-        }
+        headers = {"Accept": "application/vnd.github+json", "X-GitHub-Api-Version": API_VERSION}
+        if credential.header:
+            headers["Authorization"] = credential.header
         cache_key = None
         cached: tuple[str, Any] | None = None
         if method == "GET" and self._etags is not None:

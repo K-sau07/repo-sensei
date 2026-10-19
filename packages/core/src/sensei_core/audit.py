@@ -42,6 +42,9 @@ class AuditAction(enum.StrEnum):
     GITHUB_INSTALL_SUSPENDED = "github.install.suspended"
     GITHUB_INSTALL_UNSUSPENDED = "github.install.unsuspended"
     GITHUB_INSTALL_PERMISSIONS_ACCEPTED = "github.install.permissions_accepted"
+    REPO_CONNECTED = "repo.connected"
+    REPO_SETTINGS_UPDATE = "repo.settings_update"
+    REPO_DISCONNECTED = "repo.disconnected"
 
 
 def _clean_meta(meta: dict[str, Any] | None) -> dict[str, Any]:

@@ -320,6 +320,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/orgs/{org}/github/repos": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Available Repos
+         * @description Repositories the org's GitHub installations can read (admins), marking connected ones.
+         */
+        get: operations["available_repos_api_v1_orgs__org__github_repos_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/orgs/{org}/invitations": {
         parameters: {
             query?: never;
@@ -407,6 +427,96 @@ export interface paths {
         patch: operations["change_member_role_api_v1_orgs__org__members__user_id__patch"];
         trace?: never;
     };
+    "/api/v1/orgs/{org}/repos": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Repos
+         * @description Connected repositories the signed-in user can read on GitHub.
+         */
+        get: operations["list_repos_api_v1_orgs__org__repos_get"];
+        put?: never;
+        /**
+         * Connect Repo
+         * @description Connect a repository one of the org's installations can read (admins).
+         */
+        post: operations["connect_repo_api_v1_orgs__org__repos_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/repos/estimate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Estimate Repo
+         * @description Size, index time and cost before connecting, by public URL or GitHub repository id.
+         */
+        post: operations["estimate_repo_api_v1_orgs__org__repos_estimate_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/repos/import": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Import Repo
+         * @description Import a public GitHub repository by URL (admins). Private ones answer 422
+         *     ``repo_not_public``: they connect through the GitHub App.
+         */
+        post: operations["import_repo_api_v1_orgs__org__repos_import_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/repos/{repo}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Repo */
+        get: operations["get_repo_api_v1_orgs__org__repos__repo__get"];
+        put?: never;
+        post?: never;
+        /**
+         * Disconnect Repo
+         * @description Disconnect (admins): hidden at once, its data purged in the background.
+         */
+        delete: operations["disconnect_repo_api_v1_orgs__org__repos__repo__delete"];
+        options?: never;
+        head?: never;
+        /**
+         * Update Repo
+         * @description Tracked branches, ignore patterns and automatic indexing (admins).
+         */
+        patch: operations["update_repo_api_v1_orgs__org__repos__repo__patch"];
+        trace?: never;
+    };
     "/api/v1/readyz": {
         parameters: {
             query?: never;
@@ -460,7 +570,7 @@ export interface components {
          * AuditAction
          * @enum {string}
          */
-        AuditAction: "auth.login" | "auth.logout" | "auth.logout_all" | "org.create" | "org.update" | "org.delete" | "invitation.create" | "invitation.revoke" | "invitation.accept" | "member.role_change" | "member.remove" | "member.leave" | "github.install.linked" | "github.install.deleted" | "github.install.suspended" | "github.install.unsuspended" | "github.install.permissions_accepted";
+        AuditAction: "auth.login" | "auth.logout" | "auth.logout_all" | "org.create" | "org.update" | "org.delete" | "invitation.create" | "invitation.revoke" | "invitation.accept" | "member.role_change" | "member.remove" | "member.leave" | "github.install.linked" | "github.install.deleted" | "github.install.suspended" | "github.install.unsuspended" | "github.install.permissions_accepted" | "repo.connected" | "repo.settings_update" | "repo.disconnected";
         /** AuditEventOut */
         AuditEventOut: {
             /** Action */
@@ -501,6 +611,89 @@ export interface components {
              */
             next_cursor: string | null;
         };
+        /** AvailablePage */
+        AvailablePage: {
+            /** Items */
+            items: components["schemas"]["AvailableRepoOut"][];
+            /** Page */
+            page: number;
+            /** Per Page */
+            per_page: number;
+            /** Total */
+            total: number;
+        };
+        /** AvailableRepoOut */
+        AvailableRepoOut: {
+            /**
+             * Account Login
+             * @description The GitHub account whose installation covers it.
+             */
+            account_login: string;
+            /** Connected */
+            connected: boolean;
+            /** Default Branch */
+            default_branch: string;
+            /** Description */
+            description: string | null;
+            /** Full Name */
+            full_name: string;
+            /** Github Repo Id */
+            github_repo_id: number;
+            /** Language */
+            language: string | null;
+            /** Private */
+            private: boolean;
+            /** Pushed At */
+            pushed_at: string | null;
+        };
+        /** ConnectRepo */
+        ConnectRepo: {
+            /** Github Repo Id */
+            github_repo_id: number;
+        };
+        /** EstimateOut */
+        EstimateOut: {
+            /**
+             * Cost Usd
+             * @description Estimated one-time cost of the first full index.
+             */
+            cost_usd: string;
+            /**
+             * Files
+             * @description Estimated number of source files.
+             */
+            files: number;
+            /** Full Name */
+            full_name: string;
+            /**
+             * Heuristic
+             * @description Estimates, not measurements.
+             * @default true
+             */
+            heuristic: boolean;
+            /** Index Minutes */
+            index_minutes: number;
+            /** Languages */
+            languages: {
+                [key: string]: number;
+            };
+            /** Private */
+            private: boolean;
+            /** Size Kb */
+            size_kb: number;
+            /**
+             * Tokens
+             * @description Estimated tokens to embed.
+             */
+            tokens: number;
+        };
+        /** EstimateRequest */
+        EstimateRequest: {
+            /** Github Repo Id */
+            github_repo_id?: number | null;
+            /** Url */
+            url?: string | null;
+        };
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
@@ -515,6 +708,11 @@ export interface components {
             status: "ok";
             /** Version */
             version: string;
+        };
+        /** ImportRepo */
+        ImportRepo: {
+            /** Url */
+            url: string;
         };
         /**
          * InstallReturn
@@ -730,6 +928,87 @@ export interface components {
              * @enum {string}
              */
             status: "ok" | "unavailable";
+        };
+        /** RepoOut */
+        RepoOut: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Default Branch */
+            default_branch: string;
+            /** Full Name */
+            full_name: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Languages
+             * @description Bytes of code per language, from GitHub.
+             */
+            languages: {
+                [key: string]: number;
+            };
+            /** Last Indexed Sha */
+            last_indexed_sha: string | null;
+            /** Name */
+            name: string;
+            /** Owner */
+            owner: string;
+            settings: components["schemas"]["RepoSettings"];
+            /** Size Kb */
+            size_kb: number;
+            /**
+             * Slug
+             * @description The repository's name in URLs: /<org>/<slug>.
+             */
+            slug: string;
+            source: components["schemas"]["RepoSource"];
+            status: components["schemas"]["RepoStatus"];
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+            /** Visibility */
+            visibility: string;
+        };
+        /**
+         * RepoSettings
+         * @description What admins can change about a connected repository.
+         */
+        RepoSettings: {
+            /**
+             * Auto Index
+             * @default true
+             */
+            auto_index: boolean;
+            /** Ignore Globs */
+            ignore_globs?: string[];
+            /** Tracked Branches */
+            tracked_branches?: string[];
+        };
+        /**
+         * RepoSource
+         * @enum {string}
+         */
+        RepoSource: "github_app" | "public_url";
+        /**
+         * RepoStatus
+         * @enum {string}
+         */
+        RepoStatus: "pending" | "indexing" | "ready" | "error" | "access_lost" | "archived";
+        /** RepoUpdate */
+        RepoUpdate: {
+            /** Auto Index */
+            auto_index?: boolean | null;
+            /** Ignore Globs */
+            ignore_globs?: string[] | null;
+            /** Tracked Branches */
+            tracked_branches?: string[] | null;
         };
         /**
          * Role
@@ -1396,6 +1675,42 @@ export interface operations {
             };
         };
     };
+    available_repos_api_v1_orgs__org__github_repos_get: {
+        parameters: {
+            query?: {
+                q?: string;
+                page?: number;
+                per_page?: number;
+            };
+            header?: never;
+            path: {
+                /** @description Organization slug */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AvailablePage"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_invitations_api_v1_orgs__org__invitations_get: {
         parameters: {
             query?: never;
@@ -1612,6 +1927,250 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["MemberOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_repos_api_v1_orgs__org__repos_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization slug */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RepoOut"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    connect_repo_api_v1_orgs__org__repos_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization slug */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConnectRepo"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RepoOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    estimate_repo_api_v1_orgs__org__repos_estimate_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization slug */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EstimateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EstimateOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    import_repo_api_v1_orgs__org__repos_import_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization slug */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ImportRepo"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RepoOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_repo_api_v1_orgs__org__repos__repo__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Repository slug */
+                repo: string;
+                /** @description Organization slug */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RepoOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    disconnect_repo_api_v1_orgs__org__repos__repo__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Repository slug */
+                repo: string;
+                /** @description Organization slug */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_repo_api_v1_orgs__org__repos__repo__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Repository slug */
+                repo: string;
+                /** @description Organization slug */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RepoUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RepoOut"];
                 };
             };
             /** @description Validation Error */
