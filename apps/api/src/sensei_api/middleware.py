@@ -15,6 +15,7 @@ from starlette.datastructures import MutableHeaders
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from sensei_api.errors import error_body
+from sensei_core.context import bind_client_ip
 from sensei_core.logging import get_logger
 from sensei_core.telemetry import tag_request
 
@@ -58,7 +59,13 @@ class RequestIdMiddleware:
                 headers[REQUEST_ID_HEADER] = request_id
             await send(message)
 
-        with structlog.contextvars.bound_contextvars(request_id=request_id):
+        client = scope.get("client")
+        client_ip = client[0] if client else None
+
+        with (
+            structlog.contextvars.bound_contextvars(request_id=request_id),
+            bind_client_ip(client_ip),
+        ):
             # The tracing middleware wraps this one, so its server span is already active here.
             tag_request(request_id)
             try:

@@ -21,8 +21,9 @@ from sensei_api.auth import cookie_names
 from sensei_api.routers.auth import safe_next
 from sensei_core.auth.github_login import fresh_access_token, store_tokens
 from sensei_core.config import GitHubSettings, Settings
+from sensei_core.db.tenancy import set_user_context
 from sensei_core.github.oauth import GitHubOAuth, GitHubTokens, OAuthError
-from sensei_core.models import OAuthToken, User
+from sensei_core.models import AuditEvent, OAuthToken, User
 from sensei_core.security.crypto import TokenCipher
 from sensei_testing import make_user
 
@@ -221,6 +222,11 @@ async def test_full_sign_in_flow(
     me = await github_client.get(f"{API}/me")
     assert me.status_code == 200
     assert me.json()["login"] == "octo"
+
+    await set_user_context(db_session, user.id)
+    [event] = (await db_session.scalars(select(AuditEvent))).all()
+    assert (event.action, event.org_id, event.actor_user_id) == ("auth.login", None, user.id)
+    assert (event.target_type, event.meta) == ("session", {"method": "github"})
 
 
 @pytest.mark.integration

@@ -6,6 +6,8 @@ Permission rules (enforced here, and backed by row-level security in the databas
 * Admins manage members, viewers and other admins; only owners grant, change or remove owners.
 * An org always keeps at least one owner (no demoting, removing or leaving as the last owner).
 * Non-members cannot tell whether an org exists: lookups fail with ``org_not_found``.
+
+Every change is written to the audit log in the same transaction; no-op requests write nothing.
 """
 
 from __future__ import annotations
@@ -15,10 +17,12 @@ import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from sensei_core.audit import AuditAction, audit
 from sensei_core.auth.sessions import hash_token, new_token
 from sensei_core.db.tenancy import set_invite_context, set_org_context, set_user_context
 from sensei_core.errors import ConflictError, ForbiddenError, InvalidError, NotFoundError
@@ -109,6 +113,15 @@ class OrgService:
         db.add(Membership(org_id=org.id, user_id=user.id, role=Role.OWNER))
         user.last_org_slug = slug
         await db.flush()
+        await audit(
+            db,
+            AuditAction.ORG_CREATE,
+            actor_user_id=user.id,
+            org_id=org.id,
+            target_type="org",
+            target_id=org.id,
+            meta={"slug": slug, "name": org.name},
+        )
         return OrgAccess(org=org, role=Role.OWNER, user=user)
 
     async def list_for_user(self, db: AsyncSession, user: User) -> list[tuple[Org, Role]]:
@@ -145,23 +158,32 @@ class OrgService:
         self, db: AsyncSession, access: OrgAccess, *, name: str | None, slug: str | None
     ) -> Org:
         require_role(access, Role.ADMIN)
+        org = access.org
+        changes: dict[str, list[str]] = {}
         if name is not None:
             if not name.strip():
                 raise InvalidError("Give the organization a name.", code="invalid_name")
-            access.org.name = name.strip()[:100]
-        if slug is not None and slug.lower() != access.org.slug:
+            new_name = name.strip()[:100]
+            if new_name != org.name:
+                changes["name"] = [org.name, new_name]
+                org.name = new_name
+        if slug is not None and slug.lower() != org.slug:
             slug = validate_slug(slug)
             if not await self.slug_available(db, slug):
                 raise ConflictError("That name is already taken.", code="slug_taken")
-            access.org.slug = slug
+            changes["slug"] = [org.slug, slug]
+            org.slug = slug
         await db.flush()
-        return access.org
+        if changes:
+            await self._audit(db, access, AuditAction.ORG_UPDATE, "org", org.id, meta=changes)
+        return org
 
     async def delete(self, db: AsyncSession, access: OrgAccess) -> None:
         """Soft delete; a later purge job removes the data after the grace period."""
         require_role(access, Role.OWNER)
         access.org.deleted_at = self._clock()
         await db.flush()
+        await self._audit(db, access, AuditAction.ORG_DELETE, "org", access.org.id)
 
     # ------------------------------------------------------------------ members
 
@@ -207,8 +229,19 @@ class OrgService:
             require_role(access, Role.OWNER)
         if membership.role is Role.OWNER and role is not Role.OWNER:
             await self._ensure_not_last_owner(db, membership)
+        if membership.role is role:
+            return membership
+        previous = membership.role
         membership.role = role
         await db.flush()
+        await self._audit(
+            db,
+            access,
+            AuditAction.MEMBER_ROLE_CHANGE,
+            "user",
+            user_id,
+            meta={"from": previous.value, "to": role.value},
+        )
         return membership
 
     async def remove_member(self, db: AsyncSession, access: OrgAccess, user_id: uuid.UUID) -> None:
@@ -219,12 +252,48 @@ class OrgService:
             await self._ensure_not_last_owner(db, membership)
         await db.delete(membership)
         await db.flush()
+        await self._audit(
+            db,
+            access,
+            AuditAction.MEMBER_REMOVE,
+            "user",
+            user_id,
+            meta={"role": membership.role.value},
+        )
 
     async def leave(self, db: AsyncSession, access: OrgAccess) -> None:
         membership = await self._membership(db, access, access.user.id)
         await self._ensure_not_last_owner(db, membership)
         await db.delete(membership)
         await db.flush()
+        await self._audit(
+            db,
+            access,
+            AuditAction.MEMBER_LEAVE,
+            "user",
+            access.user.id,
+            meta={"role": membership.role.value},
+        )
+
+    async def _audit(
+        self,
+        db: AsyncSession,
+        access: OrgAccess,
+        action: AuditAction,
+        target_type: str,
+        target_id: uuid.UUID,
+        *,
+        meta: dict[str, Any] | None = None,
+    ) -> None:
+        await audit(
+            db,
+            action,
+            actor_user_id=access.user.id,
+            org_id=access.org.id,
+            target_type=target_type,
+            target_id=target_id,
+            meta=meta,
+        )
 
     # ------------------------------------------------------------------ invitations
 
@@ -257,6 +326,14 @@ class OrgService:
         )
         db.add(invitation)
         await db.flush()
+        await self._audit(
+            db,
+            access,
+            AuditAction.INVITATION_CREATE,
+            "invitation",
+            invitation.id,
+            meta={"role": role.value, "email": email, "github_login": github_login},
+        )
         if email:
             await self._mailer.send_invitation(
                 InvitationEmail(
@@ -293,6 +370,9 @@ class OrgService:
         if invitation.revoked_at is None and invitation.accepted_at is None:
             invitation.revoked_at = self._clock()
             await db.flush()
+            await self._audit(
+                db, access, AuditAction.INVITATION_REVOKE, "invitation", invitation.id
+            )
 
     def _status(self, invitation: Invitation) -> str:
         if invitation.revoked_at is not None:
@@ -344,6 +424,15 @@ class OrgService:
         invitation.accepted_by = user.id
         user.last_org_slug = org.slug
         await db.flush()
+        await audit(
+            db,
+            AuditAction.INVITATION_ACCEPT,
+            actor_user_id=user.id,
+            org_id=org.id,
+            target_type="invitation",
+            target_id=invitation.id,
+            meta={"role": membership.role.value},
+        )
         return OrgAccess(org=org, role=membership.role, user=user)
 
     @staticmethod

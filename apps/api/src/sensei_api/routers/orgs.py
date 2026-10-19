@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Query, Response, status
 from pydantic import BaseModel, Field
@@ -11,9 +12,10 @@ from pydantic import BaseModel, Field
 from sensei_api.auth import CurrentUser
 from sensei_api.deps import DbSession
 from sensei_api.orgs import OrgAccessDep, OrgServiceDep
+from sensei_core.audit import MAX_PAGE_SIZE, AuditAction, list_org_audit
 from sensei_core.errors import InvalidError
-from sensei_core.models import Org, Role
-from sensei_core.orgs.service import validate_slug
+from sensei_core.models import ActorType, Org, Role
+from sensei_core.orgs.service import require_role, validate_slug
 
 router = APIRouter(prefix="/orgs", tags=["orgs"])
 
@@ -84,6 +86,26 @@ class InvitationOut(BaseModel):
 
 class InvitationCreated(InvitationOut):
     link: str = Field(description="One-time link; shown only now.")
+
+
+class AuditEventOut(BaseModel):
+    id: uuid.UUID
+    action: str
+    actor_type: ActorType
+    actor_user_id: uuid.UUID | None
+    actor_login: str | None
+    target_type: str | None
+    target_id: str | None
+    meta: dict[str, Any]
+    ip: str | None
+    created_at: datetime
+
+
+class AuditPage(BaseModel):
+    items: list[AuditEventOut]
+    next_cursor: uuid.UUID | None = Field(
+        description="Pass as `before` to get the next (older) page; null on the last page."
+    )
 
 
 @router.get("", response_model=list[OrgOut])
@@ -225,3 +247,32 @@ async def revoke_invitation(
 ) -> Response:
     await orgs.revoke_invitation(db, access, invitation_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get("/{org}/audit", response_model=AuditPage)
+async def list_audit_events(
+    access: OrgAccessDep,
+    db: DbSession,
+    action: AuditAction | None = None,
+    before: uuid.UUID | None = None,
+    limit: Annotated[int, Query(ge=1, le=MAX_PAGE_SIZE)] = 50,
+) -> AuditPage:
+    """The org's audit log, newest first (admins and owners)."""
+    require_role(access, Role.ADMIN)
+    rows = await list_org_audit(db, access.org.id, action=action, before=before, limit=limit)
+    items = [
+        AuditEventOut(
+            id=event.id,
+            action=event.action,
+            actor_type=event.actor_type,
+            actor_user_id=event.actor_user_id,
+            actor_login=login,
+            target_type=event.target_type,
+            target_id=event.target_id,
+            meta=event.meta,
+            ip=str(event.ip) if event.ip is not None else None,
+            created_at=event.created_at,
+        )
+        for event, login in rows
+    ]
+    return AuditPage(items=items, next_cursor=items[-1].id if len(items) == limit else None)

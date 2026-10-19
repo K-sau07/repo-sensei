@@ -14,6 +14,7 @@ from redis.asyncio import Redis
 from sensei_api.auth import RequiredSession, Sessions, clear_session_cookies, set_session_cookies
 from sensei_api.deps import DbSession
 from sensei_api.errors import AppError
+from sensei_core.audit import AuditAction, audit
 from sensei_core.auth.github_login import complete_login
 from sensei_core.config import Settings
 from sensei_core.github.oauth import GitHubOAuth, OAuthError
@@ -99,6 +100,14 @@ async def github_callback(
         ip=request.client.host if request.client else None,
         user_agent=request.headers.get("user-agent"),
     )
+    await audit(
+        db,
+        AuditAction.LOGIN,
+        actor_user_id=user.id,
+        target_type="session",
+        target_id=issued.session.id,
+        meta={"method": "github"},
+    )
     log.info("user signed in", user_id=str(user.id), github_login=user.login)
     response = _web_redirect(request, f"/auth/callback?next={quote(pending.next_path, safe='/')}")
     set_session_cookies(response, issued, _settings(request))
@@ -119,7 +128,15 @@ async def logout(
 async def logout_all(
     request: Request, active: RequiredSession, db: DbSession, sessions: Sessions
 ) -> Response:
-    await sessions.revoke_all(db, active.user.id)
+    revoked = await sessions.revoke_all(db, active.user.id)
+    await audit(
+        db,
+        AuditAction.LOGOUT_ALL,
+        actor_user_id=active.user.id,
+        target_type="user",
+        target_id=active.user.id,
+        meta={"sessions_revoked": revoked},
+    )
     response = Response(status_code=status.HTTP_204_NO_CONTENT)
     clear_session_cookies(response, _settings(request))
     return response

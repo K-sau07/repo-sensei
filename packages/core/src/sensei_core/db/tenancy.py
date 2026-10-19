@@ -22,6 +22,7 @@ SYSTEM_ROLE = "sensei_system"
 
 _POLICY_EXPR = f"org_id = NULLIF(current_setting('{ORG_SETTING}', true), '')::uuid"
 _USER_EXPR = f"user_id = NULLIF(current_setting('{USER_SETTING}', true), '')::uuid"
+_ACTOR_EXPR = f"actor_user_id = NULLIF(current_setting('{USER_SETTING}', true), '')::uuid"
 _INVITE_EXPR = f"token_hash = decode(NULLIF(current_setting('{INVITE_SETTING}', true), ''), 'hex')"
 
 
@@ -69,12 +70,32 @@ def invitations_rls_sql(table: str = "invitations") -> list[str]:
     ]
 
 
+def audit_log_rls_sql(table: str = "audit_log") -> list[str]:
+    """Audit log: the current org's rows, plus the signed-in user's own account-level events
+    (``org_id`` null, e.g. sign-ins), which only that user can write or read. Other users'
+    account events are reachable only through the system role (staff tools)."""
+    return [
+        f'ALTER TABLE "{table}" ENABLE ROW LEVEL SECURITY',
+        f'ALTER TABLE "{table}" FORCE ROW LEVEL SECURITY',
+        f'CREATE POLICY org_isolation ON "{table}" USING ({_POLICY_EXPR}) '
+        f"WITH CHECK ({_POLICY_EXPR})",
+        f'CREATE POLICY own_account_events ON "{table}" '
+        f"USING (org_id IS NULL AND {_ACTOR_EXPR}) WITH CHECK (org_id IS NULL AND {_ACTOR_EXPR})",
+    ]
+
+
+def append_only_sql(table: str) -> list[str]:
+    """The app role may insert and read rows of ``table`` but never change or remove them."""
+    return [f'REVOKE UPDATE, DELETE, TRUNCATE ON "{table}" FROM {APP_ROLE}']
+
+
 def disable_org_rls_sql(table: str) -> list[str]:
-    """Inverse of :func:`enable_org_rls_sql` (use in migration downgrades)."""
+    """Inverse of the ``*_rls_sql`` helpers above (use in migration downgrades)."""
     return [
         f'DROP POLICY IF EXISTS org_isolation ON "{table}"',
         f'DROP POLICY IF EXISTS own_memberships ON "{table}"',
         f'DROP POLICY IF EXISTS invite_by_token ON "{table}"',
+        f'DROP POLICY IF EXISTS own_account_events ON "{table}"',
         f'ALTER TABLE "{table}" NO FORCE ROW LEVEL SECURITY',
         f'ALTER TABLE "{table}" DISABLE ROW LEVEL SECURITY',
     ]

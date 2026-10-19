@@ -10,6 +10,7 @@ Groups are added here as features need them; ``.env.example`` documents every va
 from __future__ import annotations
 
 from functools import lru_cache
+from pathlib import Path
 from typing import Literal
 
 from pydantic import Field, SecretStr, model_validator
@@ -137,6 +138,13 @@ class TelemetrySettings(BaseSettings):
     traces_sample_rate: float = Field(default=0.0, ge=0.0, le=1.0)
 
 
+class PricingSettings(BaseSettings):
+    model_config = _config("SENSEI_PRICING_")
+
+    # A JSON price table (see sensei_core.usage.PriceTable); the built-in table when unset.
+    table_path: Path | None = None
+
+
 class Settings(BaseSettings):
     """Root settings object. Use :func:`get_settings` instead of constructing directly."""
 
@@ -156,6 +164,7 @@ class Settings(BaseSettings):
     auth: AuthSettings = Field(default_factory=AuthSettings)
     github: GitHubSettings = Field(default_factory=GitHubSettings)
     telemetry: TelemetrySettings = Field(default_factory=TelemetrySettings)
+    pricing: PricingSettings = Field(default_factory=PricingSettings)
 
     @model_validator(mode="after")
     def _refuse_dev_secrets_outside_dev(self) -> Settings:
