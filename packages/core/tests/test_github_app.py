@@ -258,6 +258,9 @@ async def test_scoped_tokens_ask_for_less_and_are_cached_apart(
     }
     with pytest.raises(ValueError, match="at most 500"):
         await app.installation_token(INSTALLATION, repository_ids=list(range(501)))
+    # "No repositories" must never turn into "every repository".
+    with pytest.raises(ValueError, match="at least one repository"):
+        await app.installation_token(INSTALLATION, repository_ids=[])
 
 
 async def test_installation_credentials_are_scoped_for_the_etag_cache(

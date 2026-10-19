@@ -20,6 +20,7 @@ import re
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from email.utils import parsedate_to_datetime
 from typing import Any, Protocol, cast
 
 import httpx
@@ -105,6 +106,7 @@ class GitHubClient:
                 headers["If-None-Match"] = cached[0]
 
         attempt = 0
+        limited = 0
         while True:
             attempt += 1
             try:
@@ -123,9 +125,12 @@ class GitHubClient:
                 continue
 
             if response.status_code == 304 and cached is not None:
-                return httpx.Response(200, json=cached[1], request=response.request)
+                return _from_cache(cached[1], response.request)
             wait = self._rate_limit_wait(response)
             if wait is not None:
+                limited += 1
+                if limited > self._settings.max_retries:  # still limited: give the caller a date
+                    raise RateLimited(self._reset_at(wait))
                 await self._sleep(wait)
                 continue
             if response.status_code >= 500 and attempt <= self._settings.max_retries:
@@ -134,7 +139,9 @@ class GitHubClient:
             if response.status_code >= 400:
                 raise GitHubError(response.status_code, _message(response))
             if cache_key and self._etags is not None and (etag := response.headers.get("etag")):
-                await self._etags.set(cache_key, etag, response.json())
+                # The Link header too: a page served from the cache must still lead to the next.
+                entry = {"body": response.json(), "link": response.headers.get("link")}
+                await self._etags.set(cache_key, etag, entry)
             return response
 
     async def get_json(self, path: str, credential: Credential, **params: Any) -> Any:
@@ -162,15 +169,30 @@ class GitHubClient:
             return None
         retry_after = response.headers.get("retry-after")
         if retry_after is not None:
-            wait = float(retry_after)
+            wait = self._retry_after_seconds(retry_after)
         elif response.headers.get("x-ratelimit-remaining") == "0":
             reset = float(response.headers.get("x-ratelimit-reset", "0"))
             wait = max(0.0, reset - self._now().timestamp()) + 1
         else:
             return None  # a plain 403 (permissions), not a rate limit
         if wait > self._settings.rate_limit_max_wait_seconds:
-            raise RateLimited(datetime.fromtimestamp(self._now().timestamp() + wait, UTC))
+            raise RateLimited(self._reset_at(wait))
         return wait
+
+    def _reset_at(self, wait: float) -> datetime:
+        return datetime.fromtimestamp(self._now().timestamp() + wait, UTC)
+
+    def _retry_after_seconds(self, value: str) -> float:
+        """``Retry-After`` is seconds, or (per HTTP) a date."""
+        try:
+            return max(0.0, float(value))
+        except ValueError:
+            pass
+        try:
+            when = parsedate_to_datetime(value)
+        except (TypeError, ValueError):
+            return 60.0  # unreadable: wait a minute
+        return max(0.0, (when - self._now()).total_seconds())
 
     @staticmethod
     def _backoff(attempt: int) -> float:
@@ -180,6 +202,13 @@ class GitHubClient:
     def _cache_key(credential: Credential, url: str, params: dict[str, Any] | None) -> str:
         raw = json.dumps([credential.scope, url, sorted((params or {}).items())], default=str)
         return hashlib.sha256(raw.encode()).hexdigest()
+
+
+def _from_cache(entry: Any, request: httpx.Request) -> httpx.Response:
+    cached = as_object(entry) or {}
+    link = cached.get("link")
+    headers = {"link": link} if isinstance(link, str) else {}
+    return httpx.Response(200, json=cached.get("body"), headers=headers, request=request)
 
 
 def as_object(value: object) -> dict[str, Any] | None:

@@ -147,6 +147,28 @@ async def test_waits_for_a_secondary_rate_limit(sleeps: Sleeps) -> None:
     assert sleeps.calls == [3.0]
 
 
+async def test_repeated_rate_limits_give_up(sleeps: Sleeps) -> None:
+    async with httpx.AsyncClient() as http, respx.mock() as router:
+        route = router.get(f"{API}/x").mock(
+            return_value=httpx.Response(429, headers={"retry-after": "2"})
+        )
+        with pytest.raises(RateLimited):
+            await _client(http, sleeps, max_retries=2).get_json("/x", ALICE)
+    assert (route.call_count, sleeps.calls) == (3, [2.0, 2.0])
+
+
+async def test_retry_after_can_be_a_date(sleeps: Sleeps) -> None:
+    async with httpx.AsyncClient() as http, respx.mock() as router:
+        router.get(f"{API}/x").mock(
+            side_effect=[
+                httpx.Response(429, headers={"retry-after": "Mon, 19 Oct 2026 12:00:05 GMT"}),
+                httpx.Response(200, json={}),
+            ]
+        )
+        await _client(http, sleeps).get_json("/x", ALICE)
+    assert sleeps.calls == [5.0]
+
+
 async def test_raises_rate_limited_when_the_reset_is_far(sleeps: Sleeps) -> None:
     reset = int(NOW.timestamp()) + 600
     async with httpx.AsyncClient() as http, respx.mock() as router:
@@ -213,6 +235,37 @@ async def test_paginate_follows_next_links(sleeps: Sleeps) -> None:
             )
         ]
     assert [item["id"] for item in items] == [1, 2, 3]
+
+
+async def test_pagination_continues_past_a_cached_first_page(sleeps: Sleeps) -> None:
+    """A 304 for page 1 must still lead to page 2 (the Link header is cached with the body)."""
+    etags = MemoryETags()
+    page2 = f"{API}/user/installations?per_page=2&page=2"
+    async with httpx.AsyncClient() as http, respx.mock() as router:
+        router.get(page2).mock(
+            return_value=httpx.Response(200, json={"installations": [{"id": 3}]})
+        )
+        router.get(f"{API}/user/installations", params={"per_page": "2"}).mock(
+            side_effect=[
+                httpx.Response(
+                    200,
+                    json={"installations": [{"id": 1}, {"id": 2}]},
+                    headers={"etag": '"p1"', "link": f'<{page2}>; rel="next"'},
+                ),
+                httpx.Response(304),
+            ]
+        )
+        client = _client(http, sleeps, etags=etags)
+        runs = [
+            [
+                item["id"]
+                async for item in client.paginate(
+                    "/user/installations", ALICE, item_key="installations", per_page=2
+                )
+            ]
+            for _ in range(2)
+        ]
+    assert runs == [[1, 2, 3], [1, 2, 3]]
 
 
 async def test_redis_etag_cache_encrypts_bodies() -> None:

@@ -142,6 +142,10 @@ class GitHubApp:
         permissions: dict[str, str] | None = None,
     ) -> InstallationToken:
         """A token for ``installation_id``, from the cache when it has 5+ minutes left."""
+        if repository_ids is not None and not repository_ids:
+            # An empty list would mean "no restriction" to GitHub: a token for every repository.
+            msg = "repository_ids must name at least one repository (or be None for all)"
+            raise ValueError(msg)
         if repository_ids is not None and len(repository_ids) > MAX_REPOSITORIES:
             msg = f"a token can be scoped to at most {MAX_REPOSITORIES} repositories"
             raise ValueError(msg)
