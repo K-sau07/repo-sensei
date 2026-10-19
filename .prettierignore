@@ -1,0 +1,23 @@
+# generated and lock files
+pnpm-lock.yaml
+uv.lock
+apps/web/src/lib/api/schema.d.ts
+apps/web/src/lib/api/openapi.json
+apps/web/public/mockServiceWorker.js
+
+# build outputs
+next-env.d.ts
+.next/
+out/
+storybook-static/
+coverage/
+playwright-report/
+test-results/
+
+# python side is formatted by ruff
+*.py
+.venv/
+
+# private / tooling
+docs/
+.context/

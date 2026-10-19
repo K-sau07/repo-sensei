@@ -1,0 +1,13 @@
+[project]
+name = "sensei-evals"
+version = "0.1.0"
+description = "Evaluation harness and metrics for the repo-sensei engine."
+requires-python = ">=3.13"
+dependencies = ["sensei-engine"]
+
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/sensei_evals"]

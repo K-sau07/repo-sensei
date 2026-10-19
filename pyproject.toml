@@ -1,0 +1,89 @@
+[project]
+name = "repo-sensei"
+version = "0.1.0"
+description = "repo-sensei workspace root (not a distributable package)."
+requires-python = ">=3.13"
+dependencies = [
+    "sensei-core",
+    "sensei-engine",
+    "sensei-evals",
+    "sensei-api",
+    "sensei-workers",
+]
+
+[dependency-groups]
+dev = [
+    "sensei-testing",
+    "pytest>=8.4",
+    "pytest-asyncio>=1.0",
+    "pytest-cov>=6.2",
+    "hypothesis>=6.135",
+    "ruff>=0.12",
+    "pyright>=1.1.403",
+    "respx>=0.22",
+    "freezegun>=1.5",
+    "anyio>=4.9",
+]
+
+[tool.uv]
+package = false
+
+[tool.uv.workspace]
+members = ["apps/api", "workers", "packages/*"]
+
+[tool.uv.sources]
+sensei-core = { workspace = true }
+sensei-engine = { workspace = true }
+sensei-evals = { workspace = true }
+sensei-api = { workspace = true }
+sensei-workers = { workspace = true }
+sensei-testing = { workspace = true }
+
+# ---------------------------------------------------------------- ruff
+[tool.ruff]
+target-version = "py313"
+line-length = 100
+extend-exclude = ["apps/web", "**/node_modules", "**/.venv"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM", "RUF", "ASYNC", "S", "PL", "PT", "TID", "W", "N", "C4"]
+ignore = [
+    "PLR0913", # too many arguments: services take explicit dependencies
+    "PLR2004", # magic values are fine in tests and thresholds are named where it matters
+    "N818",    # client-facing errors use HTTP names (NotFound, Forbidden), not *Error
+]
+
+[tool.ruff.lint.per-file-ignores]
+"**/tests/**" = ["S101", "PLR2004", "S105", "S106", "S608", "PLR0911", "PLR0917"]  # probe-table identifiers; parametrized fixtures; matrix runners
+"scripts/**" = ["T201"]
+
+[tool.ruff.lint.isort]
+known-first-party = [
+    "sensei_core",
+    "sensei_engine",
+    "sensei_evals",
+    "sensei_api",
+    "sensei_workers",
+    "sensei_testing",
+]
+
+[tool.ruff.lint.flake8-tidy-imports]
+ban-relative-imports = "all"
+
+# ---------------------------------------------------------------- pytest
+[tool.pytest.ini_options]
+addopts = "--import-mode=importlib -ra --strict-markers"
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+python_functions = ["test_*"]
+filterwarnings = ["error"]
+testpaths = ["apps/api/tests", "workers/tests", "packages/core/tests", "packages/engine/tests", "packages/evals/tests", "scripts/hooks/tests"]
+markers = [
+    "integration: needs running infrastructure (postgres, redis, minio, docker)",
+    "slow: takes more than a few seconds",
+    "e2e: end-to-end against a running stack",
+]
+
+[tool.coverage.run]
+branch = true
+source = ["sensei_core", "sensei_engine", "sensei_evals", "sensei_api", "sensei_workers"]

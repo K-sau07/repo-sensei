@@ -1,0 +1,33 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended", ":semanticCommitTypeAll(chore)"],
+  "schedule": ["before 6am on monday"],
+  "timezone": "America/New_York",
+  "lockFileMaintenance": { "enabled": true, "schedule": ["before 6am on monday"] },
+  "vulnerabilityAlerts": { "enabled": true, "schedule": ["at any time"] },
+  "packageRules": [
+    {
+      "groupName": "next and react",
+      "matchPackageNames": [
+        "next",
+        "react",
+        "react-dom",
+        "@types/react",
+        "@types/react-dom",
+        "eslint-config-next"
+      ]
+    },
+    { "groupName": "tanstack", "matchPackageNames": ["@tanstack/**"] },
+    { "groupName": "base ui and radix", "matchPackageNames": ["@base-ui/**", "@radix-ui/**"] },
+    {
+      "groupName": "python dev tools",
+      "matchManagers": ["pep621"],
+      "matchDepTypes": ["dependency-groups"]
+    },
+    {
+      "matchUpdateTypes": ["patch"],
+      "matchDepTypes": ["devDependencies", "dependency-groups"],
+      "automerge": true
+    }
+  ]
+}

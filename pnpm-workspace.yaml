@@ -1,0 +1,8 @@
+packages:
+  - "apps/web"
+
+# Native helpers ship prebuilt binaries; their install scripts are not needed.
+ignoredBuiltDependencies:
+  - esbuild
+  - sharp
+  - unrs-resolver
