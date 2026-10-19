@@ -1,5 +1,11 @@
-import { ComingSoon } from "@/components/coming-soon";
+import { Suspense } from "react";
+
+import { OrgHome } from "@/components/orgs/org-home";
 
 export default function OrgHomePage() {
-  return <ComingSoon title="Workspace" />;
+  return (
+    <Suspense>
+      <OrgHome />
+    </Suspense>
+  );
 }

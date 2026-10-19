@@ -20,6 +20,7 @@ interface PersistedShell {
 interface ShellState extends PersistedShell {
   commandOpen: boolean;
   shortcutsOpen: boolean;
+  orgSwitcherOpen: boolean;
   mobileNavOpen: boolean;
   railContent: ReactNode;
   railTitle: string | null;
@@ -28,6 +29,7 @@ interface ShellState extends PersistedShell {
   toggleRail: () => void;
   setCommandOpen: (open: boolean) => void;
   setShortcutsOpen: (open: boolean) => void;
+  setOrgSwitcherOpen: (open: boolean) => void;
   setMobileNavOpen: (open: boolean) => void;
   setRail: (title: string | null, content: ReactNode) => void;
   /** Load the persisted layout after mount (the server render always uses the defaults). */
@@ -87,6 +89,7 @@ export const useShellStore = create<ShellState>()((set, get) => {
     ...DEFAULTS,
     commandOpen: false,
     shortcutsOpen: false,
+    orgSwitcherOpen: false,
     mobileNavOpen: false,
     railContent: null,
     railTitle: null,
@@ -107,6 +110,9 @@ export const useShellStore = create<ShellState>()((set, get) => {
     },
     setShortcutsOpen: (open) => {
       set({ shortcutsOpen: open });
+    },
+    setOrgSwitcherOpen: (open) => {
+      set({ orgSwitcherOpen: open });
     },
     setMobileNavOpen: (open) => {
       set({ mobileNavOpen: open });

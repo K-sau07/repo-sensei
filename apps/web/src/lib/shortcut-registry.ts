@@ -17,6 +17,7 @@ export interface Shortcut {
 export const SHORTCUTS = [
   { id: "command", keys: "mod+k", label: "Open the command palette", group: "General" },
   { id: "shortcuts", keys: "?", label: "Show keyboard shortcuts", group: "General" },
+  { id: "switch-org", keys: "mod+shift+o", label: "Switch organization", group: "General" },
   { id: "go-home", keys: "g h", label: "Go to home", group: "Navigation" },
   { id: "go-inbox", keys: "g i", label: "Go to inbox", group: "Navigation" },
   { id: "go-activity", keys: "g y", label: "Go to activity", group: "Navigation" },

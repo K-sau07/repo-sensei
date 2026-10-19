@@ -4,6 +4,8 @@ import { Suspense, useEffect, type ReactNode } from "react";
 
 import { CommandBar } from "./command-bar";
 import { MobileBottomBar, MobileTopBar } from "./mobile-nav";
+import { OrgGate } from "./org-gate";
+import { RememberLastOrg } from "./remember-last-org";
 import { RightRail } from "./right-rail";
 import { ShellHotkeys } from "./shell-hotkeys";
 import { BottomBarSkeleton, SidebarSkeleton, TopBarSkeleton } from "./shell-skeleton";
@@ -39,7 +41,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           <MobileTopBar className="lg:hidden" />
         </Suspense>
         <main id="main" tabIndex={-1} className="min-h-0 flex-1 overflow-y-auto outline-none">
-          {children}
+          <OrgGate>{children}</OrgGate>
         </main>
         <Suspense fallback={<BottomBarSkeleton />}>
           <MobileBottomBar className="lg:hidden" />
@@ -50,6 +52,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       <Suspense fallback={null}>
         <CommandBar />
         <ShellHotkeys />
+        <RememberLastOrg />
       </Suspense>
     </div>
   );

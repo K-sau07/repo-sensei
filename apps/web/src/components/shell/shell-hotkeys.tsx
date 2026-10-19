@@ -13,7 +13,8 @@ import { useOrgSlug } from "./use-org-slug";
 export function ShellHotkeys() {
   const org = useOrgSlug();
   const router = useRouter();
-  const { setCommandOpen, setShortcutsOpen, toggleSidebar, toggleRail } = useShellStore();
+  const { setCommandOpen, setShortcutsOpen, setOrgSwitcherOpen, toggleSidebar, toggleRail } =
+    useShellStore();
   const handlers = useMemo(() => {
     const go = (section: OrgSection) => () => {
       router.push(orgPath(org, section));
@@ -25,12 +26,15 @@ export function ShellHotkeys() {
       shortcuts: () => {
         setShortcutsOpen(true);
       },
+      switchOrg: () => {
+        setOrgSwitcherOpen(true);
+      },
       home: go(""),
       inbox: go("inbox"),
       activity: go("activity"),
       settings: go("settings"),
     };
-  }, [router, org, setCommandOpen, setShortcutsOpen]);
+  }, [router, org, setCommandOpen, setShortcutsOpen, setOrgSwitcherOpen]);
 
   // Marks the moment shortcuts work (tests wait for it).
   useEffect(() => {
@@ -43,6 +47,7 @@ export function ShellHotkeys() {
   // ⌘K also works while typing; plain-key shortcuts never do.
   useShortcut("command", handlers.command, { inInputs: true });
   useShortcut("shortcuts", handlers.shortcuts);
+  useShortcut("switch-org", handlers.switchOrg, { inInputs: true });
   useShortcut("toggle-sidebar", toggleSidebar);
   useShortcut("toggle-rail", toggleRail);
   useShortcut("go-home", handlers.home);

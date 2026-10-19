@@ -3,6 +3,7 @@
 import { Check, ChevronsUpDown, Plus } from "lucide-react";
 import { useRouter } from "next/navigation";
 
+import { KeyHint } from "@/components/primitives/key-hint";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -11,10 +12,13 @@ import {
   DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
+  DropdownMenuShortcut,
 } from "@/components/ui/dropdown-menu";
 import { Skeleton } from "@/components/ui/skeleton";
 import { orgPath } from "@/lib/routes";
+import { shortcut } from "@/lib/shortcut-registry";
 
+import { useShellStore } from "./shell-store";
 import { useShellData } from "./use-shell-data";
 
 function OrgMark({ name }: { name: string }) {
@@ -31,13 +35,15 @@ function OrgMark({ name }: { name: string }) {
 export function OrgSwitcher() {
   const router = useRouter();
   const { me, slug, currentOrg } = useShellData();
+  const open = useShellStore((state) => state.orgSwitcherOpen);
+  const setOpen = useShellStore((state) => state.setOrgSwitcherOpen);
 
   if (me.isPending) {
     return <Skeleton className="h-control-lg w-full" aria-hidden />;
   }
   const name = currentOrg?.name ?? slug ?? "Choose an organization";
   return (
-    <DropdownMenu>
+    <DropdownMenu open={open} onOpenChange={setOpen}>
       <DropdownMenuTrigger className="flex h-control-lg w-full min-w-0 items-center gap-2 rounded-sm px-2 text-left text-sm font-medium hover:bg-surface-3 focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none in-data-[sidebar=collapsed]:justify-center in-data-[sidebar=collapsed]:px-0">
         <OrgMark name={name} />
         {/* Named by its content, so the visible text is the start of the name (WCAG 2.5.3). */}
@@ -52,7 +58,12 @@ export function OrgSwitcher() {
       </DropdownMenuTrigger>
       <DropdownMenuContent className="w-60" align="start">
         <DropdownMenuGroup>
-          <DropdownMenuLabel>Organizations</DropdownMenuLabel>
+          <DropdownMenuLabel className="flex items-center justify-between">
+            Organizations
+            <DropdownMenuShortcut>
+              <KeyHint shortcut={shortcut("switch-org").keys} />
+            </DropdownMenuShortcut>
+          </DropdownMenuLabel>
           {(me.data?.orgs ?? []).map((org) => (
             <DropdownMenuItem
               key={org.slug}
@@ -73,7 +84,7 @@ export function OrgSwitcher() {
           }}
         >
           <Plus aria-hidden className="size-4" />
-          New organization
+          Create organization
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>

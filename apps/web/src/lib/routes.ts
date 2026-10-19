@@ -1,6 +1,14 @@
 import type { Route } from "next";
 
-export type OrgSection = "" | "inbox" | "activity" | "insights" | "settings" | "repos";
+export type OrgSection =
+  | ""
+  | "inbox"
+  | "activity"
+  | "insights"
+  | "repos"
+  | "settings"
+  | "settings/general"
+  | "settings/members";
 
 /**
  * Org-scoped paths. Typed routes can't check a runtime slug, so the cast lives here, once, and the

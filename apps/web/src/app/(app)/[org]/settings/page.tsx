@@ -1,9 +1,12 @@
-import type { Metadata } from "next";
+import { Suspense } from "react";
 
-import { ComingSoon } from "@/components/coming-soon";
+import { RedirectToGeneral } from "@/components/orgs/redirect-to-general";
 
-export const metadata: Metadata = { title: "Settings" };
-
-export default function SettingsPage() {
-  return <ComingSoon title="Settings" />;
+/** /[org]/settings opens the first section. */
+export default function OrgSettingsIndex() {
+  return (
+    <Suspense>
+      <RedirectToGeneral />
+    </Suspense>
+  );
 }
