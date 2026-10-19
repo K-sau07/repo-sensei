@@ -2,11 +2,26 @@ import { http, HttpResponse } from "msw";
 
 import type { Me, SessionInfo } from "@/lib/api/types";
 import { db } from "@/mocks/db";
+import { mockScenario } from "@/mocks/scenario";
 
 import { apiError } from "./errors";
 
+function signedOutError() {
+  const scenario = mockScenario();
+  if (scenario === "signed-out") return apiError(401, "unauthenticated", "Sign in to continue.");
+  if (scenario === "expired") {
+    return apiError(401, "session_expired", "Your session has expired. Please sign in again.");
+  }
+  return null;
+}
+
 export const meHandlers = [
-  http.get("*/api/v1/me", () => HttpResponse.json<Me>(db.me)),
+  http.get("*/api/v1/me", () => {
+    const error = signedOutError();
+    if (error) return error;
+    const me = mockScenario() === "no-orgs" ? { ...db.me, orgs: [], last_org_slug: null } : db.me;
+    return HttpResponse.json<Me>(me);
+  }),
 
   http.patch("*/api/v1/me", async ({ request }) => {
     const body = (await request.json()) as { last_org_slug?: string | null };
@@ -18,18 +33,23 @@ export const meHandlers = [
     return HttpResponse.json<Me>(db.me);
   }),
 
-  http.get("*/api/v1/me/sessions", () =>
-    HttpResponse.json<SessionInfo[]>([
-      {
-        id: "0199f000-0000-7000-8000-0000000000c1",
-        current: true,
-        ip: "127.0.0.1",
-        user_agent: "Mozilla/5.0",
-        created_at: "2026-10-18T10:00:00Z",
-        last_seen_at: "2026-10-18T12:00:00Z",
-      },
-    ]),
+  http.get(
+    "*/api/v1/me/sessions",
+    () => signedOutError() ?? HttpResponse.json<SessionInfo[]>(db.sessions),
   ),
 
+  http.delete<{ id: string }>("*/api/v1/me/sessions/:id", ({ params }) => {
+    const before = db.sessions.length;
+    db.sessions = db.sessions.filter((session) => session.id !== params.id);
+    return db.sessions.length === before
+      ? apiError(404, "session_not_found", "Session not found.")
+      : new HttpResponse(null, { status: 204 });
+  }),
+
   http.post("*/api/v1/auth/logout", () => new HttpResponse(null, { status: 204 })),
+
+  http.post("*/api/v1/auth/logout-all", () => {
+    db.sessions = [];
+    return new HttpResponse(null, { status: 204 });
+  }),
 ];

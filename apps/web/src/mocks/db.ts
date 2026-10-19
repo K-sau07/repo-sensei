@@ -2,13 +2,14 @@
  * In-memory data behind the mock API. Shapes come from the generated OpenAPI types, so the mocks
  * fail to compile if the API changes. `resetMockDb()` restores the seed (call it between tests).
  */
-import type { Invitation, Me, Member, Org, Role } from "@/lib/api/types";
+import type { Invitation, Me, Member, Org, Role, SessionInfo } from "@/lib/api/types";
 
 export interface MockDb {
   me: Me;
   orgs: Org[];
   members: Record<string, Member[]>;
   invitations: Record<string, Invitation[]>;
+  sessions: SessionInfo[];
 }
 
 const NOW = "2026-10-18T12:00:00Z";
@@ -56,6 +57,25 @@ function seed(): MockDb {
         },
       ],
     },
+    sessions: [
+      {
+        id: "0199f000-0000-7000-8000-0000000000c1",
+        current: true,
+        ip: "127.0.0.1",
+        user_agent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Chrome/156.0",
+        created_at: "2026-10-18T10:00:00Z",
+        last_seen_at: "2026-10-18T12:00:00Z",
+      },
+      {
+        id: "0199f000-0000-7000-8000-0000000000c2",
+        current: false,
+        ip: "203.0.113.7",
+        user_agent:
+          "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1",
+        created_at: "2026-10-12T08:00:00Z",
+        last_seen_at: "2026-10-17T21:30:00Z",
+      },
+    ],
     invitations: {
       acme: [
         {

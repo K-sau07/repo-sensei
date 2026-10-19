@@ -372,10 +372,15 @@ async def test_open_redirects_are_neutralized(
 
 
 @pytest.mark.integration
-async def test_login_when_github_is_not_configured(api_client: httpx.AsyncClient) -> None:
-    response = await api_client.get(f"{API}/auth/github/login")
-    assert response.status_code == 503
-    assert response.json()["error"]["code"] == "github_not_configured"
+@pytest.mark.parametrize("path", ["/auth/github/login", "/auth/github/callback?code=c&state=s"])
+async def test_unconfigured_github_sends_the_browser_back_to_login(
+    api_app: FastAPI, api_client: httpx.AsyncClient, path: str
+) -> None:
+    """Without a GitHub App the user sees an explanation on /login, not a JSON error page."""
+    response = await api_client.get(f"{API}{path}")
+    assert response.status_code == 302
+    origin = api_app.state.settings.web.origin
+    assert response.headers["location"] == f"{origin}/login?error=github_not_configured"
 
 
 # ------------------------------------------------------------------- token refresh
