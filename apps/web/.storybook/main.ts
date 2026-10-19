@@ -13,7 +13,10 @@ const config: StorybookConfig = {
     "@storybook/addon-a11y",
     "@storybook/addon-themes",
     "@storybook/addon-vitest",
+    "msw-storybook-addon",
   ],
+  // Serves mockServiceWorker.js for the MSW addon.
+  staticDirs: ["../public"],
   framework: { name: "@storybook/nextjs-vite", options: {} },
   core: { disableTelemetry: true },
   // Next compiles Tailwind through its Turbopack loader; Storybook runs on Vite and needs the plugin.

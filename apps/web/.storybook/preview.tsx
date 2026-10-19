@@ -1,9 +1,13 @@
 import { withThemeByDataAttribute } from "@storybook/addon-themes";
 import type { Preview } from "@storybook/nextjs-vite";
+import { QueryClientProvider } from "@tanstack/react-query";
+import { mswLoader } from "msw-storybook-addon/csf3";
 
 import { DEFAULT_THEME, MotionProvider, THEMES } from "../src/components/providers";
 import { TooltipProvider } from "../src/components/ui/tooltip";
 import { fontVariables } from "../src/fonts";
+import { makeQueryClient } from "../src/lib/query/provider";
+import { handlers } from "../src/mocks/handlers";
 
 import "../src/app/globals.css";
 
@@ -11,7 +15,10 @@ import "../src/app/globals.css";
 document.documentElement.classList.add(...fontVariables.split(" "));
 
 const preview: Preview = {
+  // Stories talk to the mock API; a story can override with `parameters.msw`.
+  loaders: [mswLoader()],
   parameters: {
+    msw: handlers,
     layout: "fullscreen",
     backgrounds: { disable: true },
     controls: { expanded: true },
@@ -21,13 +28,16 @@ const preview: Preview = {
   },
   decorators: [
     (Story) => (
-      <MotionProvider>
-        <TooltipProvider>
-          <main className="min-h-dvh bg-bg p-8 font-sans text-fg">
-            <Story />
-          </main>
-        </TooltipProvider>
-      </MotionProvider>
+      // A fresh query cache per story, so stories never share data.
+      <QueryClientProvider client={makeQueryClient()}>
+        <MotionProvider>
+          <TooltipProvider>
+            <main className="min-h-dvh bg-bg p-8 font-sans text-fg">
+              <Story />
+            </main>
+          </TooltipProvider>
+        </MotionProvider>
+      </QueryClientProvider>
     ),
     withThemeByDataAttribute({
       themes: Object.fromEntries(THEMES.map((theme) => [theme, theme])),

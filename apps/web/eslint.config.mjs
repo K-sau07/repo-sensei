@@ -56,5 +56,7 @@ export default defineConfig([
     "coverage/**",
     "storybook-static/**",
     "next-env.d.ts",
+    "src/lib/api/schema.d.ts",
+    "public/mockServiceWorker.js",
   ]),
 ]);

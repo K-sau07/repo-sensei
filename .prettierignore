@@ -3,6 +3,7 @@ pnpm-lock.yaml
 uv.lock
 apps/web/src/lib/api/schema.d.ts
 apps/web/src/lib/api/openapi.json
+apps/web/public/mockServiceWorker.js
 
 # build outputs
 next-env.d.ts

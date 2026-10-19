@@ -2,9 +2,12 @@
 
 import { domAnimation, LazyMotion, MotionConfig } from "motion/react";
 import { ThemeProvider } from "next-themes";
+import { NuqsAdapter } from "nuqs/adapters/next/app";
 import { type ReactNode } from "react";
 
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { QueryProvider } from "@/lib/query/provider";
+import { MockGate } from "@/mocks/mock-gate";
 
 export const THEMES = ["dark", "light"] as const;
 export const DEFAULT_THEME = "dark";
@@ -19,7 +22,7 @@ export function MotionProvider({ children }: { children: ReactNode }) {
   );
 }
 
-/** App-wide client providers: theme (data-theme on <html>) and motion. */
+/** App-wide client providers: theme (data-theme on <html>), URL state, server state and motion. */
 export function Providers({ children }: { children: ReactNode }) {
   return (
     <ThemeProvider
@@ -29,9 +32,15 @@ export function Providers({ children }: { children: ReactNode }) {
       enableSystem
       disableTransitionOnChange
     >
-      <MotionProvider>
-        <TooltipProvider>{children}</TooltipProvider>
-      </MotionProvider>
+      <NuqsAdapter>
+        <MockGate>
+          <QueryProvider>
+            <MotionProvider>
+              <TooltipProvider>{children}</TooltipProvider>
+            </MotionProvider>
+          </QueryProvider>
+        </MockGate>
+      </NuqsAdapter>
     </ThemeProvider>
   );
 }

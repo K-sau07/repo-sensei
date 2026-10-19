@@ -39,6 +39,8 @@ const securityHeaders = [
 ];
 
 const nextConfig: NextConfig = {
+  // Always defined, so Next inlines it and dead-code elimination drops mock mode from real builds.
+  env: { NEXT_PUBLIC_MOCKS: process.env.NEXT_PUBLIC_MOCKS === "1" ? "1" : "0" },
   poweredByHeader: false,
   agentRules: false,
   reactStrictMode: true,
@@ -47,6 +49,11 @@ const nextConfig: NextConfig = {
   partialPrefetching: true,
   typedRoutes: true,
   turbopack: {
+    resolveAlias: {
+      // Mock mode (NEXT_PUBLIC_MOCKS=1) imports msw/browser in a client component; the server
+      // render of that component gets a stub because MSW has no server build of that entry.
+      "msw/browser": { browser: "msw/browser", default: "./src/mocks/worker-ssr-stub.ts" },
+    },
     rules: {
       "*.css": {
         loaders: ["@tailwindcss/turbopack"],

@@ -49,8 +49,9 @@ storybook: ## Run Storybook on :6006
 storybook-build: ## Build the static Storybook into apps/web/storybook-static
 	pnpm --filter web storybook:build
 
-openapi: ## Export the OpenAPI schema for the web client
+openapi: ## Export the OpenAPI schema and regenerate the web client types
 	uv run python scripts/export_openapi.py
+	pnpm --filter web gen:api
 
 ALEMBIC := uv run alembic -c packages/core/alembic.ini
 
