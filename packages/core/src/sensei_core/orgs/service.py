@@ -20,6 +20,8 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import func, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from sensei_core.audit import AuditAction, audit
@@ -76,6 +78,10 @@ def validate_slug(slug: str) -> str:
     return slug
 
 
+def _slug_taken() -> ConflictError:
+    return ConflictError("That name is already taken.", code="slug_taken")
+
+
 def require_role(access: OrgAccess, minimum: Role) -> None:
     if not access.role.at_least(minimum):
         raise ForbiddenError(
@@ -105,10 +111,15 @@ class OrgService:
         if not name:
             raise InvalidError("Give the organization a name.", code="invalid_name")
         if not await self.slug_available(db, slug):
-            raise ConflictError("That name is already taken.", code="slug_taken")
+            raise _slug_taken()
         org = Org(slug=slug, name=name[:100])
-        db.add(org)
-        await db.flush()
+        try:
+            # The check above can race with another create; the unique index decides.
+            async with db.begin_nested():
+                db.add(org)
+                await db.flush()
+        except IntegrityError as exc:
+            raise _slug_taken() from exc
         await set_org_context(db, org.id)
         db.add(Membership(org_id=org.id, user_id=user.id, role=Role.OWNER))
         user.last_org_slug = slug
@@ -167,13 +178,18 @@ class OrgService:
             if new_name != org.name:
                 changes["name"] = [org.name, new_name]
                 org.name = new_name
-        if slug is not None and slug.lower() != org.slug:
+        if slug is not None:
             slug = validate_slug(slug)
-            if not await self.slug_available(db, slug):
-                raise ConflictError("That name is already taken.", code="slug_taken")
-            changes["slug"] = [org.slug, slug]
-            org.slug = slug
-        await db.flush()
+            if slug != org.slug:
+                if not await self.slug_available(db, slug):
+                    raise _slug_taken()
+                changes["slug"] = [org.slug, slug]
+                org.slug = slug
+        try:
+            async with db.begin_nested():
+                await db.flush()
+        except IntegrityError as exc:
+            raise _slug_taken() from exc
         if changes:
             await self._audit(db, access, AuditAction.ORG_UPDATE, "org", org.id, meta=changes)
         return org
@@ -198,10 +214,17 @@ class OrgService:
         )
         return [(user, membership) for user, membership in rows.tuples()]
 
+    @staticmethod
+    async def _lock_org(db: AsyncSession, org_id: uuid.UUID) -> None:
+        """Serialize membership changes in one org until this transaction ends. Without it, two
+        owners leaving (or demoting each other) at once could each see the other and both go."""
+        await db.execute(select(Org.id).where(Org.id == org_id).with_for_update())
+
     async def _membership(
         self, db: AsyncSession, access: OrgAccess, user_id: uuid.UUID
     ) -> Membership:
-        membership = await db.get(Membership, (access.org.id, user_id))
+        # Re-read after _lock_org: another transaction may have just changed it.
+        membership = await db.get(Membership, (access.org.id, user_id), populate_existing=True)
         if membership is None:
             raise NotFoundError("Member not found.", code="member_not_found")
         return membership
@@ -224,6 +247,7 @@ class OrgService:
         self, db: AsyncSession, access: OrgAccess, user_id: uuid.UUID, role: Role
     ) -> Membership:
         require_role(access, Role.ADMIN)
+        await self._lock_org(db, access.org.id)
         membership = await self._membership(db, access, user_id)
         if Role.OWNER in (role, membership.role):
             require_role(access, Role.OWNER)
@@ -246,6 +270,7 @@ class OrgService:
 
     async def remove_member(self, db: AsyncSession, access: OrgAccess, user_id: uuid.UUID) -> None:
         require_role(access, Role.ADMIN)
+        await self._lock_org(db, access.org.id)
         membership = await self._membership(db, access, user_id)
         if membership.role is Role.OWNER:
             require_role(access, Role.OWNER)
@@ -262,6 +287,7 @@ class OrgService:
         )
 
     async def leave(self, db: AsyncSession, access: OrgAccess) -> None:
+        await self._lock_org(db, access.org.id)
         membership = await self._membership(db, access, access.user.id)
         await self._ensure_not_last_owner(db, membership)
         await db.delete(membership)
@@ -416,10 +442,15 @@ class OrgService:
         if org is None or org.deleted_at is not None:
             raise NotFoundError("This invitation link is not valid.", code="invitation_not_found")
         await set_org_context(db, org.id)
-        membership = await db.get(Membership, (org.id, user.id))
-        if membership is None:
-            membership = Membership(org_id=org.id, user_id=user.id, role=invitation.role)
-            db.add(membership)
+        # Idempotent: accepting twice (double click, two tabs) keeps the existing membership.
+        await db.execute(
+            pg_insert(Membership)
+            .values(org_id=org.id, user_id=user.id, role=invitation.role)
+            .on_conflict_do_nothing(index_elements=["org_id", "user_id"])
+        )
+        membership = await db.get(Membership, (org.id, user.id), populate_existing=True)
+        if membership is None:  # unreachable: the row exists after the insert above
+            raise NotFoundError("This invitation link is not valid.", code="invitation_not_found")
         invitation.accepted_at = self._clock()
         invitation.accepted_by = user.id
         user.last_org_slug = org.slug

@@ -335,3 +335,39 @@ async def test_memberships_are_isolated_by_rls(
         await db_session.scalars(select(Membership).where(Membership.org_id == first.org.id))
     ).all()
     assert visible == []
+
+
+async def test_a_lost_slug_race_is_a_conflict_not_a_crash(
+    db_session: AsyncSession, service: OrgService, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    first, second = await make_user(db_session), await make_user(db_session)
+    await service.create(db_session, first, name="One", slug="raced-slug")
+
+    async def looks_free(*_: object) -> bool:  # both requests passed the check at once
+        return True
+
+    monkeypatch.setattr(service, "slug_available", looks_free)
+    with pytest.raises(ConflictError) as exc:
+        await service.create(db_session, second, name="Two", slug="raced-slug")
+    assert exc.value.code == "slug_taken"
+    # The transaction is still usable after the failed insert.
+    assert [o.slug for o, _ in await service.list_for_user(db_session, first)] == ["raced-slug"]
+
+
+async def test_resubmitting_the_current_slug_is_not_a_conflict(
+    db_session: AsyncSession, service: OrgService
+) -> None:
+    access, _ = await _org_with(db_session, service, {})
+    org = await service.update(db_session, access, name=None, slug=f"  {access.org.slug.upper()}")
+    assert org.slug == access.org.slug
+
+
+async def test_accepting_twice_is_idempotent(db_session: AsyncSession, service: OrgService) -> None:
+    access, _ = await _org_with(db_session, service, {})
+    friend = await make_user(db_session, email="twice@example.com")
+    _, token = await service.invite(db_session, access, role=Role.MEMBER, email="twice@example.com")
+    joined = await service.accept_invitation(db_session, friend, token)
+    assert joined.role is Role.MEMBER
+    with pytest.raises(ConflictError) as exc:
+        await service.accept_invitation(db_session, friend, token)
+    assert exc.value.code == "invitation_accepted"
