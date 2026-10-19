@@ -1,0 +1,147 @@
+/*
+ * Graphite Signal design tokens.
+ *
+ * Dark is the default theme; light is generated from the same hues. The color values must match
+ * src/lib/theme/generate.ts and the motion values src/lib/motion/tokens.ts (tests check both).
+ * Contrast is checked with APCA and WCAG 2 in src/lib/theme/generate.test.ts.
+ */
+
+/* ----------------------------------------------------------------- color: dark (default) */
+
+:root,
+[data-theme="dark"] {
+  color-scheme: dark;
+
+  --bg: oklch(0.16 0.005 260);
+  --surface-1: oklch(0.2 0.006 260);
+  --surface-2: oklch(0.24 0.007 260);
+  --surface-3: oklch(0.28 0.008 260);
+  --line: oklch(1 0 0 / 0.08);
+  --line-strong: oklch(1 0 0 / 0.14);
+  --text: oklch(0.96 0.003 260);
+  --text-muted: oklch(0.78 0.01 260);
+  --text-faint: oklch(0.67 0.01 260);
+  --signal: oklch(0.84 0.15 170);
+  --layer-ui: oklch(0.81 0.099 250);
+  --layer-api: oklch(0.81 0.14 75);
+  --layer-svc: oklch(0.81 0.11 140);
+  --layer-db: oklch(0.81 0.12 310);
+  --danger: oklch(0.8 0.114 25);
+  --warn: oklch(0.84 0.15 85);
+  --ok: oklch(0.81 0.15 150);
+  --brand: oklch(0.96 0.003 260);
+  --brand-fg: oklch(0.16 0.005 260);
+
+  /* Two-layer shadows tinted toward the surface hue; never pure black. */
+  --elevation-1: 0 1px 2px oklch(0.08 0.01 260 / 0.5), 0 1px 1px oklch(0.08 0.01 260 / 0.3);
+  --elevation-2: 0 2px 6px oklch(0.08 0.01 260 / 0.45), 0 12px 32px oklch(0.08 0.01 260 / 0.35);
+  --elevation-3: 0 4px 12px oklch(0.08 0.01 260 / 0.5), 0 24px 64px oklch(0.08 0.01 260 / 0.45);
+}
+
+/* ----------------------------------------------------------------- color: light */
+
+[data-theme="light"] {
+  color-scheme: light;
+
+  --bg: oklch(0.985 0.002 260);
+  --surface-1: oklch(0.97 0.003 260);
+  --surface-2: oklch(1 0 0);
+  --surface-3: oklch(0.94 0.005 260);
+  --line: oklch(0.22 0.01 260 / 0.12);
+  --line-strong: oklch(0.22 0.01 260 / 0.2);
+  --text: oklch(0.22 0.01 260);
+  --text-muted: oklch(0.42 0.012 260);
+  --text-faint: oklch(0.5 0.012 260);
+  --signal: oklch(0.5 0.098 170);
+  --layer-ui: oklch(0.5 0.141 250);
+  --layer-api: oklch(0.5 0.105 75);
+  --layer-svc: oklch(0.5 0.12 140);
+  --layer-db: oklch(0.5 0.17 310);
+  --danger: oklch(0.52 0.19 25);
+  --warn: oklch(0.51 0.104 85);
+  --ok: oklch(0.5 0.13 150);
+  --brand: oklch(0.22 0.01 260);
+  --brand-fg: oklch(0.985 0.002 260);
+
+  --elevation-1: 0 1px 2px oklch(0.3 0.02 260 / 0.08), 0 1px 1px oklch(0.3 0.02 260 / 0.06);
+  --elevation-2: 0 2px 6px oklch(0.3 0.02 260 / 0.08), 0 12px 32px oklch(0.3 0.02 260 / 0.1);
+  --elevation-3: 0 4px 12px oklch(0.3 0.02 260 / 0.1), 0 24px 64px oklch(0.3 0.02 260 / 0.16);
+}
+
+/* ----------------------------------------------------------------- semantic aliases (shadcn) */
+
+/* Re-declared on every theme scope so nested [data-theme] regions resolve their own values. */
+:root,
+[data-theme] {
+  --background: var(--bg);
+  --foreground: var(--text);
+  --card: var(--surface-2);
+  --card-foreground: var(--text);
+  --popover: var(--surface-2);
+  --popover-foreground: var(--text);
+  --primary: var(--brand);
+  --primary-foreground: var(--brand-fg);
+  --secondary: var(--surface-3);
+  --secondary-foreground: var(--text);
+  --muted: var(--surface-1);
+  --muted-foreground: var(--text-muted);
+  --accent: var(--surface-3);
+  --accent-foreground: var(--text);
+  --destructive: var(--danger);
+  --border: var(--line);
+  --input: var(--line-strong);
+  --ring: var(--text-muted);
+  --chart-1: var(--layer-ui);
+  --chart-2: var(--layer-api);
+  --chart-3: var(--layer-svc);
+  --chart-4: var(--layer-db);
+  --chart-5: var(--signal);
+  --sidebar: var(--surface-1);
+  --sidebar-foreground: var(--text);
+  --sidebar-primary: var(--brand);
+  --sidebar-primary-foreground: var(--brand-fg);
+  --sidebar-accent: var(--surface-3);
+  --sidebar-accent-foreground: var(--text);
+  --sidebar-border: var(--line);
+  --sidebar-ring: var(--text-muted);
+}
+
+/* ----------------------------------------------------------------- shape, size, density */
+
+:root {
+  /* Radii 6 / 10 / 14 px: controls, cards, panels (shadcn derives sm, lg and xl from this). */
+  --radius: 0.625rem;
+
+  --control-sm: 28px;
+  --control-md: 32px;
+  --control-lg: 36px;
+  --sidebar-width: 240px;
+
+  --font-size-ui: 14px;
+  --row-height: 32px;
+}
+
+[data-density="compact"] {
+  --font-size-ui: 13px;
+  --row-height: 28px;
+}
+
+/* ----------------------------------------------------------------- motion */
+
+:root {
+  --dur-instant: 0ms;
+  --dur-fast: 120ms;
+  --dur-base: 200ms;
+  --dur-slow: 320ms;
+  --dur-signature: 700ms;
+  --ease-out-ui: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-inout: cubic-bezier(0.65, 0, 0.35, 1);
+  --press-scale: 0.97;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --dur-signature: 0ms;
+    --press-scale: 1;
+  }
+}

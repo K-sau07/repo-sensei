@@ -3,14 +3,15 @@ SHELL := /bin/bash
 
 PYTEST_UNIT := -m "not integration and not e2e"
 
-.PHONY: help setup up down reset-db psql infra-check api web web-build openapi migrate revision downgrade lint typecheck test test-int check fmt
+.PHONY: help setup up down reset-db psql infra-check api web web-build storybook storybook-build openapi migrate revision downgrade lint typecheck test test-int check fmt
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2}'
 
-setup: ## Install python + js dependencies and git hooks
+setup: ## Install python + js dependencies, test browser and git hooks
 	uv sync
 	pnpm install
+	pnpm --filter web exec playwright install chromium-headless-shell
 	pre-commit install --install-hooks
 
 COMPOSE := docker compose -f infra/docker-compose.yml $(if $(wildcard .env),--env-file .env,)
@@ -42,6 +43,12 @@ web: ## Run the web app with hot reload on :3000 (proxies /api to :8000)
 web-build: ## Production build of the web app
 	pnpm --filter web build
 
+storybook: ## Run Storybook on :6006
+	pnpm --filter web storybook
+
+storybook-build: ## Build the static Storybook into apps/web/storybook-static
+	pnpm --filter web storybook:build
+
 openapi: ## Export the OpenAPI schema for the web client
 	uv run python scripts/export_openapi.py
 
@@ -68,8 +75,9 @@ typecheck: ## Static type checks
 	uv run pyright
 	pnpm --filter web typecheck
 
-test: ## Unit tests
+test: ## Unit tests (python, web units and stories with accessibility checks)
 	uv run pytest $(PYTEST_UNIT) -q
+	pnpm --filter web test
 
 test-int: ## Integration tests (needs `make up`)
 	uv run pytest -m integration -q

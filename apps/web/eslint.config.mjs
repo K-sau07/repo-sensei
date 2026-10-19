@@ -3,6 +3,7 @@ import nextVitals from "eslint-config-next/core-web-vitals";
 import nextTs from "eslint-config-next/typescript";
 import prettier from "eslint-config-prettier/flat";
 import jsxA11y from "eslint-plugin-jsx-a11y";
+import storybook from "eslint-plugin-storybook";
 import tseslint from "typescript-eslint";
 
 export default defineConfig([
@@ -42,6 +43,7 @@ export default defineConfig([
       "import/no-duplicates": "error",
     },
   },
+  ...storybook.configs["flat/recommended"],
   {
     files: ["**/*.{js,mjs}"],
     extends: [tseslint.configs.disableTypeChecked],
