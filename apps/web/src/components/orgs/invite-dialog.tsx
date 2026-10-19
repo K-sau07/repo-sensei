@@ -81,6 +81,8 @@ export function InviteDialog({ org, myRole }: { org: string; myRole: Role }) {
   return (
     <Dialog
       open={open}
+      // The link is shown once: a stray click outside mustn't throw it away (Escape still closes).
+      disablePointerDismissal={link !== null}
       onOpenChange={(next) => {
         setOpen(next);
         if (!next) reset();

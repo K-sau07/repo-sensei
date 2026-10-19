@@ -14,12 +14,24 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { roleAtLeast, useOrgRole } from "@/hooks/use-org-role";
 import { $api, api } from "@/lib/api/client";
 import { ApiError } from "@/lib/api/errors";
-import type { Org, Role } from "@/lib/api/types";
+import type { Me, Org, Role } from "@/lib/api/types";
 import { SLUG_MESSAGES } from "@/lib/orgs/slug";
 import { queryKeys } from "@/lib/query/keys";
 import { orgPath } from "@/lib/routes";
 
 import { SlugField, useSlugStatus } from "./slug-field";
+
+/** ``me`` with the org at ``oldSlug`` also listed under its saved slug (both work until the
+ * next refetch). */
+export function withRenamedOrg(me: Me, oldSlug: string, saved: Org): Me {
+  const old = me.orgs.find((o) => o.slug === oldSlug);
+  if (!old) return me;
+  return {
+    ...me,
+    orgs: [...me.orgs, { ...old, slug: saved.slug, name: saved.name }],
+    last_org_slug: saved.slug,
+  };
+}
 
 export function OrgGeneralSettings() {
   const { slug, role } = useOrgRole();
@@ -71,9 +83,20 @@ function GeneralForm({ org, role, onSaved }: { org: Org; role: Role | null; onSa
         body: { name: name.trim(), ...(slugChanged ? { slug: newSlug } : {}) },
       });
       toast.success("Settings saved");
-      await queryClient.invalidateQueries({ queryKey: queryKeys.me() });
-      if (data && data.slug !== org.slug) router.replace(orgPath(data.slug, "settings/general"));
-      else onSaved();
+      if (data && data.slug !== org.slug) {
+        // While the URL moves from the old slug to the new one, both must be valid, or the org
+        // gate shows "not found" for a moment. Add the new slug to the cached /me, mark it stale
+        // without refetching, and navigate: the next page refetches the truth once it's there.
+        queryClient.setQueryData<Me>(
+          queryKeys.me(),
+          (me) => me && withRenamedOrg(me, org.slug, data),
+        );
+        void queryClient.invalidateQueries({ queryKey: queryKeys.me(), refetchType: "none" });
+        router.replace(orgPath(data.slug, "settings/general"));
+      } else {
+        await queryClient.invalidateQueries({ queryKey: queryKeys.me() });
+        onSaved();
+      }
     } catch (error) {
       toast.error(
         error instanceof ApiError ? (SLUG_MESSAGES[error.code] ?? error.message) : "Couldn't save.",

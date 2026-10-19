@@ -8,6 +8,7 @@ import { useState } from "react";
 
 import { ErrorState } from "@/components/feedback/error-state";
 import { DelayedSpinner } from "@/components/primitives/delayed-spinner";
+import { signOut } from "@/components/shell/sign-out";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { $api, api } from "@/lib/api/client";
 import { ApiError } from "@/lib/api/errors";
@@ -117,9 +118,10 @@ export function InvitationView() {
         </Link>
       ) : me.isPending ? null : me.data ? (
         error?.code === "invitation_wrong_account" ? (
-          <Link href="/logout" className={buttonVariants({ variant: "outline" })}>
+          // Back to this invitation afterwards, to sign in with the invited account.
+          <Button variant="outline" onClick={() => void signOut(next as `/${string}`)}>
             Sign out
-          </Link>
+          </Button>
         ) : (
           <Button size="lg" disabled={accepting} onClick={() => void accept()}>
             {accepting ? "Joining…" : `Join ${invitation.org_name}`}

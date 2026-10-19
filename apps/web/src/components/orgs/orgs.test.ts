@@ -40,17 +40,27 @@ describe("member permissions (same rules as the API)", () => {
     ["member", "viewer", false],
     ["viewer", "member", false],
   ] as const)("a %s managing a %s: %s", (mine, theirs, allowed) => {
-    const result = memberPermissions(mine, "me", member("them", theirs));
+    const result = memberPermissions(mine, "me", member("them", theirs), 2);
     expect(result.canChangeRole).toBe(allowed);
     expect(result.canRemove).toBe(allowed);
   });
 
   it("you leave rather than remove yourself", () => {
-    expect(memberPermissions("owner", "me", member("me", "owner"))).toEqual({
+    expect(memberPermissions("owner", "me", member("me", "owner"), 2)).toEqual({
       canChangeRole: false,
       canRemove: false,
       canLeave: true,
+      lastOwner: false,
     });
+  });
+
+  it("the last owner can't leave", () => {
+    expect(memberPermissions("owner", "me", member("me", "owner"), 1)).toMatchObject({
+      canLeave: false,
+      lastOwner: true,
+    });
+    // Anyone else can always leave.
+    expect(memberPermissions("member", "me", member("me", "member"), 1).canLeave).toBe(true);
   });
 
   it("only owners can hand out the owner role", () => {

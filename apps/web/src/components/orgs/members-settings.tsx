@@ -7,6 +7,17 @@ import { toast } from "sonner";
 
 import { ErrorState } from "@/components/feedback/error-state";
 import { RelativeTime } from "@/components/primitives/relative-time";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -38,13 +49,67 @@ import { assignableRoles, ROLE_DESCRIPTIONS, ROLE_LABELS } from "./roles";
 const problem = (error: unknown) =>
   error instanceof ApiError ? error.message : "Something went wrong. Please try again.";
 
-/** What the signed-in user may do to one member row (mirrors the API's rules). */
-export function memberPermissions(myRole: Role | null, me: string, member: Member) {
+/** What the signed-in user may do to one member row (mirrors the API's rules). The last owner
+ * can't leave: someone else must be made an owner first. */
+export function memberPermissions(
+  myRole: Role | null,
+  me: string,
+  member: Member,
+  ownerCount: number,
+) {
   const self = member.user_id === me;
   const admin = roleAtLeast(myRole, "admin");
   const touchesOwner = member.role === "owner";
   const allowed = admin && !self && (!touchesOwner || myRole === "owner");
-  return { canChangeRole: allowed, canRemove: allowed, canLeave: self };
+  const lastOwner = self && member.role === "owner" && ownerCount <= 1;
+  return { canChangeRole: allowed, canRemove: allowed, canLeave: self && !lastOwner, lastOwner };
+}
+
+/** A button that asks before doing something hard to undo. */
+function ConfirmButton({
+  label,
+  srLabel,
+  title,
+  description,
+  confirm,
+  disabled,
+  onConfirm,
+}: {
+  label: string;
+  srLabel?: string;
+  title: string;
+  description: string;
+  confirm: string;
+  disabled: boolean;
+  onConfirm: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <AlertDialog open={open} onOpenChange={setOpen}>
+      <AlertDialogTrigger render={<Button variant="outline" size="sm" disabled={disabled} />}>
+        {label}
+        {srLabel && <span className="sr-only"> {srLabel}</span>}
+      </AlertDialogTrigger>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>{title}</AlertDialogTitle>
+          <AlertDialogDescription>{description}</AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <AlertDialogAction
+            variant="destructive"
+            onClick={() => {
+              setOpen(false);
+              onConfirm();
+            }}
+          >
+            {confirm}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
 }
 
 function MemberRow({
@@ -52,16 +117,24 @@ function MemberRow({
   member,
   myRole,
   myId,
+  ownerCount,
 }: {
   org: string;
   member: Member;
   myRole: Role | null;
   myId: string;
+  ownerCount: number;
 }) {
   const queryClient = useQueryClient();
   const router = useRouter();
   const [busy, setBusy] = useState(false);
-  const { canChangeRole, canRemove, canLeave } = memberPermissions(myRole, myId, member);
+  const [pendingOwner, setPendingOwner] = useState(false);
+  const { canChangeRole, canRemove, canLeave, lastOwner } = memberPermissions(
+    myRole,
+    myId,
+    member,
+    ownerCount,
+  );
   const name = member.name ?? member.login;
   const refresh = () => queryClient.invalidateQueries({ queryKey: queryKeys.members(org) });
 
@@ -73,6 +146,10 @@ function MemberRow({
       await refresh();
     } catch (error) {
       toast.error(problem(error));
+      // Our own role may have changed elsewhere: refresh it so the controls match.
+      if (error instanceof ApiError && (error.status === 403 || error.status === 404)) {
+        await Promise.all([refresh(), queryClient.invalidateQueries({ queryKey: queryKeys.me() })]);
+      }
     } finally {
       setBusy(false);
     }
@@ -133,7 +210,10 @@ function MemberRow({
             value={member.role}
             disabled={busy}
             onValueChange={(value) => {
-              if (value && value !== member.role) void changeRole(value);
+              if (!value || value === member.role) return;
+              // Owners can do everything, including removing other owners: ask first.
+              if (value === "owner") setPendingOwner(true);
+              else void changeRole(value);
             }}
           >
             <SelectTrigger size="sm" className="w-28" aria-label={`Role of ${name}`}>
@@ -156,14 +236,49 @@ function MemberRow({
       </TableCell>
       <TableCell className="text-right">
         {canLeave ? (
-          <Button variant="outline" size="sm" disabled={busy} onClick={() => void leave()}>
-            Leave
-          </Button>
+          <ConfirmButton
+            label="Leave"
+            title={`Leave ${org}?`}
+            description="You'll lose access to this organization until someone invites you again."
+            confirm="Leave"
+            disabled={busy}
+            onConfirm={() => void leave()}
+          />
+        ) : lastOwner ? (
+          <span className="text-xs text-fg-muted">Make someone else an owner to leave</span>
         ) : canRemove ? (
-          <Button variant="outline" size="sm" disabled={busy} onClick={() => void remove()}>
-            Remove<span className="sr-only"> {name}</span>
-          </Button>
+          <ConfirmButton
+            label="Remove"
+            srLabel={name}
+            title={`Remove ${name}?`}
+            description={`${name} loses access to this organization right away. You can invite them again later.`}
+            confirm="Remove"
+            disabled={busy}
+            onConfirm={() => void remove()}
+          />
         ) : null}
+        <AlertDialog open={pendingOwner} onOpenChange={setPendingOwner}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Make {name} an owner?</AlertDialogTitle>
+              <AlertDialogDescription>
+                Owners can do everything, including deleting the organization and removing other
+                owners.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                onClick={() => {
+                  setPendingOwner(false);
+                  void changeRole("owner");
+                }}
+              >
+                Make owner
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </TableCell>
     </TableRow>
   );
@@ -222,6 +337,7 @@ export function MembersSettings() {
     params: { path: { org: slug } },
   });
   const isAdmin = roleAtLeast(role, "admin");
+  const ownerCount = members.data?.filter((member) => member.role === "owner").length ?? 0;
 
   if (members.isPending || !me.data) {
     return (
@@ -266,6 +382,7 @@ export function MembersSettings() {
               member={member}
               myRole={role}
               myId={me.data.id}
+              ownerCount={ownerCount}
             />
           ))}
         </TableBody>

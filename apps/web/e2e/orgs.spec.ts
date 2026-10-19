@@ -4,6 +4,15 @@ import type { Page } from "@playwright/test";
 import { expect, test, useMockScenario } from "./fixtures";
 
 async function noAxeViolations(page: Page) {
+  // Check the settled page: colors mid fade-in (dialogs, toasts) aren't what people read.
+  await page.evaluate(() =>
+    Promise.all(
+      document
+        .getAnimations()
+        .filter((animation) => animation.effect?.getComputedTiming().iterations !== Infinity)
+        .map((animation) => animation.finished.catch(() => undefined)),
+    ),
+  );
   const { violations } = await new AxeBuilder({ page }).analyze();
   expect(violations.map((v) => `${v.id}: ${v.nodes.map((n) => n.html).join(" | ")}`)).toEqual([]);
 }
@@ -96,9 +105,53 @@ test("invite, accept as the invitee, change their role, then remove them", async
   await page.getByRole("option", { name: "Admin" }).click();
   await expect(page.getByText("A Friend is now admin")).toBeVisible();
 
+  // Removing asks first; cancelling keeps them.
   await row.getByRole("button", { name: "Remove A Friend" }).click();
+  const confirm = page.getByRole("alertdialog", { name: "Remove A Friend?" });
+  await expect(confirm).toBeVisible();
+  await noAxeViolations(page);
+  await confirm.getByRole("button", { name: "Cancel" }).click();
+  await expect(row).toBeVisible();
+  await row.getByRole("button", { name: "Remove A Friend" }).click();
+  await confirm.getByRole("button", { name: "Remove" }).click();
   await expect(page.getByText("Removed A Friend")).toBeVisible();
+  await expect(confirm).toHaveCount(0);
   await expect(page.getByRole("row").filter({ hasText: "@friend" })).toHaveCount(0);
+});
+
+test("the only owner is told how to leave instead of being offered a failing button", async ({
+  page,
+}) => {
+  await page.goto("/acme/settings/members");
+  const me = page.getByRole("row").filter({ hasText: "You" });
+  await expect(me.getByText("Make someone else an owner to leave")).toBeVisible();
+  await expect(me.getByRole("button", { name: "Leave" })).toHaveCount(0);
+});
+
+test("renaming the org's URL moves you there without a not-found flash", async ({ page }) => {
+  await page.goto("/acme/settings/general");
+  const notFound: string[] = [];
+  // Record any moment the gate replaces the page while the slug changes.
+  await page.exposeFunction("sawNotFound", () => notFound.push("seen"));
+  await page.evaluate(() => {
+    new MutationObserver(() => {
+      if (document.body.innerText.includes("Organization not found")) {
+        void (window as unknown as { sawNotFound: () => Promise<void> }).sawNotFound();
+      }
+    }).observe(document.body, { childList: true, subtree: true, characterData: true });
+  });
+  const url = page.getByLabel("URL");
+  await url.fill("acme-renamed");
+  await expect(page.getByText("Available.")).toBeVisible();
+  await page.getByRole("button", { name: "Save changes" }).click();
+  await expect(page).toHaveURL(/\/acme-renamed\/settings\/general$/);
+  await expect(page.getByLabel("URL")).toHaveValue("acme-renamed");
+  // The switcher and links follow the new slug.
+  await expect(page.getByRole("link", { name: "General" })).toHaveAttribute(
+    "href",
+    "/acme-renamed/settings/general",
+  );
+  expect(notFound).toEqual([]);
 });
 
 test("members who aren't admins see why they can't manage the org", async ({ context, page }) => {
@@ -133,7 +186,7 @@ test.describe("invitation links", () => {
     await expect(page.getByRole("alert").filter({ hasText: "different account" })).toContainText(
       "@octo",
     );
-    await expect(page.getByRole("link", { name: "Sign out" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Sign out" })).toBeVisible();
   });
 
   test.describe("signed out", () => {

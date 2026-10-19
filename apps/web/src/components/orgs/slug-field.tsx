@@ -38,7 +38,10 @@ export function useSlugStatus(slug: string, current?: string) {
   if (slug === "" || unchanged) status = "idle";
   else if (localProblem) status = "unavailable";
   else if (debounced !== slug || check.isFetching) status = "checking";
-  else if (check.data) {
+  else if (check.isError) {
+    status = "unavailable";
+    reason = "check_failed";
+  } else if (check.data) {
     status = check.data.available ? "available" : "unavailable";
     reason = check.data.reason ?? null;
   }
