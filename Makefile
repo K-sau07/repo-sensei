@@ -3,7 +3,7 @@ SHELL := /bin/bash
 
 PYTEST_UNIT := -m "not integration and not e2e"
 
-.PHONY: help setup up down reset-db psql infra-check api openapi migrate revision downgrade lint typecheck test test-int check fmt
+.PHONY: help setup up down reset-db psql infra-check api web web-build openapi migrate revision downgrade lint typecheck test test-int check fmt
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2}'
@@ -36,6 +36,12 @@ infra-check: ## Verify extensions, redis and buckets
 api: ## Run the API with auto-reload on :8000
 	uv run uvicorn sensei_api.app:create_app --factory --reload --port 8000
 
+web: ## Run the web app with hot reload on :3000 (proxies /api to :8000)
+	pnpm --filter web dev
+
+web-build: ## Production build of the web app
+	pnpm --filter web build
+
 openapi: ## Export the OpenAPI schema for the web client
 	uv run python scripts/export_openapi.py
 
@@ -56,9 +62,11 @@ lint: ## Lint and format-check python and web
 	uv run ruff check .
 	uv run ruff format --check .
 	pnpm fmt:check
+	pnpm --filter web lint
 
 typecheck: ## Static type checks
 	uv run pyright
+	pnpm --filter web typecheck
 
 test: ## Unit tests
 	uv run pytest $(PYTEST_UNIT) -q
@@ -72,3 +80,4 @@ fmt: ## Auto-format everything
 	uv run ruff check --fix .
 	uv run ruff format .
 	pnpm fmt
+	pnpm --filter web exec eslint --fix .

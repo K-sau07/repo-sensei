@@ -24,8 +24,8 @@ repos:
       - id: no-private-paths
         name: block private files
         language: fail
-        entry: "private files must never be committed (docs/, evals/private/, *.private.md, .env)"
-        files: ^(docs/|evals/private/)|\.private\.md$|(^|/)\.env$
+        entry: "private files must never be committed (docs/, evals/private/, *.private.md, .env, agent instruction files)"
+        files: ^(docs/|evals/private/)|\.private\.md$|(^|/)(\.env|AGENTS\.md|CLAUDE\.md)$
 
       - id: ruff-check
         name: ruff check

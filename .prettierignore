@@ -5,6 +5,7 @@ apps/web/src/lib/api/schema.d.ts
 apps/web/src/lib/api/openapi.json
 
 # build outputs
+next-env.d.ts
 .next/
 out/
 storybook-static/

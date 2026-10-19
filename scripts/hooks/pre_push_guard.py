@@ -16,7 +16,9 @@ import sys
 
 from commit_msg_guard import check_author, check_message
 
-PRIVATE_PATH_RE = re.compile(r"^(docs/|evals/private/)|\.private\.md$|(^|/)\.env$")
+PRIVATE_PATH_RE = re.compile(
+    r"^(docs/|evals/private/)|\.private\.md$|(^|/)(\.env|AGENTS\.md|CLAUDE\.md)$"
+)
 ZERO_SHA = "0" * 40
 
 
