@@ -7,7 +7,6 @@ import { type ReactNode } from "react";
 
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryProvider } from "@/lib/query/provider";
-import { MockGate } from "@/mocks/mock-gate";
 
 export const THEMES = ["dark", "light"] as const;
 export const DEFAULT_THEME = "dark";
@@ -33,13 +32,11 @@ export function Providers({ children }: { children: ReactNode }) {
       disableTransitionOnChange
     >
       <NuqsAdapter>
-        <MockGate>
-          <QueryProvider>
-            <MotionProvider>
-              <TooltipProvider>{children}</TooltipProvider>
-            </MotionProvider>
-          </QueryProvider>
-        </MockGate>
+        <QueryProvider>
+          <MotionProvider>
+            <TooltipProvider>{children}</TooltipProvider>
+          </MotionProvider>
+        </QueryProvider>
       </NuqsAdapter>
     </ThemeProvider>
   );

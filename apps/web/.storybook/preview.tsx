@@ -27,14 +27,21 @@ const preview: Preview = {
     a11y: { test: "error", context: "body" },
   },
   decorators: [
-    (Story) => (
+    (Story, context) => (
       // A fresh query cache per story, so stories never share data.
       <QueryClientProvider client={makeQueryClient()}>
         <MotionProvider>
           <TooltipProvider>
-            <main className="min-h-dvh bg-bg p-8 font-sans text-fg">
-              <Story />
-            </main>
+            {/* `bare` stories (like the app shell) bring their own <main> and layout. */}
+            {context.parameters.bare === true ? (
+              <div className="min-h-dvh bg-bg font-sans text-fg">
+                <Story />
+              </div>
+            ) : (
+              <main className="min-h-dvh bg-bg p-8 font-sans text-fg">
+                <Story />
+              </main>
+            )}
           </TooltipProvider>
         </MotionProvider>
       </QueryClientProvider>

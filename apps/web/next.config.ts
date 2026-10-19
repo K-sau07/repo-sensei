@@ -42,6 +42,8 @@ const nextConfig: NextConfig = {
   // Always defined, so Next inlines it and dead-code elimination drops mock mode from real builds.
   env: { NEXT_PUBLIC_MOCKS: process.env.NEXT_PUBLIC_MOCKS === "1" ? "1" : "0" },
   poweredByHeader: false,
+  // Keep the dev badge clear of the sidebar's account menu (bottom-left).
+  devIndicators: { position: "bottom-right" },
   agentRules: false,
   reactStrictMode: true,
   reactCompiler: true,

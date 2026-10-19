@@ -11,6 +11,8 @@ next-env.d.ts
 /coverage
 /storybook-static
 /.vitest
+/playwright-report
+/test-results
 
 # local env files and keys
 .env*

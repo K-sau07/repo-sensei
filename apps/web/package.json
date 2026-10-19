@@ -13,7 +13,8 @@
     "test:unit": "vitest run --project unit",
     "storybook": "storybook dev --port 6006 --no-open",
     "storybook:build": "storybook build --output-dir storybook-static",
-    "gen:api": "openapi-typescript src/lib/api/openapi.json -o src/lib/api/schema.d.ts"
+    "gen:api": "openapi-typescript src/lib/api/openapi.json -o src/lib/api/schema.d.ts",
+    "e2e": "playwright test"
   },
   "dependencies": {
     "@base-ui/react": "1.9.0",
@@ -32,6 +33,7 @@
     "openapi-react-query": "0.5.4",
     "react": "19.3.1",
     "react-dom": "19.3.1",
+    "react-hotkeys-hook": "5.3.3",
     "react-resizable-panels": "4.14.6",
     "shadcn": "4.22.1",
     "sonner": "2.0.8",
@@ -39,8 +41,10 @@
     "zustand": "5.0.15"
   },
   "devDependencies": {
+    "@axe-core/playwright": "4.14.0",
     "@eslint/js": "9.39.5",
     "@fontsource/commit-mono": "5.3.0",
+    "@playwright/test": "1.64.1",
     "@storybook/addon-a11y": "10.6.2",
     "@storybook/addon-docs": "10.6.2",
     "@storybook/addon-themes": "10.6.2",

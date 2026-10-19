@@ -3,7 +3,7 @@ SHELL := /bin/bash
 
 PYTEST_UNIT := -m "not integration and not e2e"
 
-.PHONY: help setup up down reset-db psql infra-check api web web-build storybook storybook-build openapi migrate revision downgrade lint typecheck test test-int check fmt
+.PHONY: help setup up down reset-db psql infra-check api web web-build storybook storybook-build e2e openapi migrate revision downgrade lint typecheck test test-int check fmt
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2}'
@@ -11,7 +11,7 @@ help: ## Show available targets
 setup: ## Install python + js dependencies, test browser and git hooks
 	uv sync
 	pnpm install
-	pnpm --filter web exec playwright install chromium-headless-shell
+	pnpm --filter web exec playwright install chromium chromium-headless-shell
 	pre-commit install --install-hooks
 
 COMPOSE := docker compose -f infra/docker-compose.yml $(if $(wildcard .env),--env-file .env,)
@@ -48,6 +48,9 @@ storybook: ## Run Storybook on :6006
 
 storybook-build: ## Build the static Storybook into apps/web/storybook-static
 	pnpm --filter web storybook:build
+
+e2e: ## Browser tests of the web app against the mock API (no backend needed)
+	pnpm --filter web e2e
 
 openapi: ## Export the OpenAPI schema and regenerate the web client types
 	uv run python scripts/export_openapi.py
