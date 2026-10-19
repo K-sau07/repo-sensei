@@ -54,10 +54,11 @@ def _d(value: str) -> Decimal:
     return Decimal(value)
 
 
-# Anthropic rates: models page as of the version date (cache writes are the 5-minute rate).
-# Voyage rates: Voyage pricing page. "sensei/*" rows are our own infrastructure cost estimates.
+# Anthropic rates: models and prompt-caching pricing as of the version date. Cache writes are the
+# 5-minute rate (1.25x input); cache reads are 0.1x input, except Opus 5.5 (0.05x) and Fable 5.1
+# (0.025x). Voyage rates: Voyage pricing page. "sensei/*" rows are our own infrastructure estimates.
 DEFAULT_PRICE_TABLE = PriceTable(
-    version="2026-10-18",
+    version="2026-10-19",
     prices={
         "anthropic/claude-haiku-5-5": ModelPrice(
             input=_d("0.10"),
@@ -73,7 +74,7 @@ DEFAULT_PRICE_TABLE = PriceTable(
         "anthropic/claude-sonnet-5-5": ModelPrice(
             input=_d("2"),
             output=_d("10"),
-            cache_read=_d("0.10"),
+            cache_read=_d("0.20"),
             cache_write=_d("2.50"),
             batch_multiplier=_d("0.5"),
         ),
@@ -87,7 +88,7 @@ DEFAULT_PRICE_TABLE = PriceTable(
         "anthropic/claude-fable-5-1": ModelPrice(
             input=_d("10"),
             output=_d("50"),
-            cache_read=_d("0.50"),
+            cache_read=_d("0.25"),
             cache_write=_d("12.50"),
             batch_multiplier=_d("0.5"),
         ),

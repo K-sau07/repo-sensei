@@ -99,6 +99,35 @@ def test_unknown_models_have_no_price(calc: CostCalculator) -> None:
     assert calc.price_for("openai", "claude-sonnet-5-5") is None
 
 
+# Published list prices, USD per million tokens: (input, output, cache read, 5-minute cache write).
+# Kept separate from the table on purpose, so a typo in either one fails here.
+ANTHROPIC_LIST_PRICES = {
+    "claude-haiku-5-5": ("0.10", "0.50", "0.01", "0.125"),
+    "claude-sonnet-5-5": ("2", "10", "0.20", "2.50"),
+    "claude-opus-5-5": ("4", "20", "0.20", "5"),
+    "claude-fable-5-1": ("10", "50", "0.25", "12.50"),
+}
+
+
+@pytest.mark.parametrize(("model", "prices"), ANTHROPIC_LIST_PRICES.items())
+def test_anthropic_rates_match_list_prices(
+    calc: CostCalculator, model: str, prices: tuple[str, str, str, str]
+) -> None:
+    price = calc.price_for("anthropic", model)
+    assert price is not None
+    expected = tuple(Decimal(p) for p in prices)
+    assert (price.input, price.output, price.cache_read, price.cache_write) == expected
+    assert price.batch_multiplier == Decimal("0.5")
+    # 10k tokens of each kind (below Haiku's long-context threshold) cost 10k x the rate.
+    costs = (
+        calc.cost("anthropic", model, tokens_in=10_000),
+        calc.cost("anthropic", model, tokens_out=10_000),
+        calc.cost("anthropic", model, tokens_cache_read=10_000),
+        calc.cost("anthropic", model, tokens_cache_write=10_000),
+    )
+    assert costs == tuple((rate * 10_000 / MTOK).quantize(Decimal("0.000001")) for rate in expected)
+
+
 def test_every_default_price_is_non_negative() -> None:
     for key, price in DEFAULT_PRICE_TABLE.prices.items():
         rates = [price.input, price.output, price.cache_read, price.cache_write, price.per_unit]
