@@ -11,6 +11,7 @@ export const RESERVED_SLUGS = new Set([
   "api",
   "app",
   "auth",
+  "benchmarks",
   "blog",
   "changelog",
   "dashboard",
@@ -22,6 +23,7 @@ export const RESERVED_SLUGS = new Set([
   "invite",
   "login",
   "logout",
+  "maintenance",
   "new",
   "oauth",
   "onboarding",
@@ -64,4 +66,5 @@ export const SLUG_MESSAGES: Record<string, string> = {
     "Use 3–39 lowercase letters, digits or single hyphens, starting and ending with a letter or digit.",
   slug_reserved: "That name is reserved.",
   slug_taken: "That name is already taken.",
+  check_failed: "Couldn't check that name. Try again in a moment.",
 };

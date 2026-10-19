@@ -49,7 +49,8 @@ _QUERY_SECRET_RE = re.compile(
 # Bearer links carry their secret in the path: /invite/<token>, /invitations/<token>, /s/<token>.
 # UUIDs (e.g. /orgs/acme/invitations/<id>) are record ids, not secrets, and stay readable.
 _PATH_SECRET_RE = re.compile(
-    r"(?P<prefix>/(?:invite|invitations|s)/)"
+    # Also URL-encoded, as in ?next=%2Finvite%2F<token>.
+    r"(?P<prefix>(?:/|%2[fF])(?:invite|invitations|s)(?:/|%2[fF]))"
     r"(?![0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b)"
     r"[A-Za-z0-9_\-]{16,}"
 )

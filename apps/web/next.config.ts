@@ -48,7 +48,19 @@ const nextConfig: NextConfig = {
       },
     },
   },
-  headers: () => Promise.resolve([{ source: "/:path*", headers: securityHeaders }]),
+  headers: () =>
+    Promise.resolve([
+      { source: "/:path*", headers: securityHeaders },
+      // An invite URL is a credential: never send it on as a Referer (not even to our own API),
+      // and keep it out of search engines. Later entries override the same key above.
+      {
+        source: "/invite/:path*",
+        headers: [
+          { key: "Referrer-Policy", value: "no-referrer" },
+          { key: "X-Robots-Tag", value: "noindex, nofollow" },
+        ],
+      },
+    ]),
   rewrites: () =>
     Promise.resolve(
       apiProxyOrigin

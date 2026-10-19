@@ -34,10 +34,10 @@ from sensei_core.models import Invitation, Membership, Org, Role, User
 SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{1,37}[a-z0-9]$")
 RESERVED_SLUGS = frozenset(
     {
-        "admin", "api", "app", "auth", "blog", "changelog", "dashboard", "device", "docs",
-        "explore", "help", "internal", "invite", "login", "logout", "new", "oauth", "onboarding",
-        "pricing", "privacy", "product", "s", "security", "settings", "signup", "static",
-        "status", "support", "terms", "www",
+        "admin", "api", "app", "auth", "benchmarks", "blog", "changelog", "dashboard", "device",
+        "docs", "explore", "help", "internal", "invite", "login", "logout", "maintenance", "new",
+        "oauth", "onboarding", "pricing", "privacy", "product", "s", "security", "settings",
+        "signup", "static", "status", "support", "terms", "www",
     }
 )  # fmt: skip
 INVITE_TTL = timedelta(days=7)
