@@ -17,7 +17,7 @@ from pydantic import SecretStr
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from sensei_api.auth import cookie_names
+from sensei_api.auth import cookie_names, oauth_state_cookie_name
 from sensei_api.routers.auth import safe_next
 from sensei_core.auth.github_login import fresh_access_token, store_tokens
 from sensei_core.config import GitHubSettings, Settings
@@ -98,8 +98,10 @@ def _github_mocks(
 async def test_start_uses_pkce_and_stores_state(fake_redis: FakeAsyncRedis) -> None:
     async with httpx.AsyncClient() as http:
         oauth = GitHubOAuth(GH_SETTINGS, fake_redis, http, redirect_uri="https://app/cb")
-        url = urlsplit(await oauth.start("/acme"))
+        raw_url, state = await oauth.start("/acme")
+        url = urlsplit(raw_url)
     query = {k: v[0] for k, v in parse_qs(url.query).items()}
+    assert query["state"] == state
     assert url.netloc == "github.com"
     assert query["code_challenge_method"] == "S256"
     assert query["redirect_uri"] == "https://app/cb"
@@ -112,10 +114,10 @@ async def test_state_is_single_use(fake_redis: FakeAsyncRedis) -> None:
     async with httpx.AsyncClient() as http, respx.mock(assert_all_called=False) as router:
         _github_mocks(router)
         oauth = GitHubOAuth(GH_SETTINGS, fake_redis, http, redirect_uri="https://app/cb")
-        state = parse_qs(urlsplit(await oauth.start("/")).query)["state"][0]
-        await oauth.finish("code-1", state)
+        _, state = await oauth.start("/")
+        await oauth.finish("code-1", state, state)
         with pytest.raises(OAuthError) as exc:
-            await oauth.finish("code-1", state)
+            await oauth.finish("code-1", state, state)
     assert exc.value.code == "invalid_state"
 
 
@@ -123,8 +125,9 @@ async def test_pkce_verifier_matches_challenge(fake_redis: FakeAsyncRedis) -> No
     async with httpx.AsyncClient() as http, respx.mock(assert_all_called=False) as router:
         token_route = _github_mocks(router)
         oauth = GitHubOAuth(GH_SETTINGS, fake_redis, http, redirect_uri="https://app/cb")
-        query = parse_qs(urlsplit(await oauth.start("/")).query)
-        await oauth.finish("code-1", query["state"][0])
+        url, state = await oauth.start("/")
+        query = parse_qs(urlsplit(url).query)
+        await oauth.finish("code-1", state, state)
     sent = parse_qs(token_route.calls.last.request.content.decode())
     verifier = sent["code_verifier"][0]
     expected = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=")
@@ -135,10 +138,55 @@ async def test_token_errors_are_reported(fake_redis: FakeAsyncRedis) -> None:
     async with httpx.AsyncClient() as http, respx.mock(assert_all_called=False) as router:
         _github_mocks(router, token_body={"error": "bad_verification_code"})
         oauth = GitHubOAuth(GH_SETTINGS, fake_redis, http, redirect_uri="https://app/cb")
-        state = parse_qs(urlsplit(await oauth.start("/")).query)["state"][0]
+        _, state = await oauth.start("/")
         with pytest.raises(OAuthError) as exc:
-            await oauth.finish("bad", state)
+            await oauth.finish("bad", state, state)
     assert exc.value.code == "bad_verification_code"
+
+
+@pytest.mark.parametrize("browser_state", [None, "", "someone-elses-state"])
+async def test_state_must_come_from_the_same_browser(
+    fake_redis: FakeAsyncRedis, browser_state: str | None
+) -> None:
+    async with httpx.AsyncClient() as http, respx.mock(assert_all_called=False) as router:
+        token_route = _github_mocks(router)
+        oauth = GitHubOAuth(GH_SETTINGS, fake_redis, http, redirect_uri="https://app/cb")
+        _, state = await oauth.start("/")
+        with pytest.raises(OAuthError) as exc:
+            await oauth.finish("code-1", state, browser_state)
+    assert exc.value.code == "state_mismatch"
+    assert not token_route.called
+    # The legitimate browser can still finish its own sign-in.
+    assert await fake_redis.exists(f"oauth:github:state:{state}") == 1
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        httpx.Response(200, text="<html>maintenance</html>"),
+        httpx.Response(200, json={"access_token": "ghu_x", "expires_in": "soon"}),
+        httpx.Response(200, json=["not", "an", "object"]),
+    ],
+)
+async def test_malformed_token_responses_are_oauth_errors(
+    fake_redis: FakeAsyncRedis, response: httpx.Response
+) -> None:
+    async with httpx.AsyncClient() as http, respx.mock(assert_all_called=False) as router:
+        router.post(f"{GITHUB}/login/oauth/access_token").mock(return_value=response)
+        oauth = GitHubOAuth(GH_SETTINGS, fake_redis, http, redirect_uri="https://app/cb")
+        _, state = await oauth.start("/")
+        with pytest.raises(OAuthError) as exc:
+            await oauth.finish("code-1", state, state)
+    assert exc.value.code == "token_exchange_failed"
+
+
+async def test_malformed_profile_is_an_oauth_error(fake_redis: FakeAsyncRedis) -> None:
+    async with httpx.AsyncClient() as http, respx.mock(assert_all_called=False) as router:
+        router.get(f"{GITHUB_API}/user").mock(return_value=httpx.Response(200, text="oops"))
+        oauth = GitHubOAuth(GH_SETTINGS, fake_redis, http, redirect_uri="https://app/cb")
+        with pytest.raises(OAuthError) as exc:
+            await oauth.fetch_user("token")
+    assert exc.value.code == "github_user_failed"
 
 
 async def test_email_falls_back_to_profile_when_emails_unavailable(
@@ -181,17 +229,31 @@ async def github_client(github_app: FastAPI) -> AsyncGenerator[httpx.AsyncClient
             yield client
 
 
-async def _start_login(client: httpx.AsyncClient, next_path: str) -> str:
+def _set_cookie(response: httpx.Response, name: str) -> str:
+    return next(c for c in response.headers.get_list("set-cookie") if c.startswith(f"{name}="))
+
+
+async def _start_login(app: FastAPI, client: httpx.AsyncClient, next_path: str) -> str:
+    """Start sign-in like a browser: follow nothing, but keep the state cookie (set explicitly,
+    because the test client won't send a Secure cookie over http://testserver)."""
     response = await client.get(f"{API}/auth/github/login", params={"next": next_path})
     assert response.status_code == 302
-    return parse_qs(urlsplit(response.headers["location"]).query)["state"][0]
+    state = parse_qs(urlsplit(response.headers["location"]).query)["state"][0]
+    name = oauth_state_cookie_name(app.state.settings)
+    cookie = _set_cookie(response, name)
+    assert cookie.split(";", 1)[0] == f"{name}={state}"
+    assert "HttpOnly" in cookie
+    assert "SameSite=lax" in cookie
+    assert "Max-Age=600" in cookie
+    client.cookies.set(name, state)
+    return state
 
 
 @pytest.mark.integration
 async def test_full_sign_in_flow(
     github_app: FastAPI, github_client: httpx.AsyncClient, db_session: AsyncSession
 ) -> None:
-    state = await _start_login(github_client, "/acme/langflow")
+    state = await _start_login(github_app, github_client, "/acme/langflow")
     with respx.mock(assert_all_mocked=False, assert_all_called=False) as router:
         router.route(host="testserver").pass_through()
         _github_mocks(router)
@@ -230,11 +292,36 @@ async def test_full_sign_in_flow(
 
 
 @pytest.mark.integration
+async def test_callback_from_another_browser_is_refused(
+    github_app: FastAPI, github_client: httpx.AsyncClient, db_session: AsyncSession
+) -> None:
+    """Login CSRF: an attacker's callback link must not sign the victim into the attacker's
+    account. The victim's browser lacks the attacker's state cookie."""
+    state = await _start_login(github_app, github_client, "/")
+    name = oauth_state_cookie_name(github_app.state.settings)
+    github_client.cookies.clear()  # the victim's browser
+    with respx.mock(assert_all_mocked=False, assert_all_called=False) as router:
+        router.route(host="testserver").pass_through()
+        token_route = _github_mocks(router)
+        response = await github_client.get(
+            f"{API}/auth/github/callback", params={"code": "c1", "state": state}
+        )
+    origin = github_app.state.settings.web.origin
+    assert response.headers["location"] == f"{origin}/login?error=state_mismatch"
+    assert not token_route.called
+    session_cookie, _ = cookie_names(github_app.state.settings)
+    set_cookies = response.headers.get_list("set-cookie")
+    assert not any(c.startswith(f"{session_cookie}=") for c in set_cookies)
+    assert any(c.startswith(f"{name}=") and "Max-Age=0" in c for c in set_cookies)
+    assert await db_session.scalar(select(User).where(User.github_id == 4242)) is None
+
+
+@pytest.mark.integration
 async def test_second_sign_in_updates_profile_without_duplicates(
-    github_client: httpx.AsyncClient, db_session: AsyncSession
+    github_app: FastAPI, github_client: httpx.AsyncClient, db_session: AsyncSession
 ) -> None:
     await make_user(db_session, github_id=4242, login="old-login")
-    state = await _start_login(github_client, "/")
+    state = await _start_login(github_app, github_client, "/")
     with respx.mock(assert_all_mocked=False, assert_all_called=False) as router:
         router.route(host="testserver").pass_through()
         _github_mocks(router)
@@ -258,18 +345,27 @@ async def test_failed_callbacks_redirect_to_login(
     params: dict[str, str],
     expected_error: str,
 ) -> None:
+    settings = github_app.state.settings
+    if "state" in params:  # the browser holds the matching cookie; the state itself is unknown
+        github_client.cookies.set(oauth_state_cookie_name(settings), params["state"])
     response = await github_client.get(f"{API}/auth/github/callback", params=params)
-    origin = github_app.state.settings.web.origin
     assert response.status_code == 302
-    assert response.headers["location"] == f"{origin}/login?error={expected_error}"
-    assert "set-cookie" not in response.headers
+    assert response.headers["location"] == f"{settings.web.origin}/login?error={expected_error}"
+    session_cookie, _ = cookie_names(settings)
+    set_cookies = response.headers.get_list("set-cookie")
+    assert not any(c.startswith(f"{session_cookie}=") for c in set_cookies)
+    # The attempt is over, so its state cookie is cleared.
+    assert any(
+        c.startswith(f"{oauth_state_cookie_name(settings)}=") and "Max-Age=0" in c
+        for c in set_cookies
+    )
 
 
 @pytest.mark.integration
 async def test_open_redirects_are_neutralized(
-    github_client: httpx.AsyncClient, fake_redis: FakeAsyncRedis
+    github_app: FastAPI, github_client: httpx.AsyncClient, fake_redis: FakeAsyncRedis
 ) -> None:
-    state = await _start_login(github_client, "https://evil.example/steal")
+    state = await _start_login(github_app, github_client, "https://evil.example/steal")
     stored = await fake_redis.get(f"oauth:github:state:{state}")
     assert stored is not None
     assert '"next": "/"' in str(stored)

@@ -1,20 +1,23 @@
 """GitHub App user authorization (OAuth 2.0 web flow with PKCE).
 
 Flow: ``start()`` creates a random ``state`` and PKCE verifier (kept in Redis for 10 minutes) and
-returns the GitHub authorize URL; GitHub redirects back with ``code`` + ``state``; ``finish()``
-consumes the state exactly once and exchanges the code for user tokens. GitHub App user tokens
-expire (about 8 hours) and come with a refresh token, see ``refresh()``.
+returns the GitHub authorize URL; the caller also stores ``state`` in a cookie on the browser that
+started sign-in. GitHub redirects back with ``code`` + ``state``; ``finish()`` checks the state
+against that cookie (so a callback link can't sign someone else's browser into the attacker's
+account), consumes the state exactly once and exchanges the code for user tokens. GitHub App user
+tokens expire (about 8 hours) and come with a refresh token, see ``refresh()``.
 """
 
 from __future__ import annotations
 
 import base64
 import hashlib
+import hmac
 import json
 import secrets
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, cast
 from urllib.parse import urlencode
 
 import httpx
@@ -63,7 +66,31 @@ def _challenge(verifier: str) -> str:
 
 
 def _expiry(seconds: object, now: datetime) -> datetime | None:
-    return now + timedelta(seconds=int(seconds)) if isinstance(seconds, int | str) else None
+    if seconds is None:
+        return None
+    try:
+        return now + timedelta(seconds=int(str(seconds)))
+    except ValueError:
+        raise OAuthError("token_exchange_failed", "GitHub sent an unexpected response.") from None
+
+
+def _json_object(response: httpx.Response) -> dict[str, Any] | None:
+    """The response body if it is a JSON object, else None (GitHub sometimes answers with HTML)."""
+    try:
+        body: object = response.json()
+    except ValueError:
+        return None
+    return cast("dict[str, Any]", body) if isinstance(body, dict) else None
+
+
+def _json_objects(response: httpx.Response) -> list[dict[str, Any]]:
+    """The JSON objects in a list response; anything else becomes an empty list."""
+    try:
+        body: object = response.json()
+    except ValueError:
+        return []
+    items = cast("list[object]", body) if isinstance(body, list) else []
+    return [cast("dict[str, Any]", item) for item in items if isinstance(item, dict)]
 
 
 class GitHubOAuth:
@@ -77,8 +104,9 @@ class GitHubOAuth:
         self._http = http
         self._redirect_uri = redirect_uri
 
-    async def start(self, next_path: str) -> str:
-        """Remember the login attempt and return the GitHub authorize URL."""
+    async def start(self, next_path: str) -> tuple[str, str]:
+        """Remember the login attempt; returns the GitHub authorize URL and the ``state``, which the
+        caller must bind to the browser (see ``finish``)."""
         state = secrets.token_urlsafe(32)
         verifier = secrets.token_urlsafe(64)
         payload = json.dumps({"verifier": verifier, "next": next_path})
@@ -93,10 +121,15 @@ class GitHubOAuth:
                 "allow_signup": "true",
             }
         )
-        return f"{self._settings.web_url}/login/oauth/authorize?{query}"
+        return f"{self._settings.web_url}/login/oauth/authorize?{query}", state
 
-    async def finish(self, code: str, state: str) -> tuple[PendingLogin, GitHubTokens]:
-        """Consume ``state`` (single use) and exchange ``code`` for tokens."""
+    async def finish(
+        self, code: str, state: str, browser_state: str | None
+    ) -> tuple[PendingLogin, GitHubTokens]:
+        """Check that ``state`` belongs to this browser, consume it (single use) and exchange
+        ``code`` for tokens."""
+        if not browser_state or not hmac.compare_digest(state, browser_state):
+            raise OAuthError("state_mismatch", "This sign-in was started in another browser.")
         raw = await self._redis.getdel(_STATE_KEY.format(state))
         if raw is None:
             raise OAuthError("invalid_state", "The sign-in link expired or was already used.")
@@ -124,13 +157,14 @@ class GitHubOAuth:
         response = await self._http.get(f"{self._settings.api_url}/user", headers=headers)
         if response.status_code != 200:
             raise OAuthError("github_user_failed", "Could not read your GitHub profile.")
-        profile: dict[str, Any] = response.json()
+        profile = _json_object(response)
+        if profile is None or "id" not in profile or "login" not in profile:
+            raise OAuthError("github_user_failed", "Could not read your GitHub profile.")
         email = profile.get("email")
         emails = await self._http.get(f"{self._settings.api_url}/user/emails", headers=headers)
-        if emails.status_code == 200:
-            entries: list[dict[str, Any]] = emails.json()
-            primary = next((e for e in entries if e.get("primary") and e.get("verified")), None)
-            email = primary["email"] if primary else email
+        entries = _json_objects(emails) if emails.status_code == 200 else []
+        primary = next((e for e in entries if e.get("primary") and e.get("verified")), None)
+        email = primary["email"] if primary else email
         return GitHubUser(
             id=int(profile["id"]),
             login=str(profile["login"]),
@@ -153,7 +187,7 @@ class GitHubOAuth:
             data=data,
             headers={"Accept": "application/json"},
         )
-        body: dict[str, Any] = response.json() if response.status_code == 200 else {}
+        body = (_json_object(response) if response.status_code == 200 else None) or {}
         if "access_token" not in body:
             error = str(body.get("error") or "token_exchange_failed")
             raise OAuthError(error, "GitHub did not accept the sign-in. Please try again.")

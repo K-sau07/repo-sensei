@@ -11,13 +11,19 @@ from fastapi import APIRouter, Depends, Query, Request, Response, status
 from fastapi.responses import RedirectResponse
 from redis.asyncio import Redis
 
-from sensei_api.auth import RequiredSession, Sessions, clear_session_cookies, set_session_cookies
+from sensei_api.auth import (
+    RequiredSession,
+    Sessions,
+    clear_session_cookies,
+    oauth_state_cookie_name,
+    set_session_cookies,
+)
 from sensei_api.deps import DbSession
 from sensei_api.errors import AppError
 from sensei_core.audit import AuditAction, audit
 from sensei_core.auth.github_login import complete_login
 from sensei_core.config import Settings
-from sensei_core.github.oauth import GitHubOAuth, OAuthError
+from sensei_core.github.oauth import STATE_TTL_SECONDS, GitHubOAuth, OAuthError
 from sensei_core.logging import get_logger
 from sensei_core.security.crypto import TokenCipher
 
@@ -60,15 +66,36 @@ GitHubOAuthDep = Annotated[GitHubOAuth, Depends(get_github_oauth)]
 
 
 def _web_redirect(request: Request, path: str) -> RedirectResponse:
-    return RedirectResponse(f"{_settings(request).web.origin}{path}", status_code=302)
+    response = RedirectResponse(f"{_settings(request).web.origin}{path}", status_code=302)
+    # The sign-in attempt is over either way; its state cookie must not outlive it.
+    settings = _settings(request)
+    response.delete_cookie(
+        oauth_state_cookie_name(settings), path="/", secure=settings.secure_cookies, samesite="lax"
+    )
+    return response
 
 
 @router.get("/github/login", response_class=RedirectResponse, status_code=302)
 async def github_login(
-    oauth: GitHubOAuthDep, next_path: Annotated[str | None, Query(alias="next")] = None
+    request: Request,
+    oauth: GitHubOAuthDep,
+    next_path: Annotated[str | None, Query(alias="next")] = None,
 ) -> RedirectResponse:
     """Send the browser to GitHub to authorize repo-sensei."""
-    return RedirectResponse(await oauth.start(safe_next(next_path)), status_code=302)
+    url, state = await oauth.start(safe_next(next_path))
+    response = RedirectResponse(url, status_code=302)
+    settings = _settings(request)
+    # Lax (not Strict): GitHub's redirect back to the callback is a cross-site top-level GET.
+    response.set_cookie(
+        oauth_state_cookie_name(settings),
+        state,
+        max_age=STATE_TTL_SECONDS,
+        path="/",
+        secure=settings.secure_cookies,
+        httponly=True,
+        samesite="lax",
+    )
+    return response
 
 
 @router.get("/github/callback", response_class=RedirectResponse, status_code=302)
@@ -87,7 +114,8 @@ async def github_callback(
         reason = "access_denied" if error == "access_denied" else "oauth_failed"
         return _web_redirect(request, f"/login?error={reason}")
     try:
-        pending, tokens = await oauth.finish(code, state)
+        browser_state = request.cookies.get(oauth_state_cookie_name(_settings(request)))
+        pending, tokens = await oauth.finish(code, state, browser_state)
         cipher: TokenCipher = request.app.state.token_cipher
         user = await complete_login(db, cipher, oauth, tokens)
     except OAuthError as exc:
@@ -119,6 +147,13 @@ async def logout(
     request: Request, active: RequiredSession, db: DbSession, sessions: Sessions
 ) -> Response:
     await sessions.revoke(db, active.user.id, active.session.id)
+    await audit(
+        db,
+        AuditAction.LOGOUT,
+        actor_user_id=active.user.id,
+        target_type="session",
+        target_id=active.session.id,
+    )
     response = Response(status_code=status.HTTP_204_NO_CONTENT)
     clear_session_cookies(response, _settings(request))
     return response

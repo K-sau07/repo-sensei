@@ -13,6 +13,7 @@
       "AuditAction": {
         "enum": [
           "auth.login",
+          "auth.logout",
           "auth.logout_all",
           "org.create",
           "org.update",

@@ -34,6 +34,11 @@ def cookie_names(settings: Settings) -> tuple[str, str]:
     return "session", "csrf"
 
 
+def oauth_state_cookie_name(settings: Settings) -> str:
+    """Binds a GitHub sign-in to the browser that started it (see GitHubOAuth.finish)."""
+    return "__Host-oauth_state" if settings.secure_cookies else "oauth_state"
+
+
 def set_session_cookies(response: Response, issued: IssuedSession, settings: Settings) -> None:
     session_cookie, csrf_cookie = cookie_names(settings)
     max_age = settings.auth.session_absolute_days * 86400

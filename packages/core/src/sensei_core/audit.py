@@ -26,6 +26,7 @@ MAX_PAGE_SIZE = 200
 
 class AuditAction(enum.StrEnum):
     LOGIN = "auth.login"
+    LOGOUT = "auth.logout"
     LOGOUT_ALL = "auth.logout_all"
     ORG_CREATE = "org.create"
     ORG_UPDATE = "org.update"

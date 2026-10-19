@@ -118,3 +118,19 @@ async def test_logout_everywhere_is_audited(
     assert (event.action, event.org_id, event.actor_user_id) == ("auth.logout_all", None, user.id)
     assert (event.meta, event.request_id) == ({"sessions_revoked": 2}, "req-logout")
     assert event.ip is not None
+
+
+async def test_logout_is_audited(
+    api_app: FastAPI, api_client: httpx.AsyncClient, db_session: AsyncSession
+) -> None:
+    user, headers = await sign_in(api_app, api_client, db_session)
+    response = await api_client.post(f"{API}/auth/logout", headers=headers)
+    assert response.status_code == 204
+
+    await set_user_context(db_session, user.id)
+    [event] = (await db_session.scalars(select(AuditEvent))).all()
+    assert (event.action, event.target_type, event.actor_user_id) == (
+        "auth.logout",
+        "session",
+        user.id,
+    )
