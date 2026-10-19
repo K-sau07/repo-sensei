@@ -186,6 +186,9 @@ async def github_setup(
     except GitHubError as exc:
         log.warning("github unavailable during install", status=exc.status)
         error = "github_unavailable"
+    except httpx.TransportError as exc:
+        log.warning("github unreachable during install", error_type=type(exc).__name__)
+        error = "github_unavailable"
     else:
         return _to_web(request, _return_path(slug, pending.return_to, ok=True))
     log.warning("github install not linked", reason=error, installation_id=installation_id)

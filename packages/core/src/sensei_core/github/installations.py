@@ -6,8 +6,11 @@
    ``consume_state()`` checks the state was issued to the signed-in user (so a link sent to someone
    else can't attach *their* installation to the sender's org).
 3. GitHub warns that ``installation_id`` can be spoofed, so ``link()`` only trusts it after the
-   user's own GitHub token lists that installation (``GET /user/installations``), then reads the
-   details as the app and records the link.
+   user's own GitHub token lists that installation (``GET /user/installations``). Being listed
+   only means the user can see it (a collaborator on one repository can), so the user must also
+   own the account: be that GitHub user, or an admin of that GitHub organization
+   (``GET /user/memberships/orgs/{org}``, the app's "Members: read" permission). Then the details
+   are read as the app and the link is recorded.
 
 An installation belongs to one org. Row-level security hides other orgs' rows, so a link that
 collides with another org's is detected by the unique index, without reading that row.
@@ -22,7 +25,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, cast
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 
 from redis.asyncio import Redis
 from sqlalchemy import select
@@ -33,7 +36,7 @@ from sensei_core.audit import AuditAction, audit
 from sensei_core.config import GitHubSettings
 from sensei_core.errors import ConflictError, DomainError, ForbiddenError, NotFoundError
 from sensei_core.github.app import GitHubApp
-from sensei_core.github.client import Credential, as_object
+from sensei_core.github.client import Credential, GitHubError, as_object
 from sensei_core.models import GitHubInstallation, Role, User
 from sensei_core.orgs.service import OrgAccess, require_role
 
@@ -119,8 +122,12 @@ class InstallationService:
         return f"{self._settings.web_url}/apps/{self._settings.app_slug}/installations/new?{query}"
 
     async def consume_state(self, state: str, user: User) -> PendingInstall:
-        """The install this ``state`` started, if the signed-in ``user`` started it (single use)."""
-        raw = await self._redis.getdel(_STATE_KEY.format(state))
+        """The install this ``state`` started, if the signed-in ``user`` started it (single use).
+
+        Someone else presenting the state doesn't use it up: the admin who started the install
+        can still finish it."""
+        key = _STATE_KEY.format(state)
+        raw = await self._redis.get(key)
         if raw is None:
             raise InstallStateError("This install link expired or was already used.")
         data = json.loads(raw)
@@ -128,6 +135,8 @@ class InstallationService:
             raise InstallStateError(
                 "This install was started by someone else.", code="state_mismatch"
             )
+        if await self._redis.getdel(key) is None:  # finished concurrently by the same user
+            raise InstallStateError("This install link expired or was already used.")
         return PendingInstall(
             org_id=uuid.UUID(data["org_id"]),
             org_slug=data["org_slug"],
@@ -147,7 +156,9 @@ class InstallationService:
         """Attach ``installation_id`` to the org; returns the row and whether it is new."""
         require_role(access, Role.ADMIN)
         await self._require_user_access(access.user, installation_id, user_token)
-        details = installation_details(await self._app.get_installation(installation_id))
+        body = await self._app.get_installation(installation_id)
+        await self._require_authority(access.user, body, user_token)
+        details = installation_details(body)
 
         inserted = await db.scalar(
             pg_insert(GitHubInstallation)
@@ -207,6 +218,44 @@ class InstallationService:
             "Your GitHub account can't access that installation.",
             code="installation_not_accessible",
         )
+
+    async def _require_authority(self, user: User, body: dict[str, Any], token: str) -> None:
+        """Seeing an installation isn't owning it: a collaborator on one repository sees it too.
+        Linking hands the org every repository the installation covers, so the user must own the
+        GitHub account: be that user, or an admin (owner) of that GitHub organization."""
+        account = as_object(body.get("account")) or {}
+        target = str(body.get("target_type") or account.get("type") or "")
+        not_owner = ForbiddenError(
+            "Only an owner of that GitHub account can connect it. Ask them to install the app "
+            "from an organization where they're an admin.",
+            code="installation_not_owned",
+        )
+        if target == "User":
+            if account.get("id") != user.github_id:
+                raise not_owner
+            return
+        if target != "Organization":
+            raise ForbiddenError(
+                "Enterprise installations can't be connected yet.", code="installation_unsupported"
+            )
+        login = str(account.get("login") or "")
+        credential = Credential(f"Bearer {token}", f"user:{user.id}")
+        try:
+            membership = as_object(
+                await self._app.client.get_json(
+                    f"/user/memberships/orgs/{quote(login, safe='')}", credential
+                )
+            )
+        except GitHubError as exc:
+            if exc.status in (403, 404):  # not a member, or the org blocks the app
+                raise not_owner from None
+            raise
+        if (
+            not membership
+            or membership.get("state") != "active"
+            or membership.get("role") != ("admin")
+        ):
+            raise not_owner
 
 
 async def list_org_installations(db: AsyncSession, access: OrgAccess) -> list[GitHubInstallation]:

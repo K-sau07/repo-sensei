@@ -118,9 +118,20 @@ async def _start(client: httpx.AsyncClient, slug: str = "acme", source: str = "r
     return parse_qs(location.query)["state"][0]
 
 
+MEMBERSHIP_URL = f"{GITHUB_API}/user/memberships/orgs/acme-gh"
+
+
 def _github(
-    router: respx.MockRouter, *, user_sees: list[int] | None = None
+    router: respx.MockRouter,
+    *,
+    user_sees: list[int] | None = None,
+    membership: httpx.Response | None = None,
 ) -> tuple[respx.Route, respx.Route]:
+    """GitHub as an admin of the installing organization sees it (override to test refusals)."""
+    router.get(MEMBERSHIP_URL).mock(
+        return_value=membership
+        or httpx.Response(200, json={"state": "active", "role": "admin", "user": {"id": 1}})
+    )
     visible = [INSTALLATION] if user_sees is None else user_sees
     listing = router.get(f"{GITHUB_API}/user/installations").mock(
         return_value=httpx.Response(
@@ -325,6 +336,106 @@ async def test_spoofed_installation_id_is_rejected(
     assert _error(response) == "installation_not_accessible"
     assert not details.called
     assert await _installations(db_session) == []
+
+
+@pytest.mark.parametrize(
+    "membership",
+    [
+        # A plain member, or an outside collaborator on one repository (not a member at all),
+        # sees the installation but must not hand all of its repositories to their own org.
+        httpx.Response(200, json={"state": "active", "role": "member"}),
+        httpx.Response(200, json={"state": "pending", "role": "admin"}),
+        httpx.Response(200, json={"state": "active", "role": "billing_manager"}),
+        httpx.Response(404, json={"message": "Not Found"}),
+        httpx.Response(403, json={"message": "blocked"}),
+    ],
+)
+async def test_seeing_an_org_installation_is_not_owning_it(
+    membership: httpx.Response,
+    github_app: FastAPI,
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    await _admin_with_org(github_app, client, db_session)
+    state = await _start(client)
+    with respx.mock(assert_all_called=False) as router:
+        _github(router, membership=membership)
+        response = await _setup(client, state)
+    assert _error(response) == "installation_not_owned"
+    assert await _installations(db_session) == []
+
+
+async def test_a_personal_installation_must_be_the_users_own(
+    github_app: FastAPI, client: httpx.AsyncClient, db_session: AsyncSession, web: str
+) -> None:
+    user = await _admin_with_org(github_app, client, db_session)
+    personal = {
+        **INSTALLATION_BODY,
+        "target_type": "User",
+        "account": {"login": "someone-else", "id": 999, "type": "User"},
+    }
+    with respx.mock(assert_all_called=False) as router:
+        _github(router)
+        router.get(f"{GITHUB_API}/app/installations/{INSTALLATION}").mock(
+            return_value=httpx.Response(200, json=personal)
+        )
+        refused = await _setup(client, await _start(client))
+        mine = {**personal, "account": {"login": user.login, "id": user.github_id, "type": "User"}}
+        router.get(f"{GITHUB_API}/app/installations/{INSTALLATION}").mock(
+            return_value=httpx.Response(200, json=mine)
+        )
+        accepted = await _setup(client, await _start(client))
+    assert _error(refused) == "installation_not_owned"
+    assert accepted.headers["location"] == f"{web}/acme/repos/new?installed=1"
+    [row] = await _installations(db_session)
+    assert (row.account_type, row.account_login) == ("User", user.login)
+
+
+async def test_enterprise_installations_are_refused(
+    github_app: FastAPI, client: httpx.AsyncClient, db_session: AsyncSession
+) -> None:
+    await _admin_with_org(github_app, client, db_session)
+    enterprise = {
+        **INSTALLATION_BODY,
+        "target_type": "Enterprise",
+        "account": {"slug": "big-co", "id": 7, "name": "Big Co"},
+    }
+    with respx.mock(assert_all_called=False) as router:
+        _github(router)
+        router.get(f"{GITHUB_API}/app/installations/{INSTALLATION}").mock(
+            return_value=httpx.Response(200, json=enterprise)
+        )
+        response = await _setup(client, await _start(client))
+    assert _error(response) == "installation_unsupported"
+
+
+async def test_someone_elses_attempt_does_not_use_up_the_state(
+    github_app: FastAPI, client: httpx.AsyncClient, db_session: AsyncSession
+) -> None:
+    admin = await _admin_with_org(github_app, client, db_session)
+    state = await _start(client)
+    await sign_in(github_app, client, db_session)  # another account presents it
+    with respx.mock(assert_all_called=False) as router:
+        _github(router)
+        assert _error(await _setup(client, state)) == "state_mismatch"
+        await sign_in(github_app, client, db_session, admin)
+        assert _error(await _setup(client, state)) is None  # the admin can still finish
+
+
+async def test_github_unreachable_is_reported(
+    github_app: FastAPI, client: httpx.AsyncClient, db_session: AsyncSession
+) -> None:
+    github_app.state.settings = github_app.state.settings.model_copy(
+        update={"github": GH_SETTINGS.model_copy(update={"max_retries": 0})}
+    )
+    await _admin_with_org(github_app, client, db_session)
+    state = await _start(client)
+    with respx.mock(assert_all_called=False) as router:
+        router.get(f"{GITHUB_API}/user/installations").mock(
+            side_effect=httpx.ConnectError("unreachable")
+        )
+        response = await _setup(client, state)
+    assert _error(response) == "github_unavailable"
 
 
 async def test_admins_demoted_mid_install_cannot_link(
