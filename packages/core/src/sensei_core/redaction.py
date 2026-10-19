@@ -46,6 +46,14 @@ _QUERY_SECRET_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Bearer links carry their secret in the path: /invite/<token>, /invitations/<token>, /s/<token>.
+# UUIDs (e.g. /orgs/acme/invitations/<id>) are record ids, not secrets, and stay readable.
+_PATH_SECRET_RE = re.compile(
+    r"(?P<prefix>/(?:invite|invitations|s)/)"
+    r"(?![0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b)"
+    r"[A-Za-z0-9_\-]{16,}"
+)
+
 # Usage counters such as input_tokens / max_tokens / tokens_out are numbers, not credentials.
 _COUNTER_KEY_RE = re.compile(r"tokens|token_count|token_usage", re.IGNORECASE)
 
@@ -54,6 +62,7 @@ def redact_text(text: str) -> str:
     """Mask credential-looking substrings inside free text."""
     redacted = _URL_CREDENTIALS_RE.sub(r"\g<scheme>\g<user>:" + MASK + "@", text)
     redacted = _QUERY_SECRET_RE.sub(r"\g<key>" + MASK, redacted)
+    redacted = _PATH_SECRET_RE.sub(r"\g<prefix>" + MASK, redacted)
     for pattern in _VALUE_PATTERNS:
         redacted = pattern.sub(MASK, redacted)
     return redacted

@@ -10,6 +10,7 @@ Both are optional and configured from settings:
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
 import sentry_sdk
@@ -24,7 +25,7 @@ from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExport
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from sensei_core.config import Settings
-from sensei_core.redaction import redact
+from sensei_core.redaction import redact, redact_text
 
 _state: dict[str, bool] = {"tracing": False, "sentry": False}
 
@@ -105,6 +106,22 @@ def init_sentry(settings: Settings, service_name: str) -> bool:
 def init_telemetry(settings: Settings, service_name: str) -> None:
     init_tracing(settings, service_name)
     init_sentry(settings, service_name)
+
+
+# Request attributes that can carry a secret (invite tokens in the path, OAuth code/state in the
+# query string).
+_URL_ATTRIBUTES = ("url.path", "url.query", "url.full", "http.target", "http.url")
+
+
+def scrub_server_span(span: Any, _scope: Any) -> None:
+    """``server_request_hook`` for the FastAPI instrumentation: mask secrets in URL attributes."""
+    if span is None or not span.is_recording():
+        return
+    attributes: Mapping[str, object] = getattr(span, "attributes", None) or {}
+    for key in _URL_ATTRIBUTES:
+        value = attributes.get(key)
+        if isinstance(value, str):
+            span.set_attribute(key, redact_text(value))
 
 
 def tag_request(request_id: str) -> None:

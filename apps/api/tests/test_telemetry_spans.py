@@ -55,3 +55,24 @@ async def test_database_and_redis_calls_are_traced() -> None:
     names = {span.name for span in exporter.get_finished_spans()}
     assert "SELECT" in names, names
     assert "PING" in names, names
+
+
+async def test_secrets_in_urls_never_reach_spans() -> None:
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    init_tracing(Settings(env="test"), "sensei-api-test", provider=provider)
+    exporter.clear()
+
+    token = "inv_" + "A1b2C3d4" * 5
+    app = create_app(Settings(env="test"))
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        await client.get(f"/api/v1/invitations/{token}")
+        await client.get("/api/v1/auth/github/callback?code=gh-code-123&state=st-456")
+
+    server_spans = [s for s in exporter.get_finished_spans() if s.kind.name == "SERVER"]
+    assert len(server_spans) >= 2
+    dumped = " ".join(str(dict(span.attributes or {})) for span in server_spans)
+    assert "/api/v1/invitations/***" in dumped
+    for secret in (token, "gh-code-123", "st-456"):
+        assert secret not in dumped

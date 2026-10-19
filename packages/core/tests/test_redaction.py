@@ -110,3 +110,27 @@ def test_very_deep_structures_are_still_redacted() -> None:
     for _ in range(20):
         deep = {"nested": deep}
     assert GH_TOKEN not in str(redact(deep))
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        (
+            '"GET /api/v1/invitations/Zx9_kq2L-7vYp0TzAbCdEfGh HTTP/1.1" 200',
+            '"GET /api/v1/invitations/*** HTTP/1.1" 200',
+        ),
+        (
+            "https://app.example.com/invite/Zx9_kq2L-7vYp0TzAbCdEfGh",
+            "https://app.example.com/invite/***",
+        ),
+        ("/s/AbCdEfGhIjKlMnOpQr", "/s/***"),
+        # Record ids are not secrets.
+        ("/orgs/acme/invitations/0199f000", "/orgs/acme/invitations/0199f000"),
+        (
+            "DELETE /api/v1/orgs/acme/invitations/0199f000-0000-7000-8000-0000000000b1",
+            "DELETE /api/v1/orgs/acme/invitations/0199f000-0000-7000-8000-0000000000b1",
+        ),
+    ],
+)
+def test_secret_path_segments_are_masked(text: str, expected: str) -> None:
+    assert redact_text(text) == expected

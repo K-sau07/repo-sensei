@@ -29,7 +29,7 @@ from sensei_core.mail import ConsoleMailer
 from sensei_core.orgs.service import OrgService
 from sensei_core.redis import make_redis, ping_redis
 from sensei_core.security.crypto import TokenCipher
-from sensei_core.telemetry import init_telemetry, instrument_engine
+from sensei_core.telemetry import init_telemetry, instrument_engine, scrub_server_span
 
 API_PREFIX = "/api/v1"
 SERVICE_NAME = "sensei-api"
@@ -106,5 +106,5 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(orgs.router, prefix=API_PREFIX)
     app.include_router(invitations.router, prefix=API_PREFIX)
     # Wraps the whole middleware stack; RequestIdMiddleware tags the server span it creates.
-    FastAPIInstrumentor.instrument_app(app)
+    FastAPIInstrumentor.instrument_app(app, server_request_hook=scrub_server_span)
     return app
