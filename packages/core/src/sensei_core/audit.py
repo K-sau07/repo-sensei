@@ -38,6 +38,10 @@ class AuditAction(enum.StrEnum):
     MEMBER_REMOVE = "member.remove"
     MEMBER_LEAVE = "member.leave"
     GITHUB_INSTALL_LINKED = "github.install.linked"
+    GITHUB_INSTALL_DELETED = "github.install.deleted"
+    GITHUB_INSTALL_SUSPENDED = "github.install.suspended"
+    GITHUB_INSTALL_UNSUSPENDED = "github.install.unsuspended"
+    GITHUB_INSTALL_PERMISSIONS_ACCEPTED = "github.install.permissions_accepted"
 
 
 def _clean_meta(meta: dict[str, Any] | None) -> dict[str, Any]:

@@ -19,11 +19,12 @@ from starlette.middleware.gzip import GZipMiddleware
 from sensei_api import __version__
 from sensei_api.errors import install_error_handlers
 from sensei_api.middleware import RequestIdMiddleware
-from sensei_api.routers import auth, github, health, invitations, me, orgs
+from sensei_api.routers import auth, github, health, invitations, me, orgs, webhooks
 from sensei_api.routers.health import ReadinessCheck
 from sensei_core.auth.sessions import SessionService
 from sensei_core.config import Settings, get_settings
 from sensei_core.db import make_database
+from sensei_core.github.webhooks import DeferredDispatcher
 from sensei_core.logging import configure_logging, get_logger
 from sensei_core.mail import ConsoleMailer
 from sensei_core.orgs.service import OrgService
@@ -80,6 +81,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.session_service = SessionService(settings.auth)
     app.state.token_cipher = TokenCipher.from_settings(settings.auth)
     app.state.org_service = OrgService(ConsoleMailer(), settings.web.origin)
+    app.state.webhook_dispatcher = DeferredDispatcher()
     readiness_checks: dict[str, ReadinessCheck] = {}
     app.state.readiness_checks = readiness_checks
 
@@ -106,6 +108,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(orgs.router, prefix=API_PREFIX)
     app.include_router(invitations.router, prefix=API_PREFIX)
     app.include_router(github.router, prefix=API_PREFIX)
+    app.include_router(webhooks.router, prefix=API_PREFIX)
     # Wraps the whole middleware stack; RequestIdMiddleware tags the server span it creates.
     FastAPIInstrumentor.instrument_app(app, server_request_hook=scrub_server_span)
     return app

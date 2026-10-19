@@ -78,8 +78,8 @@ def manage_url(settings: GitHubSettings, installation: GitHubInstallation) -> st
     return f"{settings.web_url}/settings/installations/{installation.installation_id}"
 
 
-def _details(body: dict[str, Any]) -> dict[str, Any]:
-    """Our columns from GitHub's installation object."""
+def installation_details(body: dict[str, Any]) -> dict[str, Any]:
+    """Our columns from GitHub's installation object (API responses and webhook payloads)."""
     account = as_object(body.get("account")) or {}
     events = cast("list[object]", body.get("events") or [])
     return {
@@ -147,7 +147,7 @@ class InstallationService:
         """Attach ``installation_id`` to the org; returns the row and whether it is new."""
         require_role(access, Role.ADMIN)
         await self._require_user_access(access.user, installation_id, user_token)
-        details = _details(await self._app.get_installation(installation_id))
+        details = installation_details(await self._app.get_installation(installation_id))
 
         inserted = await db.scalar(
             pg_insert(GitHubInstallation)

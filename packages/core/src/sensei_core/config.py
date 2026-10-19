@@ -128,6 +128,8 @@ class GitHubSettings(BaseSettings):
     # Wait this long at most for a rate limit to reset before giving up with an error.
     rate_limit_max_wait_seconds: float = Field(default=30.0, ge=0)
     max_retries: int = Field(default=3, ge=0)
+    # GitHub caps webhook payloads at 25 MB; anything bigger is not from GitHub.
+    webhook_max_bytes: int = Field(default=25 * 1024 * 1024, gt=0)
 
     @property
     def oauth_configured(self) -> bool:

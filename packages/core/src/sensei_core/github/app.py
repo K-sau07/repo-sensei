@@ -41,6 +41,14 @@ def _utcnow() -> datetime:
     return datetime.now(UTC)
 
 
+async def forget_installation_tokens(redis: Redis, installation_id: int) -> None:
+    """Drop every cached token for an installation (suspended, uninstalled, permissions
+    changed), so the next caller mints one that reflects the change."""
+    index = _CACHE_INDEX.format(installation_id=installation_id)
+    keys = cast("set[str]", await redis.smembers(index))  # pyright: ignore[reportUnknownMemberType]
+    await redis.delete(index, *keys)
+
+
 class GitHubAppNotConfiguredError(RuntimeError):
     """The deployment has no GitHub App (slug, client or app id, and private key)."""
 
@@ -179,11 +187,7 @@ class GitHubApp:
         return token.credential(installation_id, _scope(repository_ids, permissions))
 
     async def forget_tokens(self, installation_id: int) -> None:
-        """Drop every cached token for an installation (suspended, uninstalled, permissions
-        changed)."""
-        index = _CACHE_INDEX.format(installation_id=installation_id)
-        keys = cast("set[str]", await self._redis.smembers(index))  # pyright: ignore[reportUnknownMemberType]
-        await self._redis.delete(index, *keys)
+        await forget_installation_tokens(self._redis, installation_id)
 
     async def _read_cached(self, key: str) -> InstallationToken | None:
         raw = cast("str | None", await self._redis.get(key))

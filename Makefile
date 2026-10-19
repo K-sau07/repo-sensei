@@ -3,7 +3,7 @@ SHELL := /bin/bash
 
 PYTEST_UNIT := -m "not integration and not e2e"
 
-.PHONY: help setup up down reset-db psql infra-check api web web-build storybook storybook-build e2e e2e-real openapi migrate revision downgrade lint typecheck test test-int check fmt
+.PHONY: help setup up down reset-db psql infra-check api webhooks web web-build storybook storybook-build e2e e2e-real openapi migrate revision downgrade lint typecheck test test-int check fmt
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2}'
@@ -36,6 +36,16 @@ infra-check: ## Verify extensions, redis and buckets
 
 api: ## Run the API with auto-reload on :8000
 	uv run uvicorn sensei_api.app:create_app --factory --reload --port 8000
+
+# Webhooks reach a laptop through a smee.io channel: create one at https://smee.io, set it as the
+# GitHub App's webhook URL and as SMEE_URL (environment or .env). smee re-encodes the JSON, so a
+# payload with unusual characters can fail the signature check; a byte-exact tunnel such as
+# `cloudflared tunnel --url http://localhost:8000` avoids that.
+SMEE_URL ?= $(shell sed -n 's/^SMEE_URL=//p' .env 2>/dev/null)
+
+webhooks: ## Forward GitHub webhooks from SMEE_URL to the local API
+	@test -n "$(SMEE_URL)" || { echo "Set SMEE_URL (a https://smee.io channel) in .env first"; exit 1; }
+	pnpm dlx smee-client@5 --url "$(SMEE_URL)" --target http://localhost:8000/api/v1/webhooks/github
 
 web: ## Run the web app with hot reload on :3000 (proxies /api to :8000)
 	pnpm --filter web dev
