@@ -90,7 +90,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     # Order matters: the last added middleware runs first (outermost).
     app.add_middleware(GZipMiddleware, minimum_size=1024)
-    app.add_middleware(RequestIdMiddleware)
+    app.add_middleware(RequestIdMiddleware, client_ip_header=settings.api.client_ip_header)
     if settings.is_dev:
         # Outermost in dev so every response, including 500s built by RequestIdMiddleware,
         # carries CORS headers when the API is called directly from the dev web origin.

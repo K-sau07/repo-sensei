@@ -15,5 +15,6 @@
 **/.pytest_cache
 **/tests/
 **/.env
+**/.env.*
 **/*.pem
 **/node_modules

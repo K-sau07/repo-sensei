@@ -23,6 +23,7 @@ from sensei_api.errors import AppError
 from sensei_core.audit import AuditAction, audit
 from sensei_core.auth.github_login import complete_login
 from sensei_core.config import Settings
+from sensei_core.context import current_client_ip
 from sensei_core.github.oauth import STATE_TTL_SECONDS, GitHubOAuth, OAuthError
 from sensei_core.logging import get_logger
 from sensei_core.security.crypto import TokenCipher
@@ -130,7 +131,7 @@ async def github_callback(
     issued = await sessions.create(
         db,
         user,
-        ip=request.client.host if request.client else None,
+        ip=current_client_ip(),
         user_agent=request.headers.get("user-agent"),
     )
     await audit(

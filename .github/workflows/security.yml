@@ -47,7 +47,7 @@ jobs:
       - name: Known vulnerabilities (pip-audit)
         run: |
           uv export --frozen --all-packages --no-emit-workspace --no-hashes > requirements-audit.txt
-          uvx pip-audit --strict --requirement requirements-audit.txt
+          uvx pip-audit@2.10.1 --strict --requirement requirements-audit.txt
 
   web-dependencies:
     runs-on: ubuntu-24.04

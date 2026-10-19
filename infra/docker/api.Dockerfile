@@ -50,5 +50,6 @@ USER sensei
 EXPOSE 8000
 HEALTHCHECK --interval=15s --timeout=5s --start-period=20s --retries=3 \
     CMD ["python", "/app/scripts/healthcheck.py"]
-# Behind the platform's proxy (the only way in), so forwarded client addresses are trusted.
-CMD ["sh", "-c", "exec uvicorn sensei_api.app:create_app --factory --host 0.0.0.0 --port \"$PORT\" --workers \"$SENSEI_API_WORKERS\" --proxy-headers --forwarded-allow-ips '*' --no-server-header"]
+# Forwarded headers are not trusted (any client can send them); the client address comes from the
+# header the platform's proxy sets itself (SENSEI_API_CLIENT_IP_HEADER, e.g. fly-client-ip).
+CMD ["sh", "-c", "exec uvicorn sensei_api.app:create_app --factory --host 0.0.0.0 --port \"$PORT\" --workers \"$SENSEI_API_WORKERS\" --no-proxy-headers --no-server-header"]

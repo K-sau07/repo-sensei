@@ -6,6 +6,7 @@ buffered.
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import re
 
@@ -34,8 +35,21 @@ class RequestIdMiddleware:
     it on the response. Also turns unexpected exceptions into the JSON error envelope, so even a
     500 carries the request id."""
 
-    def __init__(self, app: ASGIApp) -> None:
+    def __init__(self, app: ASGIApp, *, client_ip_header: str | None = None) -> None:
         self.app = app
+        self._client_ip_header = client_ip_header.lower().encode() if client_ip_header else None
+
+    def _client_ip(self, scope: Scope) -> str | None:
+        """The trusted proxy's client-address header if configured and valid, else the peer."""
+        if self._client_ip_header is not None:
+            for name, value in scope.get("headers", []):
+                if name == self._client_ip_header:
+                    try:
+                        return str(ipaddress.ip_address(value.decode("latin-1").strip()))
+                    except ValueError:
+                        break
+        client = scope.get("client")
+        return client[0] if client else None
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
@@ -59,8 +73,7 @@ class RequestIdMiddleware:
                 headers[REQUEST_ID_HEADER] = request_id
             await send(message)
 
-        client = scope.get("client")
-        client_ip = client[0] if client else None
+        client_ip = self._client_ip(scope)
 
         with (
             structlog.contextvars.bound_contextvars(request_id=request_id),

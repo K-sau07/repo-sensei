@@ -119,5 +119,5 @@ jobs:
         # Our tests, docs and any .env never ship (third-party packages may bundle their own tests).
         run: |
           for image in repo-sensei/api:ci repo-sensei/worker:ci; do
-            docker run --rm --entrypoint sh "$image" -c 'test ! -e /app/docs && test -z "$(find / -xdev -name ".env" -not -path "/proc/*" 2>/dev/null)" && test -z "$(ls -d /app/.venv/lib/python3.*/site-packages/sensei_*/tests 2>/dev/null)" && test -z "$(find /app -path /app/.venv -prune -o -name "*.py" -path "*/tests/*" -print)"'
+            docker run --rm --entrypoint sh "$image" -c 'test ! -e /app/docs && test -z "$(find / -xdev -name ".env*" -not -path "/proc/*" 2>/dev/null)" && test -z "$(ls -d /app/.venv/lib/python3.*/site-packages/sensei_*/tests 2>/dev/null)" && test -z "$(find /app -path /app/.venv -prune -o -name "*.py" -path "*/tests/*" -print)"'
           done

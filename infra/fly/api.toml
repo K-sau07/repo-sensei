@@ -17,6 +17,8 @@ primary_region = "iad"
 [env]
   SENSEI_ENV = "staging"
   SENSEI_API_WORKERS = "2"
+  # Set by Fly's proxy on every request (a client-sent value is replaced).
+  SENSEI_API_CLIENT_IP_HEADER = "fly-client-ip"
   PORT = "8000"
 
 [http_service]

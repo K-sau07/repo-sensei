@@ -1,0 +1,34 @@
+# Staging workers on Fly.io (Celery). Deploy from the repo root:
+#   fly deploy . --config infra/fly/worker.toml
+# Same secrets as the API (see README.md). No public service: workers only talk to Redis,
+# Postgres and GitHub.
+
+app = "repo-sensei-worker-staging"
+primary_region = "iad"
+
+[build]
+  dockerfile = "infra/docker/worker.Dockerfile"
+
+[env]
+  SENSEI_ENV = "staging"
+  SENSEI_WORKER_CONCURRENCY = "2"
+
+# Two process groups from one image. Run exactly one beat machine: `fly scale count beat=1`
+# (two schedulers would send every periodic task twice).
+[processes]
+  worker = "sh -c 'exec celery -A sensei_workers.app worker --loglevel=INFO --queues=\"$SENSEI_WORKER_QUEUES\" --concurrency=\"$SENSEI_WORKER_CONCURRENCY\" --hostname=\"worker@%h\" --without-gossip --without-mingle'"
+  beat = "celery -A sensei_workers.app beat --loglevel=INFO --schedule=/tmp/celerybeat-schedule"
+
+[[vm]]
+  processes = ["worker"]
+  size = "shared-cpu-2x"
+  memory = "2gb"
+
+[[vm]]
+  processes = ["beat"]
+  size = "shared-cpu-1x"
+  memory = "512mb"
+
+[[restart]]
+  policy = "always"
+  processes = ["worker", "beat"]
