@@ -5,6 +5,7 @@ from __future__ import annotations
 from sensei_core.db.base import Base
 from sensei_core.models.audit import ActorType, AuditEvent, UsageEvent, UsageKind
 from sensei_core.models.github import GitHubInstallation
+from sensei_core.models.jobs import JobFailure
 from sensei_core.models.org import Invitation, Membership, Org, Role
 from sensei_core.models.user import OAuthToken, User, UserSession
 from sensei_core.models.webhook import DeliveryStatus, WebhookDelivery
@@ -16,6 +17,7 @@ __all__ = [
     "DeliveryStatus",
     "GitHubInstallation",
     "Invitation",
+    "JobFailure",
     "Membership",
     "OAuthToken",
     "Org",

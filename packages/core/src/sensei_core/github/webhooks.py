@@ -18,7 +18,7 @@ import traceback
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol, cast
 
 from redis.asyncio import Redis
@@ -104,11 +104,20 @@ class WebhookDispatcher(Protocol):
     async def dispatch(self, delivery_id: uuid.UUID) -> None: ...
 
 
-class DeferredDispatcher:
-    """Leaves deliveries ``received`` for the sweep; used until a task queue is configured."""
-
-    async def dispatch(self, delivery_id: uuid.UUID) -> None:
-        log.info("webhook stored for later processing", delivery=str(delivery_id))
+async def stale_deliveries(
+    db: AsyncSession, *, older_than: timedelta, limit: int
+) -> list[uuid.UUID]:
+    """Deliveries still waiting for a worker after ``older_than``, oldest first."""
+    rows = await db.scalars(
+        select(WebhookDelivery.id)
+        .where(
+            WebhookDelivery.status == DeliveryStatus.RECEIVED,
+            WebhookDelivery.received_at < _now() - older_than,
+        )
+        .order_by(WebhookDelivery.received_at)
+        .limit(limit)
+    )
+    return list(rows)
 
 
 # ---------------------------------------------------------------------- processing

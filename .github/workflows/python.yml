@@ -102,7 +102,22 @@ jobs:
         run: |
           test "$(docker run --rm --entrypoint id repo-sensei/api:ci -u)" = "10001"
           docker run --rm --entrypoint python repo-sensei/api:ci -c "import sensei_api.app"
-      - name: No private or local files went into the image
+      - name: Build the worker image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: infra/docker/worker.Dockerfile
+          tags: repo-sensei/worker:ci
+          load: true
+          cache-from: type=gha,scope=worker
+          cache-to: type=gha,scope=worker,mode=max
+      - name: The worker image runs as a non-root user and registers its tasks
+        run: |
+          test "$(docker run --rm --entrypoint id repo-sensei/worker:ci -u)" = "10001"
+          docker run --rm -e SENSEI_ENV=test --entrypoint python repo-sensei/worker:ci -c "import sensei_workers.tasks.webhooks; from sensei_workers.app import celery_app; assert 'sensei.webhooks.process_github' in celery_app.tasks"
+      - name: No private or local files went into the images
         # Our tests, docs and any .env never ship (third-party packages may bundle their own tests).
         run: |
-          docker run --rm --entrypoint sh repo-sensei/api:ci -c 'test ! -e /app/docs && test -z "$(find / -xdev -name ".env" -not -path "/proc/*" 2>/dev/null)" && test -z "$(ls -d /app/.venv/lib/python3.*/site-packages/sensei_*/tests 2>/dev/null)" && test -z "$(find /app -path /app/.venv -prune -o -name "*.py" -path "*/tests/*" -print)"'
+          for image in repo-sensei/api:ci repo-sensei/worker:ci; do
+            docker run --rm --entrypoint sh "$image" -c 'test ! -e /app/docs && test -z "$(find / -xdev -name ".env" -not -path "/proc/*" 2>/dev/null)" && test -z "$(ls -d /app/.venv/lib/python3.*/site-packages/sensei_*/tests 2>/dev/null)" && test -z "$(find /app -path /app/.venv -prune -o -name "*.py" -path "*/tests/*" -print)"'
+          done

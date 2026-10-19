@@ -23,6 +23,8 @@ dev = [
     "respx>=0.22",
     "freezegun>=1.5",
     "anyio>=4.9",
+    "celery-types>=0.26",
+    "honcho>=2.0",
 ]
 
 [tool.uv]

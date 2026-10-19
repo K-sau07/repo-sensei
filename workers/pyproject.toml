@@ -3,7 +3,11 @@ name = "sensei-workers"
 version = "0.1.0"
 description = "Background workers for repo-sensei."
 requires-python = ">=3.13"
-dependencies = ["sensei-core", "sensei-engine"]
+dependencies = [
+    "sensei-core",
+    "sensei-engine",
+    "opentelemetry-instrumentation-celery>=0.66b1",
+]
 
 [build-system]
 requires = ["hatchling>=1.27"]

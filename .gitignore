@@ -38,6 +38,7 @@ next-env.d.ts
 !.vscode/extensions.json
 
 # Local data and logs
+.cache/
 /data/
 /.cache/
 *.log

@@ -14,7 +14,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
-from collections.abc import Sequence
+from collections.abc import Awaitable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any, cast
@@ -45,7 +45,7 @@ async def forget_installation_tokens(redis: Redis, installation_id: int) -> None
     """Drop every cached token for an installation (suspended, uninstalled, permissions
     changed), so the next caller mints one that reflects the change."""
     index = _CACHE_INDEX.format(installation_id=installation_id)
-    keys = cast("set[str]", await redis.smembers(index))  # pyright: ignore[reportUnknownMemberType]
+    keys = await cast("Awaitable[set[str]]", redis.smembers(index))  # pyright: ignore[reportUnknownMemberType]
     await redis.delete(index, *keys)
 
 

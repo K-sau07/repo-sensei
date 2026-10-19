@@ -24,7 +24,7 @@ from sensei_api.routers.health import ReadinessCheck
 from sensei_core.auth.sessions import SessionService
 from sensei_core.config import Settings, get_settings
 from sensei_core.db import make_database
-from sensei_core.github.webhooks import DeferredDispatcher
+from sensei_core.jobs import CeleryDispatcher, make_celery
 from sensei_core.logging import configure_logging, get_logger
 from sensei_core.mail import ConsoleMailer
 from sensei_core.orgs.service import OrgService
@@ -81,7 +81,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.session_service = SessionService(settings.auth)
     app.state.token_cipher = TokenCipher.from_settings(settings.auth)
     app.state.org_service = OrgService(ConsoleMailer(), settings.web.origin)
-    app.state.webhook_dispatcher = DeferredDispatcher()
+    # Sends tasks by name; the workers package defines them.
+    app.state.webhook_dispatcher = CeleryDispatcher(make_celery(settings, main="sensei-api"))
     readiness_checks: dict[str, ReadinessCheck] = {}
     app.state.readiness_checks = readiness_checks
 

@@ -12,6 +12,7 @@ from __future__ import annotations
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
+from urllib.parse import urlsplit, urlunsplit
 
 from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -74,6 +75,43 @@ class RedisSettings(BaseSettings):
     url: SecretStr = SecretStr("redis://localhost:56379/0")
     connect_timeout_seconds: float = Field(default=2.0, gt=0)
     timeout_seconds: float = Field(default=5.0, gt=0)
+
+
+def with_redis_db(url: str, db: int) -> str:
+    """The same Redis URL pointing at logical database ``db``."""
+    parts = urlsplit(url)
+    return urlunsplit(parts._replace(path=f"/{db}"))
+
+
+class WorkerSettings(BaseSettings):
+    """Celery. Broker and results default to databases 1 and 2 of the main Redis."""
+
+    model_config = _config("SENSEI_WORKER_")
+
+    broker_url: SecretStr | None = None
+    result_backend: SecretStr | None = None
+    soft_time_limit_seconds: int = Field(default=1800, gt=0)
+    time_limit_seconds: int = Field(default=2100, gt=0)
+    # Redis hands an unacknowledged task to another worker after this long, so it must exceed the
+    # longest task, and retry delays are kept below it.
+    visibility_timeout_seconds: int = Field(default=3600, gt=0)
+    result_expires_seconds: int = Field(default=86_400, gt=0)
+    max_retries: int = Field(default=5, ge=0)
+    retry_backoff_seconds: float = Field(default=2.0, gt=0)
+    retry_backoff_max_seconds: float = Field(default=600.0, gt=0)
+    # Tasks run in the caller, synchronously (tests).
+    always_eager: bool = False
+
+    @model_validator(mode="after")
+    def _limits_are_ordered(self) -> WorkerSettings:
+        if (
+            not self.soft_time_limit_seconds
+            < self.time_limit_seconds
+            < (self.visibility_timeout_seconds)
+        ):
+            msg = "worker limits must satisfy soft time limit < time limit < visibility timeout"
+            raise ValueError(msg)
+        return self
 
 
 class S3Settings(BaseSettings):
@@ -189,6 +227,7 @@ class Settings(BaseSettings):
     github: GitHubSettings = Field(default_factory=GitHubSettings)
     telemetry: TelemetrySettings = Field(default_factory=TelemetrySettings)
     pricing: PricingSettings = Field(default_factory=PricingSettings)
+    worker: WorkerSettings = Field(default_factory=WorkerSettings)
 
     @model_validator(mode="after")
     def _refuse_dev_secrets_outside_dev(self) -> Settings:

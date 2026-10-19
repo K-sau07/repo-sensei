@@ -3,7 +3,7 @@ SHELL := /bin/bash
 
 PYTEST_UNIT := -m "not integration and not e2e"
 
-.PHONY: help setup up down reset-db psql infra-check api webhooks web web-build storybook storybook-build e2e e2e-real openapi migrate revision downgrade lint typecheck test test-int check fmt
+.PHONY: help setup up down reset-db psql infra-check api worker beat dev webhooks web web-build storybook storybook-build e2e e2e-real openapi migrate revision downgrade lint typecheck test test-int check fmt
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2}'
@@ -36,6 +36,20 @@ infra-check: ## Verify extensions, redis and buckets
 
 api: ## Run the API with auto-reload on :8000
 	uv run uvicorn sensei_api.app:create_app --factory --reload --port 8000
+
+# Every queue in sensei_core.jobs.Queue (a test keeps the two in sync). Production runs separate
+# workers per queue group; in dev one worker takes them all.
+WORKER_QUEUES := default,webhooks,ingest,parse,embed,llm,graph,agent,sandbox,maintenance
+
+worker: ## Run a worker for every queue
+	uv run celery -A sensei_workers.app worker --loglevel=INFO --queues=$(WORKER_QUEUES) --concurrency=2
+
+beat: ## Run the periodic task scheduler
+	@mkdir -p .cache
+	uv run celery -A sensei_workers.app beat --loglevel=INFO --schedule=.cache/celerybeat-schedule
+
+dev: ## Run api, worker, beat and web together (Procfile.dev)
+	uv run honcho -f Procfile.dev start
 
 # Webhooks reach a laptop through a smee.io channel: create one at https://smee.io, set it as the
 # GitHub App's webhook URL and as SMEE_URL (environment or .env). smee re-encodes the JSON, so a

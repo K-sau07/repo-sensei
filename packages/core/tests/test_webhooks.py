@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import uuid
-from typing import Any
+from collections.abc import Awaitable
+from typing import Any, cast
 
 import pytest
 from fakeredis import FakeAsyncRedis
@@ -188,7 +189,10 @@ async def test_uninstall_marks_the_link_and_forgets_tokens(
     system_session: AsyncSession, fake_redis: FakeAsyncRedis
 ) -> None:
     link = await _linked(system_session)
-    await fake_redis.sadd(f"github:itoken:{INSTALLATION}:keys", f"github:itoken:{INSTALLATION}:all")
+    await cast(
+        "Awaitable[int]",
+        fake_redis.sadd(f"github:itoken:{INSTALLATION}:keys", f"github:itoken:{INSTALLATION}:all"),
+    )
     await fake_redis.set(f"github:itoken:{INSTALLATION}:all", "sealed")
     delivery, result = await _deliver(system_session, fake_redis, "installation", _payload())
     assert result == webhooks.ProcessResult(DeliveryStatus.PROCESSED)
