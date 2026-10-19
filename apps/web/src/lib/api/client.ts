@@ -10,14 +10,20 @@ import { ApiError, apiErrorFromResponse, networkError } from "./errors";
 import type { paths } from "./schema";
 
 const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
-// Must match the API's cookie names (__Host- prefixed when served over HTTPS).
+// Must match the API's cookie names, most trusted first: the __Host- one (HTTPS) can't be set by
+// a sibling subdomain, so it wins over a stale or planted plain "csrf" cookie.
 const CSRF_COOKIES = ["__Host-csrf", "csrf"];
 
 /** Read the CSRF cookie the API set at sign-in (not HttpOnly, by design). */
 export function readCsrfCookie(cookieHeader: string): string | null {
+  const cookies = new Map<string, string>();
   for (const part of cookieHeader.split(";")) {
     const [rawName, ...rest] = part.trim().split("=");
-    if (rawName && CSRF_COOKIES.includes(rawName)) return decodeURIComponent(rest.join("="));
+    if (rawName && !cookies.has(rawName)) cookies.set(rawName, rest.join("="));
+  }
+  for (const name of CSRF_COOKIES) {
+    const value = cookies.get(name);
+    if (value !== undefined) return decodeURIComponent(value);
   }
   return null;
 }
@@ -45,8 +51,11 @@ export function apiMiddleware({
     },
     async onResponse({ response }) {
       if (response.ok) return response;
-      if (response.status === 401) emitAuthExpired();
-      throw await apiErrorFromResponse(response);
+      const error = await apiErrorFromResponse(response);
+      // Only a session that existed and ended sends the user to sign in. A plain 401 (nobody is
+      // signed in) is normal on public pages such as an invitation preview.
+      if (error.status === 401 && error.code === "session_expired") emitAuthExpired();
+      throw error;
     },
     onError({ error }) {
       return error instanceof ApiError ? error : networkError(error);

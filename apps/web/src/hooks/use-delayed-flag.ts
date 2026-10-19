@@ -9,7 +9,7 @@ export interface DelayedFlagOptions {
 
 /**
  * Turns a raw "busy" flag into a calm "show the indicator" flag: spinners appear after 200ms and
- * stay for at least 400ms (frontend spec, motion rule 6).
+ * stay for at least 400ms, so quick work never flickers a spinner.
  */
 export function useDelayedFlag(
   active: boolean,

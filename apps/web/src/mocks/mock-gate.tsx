@@ -17,7 +17,11 @@ export function MockGate({ children }: { children: ReactNode }) {
       let cancelled = false;
       void import("./browser")
         .then(({ worker }) => worker.start({ onUnhandledFrame: "bypass", quiet: true }))
-        .then(() => {
+        .catch((error: unknown) => {
+          // Don't leave a blank page: carry on against the real API and say why.
+          console.error("Mock API failed to start; using the real API.", error);
+        })
+        .finally(() => {
           if (!cancelled) setReady(true);
         });
       return () => {

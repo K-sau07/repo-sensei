@@ -1,5 +1,5 @@
 /**
- * Motion tokens (frontend spec §2), mirrored from `src/styles/tokens.css` for Motion components.
+ * Motion tokens, mirrored from `src/styles/tokens.css` for Motion components.
  * A test keeps both in sync. Motion takes durations in seconds.
  */
 

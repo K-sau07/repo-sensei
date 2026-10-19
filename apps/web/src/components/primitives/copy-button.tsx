@@ -14,19 +14,33 @@ interface CopyButtonProps {
 
 const RESET_AFTER_MS = 2000;
 
+type CopyState = { status: "idle" } | { status: "copied" | "failed"; at: number };
+
+async function writeClipboard(value: string): Promise<void> {
+  // navigator.clipboard is missing outside secure contexts (plain http on a LAN address).
+  if (typeof navigator === "undefined" || !("clipboard" in navigator)) {
+    throw new Error("Clipboard unavailable");
+  }
+  await navigator.clipboard.writeText(value);
+}
+
 /** Copies `value` to the clipboard and confirms for two seconds (announced politely). */
 export function CopyButton({ value, label = "Copy", className }: CopyButtonProps) {
-  const [state, setState] = useState<"idle" | "copied" | "failed">("idle");
+  const [state, setState] = useState<CopyState>({ status: "idle" });
 
+  // Keyed on `at`, so copying again restarts the two seconds.
   useEffect(() => {
-    if (state === "idle") return;
+    if (state.status === "idle") return;
     const timer = setTimeout(() => {
-      setState("idle");
+      setState({ status: "idle" });
     }, RESET_AFTER_MS);
     return () => {
       clearTimeout(timer);
     };
   }, [state]);
+
+  const announcement =
+    state.status === "copied" ? "Copied" : state.status === "failed" ? "Copy failed" : "";
 
   return (
     <>
@@ -37,20 +51,21 @@ export function CopyButton({ value, label = "Copy", className }: CopyButtonProps
         aria-label={label}
         className={className}
         onClick={() => {
-          navigator.clipboard.writeText(value).then(
+          writeClipboard(value).then(
             () => {
-              setState("copied");
+              setState({ status: "copied", at: Date.now() });
             },
             () => {
-              setState("failed");
+              setState({ status: "failed", at: Date.now() });
             },
           );
         }}
       >
-        {state === "copied" ? <Check className="text-ok" /> : <Copy />}
+        {state.status === "copied" ? <Check className="text-ok" /> : <Copy />}
       </Button>
-      <span role="status" className="sr-only">
-        {state === "copied" ? "Copied" : state === "failed" ? "Copy failed" : ""}
+      {/* The key re-mounts the region so a repeat copy is announced again. */}
+      <span key={state.status === "idle" ? "idle" : state.at} role="status" className="sr-only">
+        {announcement}
       </span>
     </>
   );

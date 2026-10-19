@@ -123,19 +123,35 @@ describe("errors", () => {
     });
   });
 
-  it("announces an expired session on 401", async () => {
+  it("announces an expired session", async () => {
     const listener = vi.fn();
     const stop = onAuthExpired(listener);
     server.use(
       http.get("*/api/v1/me", () =>
         HttpResponse.json(
-          { error: { code: "not_authenticated", message: "Sign in first." } },
+          { error: { code: "session_expired", message: "Your session has expired." } },
           { status: 401 },
         ),
       ),
     );
-    await expect(client().GET("/api/v1/me")).rejects.toMatchObject({ code: "not_authenticated" });
+    await expect(client().GET("/api/v1/me")).rejects.toMatchObject({ code: "session_expired" });
     expect(listener).toHaveBeenCalledOnce();
+    stop();
+  });
+
+  it("does not redirect anonymous visitors (401 unauthenticated)", async () => {
+    const listener = vi.fn();
+    const stop = onAuthExpired(listener);
+    server.use(
+      http.get("*/api/v1/me", () =>
+        HttpResponse.json(
+          { error: { code: "unauthenticated", message: "Sign in to continue." } },
+          { status: 401 },
+        ),
+      ),
+    );
+    await expect(client().GET("/api/v1/me")).rejects.toMatchObject({ status: 401 });
+    expect(listener).not.toHaveBeenCalled();
     stop();
   });
 
@@ -156,6 +172,8 @@ describe("readCsrfCookie", () => {
     ["other=1", null],
     ["", null],
     ["xcsrf=nope", null],
+    ["csrf=stale; __Host-csrf=fresh", "fresh"],
+    ["csrf=first; csrf=second", "first"],
   ])("%s → %s", (header, expected) => {
     expect(readCsrfCookie(header)).toBe(expected);
   });

@@ -19,6 +19,10 @@ describe("formatRelative", () => {
     [14 * 24 * 3600, "2 weeks ago"],
     [-2 * 24 * 3600, "in 2 days"],
     [400 * 24 * 3600, "last year"],
+    [59.6 * 60, "1 hour ago"], // rounds up into the next unit, never "60 minutes ago"
+    [23.6 * 3600, "yesterday"],
+    [6.6 * 24 * 3600, "last week"],
+    [45 * 24 * 3600, "2 months ago"],
   ])("%is ago is %s", (seconds, expected) => {
     expect(formatRelative(ago(seconds), NOW)).toBe(expected);
   });
