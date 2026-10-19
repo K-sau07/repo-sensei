@@ -1,11 +1,13 @@
 "use client";
 
 import type { Route } from "next";
+import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect } from "react";
 
 import { ErrorState } from "@/components/feedback/error-state";
 import { DelayedSpinner } from "@/components/primitives/delayed-spinner";
+import { buttonVariants } from "@/components/ui/button";
 import { useMe } from "@/hooks/use-me";
 import { ApiError } from "@/lib/api/errors";
 import type { Me } from "@/lib/api/types";
@@ -37,6 +39,11 @@ export function SignInCallback() {
       <ErrorState
         title="Sign-in didn't complete"
         description="We couldn't load your account. Please sign in again."
+        action={
+          <Link href="/login" className={buttonVariants({ variant: "outline", size: "sm" })}>
+            Sign in again
+          </Link>
+        }
         {...(error instanceof ApiError && error.requestId ? { requestId: error.requestId } : {})}
         className="w-full max-w-md"
       />

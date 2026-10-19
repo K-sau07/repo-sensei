@@ -3,8 +3,25 @@ import { expect, test, type BrowserContext, type Page } from "@playwright/test";
 const STUB = "http://localhost:8099";
 const run = Date.now().toString(36);
 
+// The web app runs as a production build here, so this is the real Content-Security-Policy:
+// any script or style it blocks fails the test.
+const cspViolations: string[] = [];
+
+function watchCsp(context: BrowserContext) {
+  context.on("page", (page) => {
+    page.on("console", (message) => {
+      if (/Content Security Policy/i.test(message.text())) cspViolations.push(message.text());
+    });
+  });
+}
+
+test.afterEach(() => {
+  expect(cspViolations).toEqual([]);
+});
+
 /** Choose which GitHub account the OAuth stub signs this browser in as. */
 async function asGitHubUser(context: BrowserContext, login: string) {
+  watchCsp(context);
   await context.addCookies([{ name: "stub_login", value: login, url: STUB }]);
 }
 
@@ -58,6 +75,9 @@ test("sign in with GitHub, create an org, invite a teammate who joins", async ({
   await page.getByRole("option", { name: "Admin" }).click();
   await expect(page.getByText(/is now admin/)).toBeVisible();
   await row.getByRole("button", { name: /^Remove/ }).click();
+  await page.getByRole("alertdialog").getByRole("button", { name: "Remove" }).click();
+  await expect(page.getByText(/^Removed /)).toBeVisible();
+  await expect(page.getByRole("alertdialog")).toHaveCount(0);
   await expect(page.getByRole("row").filter({ hasText: `@friend-${run}` })).toHaveCount(0);
 
   // The removed teammate can no longer see the org (and isn't told it exists).
@@ -86,6 +106,7 @@ test("a sign-in link finished in another browser is refused (login CSRF)", async
 
   // The victim's browser opens that link: refused, and no session is created.
   const victim = await browser.newContext();
+  watchCsp(victim);
   const victimPage = await victim.newPage();
   await victimPage.goto(callback);
   await expect(victimPage).toHaveURL(/\/login\?error=state_mismatch$/);

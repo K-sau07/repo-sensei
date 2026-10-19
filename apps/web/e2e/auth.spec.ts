@@ -13,6 +13,23 @@ test.describe("signed out", () => {
     );
   });
 
+  test("pages whose path ends like a file are protected too", async ({ page }) => {
+    // Repository files appear in page paths ("…/src/main.ts"); they are pages, not assets.
+    const response = await page.goto("/acme/repos/next.config.js");
+    await expect(page).toHaveURL(/\/login\?next=%2Facme%2Frepos%2Fnext\.config\.js$/);
+    expect(response?.headers()["content-security-policy"]).toMatch(/'strict-dynamic'/);
+  });
+
+  test("an unsafe next with a tab or newline is never followed", async ({ page }) => {
+    for (const next of ["%2F%09%2Fevil.example", "%2F%0A%2Fevil.example"]) {
+      await page.goto(`/login?next=${next}`);
+      await expect(page.getByRole("link", { name: "Continue with GitHub" })).toHaveAttribute(
+        "href",
+        "/api/v1/auth/github/login",
+      );
+    }
+  });
+
   test("public pages stay public", async ({ page }) => {
     await page.goto("/");
     await expect(page).toHaveURL(/\/$/);
@@ -88,6 +105,25 @@ test("the profile shows what GitHub told us", async ({ page }) => {
   await expect(page.getByRole("heading", { name: "Octo Cat" })).toBeVisible();
   await expect(page.getByText("@octo")).toBeVisible();
   await expect(page.getByRole("link", { name: "Back to Acme" })).toHaveAttribute("href", "/acme");
+});
+
+test("a link to /logout asks before signing out", async ({ page }) => {
+  await page.goto("/logout");
+  await expect(page.getByText("Sign out of repo-sensei on this device?")).toBeVisible();
+  await expect(page).toHaveURL(/\/logout$/);
+  await page.getByRole("button", { name: "Sign out" }).click();
+  await expect(page).toHaveURL(/\/$/);
+});
+
+test("the sign-in callback never leaves the site", async ({ page }) => {
+  // An unsafe next is dropped: the user lands in their workspace instead.
+  await page.goto("/auth/callback?next=%2F%09%2Fevil.example");
+  await expect(page).toHaveURL(/^http:\/\/localhost:\d+\/acme$/);
+});
+
+test("invitation pages send no referrer", async ({ page }) => {
+  const response = await page.goto("/invite/Zx9_kq2L-7vYp0TzAbCdEfGh");
+  expect(response?.headers()["referrer-policy"]).toBe("no-referrer");
 });
 
 test("every page carries a strict, per-request script policy", async ({ page }) => {

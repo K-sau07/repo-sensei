@@ -2,8 +2,9 @@ import { defineConfig } from "@playwright/test";
 
 /**
  * Browser tests against the real API (no mocks): our FastAPI on the `sensei_e2e` database and a
- * GitHub OAuth stub, so the whole sign-in runs for real. Needs `make up`; `make e2e-real` prepares
- * the database first. Ports are their own, so a running dev setup is never touched.
+ * GitHub OAuth stub, so the whole sign-in runs for real, on a production build of the web app.
+ * Needs `make up`; `make e2e-real` prepares the database first. Ports are their own, so a running
+ * dev setup is never touched.
  */
 const STUB = 8099;
 const API = 8010;
@@ -50,10 +51,11 @@ export default defineConfig({
       },
     },
     {
-      command: `pnpm exec next dev --port ${WEB}`,
+      // A production build, so the strict production CSP (nonces, no eval) is what's tested.
+      command: `pnpm exec next build && pnpm exec next start --port ${WEB}`,
       url: `${web}/login`,
       reuseExistingServer: false,
-      timeout: 120_000,
+      timeout: 300_000,
       env: { SENSEI_API_PROXY_ORIGIN: `http://localhost:${API}`, NEXT_PUBLIC_MOCKS: "0" },
     },
   ],

@@ -26,12 +26,24 @@ describe("next paths", () => {
 
   it.each([
     ["/acme/inbox", "/acme/inbox"],
+    ["/acme/langflow?tab=ask#q1", "/acme/langflow?tab=ask#q1"],
+    ["/acme/%2F%2Fevil.example", "/acme/%2F%2Fevil.example"],
     ["//evil.example", null],
     ["/\\evil.example", null],
     ["https://evil.example", null],
+    ["javascript:alert(1)", null],
+    // URL parsing drops tabs and newlines, turning these into "//evil.example".
+    ["/\t/evil.example", null],
+    ["/\n/evil.example", null],
+    ["/\r/evil.example", null],
+    ["/ /evil.example", null],
+    ["/acme\u0000", null],
+    ["/acme/\u00e9", null],
+    [`/${"a".repeat(512)}`, null],
+    ["relative/path", null],
     ["", null],
     [null, null],
-  ])("safeNext(%s) is %s", (value, expected) => {
+  ])("safeNext(%j) is %j", (value, expected) => {
     expect(safeNext(value)).toBe(expected);
   });
 });

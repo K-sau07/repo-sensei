@@ -12,12 +12,21 @@ interface ErrorStateProps {
   title: string;
   description?: ReactNode;
   onRetry?: () => void;
+  /** Another way forward, e.g. a link back to sign-in. */
+  action?: ReactNode;
   /** The X-Request-Id of the failed call, so support can find it in the logs. */
   requestId?: string;
   className?: string;
 }
 
-export function ErrorState({ title, description, onRetry, requestId, className }: ErrorStateProps) {
+export function ErrorState({
+  title,
+  description,
+  onRetry,
+  action,
+  requestId,
+  className,
+}: ErrorStateProps) {
   return (
     <section
       role="alert"
@@ -38,6 +47,7 @@ export function ErrorState({ title, description, onRetry, requestId, className }
             Try again
           </Button>
         )}
+        {action}
         {requestId && (
           <span className="inline-flex items-center gap-1 text-xs text-fg-muted">
             Request ID <code className="font-mono">{requestId}</code>
