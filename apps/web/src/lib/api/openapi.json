@@ -23,7 +23,8 @@
           "invitation.accept",
           "member.role_change",
           "member.remove",
-          "member.leave"
+          "member.leave",
+          "github.install.linked"
         ],
         "title": "AuditAction",
         "type": "string"
@@ -184,6 +185,74 @@
           "version"
         ],
         "title": "HealthResponse",
+        "type": "object"
+      },
+      "InstallReturn": {
+        "description": "Where the browser goes after installing.",
+        "enum": [
+          "onboarding",
+          "repos"
+        ],
+        "title": "InstallReturn",
+        "type": "string"
+      },
+      "InstallationOut": {
+        "properties": {
+          "account_login": {
+            "title": "Account Login",
+            "type": "string"
+          },
+          "account_type": {
+            "description": "\"User\" or \"Organization\"",
+            "title": "Account Type",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "installation_id": {
+            "title": "Installation Id",
+            "type": "integer"
+          },
+          "manage_url": {
+            "description": "Change repository access or uninstall on GitHub.",
+            "title": "Manage Url",
+            "type": "string"
+          },
+          "repository_selection": {
+            "description": "\"all\" or \"selected\"",
+            "title": "Repository Selection",
+            "type": "string"
+          },
+          "suspended": {
+            "title": "Suspended",
+            "type": "boolean"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "installation_id",
+          "account_login",
+          "account_type",
+          "repository_selection",
+          "suspended",
+          "manage_url",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "InstallationOut",
         "type": "object"
       },
       "InvitationCreate": {
@@ -970,6 +1039,132 @@
         ]
       }
     },
+    "/api/v1/github/install": {
+      "get": {
+        "description": "Send an org admin to GitHub to install the app. Non-admins get 403.",
+        "operationId": "github_install_api_v1_github_install_get",
+        "parameters": [
+          {
+            "description": "Organization slug",
+            "in": "query",
+            "name": "org",
+            "required": true,
+            "schema": {
+              "description": "Organization slug",
+              "maxLength": 64,
+              "title": "Org",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "from",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/InstallReturn",
+              "default": "repos"
+            }
+          }
+        ],
+        "responses": {
+          "302": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Github Install",
+        "tags": [
+          "github"
+        ]
+      }
+    },
+    "/api/v1/github/setup": {
+      "get": {
+        "description": "GitHub's Setup URL: link the new installation to the org that started the install.\n\nAlways answers with a redirect to the web app, carrying ``github_error`` on failure.",
+        "operationId": "github_setup_api_v1_github_setup_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "installation_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "exclusiveMinimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Installation Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "setup_action",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 32,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Setup Action"
+            }
+          },
+          {
+            "in": "query",
+            "name": "state",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 128,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "State"
+            }
+          }
+        ],
+        "responses": {
+          "302": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Github Setup",
+        "tags": [
+          "github"
+        ]
+      }
+    },
     "/api/v1/healthz": {
       "get": {
         "description": "Liveness: the process is up and serving requests.",
@@ -1522,6 +1717,55 @@
         "summary": "List Audit Events",
         "tags": [
           "orgs"
+        ]
+      }
+    },
+    "/api/v1/orgs/{org}/github/installations": {
+      "get": {
+        "description": "GitHub accounts connected to the org.",
+        "operationId": "list_installations_api_v1_orgs__org__github_installations_get",
+        "parameters": [
+          {
+            "description": "Organization slug",
+            "in": "path",
+            "name": "org",
+            "required": true,
+            "schema": {
+              "description": "Organization slug",
+              "title": "Org",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/InstallationOut"
+                  },
+                  "title": "Response List Installations Api V1 Orgs  Org  Github Installations Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Installations",
+        "tags": [
+          "github"
         ]
       }
     },

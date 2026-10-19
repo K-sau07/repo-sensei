@@ -119,14 +119,36 @@ class GitHubSettings(BaseSettings):
     client_id: str | None = None
     client_secret: SecretStr | None = None
     private_key_path: str | None = None
+    # The PEM itself, for platforms where secrets are env vars rather than files.
+    private_key: SecretStr | None = None
     webhook_secret: SecretStr | None = None
     api_url: str = "https://api.github.com"
     web_url: str = "https://github.com"
     timeout_seconds: float = Field(default=10.0, gt=0)
+    # Wait this long at most for a rate limit to reset before giving up with an error.
+    rate_limit_max_wait_seconds: float = Field(default=30.0, ge=0)
+    max_retries: int = Field(default=3, ge=0)
 
     @property
     def oauth_configured(self) -> bool:
         return bool(self.client_id and self.client_secret)
+
+    @property
+    def app_configured(self) -> bool:
+        """Installing the app and acting as it need its slug, an issuer id and the private key."""
+        return bool(
+            self.app_slug
+            and (self.client_id or self.app_id)
+            and (self.private_key or self.private_key_path)
+        )
+
+    def private_key_pem(self) -> str:
+        if self.private_key is not None:
+            return self.private_key.get_secret_value()
+        if self.private_key_path:
+            return Path(self.private_key_path).expanduser().read_text()
+        msg = "no GitHub App private key configured"
+        raise RuntimeError(msg)
 
 
 class TelemetrySettings(BaseSettings):

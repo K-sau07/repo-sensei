@@ -78,6 +78,48 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/github/install": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Github Install
+         * @description Send an org admin to GitHub to install the app. Non-admins get 403.
+         */
+        get: operations["github_install_api_v1_github_install_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/github/setup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Github Setup
+         * @description GitHub's Setup URL: link the new installation to the org that started the install.
+         *
+         *     Always answers with a redirect to the web app, carrying ``github_error`` on failure.
+         */
+        get: operations["github_setup_api_v1_github_setup_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/healthz": {
         parameters: {
             query?: never;
@@ -258,6 +300,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/orgs/{org}/github/installations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Installations
+         * @description GitHub accounts connected to the org.
+         */
+        get: operations["list_installations_api_v1_orgs__org__github_installations_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/orgs/{org}/invitations": {
         parameters: {
             query?: never;
@@ -378,7 +440,7 @@ export interface components {
          * AuditAction
          * @enum {string}
          */
-        AuditAction: "auth.login" | "auth.logout" | "auth.logout_all" | "org.create" | "org.update" | "org.delete" | "invitation.create" | "invitation.revoke" | "invitation.accept" | "member.role_change" | "member.remove" | "member.leave";
+        AuditAction: "auth.login" | "auth.logout" | "auth.logout_all" | "org.create" | "org.update" | "org.delete" | "invitation.create" | "invitation.revoke" | "invitation.accept" | "member.role_change" | "member.remove" | "member.leave" | "github.install.linked";
         /** AuditEventOut */
         AuditEventOut: {
             /** Action */
@@ -433,6 +495,51 @@ export interface components {
             status: "ok";
             /** Version */
             version: string;
+        };
+        /**
+         * InstallReturn
+         * @description Where the browser goes after installing.
+         * @enum {string}
+         */
+        InstallReturn: "onboarding" | "repos";
+        /** InstallationOut */
+        InstallationOut: {
+            /** Account Login */
+            account_login: string;
+            /**
+             * Account Type
+             * @description "User" or "Organization"
+             */
+            account_type: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Installation Id */
+            installation_id: number;
+            /**
+             * Manage Url
+             * @description Change repository access or uninstall on GitHub.
+             */
+            manage_url: string;
+            /**
+             * Repository Selection
+             * @description "all" or "selected"
+             */
+            repository_selection: string;
+            /** Suspended */
+            suspended: boolean;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
         };
         /** InvitationCreate */
         InvitationCreate: {
@@ -762,6 +869,68 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+        };
+    };
+    github_install_api_v1_github_install_get: {
+        parameters: {
+            query: {
+                /** @description Organization slug */
+                org: string;
+                from?: components["schemas"]["InstallReturn"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            302: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    github_setup_api_v1_github_setup_get: {
+        parameters: {
+            query?: {
+                installation_id?: number | null;
+                setup_action?: string | null;
+                state?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            302: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
             };
         };
     };
@@ -1154,6 +1323,38 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AuditPage"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_installations_api_v1_orgs__org__github_installations_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization slug */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InstallationOut"][];
                 };
             };
             /** @description Validation Error */

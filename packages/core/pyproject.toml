@@ -16,6 +16,7 @@ dependencies = [
     "orjson>=3.11",
     "pydantic>=2.11",
     "pydantic-settings>=2.10",
+    "pyjwt[crypto]>=2.15",
     "redis>=6.2",
     "sentry-sdk>=2.35",
     "sqlalchemy[asyncio]>=2.0.43,<2.1",
