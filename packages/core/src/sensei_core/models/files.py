@@ -39,6 +39,9 @@ class RepoFile(IdMixin, OrgScopedMixin, Base):
     path: Mapped[str] = mapped_column(Text)
     blob_sha: Mapped[str] = mapped_column(String(64))  # git's object id for the content
     content_hash: Mapped[bytes] = mapped_column(LargeBinary)  # SHA-256 of the content
+    # xxh3-128 of the content, for quick checks against a file on disk (None: discovered before
+    # it was recorded; the next index fills it in).
+    fast_hash: Mapped[bytes | None] = mapped_column(LargeBinary)
     language: Mapped[str | None] = mapped_column(String(32))
     size: Mapped[int] = mapped_column(BigInteger)
     loc: Mapped[int | None] = mapped_column(Integer)  # physical lines; None if not read as text

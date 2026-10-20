@@ -31,10 +31,12 @@ from sensei_core.models import (
     Snapshot,
     SnapshotStatus,
 )
-from sensei_core.storage import Bucket, repo_prefix, snapshot_key
+from sensei_core.storage import Bucket, artifact_key, repo_prefix, snapshot_key
+from sensei_engine.ingest.merkle import ARTIFACT_NAME, MAX_STORED_BYTES, MerkleTree
 from sensei_workers.runtime import Runtime, set_runtime
 from sensei_workers.tasks.discover import discover_files
 from sensei_workers.tasks.ingest import clone_snapshot
+from sensei_workers.tasks.merkle import build_merkle
 
 pytestmark = pytest.mark.integration
 
@@ -116,7 +118,8 @@ async def _snapshot(database: Database, repo_id: uuid.UUID) -> Snapshot | None:
 
 async def _cleanup(runtime: Runtime, org_id: uuid.UUID, repo_id: uuid.UUID) -> None:
     storage = await runtime.storage()
-    await storage.delete_prefix(Bucket.SNAPSHOTS, repo_prefix(Bucket.SNAPSHOTS, org_id, repo_id))
+    for bucket in Bucket:
+        await storage.delete_prefix(bucket, repo_prefix(bucket, org_id, repo_id))
     async with runtime.system_database.session() as db:
         await db.execute(delete(Org).where(Org.id == org_id))
 
@@ -347,3 +350,101 @@ def test_discover_waits_for_the_clone(
     assert _discover(org_id, repo_id, job_id) is None
     job = runtime.run(_job(runtime.system_database, job_id))
     assert (job.status, job.stage) == (JobStatus.QUEUED, None)
+
+
+# ------------------------------------------------------------------ merkle
+
+
+def _merkle(org_id: uuid.UUID, repo_id: uuid.UUID, job_id: uuid.UUID) -> str | None:
+    return build_merkle.apply(
+        kwargs={"job_id": str(job_id), "org_id": str(org_id), "repo_id": str(repo_id)}
+    ).get()
+
+
+def _stored_tree(runtime: Runtime, org_id: uuid.UUID, repo_id: uuid.UUID, sha: str) -> MerkleTree:
+    async def load() -> bytes | None:
+        storage = await runtime.storage()
+        key = artifact_key(org_id, repo_id, sha, ARTIFACT_NAME)
+        return await storage.get_bytes(Bucket.ARTIFACTS, key, max_bytes=MAX_STORED_BYTES)
+
+    data = runtime.run(load())
+    assert data is not None
+    return MerkleTree.from_bytes(data)
+
+
+async def _indexed_at(database: Database, repo_id: uuid.UUID, sha: str) -> None:
+    async with database.session() as db:
+        await db.execute(update(Repo).where(Repo.id == repo_id).values(last_indexed_sha=sha))
+
+
+def test_merkle_stores_the_tree_and_records_the_root(
+    runtime: Runtime,
+    repo: tuple[uuid.UUID, uuid.UUID],
+    github: respx.MockRouter,
+    bare_repo: Any,
+) -> None:
+    org_id, repo_id = repo
+    system = runtime.system_database
+    job_id = _cloned(runtime, org_id, repo_id)
+    _discover(org_id, repo_id, job_id)
+    root = _merkle(org_id, repo_id, job_id)
+    assert root is not None
+
+    job = runtime.run(_job(system, job_id))
+    merkle = job.stages["merkle"]
+    assert (job.stage, merkle["status"], merkle["done"]) == ("merkle", "done", 3)
+    assert (merkle["details"]["root"], merkle["details"]["files"]) == (root, 5)
+    assert "since" not in merkle["details"]  # never indexed before
+    snapshot = runtime.run(_snapshot(system, repo_id))
+    assert snapshot is not None
+    assert snapshot.merkle_root == root
+
+    tree = _stored_tree(runtime, org_id, repo_id, bare_repo.second)
+    assert tree.root.hex() == root
+    files = runtime.run(_files(system, repo_id))
+    assert sorted(tree.files) == sorted(files)
+    leaf = tree.files["src/app.py"]
+    assert (leaf.content_hash, leaf.fast_hash) == (
+        files["src/app.py"].content_hash,
+        files["src/app.py"].fast_hash,
+    )
+    assert _merkle(org_id, repo_id, job_id) is None  # a duplicate delivery
+
+
+def test_merkle_notes_what_changed_since_the_last_index(
+    runtime: Runtime,
+    repo: tuple[uuid.UUID, uuid.UUID],
+    github: respx.MockRouter,
+    bare_repo: Any,
+) -> None:
+    org_id, repo_id = repo
+    system = runtime.system_database
+    github.get(COMMITS_URL).mock(return_value=httpx.Response(200, json={"sha": bare_repo.first}))
+    first_job = _cloned(runtime, org_id, repo_id)
+    _discover(org_id, repo_id, first_job)
+    _merkle(org_id, repo_id, first_job)
+    runtime.run(_indexed_at(system, repo_id, bare_repo.first))  # what finalize (1.9) will do
+
+    github.get(COMMITS_URL).mock(return_value=httpx.Response(200, json={"sha": bare_repo.second}))
+    second_job = _cloned(runtime, org_id, repo_id)
+    _discover(org_id, repo_id, second_job)
+    _merkle(org_id, repo_id, second_job)
+    since = runtime.run(_job(system, second_job)).stages["merkle"]["details"]["since"]
+    # first -> second: old.txt deleted, src/app.py changed, .gitattributes and model.bin added.
+    assert since == {
+        "commit_sha": bare_repo.first,
+        "added": 2,
+        "modified": 1,
+        "deleted": 1,
+        "renamed": 0,
+    }
+
+
+def test_merkle_waits_for_discover(
+    runtime: Runtime, repo: tuple[uuid.UUID, uuid.UUID], github: respx.MockRouter
+) -> None:
+    org_id, repo_id = repo
+    job_id = _cloned(runtime, org_id, repo_id)
+    assert _merkle(org_id, repo_id, job_id) is None
+    job = runtime.run(_job(runtime.system_database, job_id))
+    assert (job.stage, job.stages["clone"]["status"]) == ("clone", "done")

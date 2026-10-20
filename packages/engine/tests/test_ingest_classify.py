@@ -8,6 +8,7 @@ import hashlib
 from pathlib import Path
 
 import pytest
+import xxhash
 
 from sensei_engine.ingest.classify import MAX_PARSE_BYTES, FileFacts, Flag, classify
 from sensei_engine.ingest.ignore import Attribute
@@ -40,6 +41,7 @@ def test_hashes_and_lines(tmp_path: Path) -> None:
     blob = hashlib.sha1(b"blob %d\0" % len(content) + content, usedforsecurity=False)
     assert facts.blob_sha == blob.hexdigest()
     assert facts.content_hash == hashlib.sha256(content).digest()
+    assert facts.fast_hash == xxhash.xxh3_128_digest(content)
     assert (facts.language, facts.loc, facts.size, facts.flags) == ("python", 3, 26, frozenset())
     assert facts.text == content.decode()
 

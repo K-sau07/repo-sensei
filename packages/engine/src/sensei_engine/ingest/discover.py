@@ -36,6 +36,7 @@ class DiscoveredFile:
     size: int
     blob_sha: str
     content_hash: bytes
+    fast_hash: bytes
     language: str | None
     loc: int | None
     role: Role
@@ -125,6 +126,7 @@ def discover(
                 size=facts.size,
                 blob_sha=facts.blob_sha,
                 content_hash=facts.content_hash,
+                fast_hash=facts.fast_hash,
                 language=facts.language,
                 loc=facts.loc,
                 role=role,

@@ -145,6 +145,18 @@ class ObjectStorage:
             async for chunk in body.iter_chunks(chunk_size):
                 yield chunk
 
+    async def get_bytes(self, bucket: Bucket, key: str, *, max_bytes: int) -> bytes | None:
+        """The whole object (None if there is nothing at ``key``); refuses more than
+        ``max_bytes``."""
+        size = await self.size(bucket, key)
+        if size is None:
+            return None
+        if size > max_bytes:
+            msg = f"{key} is {size} bytes, more than {max_bytes}"
+            raise ValueError(msg)
+        parts = [chunk async for chunk in self.get_stream(bucket, key)]
+        return b"".join(parts)
+
     async def size(self, bucket: Bucket, key: str) -> int | None:
         """Bytes stored at ``key``, or None if there is nothing there."""
         try:

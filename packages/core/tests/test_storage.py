@@ -81,6 +81,20 @@ async def test_put_get_and_size(storage: ObjectStorage, tmp_path: Path) -> None:
 
 
 @pytest.mark.integration
+async def test_get_bytes_is_bounded(storage: ObjectStorage) -> None:
+    org, repo = _ids()
+    key = artifact_key(org, repo, SHA, "merkle.msgpack.zst")
+    try:
+        await storage.put_bytes(Bucket.ARTIFACTS, key, b"x" * 1000)
+        assert await storage.get_bytes(Bucket.ARTIFACTS, key, max_bytes=1000) == b"x" * 1000
+        with pytest.raises(ValueError, match="more than 999"):
+            await storage.get_bytes(Bucket.ARTIFACTS, key, max_bytes=999)
+        assert await storage.get_bytes(Bucket.ARTIFACTS, f"{key}.missing", max_bytes=1) is None
+    finally:
+        await storage.delete_prefix(Bucket.ARTIFACTS, repo_prefix(Bucket.ARTIFACTS, org, repo))
+
+
+@pytest.mark.integration
 async def test_presigned_urls_download_and_expire_quickly(storage: ObjectStorage) -> None:
     org, repo = _ids()
     key = artifact_key(org, repo, SHA, "manifest.json")

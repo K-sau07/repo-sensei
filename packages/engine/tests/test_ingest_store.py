@@ -7,6 +7,7 @@ import uuid
 from pathlib import Path
 
 import pytest
+import xxhash
 from asyncpg.exceptions import InsufficientPrivilegeError
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -82,6 +83,7 @@ async def test_files_summary_and_languages_are_saved(
     content = (tmp_path / "app/main.py").read_bytes()
     assert (main.language, main.role, main.loc, main.size) == ("python", "api", 2, len(content))
     assert main.content_hash == hashlib.sha256(content).digest()
+    assert main.fast_hash == xxhash.xxh3_128_digest(content)
     assert main.framework_root == "."
     assert (main.org_id, main.repo_id, main.snapshot_id) == (
         snapshot.org_id,

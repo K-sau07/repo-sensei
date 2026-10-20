@@ -25,6 +25,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
+import xxhash
 from charset_normalizer import from_bytes
 from identify import identify
 
@@ -87,6 +88,7 @@ class FileFacts:
     size: int
     blob_sha: str  # git's id for the content (sha1 of "blob <size>\0" + content)
     content_hash: bytes  # SHA-256 of the content
+    fast_hash: bytes  # xxh3-128 of the content (quick comparisons)
     language: str | None
     loc: int | None  # physical lines; None for binary and too-large files
     flags: frozenset[Flag]
@@ -98,24 +100,34 @@ class FileChangedError(Exception):
     """The file changed while it was being read (the tree isn't stable)."""
 
 
-def _read(path: Path) -> tuple[bytes, str, bytes, int]:
-    """Up to MAX_PARSE_BYTES + 1 bytes of the content, the blob id, the SHA-256 and the size."""
+@dataclass(frozen=True, slots=True)
+class _Read:
+    head: bytes  # up to MAX_PARSE_BYTES + 1 bytes
+    blob_sha: str
+    sha256: bytes
+    xxh3: bytes
+    size: int
+
+
+def _read(path: Path) -> _Read:
     fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0))
     with os.fdopen(fd, "rb") as handle:
         size = os.fstat(handle.fileno()).st_size
         blob = hashlib.sha1(f"blob {size}\0".encode(), usedforsecurity=False)
         sha256 = hashlib.sha256()
+        xxh3 = xxhash.xxh3_128()
         head = bytearray()
         read = 0
         while chunk := handle.read(CHUNK_BYTES):
             read += len(chunk)
             blob.update(chunk)
             sha256.update(chunk)
+            xxh3.update(chunk)
             if len(head) <= MAX_PARSE_BYTES:
                 head += chunk[: MAX_PARSE_BYTES + 1 - len(head)]
     if read != size:
         raise FileChangedError(str(path))
-    return bytes(head), blob.hexdigest(), sha256.digest(), size
+    return _Read(bytes(head), blob.hexdigest(), sha256.digest(), xxh3.digest(), size)
 
 
 def _decode(data: bytes) -> str | None:
@@ -151,7 +163,8 @@ def _has_generated_marker(header: bytes) -> bool:
 
 
 def classify(walked: WalkedFile) -> FileFacts:
-    head, blob_sha, content_hash, size = _read(walked.absolute)
+    read = _read(walked.absolute)
+    head, size = read.head, read.size
     flags: set[Flag] = set()
     name = PurePosixPath(walked.path).name
     tags = identify.tags_from_filename(name)
@@ -187,8 +200,9 @@ def classify(walked: WalkedFile) -> FileFacts:
     return FileFacts(
         path=walked.path,
         size=size,
-        blob_sha=blob_sha,
-        content_hash=content_hash,
+        blob_sha=read.blob_sha,
+        content_hash=read.sha256,
+        fast_hash=read.xxh3,
         language=language,
         loc=None if text is None else _lines(text),
         flags=frozenset(flags),

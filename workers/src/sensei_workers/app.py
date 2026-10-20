@@ -28,6 +28,7 @@ TASK_MODULES = [
     "sensei_workers.tasks.repos",
     "sensei_workers.tasks.ingest",
     "sensei_workers.tasks.discover",
+    "sensei_workers.tasks.merkle",
 ]
 
 settings = get_settings()
