@@ -59,10 +59,11 @@ jobs:
           cache-from: type=gha,scope=postgres
           cache-to: type=gha,scope=postgres,mode=max
 
-      - name: Start Postgres and Redis
+      - name: Start Postgres, Redis and object storage
         run: |
           cp .env.example .env
-          docker compose -f infra/docker-compose.yml --env-file .env up -d --wait postgres redis
+          docker compose -f infra/docker-compose.yml --env-file .env up -d --wait postgres redis s3
+          docker compose -f infra/docker-compose.yml --env-file .env run --rm s3-init
 
       - name: Migrations go up, all the way down, and up again
         run: |
