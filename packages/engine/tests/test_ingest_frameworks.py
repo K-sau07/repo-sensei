@@ -181,7 +181,34 @@ def test_framework_root_is_the_deepest() -> None:
         ("Button.tsx", "tsx", "export const B = () => <button />", False, Role.UI),
         ("styles/site.css", "css", "", False, Role.UI),
         ("templates/email.html", "html", "", False, Role.UI),
-        ("app/core/security.py", "python", "", True, Role.UI),
+        ("web/main.go", "go", "", True, Role.SERVICE),  # not JS: not UI because of the package
+        ("web/api/handler.py", "python", "", True, Role.API),
+        ("web/src/routes/api/+server.ts", "typescript", "", True, Role.API),  # SvelteKit
+        ("web/src/routes/+page.svelte", "svelte", "", True, Role.UI),
+        (
+            "src/main/java/com/acme/UserController.java",
+            "java",
+            '@RestController\npublic class UserController {\n  @GetMapping("/users")\n',
+            False,
+            Role.API,
+        ),
+        (
+            "src/main/java/com/acme/User.java",
+            "java",
+            "@Entity\npublic class User {}",
+            False,
+            Role.DB,
+        ),
+        (
+            "src/main/java/com/acme/Users.java",
+            "java",
+            "public interface Users extends JpaRepository<User, Long> {}",
+            False,
+            Role.DB,
+        ),
+        ("cmd/server/main.go", "go", 'http.HandleFunc("/health", ok)', False, Role.API),
+        ("internal/http/routes.go", "go", 'r.GET("/users", list)', False, Role.API),
+        ("mysite/settings/base.py", "python", "", False, Role.CONFIG),  # Django settings package
         ("app/utils.py", "python", "", False, Role.SERVICE),
         ("img/logo.png", None, None, False, Role.OTHER),
         ("data/cities.csv", "csv", "", False, Role.OTHER),

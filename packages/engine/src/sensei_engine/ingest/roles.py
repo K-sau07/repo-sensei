@@ -10,8 +10,10 @@ Checked in order, first match wins:
 5. ``api``: route handlers and applications by framework decorator or registration anywhere,
    and by directory (``api``, ``routes``, ``controllers``, ``endpoints``) outside frontend
    packages;
-6. ``ui``: components that return JSX, Vue/Svelte/Astro files, stylesheets, HTML, and any code in
-   a frontend package (one whose manifest uses React, Vue, Svelte, Angular or Next.js);
+6. ``ui``: components that return JSX, Vue/Svelte/Astro files, stylesheets, HTML, and any
+   JavaScript or TypeScript in a frontend package (one whose manifest uses React, Vue, Svelte,
+   Angular or Next.js), except its server endpoints (Next.js ``route.ts``, SvelteKit
+   ``+server.ts``);
 7. ``service``: the rest of the code;
 8. ``other``: everything else (images, data, plain text).
 """
@@ -83,7 +85,17 @@ _CONFIG_LANGUAGES = frozenset(
     }
 )
 _CONFIG_DIRS = frozenset(
-    {".github", ".circleci", ".gitlab", ".husky", ".vscode", ".idea", ".devcontainer", "scripts"}
+    {
+        ".github",
+        ".circleci",
+        ".gitlab",
+        ".husky",
+        ".vscode",
+        ".idea",
+        ".devcontainer",
+        "scripts",
+        "settings",  # Django settings split into a package (settings/base.py, …)
+    }
 )
 _CONFIG_NAME = re.compile(
     r"^(?:.+\.config\.[cm]?[jt]s|tsconfig.*\.json|setup\.py|setup\.cfg|manage\.py|noxfile\.py"
@@ -102,9 +114,13 @@ _DB_NAME = re.compile(
 )
 _ORM_MODEL = re.compile(
     r"^\s*class\s+\w+\s*\([^)]*\b(?:table\s*=\s*True|DeclarativeBase|declarative_base|db\.Model"
-    r"|models\.Model)\b",
+    r"|models\.Model)\b"
+    # JPA and Spring Data
+    r"|^\s*@(?:Entity|Table|Document)\b"
+    r"|\binterface\s+\w+\s+extends\s+(?:Jpa|Crud|PagingAndSorting|Mongo|Reactive\w*)Repository\b",
     re.MULTILINE,
 )
+_ORM_LANGUAGES = frozenset({"python", "java", "kotlin"})
 
 _API_DIRS = frozenset(
     {"api", "routes", "routers", "router", "controllers", "endpoints", "handlers"}
@@ -117,11 +133,24 @@ _API_CODE = re.compile(
     # Express/Koa/Fastify-style registration
     r"|\b(?:app|router|server)\.(?:get|post|put|patch|delete|all)\s*\(\s*[\"'`]/"
     # NestJS
-    r"|^\s*@(?:Controller|Get|Post|Put|Patch|Delete)\s*\(",
+    r"|^\s*@(?:Controller|Get|Post|Put|Patch|Delete)\s*\("
+    # Spring (Java, Kotlin)
+    r"|^\s*@(?:RestController|Controller|RequestMapping|GetMapping|PostMapping|PutMapping"
+    r"|PatchMapping|DeleteMapping)\b"
+    # Go: net/http, gin, echo, chi, fiber
+    r"|\bhttp\.Handle(?:Func)?\s*\("
+    r"|\.(?:GET|POST|PUT|PATCH|DELETE|Get|Post|Put|Patch|Delete|HandleFunc)\s*\(\s*\"/",
     re.MULTILINE,
 )
+# Frontend packages hold JavaScript and TypeScript; other languages there are not UI code.
+_JS_LANGUAGES = frozenset({"javascript", "typescript", "jsx", "tsx"})
+_FRONTEND_LANGUAGES = _JS_LANGUAGES | {"vue", "svelte", "astro"}
 # Next.js route handlers and API routes (in a frontend package, but server endpoints).
-_NEXT_HANDLER = re.compile(r"(?:^|/)(?:app/(?:.+/)?route\.[cm]?[jt]s|pages/api/.+\.[cm]?[jt]sx?)$")
+# Next.js route handlers and API routes, SvelteKit endpoints (in a frontend package, but server
+# endpoints).
+_FRONTEND_HANDLER = re.compile(
+    r"(?:^|/)(?:app/(?:.+/)?route\.[cm]?[jt]s|pages/api/.+\.[cm]?[jt]sx?|\+server\.[jt]s)$"
+)
 
 _UI_LANGUAGES = frozenset(
     {"vue", "svelte", "astro", "css", "scss", "sass", "less", "html", "jinja", "handlebars", "ejs"}
@@ -165,14 +194,17 @@ def _db(f: _File) -> bool:
         f.language in _DB_LANGUAGES
         or f.directories & _DB_DIRS
         or _DB_NAME.match(f.name)
-        or (f.language == "python" and _ORM_MODEL.search(f.code))
+        or (f.language in _ORM_LANGUAGES and _ORM_MODEL.search(f.code))
     )
 
 
 def _api(f: _File) -> bool:
-    if _NEXT_HANDLER.search(f.path) or (f.language in CODE_LANGUAGES and _API_CODE.search(f.code)):
+    if _FRONTEND_HANDLER.search(f.path):
         return True
-    return not f.ui_package and bool(f.directories & _API_DIRS or _API_NAME.match(f.name))
+    if f.language in CODE_LANGUAGES and _API_CODE.search(f.code):
+        return True
+    frontend = f.ui_package and f.language in _FRONTEND_LANGUAGES
+    return not frontend and bool(f.directories & _API_DIRS or _API_NAME.match(f.name))
 
 
 def _ui(f: _File) -> bool:
@@ -180,7 +212,7 @@ def _ui(f: _File) -> bool:
         return True
     if f.language in ("tsx", "jsx") and _JSX_RETURN.search(f.code):
         return True
-    return f.ui_package and f.language in CODE_LANGUAGES
+    return f.ui_package and f.language in _JS_LANGUAGES
 
 
 def _service(f: _File) -> bool:
