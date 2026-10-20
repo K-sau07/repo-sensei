@@ -116,6 +116,10 @@ def test_settings_defaults_and_cleanup() -> None:
         {"tracked_branches": ["has space"]},
         {"tracked_branches": ["bad~name"]},
         {"tracked_branches": [""]},
+        *(
+            {"tracked_branches": [name]}
+            for name in ("-delete", "a..b", "x@{1}", "@", "main.lock", "a/.hidden", "a//b", "a/")
+        ),
         {"tracked_branches": [f"b{i}" for i in range(21)]},
         {"ignore_globs": ["x" * 201]},
     ],

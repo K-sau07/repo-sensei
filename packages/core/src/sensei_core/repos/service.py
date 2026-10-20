@@ -58,6 +58,23 @@ def _now() -> datetime:
     return datetime.now(UTC)
 
 
+def _valid_branch(name: str) -> bool:
+    """git's rules for a branch name (``git check-ref-format --branch``), and never anything
+    that could read as a command-line option."""
+    return not (
+        not name
+        or len(name) > 255
+        or re.search(r"[\x00-\x20\x7f~^:?*\[\\]", name)
+        or name.startswith(("-", "/"))
+        or name.endswith(("/", ".", ".lock"))
+        or ".." in name
+        or "//" in name
+        or "@{" in name
+        or name == "@"
+        or any(part.startswith(".") or part.endswith(".lock") for part in name.split("/"))
+    )
+
+
 class RepoSettings(BaseModel):
     """What admins can change about a connected repository."""
 
@@ -70,7 +87,7 @@ class RepoSettings(BaseModel):
     def _branches(cls, value: list[str]) -> list[str]:
         cleaned = [branch.strip() for branch in value]
         for branch in cleaned:
-            if not branch or len(branch) > 255 or re.search(r"[\x00-\x20\x7f~^:?*\[\\]", branch):
+            if not _valid_branch(branch):
                 msg = f"not a valid branch name: {branch!r}"
                 raise ValueError(msg)
         return list(dict.fromkeys(cleaned))
