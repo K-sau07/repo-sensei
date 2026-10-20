@@ -22,6 +22,8 @@ import yaml
 from packaging.requirements import InvalidRequirement, Requirement
 from packaging.utils import canonicalize_name
 
+from sensei_core.logging import get_logger
+
 PYTHON_PACKAGES: dict[str, str] = {
     "fastapi": "fastapi",
     "starlette": "starlette",
@@ -70,10 +72,16 @@ JS_PACKAGES: dict[str, str] = {
     "@playwright/test": "playwright",
 }
 
+log = get_logger(__name__)
+
 _REQUIREMENTS = re.compile(r"^requirements[\w.-]*\.(?:txt|in)$")
 _COMPOSE = re.compile(r"^(?:docker-)?compose(?:\.[\w-]+)?\.ya?ml$")
 _NEXT_CONFIG = re.compile(r"^next\.config\.(?:js|cjs|mjs|ts|mts)$")
 _OPENAPI = re.compile(r"^openapi\.(?:json|ya?ml)$")
+_COMMENT_TAIL = re.compile(r"\s#")
+_OPENAPI_VERSION = re.compile(
+    r"^(?:openapi|swagger)\s*:\s*[\"']?([0-9][0-9A-Za-z.-]*)", re.MULTILINE
+)
 ROOT = "."
 
 
@@ -136,7 +144,7 @@ def _requirement(line: str) -> tuple[str, str | None] | None:
 
 def _requirements_txt(text: str) -> Iterable[tuple[str, str | None]]:
     for raw in text.splitlines():
-        line = raw.split(" #", 1)[0].strip()
+        line = _COMMENT_TAIL.split(raw, maxsplit=1)[0].strip()
         if not line or line.startswith(("#", "-", "git+", "http:", "https:", "file:")):
             continue  # comments, options (-r, -e, --hash), bare URLs
         parsed = _requirement(line)
@@ -164,7 +172,7 @@ def _poetry_version(spec: object) -> str | None:
 def _pyproject(text: str) -> Iterable[tuple[str, str | None]]:
     try:
         data = tomllib.loads(text)
-    except tomllib.TOMLDecodeError:
+    except (ValueError, RecursionError):  # TOMLDecodeError is a ValueError
         return
     project = _table(data.get("project"))
     lines = _strings(project.get("dependencies"))
@@ -193,7 +201,7 @@ def _pyproject(text: str) -> Iterable[tuple[str, str | None]]:
 def _package_json(text: str) -> Iterable[tuple[str, str | None]]:
     try:
         data = json.loads(text)
-    except ValueError:
+    except (ValueError, RecursionError):
         return
     for key in ("dependencies", "devDependencies", "peerDependencies", "optionalDependencies"):
         for name, spec in _table(_table(data).get(key)).items():
@@ -206,7 +214,7 @@ def _package_json(text: str) -> Iterable[tuple[str, str | None]]:
 def _yaml(text: str) -> object:
     try:
         return yaml.safe_load(text)
-    except yaml.YAMLError:
+    except (yaml.YAMLError, ValueError, TypeError, RecursionError):  # bad values, deep nesting
         return None
 
 
@@ -219,12 +227,13 @@ def _openapi_version(path: str, text: str) -> str | None:
     if path.endswith(".json"):
         try:
             data: object = json.loads(text)
-        except ValueError:
+        except (ValueError, RecursionError):
             return None
-    else:
-        data = _yaml(text)
-    version = _table(data).get("openapi") or _table(data).get("swagger")
-    return str(version) if version else None
+        version = _table(data).get("openapi") or _table(data).get("swagger")
+        return str(version) if version else None
+    # As written: YAML would read "openapi: 3.10" as the number 3.1.
+    written = _OPENAPI_VERSION.search(text)
+    return written.group(1) if written else None
 
 
 class _Found:
@@ -257,27 +266,33 @@ def detect_frameworks(manifests: Mapping[str, str]) -> list[Framework]:
     """Frameworks from the manifests' text (path → content), sorted by root, then name."""
     found = _Found()
     for path in sorted(manifests):
-        text = manifests[path]
-        name = PurePosixPath(path).name
-        root = _root(path)
-        if name == "pyproject.toml" or _is_requirements(PurePosixPath(path)):
-            parse = _pyproject if name == "pyproject.toml" else _requirements_txt
-            for package, version in parse(text):
-                if package in PYTHON_PACKAGES:
-                    found.add(PYTHON_PACKAGES[package], root, path, version)
-        elif name == "package.json":
-            for package, version in _package_json(text):
-                if package in JS_PACKAGES:
-                    found.add(JS_PACKAGES[package], root, path, version)
-        elif _NEXT_CONFIG.match(name):
-            found.add("next", root, path)
-        elif name == "alembic.ini":
-            found.add("alembic", root, path)
-        elif _COMPOSE.match(name):
-            found.add("docker-compose", root, path, details={"services": _compose_services(text)})
-        elif _OPENAPI.match(name):
-            found.add("openapi", root, path, _openapi_version(path, text))
+        try:
+            _detect_one(found, path, manifests[path])
+        except Exception:  # a manifest no parser expected: skip it, never the whole discovery
+            log.warning("manifest skipped", path=path, exc_info=True)
     return sorted(found.by_key.values(), key=lambda f: (f.root != ROOT, f.root, f.name))
+
+
+def _detect_one(found: _Found, path: str, text: str) -> None:
+    name = PurePosixPath(path).name
+    root = _root(path)
+    if name == "pyproject.toml" or _is_requirements(PurePosixPath(path)):
+        parse = _pyproject if name == "pyproject.toml" else _requirements_txt
+        for package, version in parse(text):
+            if package in PYTHON_PACKAGES:
+                found.add(PYTHON_PACKAGES[package], root, path, version)
+    elif name == "package.json":
+        for package, version in _package_json(text):
+            if package in JS_PACKAGES:
+                found.add(JS_PACKAGES[package], root, path, version)
+    elif _NEXT_CONFIG.match(name):
+        found.add("next", root, path)
+    elif name == "alembic.ini":
+        found.add("alembic", root, path)
+    elif _COMPOSE.match(name):
+        found.add("docker-compose", root, path, details={"services": _compose_services(text)})
+    elif _OPENAPI.match(name):
+        found.add("openapi", root, path, _openapi_version(path, text))
 
 
 def framework_root(path: str, roots: Iterable[str]) -> str | None:

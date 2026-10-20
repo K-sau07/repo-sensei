@@ -100,6 +100,37 @@ def test_alembic_compose_and_openapi() -> None:
     assert frameworks["spec", "openapi"].version == "2.0"
 
 
+@pytest.mark.parametrize(
+    ("path", "text"),
+    [
+        ("compose.yml", "services:\n  db:\n    created: 2024-02-30\n"),  # an impossible date
+        ("compose.yml", "x: !!int xx\n"),
+        ("compose.yml", "[" * 100_000),
+        ("openapi.json", "[" * 100_000),
+        ("package.json", "[" * 100_000),
+        ("pyproject.toml", "a = " + "[" * 100_000),
+        ("package.json", '{"dependencies": ["react"]}'),
+        ("pyproject.toml", "[project]\ndependencies = 5\n"),
+    ],
+)
+def test_broken_manifests_are_skipped(path: str, text: str) -> None:
+    assert detect_frameworks({path: text, "web/package.json": '{"dependencies": {"vue": "3"}}'})
+
+
+def test_versions_as_written() -> None:
+    manifests = {
+        "requirements.txt": "fastapi>=0.1\t# web framework\n",
+        "api/openapi.yaml": "openapi: 3.10.0\n",
+        "spec/openapi.yaml": "openapi: 3.10\n",
+    }
+    found = {(f.root, f.name): f.version for f in detect_frameworks(manifests)}
+    assert found == {
+        (".", "fastapi"): ">=0.1",
+        ("api", "openapi"): "3.10.0",
+        ("spec", "openapi"): "3.10",
+    }
+
+
 def test_not_manifests() -> None:
     for path in ("src/package.ts", "requirements.md", "docs/openapi.md", "compose.ts"):
         assert not is_manifest(path)
