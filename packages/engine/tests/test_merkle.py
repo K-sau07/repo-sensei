@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import random
+import time
 
 import msgpack
 import pytest
@@ -69,6 +70,7 @@ def test_names_matter_not_just_contents() -> None:
         ["./a.py"],
         ["a//b.py"],
         [""],
+        ["a\0b.py"],
     ],
 )
 def test_invalid_trees_are_refused(paths: list[str]) -> None:
@@ -120,6 +122,12 @@ def test_a_tampered_tree_is_refused() -> None:
         _stored({"v": 99, "root": b"", "dirs": {}}),
         _stored({"v": 1, "dirs": {"": [["a", "f"]]}}),  # rows missing fields
         _stored({"v": 1, "root": b"x", "dirs": {"": [["../x", "f", b"h", None, 1]]}}),
+        _stored({"v": 1, "root": b"x", "dirs": {"": [["a", "f", b"h" * 32, None, "12"]]}}),
+        _stored({"v": 1, "root": b"x", "dirs": {"": [["a", "f", b"h" * 32, None, -1]]}}),
+        _stored({"v": 1, "root": b"x", "dirs": {"": [["a", "f", b"short", None, 1]]}}),
+        _stored({"v": 1, "root": b"x", "dirs": {"": [["a", "f", b"h" * 32, b"xx", 1]]}}),
+        _stored({"v": 1, "root": b"x", "dirs": {"": [["a", "x", b"h" * 32]]}}),
+        _stored({"v": 1, "root": b"x", "dirs": ["not", "a", "dict"]}),
     ],
 )
 def test_garbage_is_refused(data: bytes) -> None:
@@ -173,6 +181,29 @@ def test_empty_files_are_never_renames() -> None:
         ["a/__init__.py"],
         [],
     )
+
+
+def test_names_pair_before_contents() -> None:
+    before = _tree({"a/foo": b"shared", "b/LICENSE": b"shared"})
+    after = _tree({"c/LICENSE": b"shared", "d/bar": b"shared"})
+    assert diff(before, after).renamed == [("a/foo", "d/bar"), ("b/LICENSE", "c/LICENSE")]
+
+
+def test_many_identical_files_diff_quickly() -> None:
+    before = _tree({f"old/{i}.txt": b"same" for i in range(20_000)})
+    after = _tree({f"new/n{i}.txt": b"same" for i in range(20_000)})
+    started = time.monotonic()
+    changes = diff(before, after)
+    assert len(changes.renamed) == 20_000
+    assert time.monotonic() - started < 5
+
+
+def test_very_deep_paths() -> None:
+    deep = "/".join(["d"] * 3000) + "/leaf.txt"
+    tree = _tree({deep: b"x", "top.txt": b"y"})
+    assert MerkleTree.from_bytes(tree.to_bytes()).root == tree.root
+    assert [leaf.path for leaf in tree.files_under("d")] == [deep]
+    assert diff(tree, _tree({deep: b"z", "top.txt": b"y"})).modified == [deep]
 
 
 def test_a_file_replaced_by_a_directory() -> None:

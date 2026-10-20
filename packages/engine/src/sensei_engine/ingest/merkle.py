@@ -14,7 +14,7 @@ tree) and the size. Loading recomputes every hash and refuses a tree that doesn'
 from __future__ import annotations
 
 import hashlib
-from collections import defaultdict
+from collections import defaultdict, deque
 from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass, field
 from pathlib import PurePosixPath
@@ -29,6 +29,7 @@ ARTIFACT_NAME = "merkle.msgpack.zst"  # stored per snapshot in the artifacts buc
 MAX_STORED_BYTES = 256 * 1024 * 1024
 FILE, DIR = "f", "d"
 ROOT = ""  # the root directory's path
+HASH_BYTES = 32  # SHA-256
 
 # msgpack ships no type information.
 _pack = cast("Callable[[object], bytes]", msgpack.packb)  # pyright: ignore[reportUnknownMemberType]
@@ -85,11 +86,14 @@ class MerkleTree:
 
     def files_under(self, path: str) -> Iterator[Leaf]:
         """Every file at or below ``path`` (a file or a directory)."""
-        if path in self.files:
-            yield self.files[path]
-            return
-        for entry in self.children.get(path, []):
-            yield from self.files_under(_join(path, entry.name))
+        pending = [path]
+        while pending:  # no recursion: paths can be thousands of directories deep
+            current = pending.pop()
+            if current in self.files:
+                yield self.files[current]
+                continue
+            entries = self.children.get(current, [])
+            pending.extend(_join(current, entry.name) for entry in reversed(entries))
 
     # ------------------------------------------------------------------ storage
 
@@ -123,20 +127,59 @@ class MerkleTree:
         if payload.get("v") != FORMAT_VERSION:
             raise CorruptTreeError(f"unknown format {payload.get('v')!r}")
         leaves: list[Leaf] = []
-        dirs = cast("dict[str, list[list[Any]]]", payload["dirs"])
-        for directory, rows in dirs.items():
-            for row in rows:
-                if row[1] == FILE:
-                    name, _, content_hash, fast_hash, size = row
-                    leaves.append(Leaf(_join(directory, name), content_hash, fast_hash, size))
+        dirs = payload["dirs"]
+        if not isinstance(dirs, dict):
+            raise CorruptTreeError("no directories")
+        for directory, rows in cast("dict[object, object]", dirs).items():
+            if not isinstance(directory, str) or not isinstance(rows, list):
+                raise CorruptTreeError("a directory that isn't one")
+            for row in cast("list[object]", rows):
+                leaf = _stored_leaf(directory, row)
+                if leaf is not None:
+                    leaves.append(leaf)
         tree = build_tree(leaves)
-        if tree.root != payload["root"] or set(tree.children) != set(dirs):
+        stored_dirs = set(cast("dict[str, object]", dirs))
+        if tree.root != payload["root"] or set(tree.children) != stored_dirs:
             raise CorruptTreeError("the hashes don't add up")
         return tree
 
 
+def _stored_leaf(directory: str, row: object) -> Leaf | None:
+    """A file row of a stored tree (None for a directory row), checked field by field."""
+    if not isinstance(row, list):
+        raise CorruptTreeError("an entry that isn't a list")
+    fields = cast("list[object]", row)
+    if len(fields) == 3 and fields[1] == DIR:
+        return None
+    if len(fields) != 5 or fields[1] != FILE:
+        raise CorruptTreeError("an entry of an unknown kind")
+    name, _, content_hash, fast_hash, size = fields
+    valid = (
+        isinstance(name, str)
+        and isinstance(content_hash, bytes)
+        and len(content_hash) == HASH_BYTES
+        and (fast_hash is None or (isinstance(fast_hash, bytes) and len(fast_hash) == 16))
+        and isinstance(size, int)
+        and not isinstance(size, bool)
+        and size >= 0
+    )
+    if not valid:
+        raise CorruptTreeError("a file entry with bad fields")
+    return Leaf(
+        _join(directory, cast("str", name)),
+        cast("bytes", content_hash),
+        cast("bytes | None", fast_hash),
+        cast("int", size),
+    )
+
+
 def _check_path(path: str) -> None:
-    if not path or path.startswith("/") or any(p in ("", ".", "..") for p in path.split("/")):
+    if (
+        not path
+        or path.startswith("/")
+        or "\0" in path  # names end at NUL in the encoding
+        or any(p in ("", ".", "..") for p in path.split("/"))
+    ):
         raise ValueError(f"not a relative, normalised path: {path!r}")
 
 
@@ -164,20 +207,22 @@ def build_tree(leaves: Iterable[Leaf]) -> MerkleTree:
 
     dirs: dict[str, bytes] = {}
     children: dict[str, list[Entry]] = {}
-
-    def visit(directory: str) -> bytes:
+    # Deepest directories first, so every child's hash is known before its parent's (no
+    # recursion: paths can be thousands of directories deep).
+    for directory in sorted(members, key=_depth, reverse=True):
         entries: list[Entry] = []
         for name, kind in members[directory].items():
             path = _join(directory, name)
-            child = files[path].content_hash if kind == FILE else visit(path)
+            child = files[path].content_hash if kind == FILE else dirs[path]
             entries.append(Entry(name, kind, child))
         entries.sort(key=lambda e: e.name.encode())
         children[directory] = entries
         dirs[directory] = directory_hash(entries)
-        return dirs[directory]
-
-    visit(ROOT)
     return MerkleTree(files=files, dirs=dirs, children=children)
+
+
+def _depth(directory: str) -> int:
+    return 0 if directory == ROOT else directory.count("/") + 1
 
 
 # ------------------------------------------------------------------ diff
@@ -199,25 +244,39 @@ def _pair_renames(
     deleted: list[Leaf], added: list[Leaf]
 ) -> tuple[list[tuple[str, str]], set[str], set[str]]:
     """Deleted and added files with identical content are renames. Empty files are never paired
-    (every empty file looks the same); within a content, same file names pair first."""
-    by_hash: dict[bytes, list[Leaf]] = defaultdict(list)
-    for leaf in added:
+    (every empty file looks the same). Same content and same file name pair first, then same
+    content alone, each in path order. Linear: queues per key, no scanning."""
+    by_name: dict[tuple[bytes, str], deque[str]] = defaultdict(deque)
+    by_hash: dict[bytes, deque[str]] = defaultdict(deque)
+    for leaf in sorted(added, key=lambda leaf: leaf.path):
         if leaf.size > 0:
-            by_hash[leaf.content_hash].append(leaf)
+            by_name[leaf.content_hash, PurePosixPath(leaf.path).name].append(leaf.path)
+            by_hash[leaf.content_hash].append(leaf.path)
     renamed: list[tuple[str, str]] = []
-    old_paths: set[str] = set()
     new_paths: set[str] = set()
-    for old in sorted(deleted, key=lambda leaf: leaf.path):
-        candidates = by_hash.get(old.content_hash)
-        if old.size == 0 or not candidates:
-            continue
-        name = PurePosixPath(old.path).name
-        match = next((c for c in candidates if PurePosixPath(c.path).name == name), candidates[0])
-        candidates.remove(match)
-        renamed.append((old.path, match.path))
-        old_paths.add(old.path)
-        new_paths.add(match.path)
-    return renamed, old_paths, new_paths
+
+    def take(queue: deque[str] | None) -> str | None:
+        while queue:
+            candidate = queue.popleft()
+            if candidate not in new_paths:  # it may have paired through the other queue
+                return candidate
+        return None
+
+    olds = sorted((leaf for leaf in deleted if leaf.size > 0), key=lambda leaf: leaf.path)
+    unpaired: list[Leaf] = []
+    for old in olds:
+        match = take(by_name.get((old.content_hash, PurePosixPath(old.path).name)))
+        if match is None:
+            unpaired.append(old)
+        else:
+            renamed.append((old.path, match))
+            new_paths.add(match)
+    for old in unpaired:
+        match = take(by_hash.get(old.content_hash))
+        if match is not None:
+            renamed.append((old.path, match))
+            new_paths.add(match)
+    return renamed, {old for old, _ in renamed}, new_paths
 
 
 def diff(before: MerkleTree, after: MerkleTree) -> TreeDiff:
@@ -226,7 +285,9 @@ def diff(before: MerkleTree, after: MerkleTree) -> TreeDiff:
     deleted: list[Leaf] = []
     modified: list[str] = []
 
-    def compare(directory: str) -> None:
+    pending = [ROOT] if before.root != after.root else []
+    while pending:  # directories whose hashes differ
+        directory = pending.pop()
         old = {e.name: e for e in before.children.get(directory, [])}
         new = {e.name: e for e in after.children.get(directory, [])}
         for name in sorted(old.keys() | new.keys()):
@@ -236,7 +297,7 @@ def diff(before: MerkleTree, after: MerkleTree) -> TreeDiff:
                 if a.hash == b.hash:
                     continue
                 if a.kind == DIR:
-                    compare(path)
+                    pending.append(path)
                 else:
                     modified.append(path)
                 continue
@@ -244,9 +305,6 @@ def diff(before: MerkleTree, after: MerkleTree) -> TreeDiff:
                 deleted.extend(before.files_under(path))
             if b is not None:
                 added.extend(after.files_under(path))
-
-    if before.root != after.root:
-        compare(ROOT)
     renamed, old_paths, new_paths = _pair_renames(deleted, added)
     return TreeDiff(
         added=sorted(leaf.path for leaf in added if leaf.path not in new_paths),
