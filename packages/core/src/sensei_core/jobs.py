@@ -41,6 +41,7 @@ class TaskName(enum.StrEnum):
     DISCOVER_FILES = "sensei.ingest.discover_files"
     BUILD_MERKLE = "sensei.ingest.build_merkle"
     EVICT_REPO_CACHE = "sensei.maintenance.evict_repo_cache"
+    SWEEP_STALLED_JOBS = "sensei.maintenance.sweep_stalled_jobs"
 
 
 # Tasks go to the queue named by the second part of their name ("sensei.<queue>.<task>").

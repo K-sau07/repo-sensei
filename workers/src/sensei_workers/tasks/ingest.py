@@ -12,7 +12,7 @@ from __future__ import annotations
 import time
 import uuid
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from urllib.parse import quote
 
@@ -29,15 +29,16 @@ from sensei_core.models import (
     JobStatus,
     Repo,
     RepoSource,
+    RepoStatus,
     Snapshot,
     SnapshotStatus,
     Stage,
 )
 from sensei_core.storage import Bucket, snapshot_key
 from sensei_workers.app import celery_app
-from sensei_workers.base import RetryableError, SenseiTask
+from sensei_workers.base import RetryableError, SenseiTask, is_retryable
 from sensei_workers.ingest.archive import write_archive
-from sensei_workers.ingest.cache import evict
+from sensei_workers.ingest.cache import evict, repo_lock
 from sensei_workers.ingest.git import CloneError, CloneSource, GitRunner, TransientGitError
 from sensei_workers.runtime import get_runtime
 
@@ -47,6 +48,27 @@ log = get_logger(__name__)
 STEPS = 5
 # What an installation token for cloning may do: read this one repository, nothing else.
 CLONE_PERMISSIONS = {"contents": "read", "metadata": "read"}
+# GitHub's repository size counts the history too; far beyond the checkout limit, don't even
+# start fetching.
+HISTORY_SIZE_FACTOR = 10
+# A running stage with no progress for the task time limit plus this is dead.
+STALL_MARGIN_SECONDS = 600
+
+INTERNAL_MESSAGE = (
+    "Indexing stopped unexpectedly. Try again; if it keeps happening, contact support with the "
+    "job id."
+)
+UNAVAILABLE_MESSAGE = "GitHub or our storage didn't answer for a while. Try again later."
+TIMEOUT_MESSAGE = "A stage of indexing took too long and was stopped."
+WORKER_LOST_MESSAGE = (
+    "The worker indexing this repository kept stopping (it may be too large to index). Contact "
+    "support with the job id."
+)
+ACCESS_LOST_MESSAGE = (
+    "repo-sensei can't read this repository on GitHub any more (the GitHub App was removed from "
+    "it, or it was deleted)."
+)
+NOT_PUBLIC_MESSAGE = "This repository isn't public on GitHub any more (or was deleted)."
 
 
 @dataclass(frozen=True, slots=True)
@@ -58,6 +80,7 @@ class Target:
     source: RepoSource
     github_repo_id: int
     installation_id: int | None  # GitHub's id, for an installation token
+    size_kb: int  # as GitHub reported it at connect time (history included)
 
 
 def _now() -> datetime:
@@ -65,7 +88,8 @@ def _now() -> datetime:
 
 
 class IngestTask(SenseiTask):
-    """Ingest tasks fail their index job when they give up (out of retries, killed)."""
+    """Ingest tasks fail their index job when they give up: out of retries, killed at the time
+    limit, or dead-lettered after the worker kept dying (out of memory)."""
 
     def on_failure(
         self,
@@ -76,27 +100,27 @@ class IngestTask(SenseiTask):
         einfo: Any,
     ) -> None:
         super().on_failure(exc, task_id, args, kwargs, einfo)
-        self._give_up(kwargs)
+        if is_retryable(exc):  # out of retries on something temporary
+            self._give_up(kwargs, "github_unavailable", UNAVAILABLE_MESSAGE)
+        else:
+            self._give_up(kwargs)
 
     def on_hard_timeout(self, task_id: str, args: tuple[Any, ...], kwargs: dict[str, Any]) -> None:
         super().on_hard_timeout(task_id, args, kwargs)
-        self._give_up(kwargs)
+        self._give_up(kwargs, "stage_timeout", TIMEOUT_MESSAGE)
 
-    def _give_up(self, kwargs: dict[str, Any]) -> None:
+    def on_dead_letter(self, task_id: str, args: tuple[Any, ...], kwargs: dict[str, Any]) -> None:
+        super().on_dead_letter(task_id, args, kwargs)
+        self._give_up(kwargs, "worker_lost", WORKER_LOST_MESSAGE)
+
+    def _give_up(
+        self, kwargs: dict[str, Any], code: str = "internal_error", message: str = INTERNAL_MESSAGE
+    ) -> None:
         job_id, org_id = kwargs.get("job_id"), kwargs.get("org_id")
         if not job_id or not org_id:
             return
         try:
-            get_runtime().run(
-                fail_job(
-                    self,
-                    org_id,
-                    uuid.UUID(str(job_id)),
-                    "internal_error",
-                    "Indexing stopped unexpectedly. Try again; if it keeps happening, contact "
-                    "support with the job id.",
-                )
-            )
+            get_runtime().run(fail_job(self, org_id, uuid.UUID(str(job_id)), code, message))
         except Exception:
             log.exception("could not mark the index job failed")
 
@@ -125,6 +149,17 @@ async def fail_job(
                 snapshot.status = SnapshotStatus.FAILED
 
 
+class AccessLostError(CloneError):
+    """GitHub no longer lets us read the repository: it is marked ``access_lost``."""
+
+
+async def _access_lost(task: SenseiTask, target: Target) -> None:
+    async with task.org_session(target.org_id) as db:
+        repo = await db.get(Repo, target.repo_id)
+        if repo is not None and repo.deleted_at is None:
+            repo.status = RepoStatus.ACCESS_LOST
+
+
 async def _begin(task: SenseiTask, org_id: str, job_id: uuid.UUID) -> Target | None:
     """Start (or resume) the job's clone stage; None if there is nothing to do."""
     async with task.org_session(org_id) as db:
@@ -151,6 +186,7 @@ async def _begin(task: SenseiTask, org_id: str, job_id: uuid.UUID) -> Target | N
             source=repo.source,
             github_repo_id=repo.github_repo_id,
             installation_id=installation.installation_id if installation else None,
+            size_kb=repo.size_kb,
         )
 
 
@@ -172,12 +208,28 @@ async def _token(target: Target) -> str | None:
         raise CloneError(
             "github_not_configured", "The GitHub App isn't available to read this repository."
         )
-    token = await app.installation_token(
-        target.installation_id,
-        repository_ids=[target.github_repo_id],
-        permissions=CLONE_PERMISSIONS,
-    )
+    try:
+        token = await app.installation_token(
+            target.installation_id,
+            repository_ids=[target.github_repo_id],
+            permissions=CLONE_PERMISSIONS,
+        )
+    except GitHubError as exc:
+        if exc.status in (401, 403, 404, 422):  # uninstalled, or the repo is no longer covered
+            raise AccessLostError("github_access_lost", ACCESS_LOST_MESSAGE) from None
+        raise
     return token.token
+
+
+async def _repository_exists(target: Target, credential: Credential) -> bool:
+    """After a 404 for the branch: is it the branch that's missing, or the whole repository?"""
+    try:
+        await get_runtime().github_client.get_json(f"/repos/{target.full_name}", credential)
+    except GitHubError as exc:
+        if exc.status in (403, 404):
+            return False
+        raise
+    return True
 
 
 async def _resolve(target: Target, token: str | None) -> str:
@@ -194,6 +246,14 @@ async def _resolve(target: Target, token: str | None) -> str:
         wait = (exc.reset_at - _now()).total_seconds()
         raise RetryableError("GitHub rate limit", retry_after=max(1.0, wait)) from exc
     except GitHubError as exc:
+        if exc.status in (401, 403):
+            raise AccessLostError("github_access_lost", ACCESS_LOST_MESSAGE) from None
+        if exc.status == 404 and not await _repository_exists(target, credential):
+            public = target.source is RepoSource.PUBLIC_URL  # gone private, or deleted
+            raise AccessLostError(
+                "repo_not_public" if public else "github_access_lost",
+                NOT_PUBLIC_MESSAGE if public else ACCESS_LOST_MESSAGE,
+            ) from None
         if exc.status in (404, 409, 422):
             raise CloneError(
                 "ref_not_found", f"The branch {target.ref!r} wasn't found on GitHub."
@@ -281,43 +341,55 @@ def clone_snapshot(self: IngestTask, *, job_id: str, org_id: str, repo_id: str) 
     if target is None:
         return None
     started = time.monotonic()
-    git = GitRunner(settings.ingest)
+    ingest = settings.ingest
+    git = GitRunner(ingest)
     try:
+        if target.size_kb * 1024 > ingest.max_checkout_bytes * HISTORY_SIZE_FACTOR:
+            raise CloneError(
+                "repo_too_large",
+                f"The repository is {target.size_kb / 1024**2:.1f} GB on GitHub, too large to "
+                "index.",
+            )
         token = runtime.run(_token(target))
         sha = runtime.run(_resolve(target, token))
         runtime.run(_step(self, org_id, job, 1))
         url = f"{settings.github.web_url.rstrip('/')}/{target.full_name}.git"
-        dest = settings.ingest.cache_dir / str(target.repo_id)
-        checkout = git.checkout(
-            CloneSource(url=url, token=token),
-            sha,
-            dest,
-            deadline=started + settings.ingest.clone_timeout_seconds,
-        )
-        runtime.run(_step(self, org_id, job, 2))
-        details: dict[str, Any] = {
-            "files": checkout.files,
-            "bytes": checkout.bytes,
-            "submodules_skipped": checkout.submodules,
-            "lfs": "pointers_only",
-        }
-        if not runtime.run(_snapshot(self, target, job, sha)):
-            archives = settings.ingest.cache_dir / ".archives"
-            archives.mkdir(parents=True, exist_ok=True)
-            path = archives / f"{job_id}.tar.zst"
-            try:
-                info = write_archive(checkout.path, path)
-                runtime.run(_step(self, org_id, job, 3))
-                runtime.run(_upload(target, sha, path))
-                details["archive_bytes"] = info.bytes
-            finally:
-                path.unlink(missing_ok=True)
+        name = str(target.repo_id)
+        # This machine's own disk: make room before fetching (copies in use stay).
+        evict(ingest.cache_dir, ingest.cache_max_bytes, keep={name})
+        with repo_lock(ingest.cache_dir, name):
+            checkout = git.checkout(
+                CloneSource(url=url, token=token),
+                sha,
+                ingest.cache_dir / name,
+                deadline=started + ingest.clone_timeout_seconds,
+            )
+            runtime.run(_step(self, org_id, job, 2))
+            details: dict[str, Any] = {
+                "files": checkout.files,
+                "bytes": checkout.bytes,
+                "submodules_skipped": checkout.submodules,
+                "lfs": "pointers_only",
+            }
+            if not runtime.run(_snapshot(self, target, job, sha)):
+                archives = ingest.cache_dir / ".archives"
+                archives.mkdir(parents=True, exist_ok=True)
+                path = archives / f"{job_id}.tar.zst"
+                try:
+                    info = write_archive(checkout.path, path)
+                    runtime.run(_step(self, org_id, job, 3))
+                    runtime.run(_upload(target, sha, path))
+                    details["archive_bytes"] = info.bytes
+                finally:
+                    path.unlink(missing_ok=True)
         runtime.run(_step(self, org_id, job, 4))
         runtime.run(
             _finish(self, target, job, sha, details, file_count=checkout.files, size=checkout.bytes)
         )
     except CloneError as exc:
         log.warning("clone failed", code=exc.code)
+        if isinstance(exc, AccessLostError):
+            runtime.run(_access_lost(self, target))
         runtime.run(fail_job(self, org_id, job, exc.code, exc.message))
         return None
     except TransientGitError as exc:
@@ -345,3 +417,45 @@ def evict_repo_cache(self: SenseiTask) -> int:
     if removed:
         log.info("repo cache evicted", copies=len(removed))
     return len(removed)
+
+
+STALLED_MESSAGE = (
+    "Indexing stopped making progress (the worker running it went away). Try again; if it keeps "
+    "happening, contact support with the job id."
+)
+
+
+@celery_app.task(bind=True, base=SenseiTask, name=TaskName.SWEEP_STALLED_JOBS.value, system=True)
+def sweep_stalled_jobs(self: SenseiTask) -> int:
+    """Fail running jobs whose running stage hasn't moved for longer than any task may run
+    (the time limit, plus margin): their worker died in a way nothing else reported."""
+    runtime = get_runtime()
+    limit = timedelta(seconds=runtime.settings.worker.time_limit_seconds + STALL_MARGIN_SECONDS)
+
+    async def _sweep() -> int:
+        failed = 0
+        cutoff = _now() - limit
+        async with self.system_session() as db:
+            jobs = await db.scalars(
+                select(IndexJob).where(IndexJob.status == JobStatus.RUNNING).with_for_update()
+            )
+            for job in jobs:
+                stage = job.stage
+                if stage is None:
+                    continue
+                entry: dict[str, Any] = (job.stages or {}).get(stage.value, {})
+                if entry.get("status") != "running":
+                    continue  # between stages: the next task is queued
+                moved = entry.get("updated_at") or entry.get("started_at")
+                if not isinstance(moved, str) or datetime.fromisoformat(moved) > cutoff:
+                    continue
+                IndexJobStateMachine(job).fail(
+                    stage, {"code": "stage_stalled", "message": STALLED_MESSAGE}
+                )
+                failed += 1
+        return failed
+
+    failed = runtime.run(_sweep())
+    if failed:
+        log.warning("stalled index jobs failed", jobs=failed)
+    return failed

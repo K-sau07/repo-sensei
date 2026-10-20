@@ -59,6 +59,11 @@ log = get_logger(__name__)
 MAX_TEXT = 20_000
 
 
+class NotYetError(Exception):
+    """The task came too early (what it needs isn't there yet): nothing is done, nothing is
+    retried, and it isn't recorded as done, so the delivery that comes at the right time runs."""
+
+
 class RetryableError(Exception):
     """A temporary failure: try again later (after ``retry_after`` seconds, if given)."""
 
@@ -248,6 +253,11 @@ class SenseiTask(_TaskBase):
                     return None
             try:
                 result = self.run(*args, **kwargs)
+            except NotYetError as exc:
+                if lock is not None:
+                    lock.release()
+                log.info("task came too early; skipped", reason=str(exc))
+                return None
             except Retry:
                 if lock is not None:
                     lock.release()
@@ -281,7 +291,12 @@ class SenseiTask(_TaskBase):
         self.record_failure(
             task_id, args, kwargs, error_type="WorkerLost", error=error, traceback=None
         )
+        self.on_dead_letter(task_id, args, kwargs)
         return True
+
+    def on_dead_letter(self, task_id: str, args: tuple[Any, ...], kwargs: dict[str, Any]) -> None:
+        """Called when a delivery is dropped for good after repeated worker loss (no
+        ``on_failure`` runs then). For subclasses that must record the outcome elsewhere."""
 
     def _lock(self, task_id: str, kwargs: dict[str, Any]) -> IdempotencyLock | None:
         if not self.idempotent_on:

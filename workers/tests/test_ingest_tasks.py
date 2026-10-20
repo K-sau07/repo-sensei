@@ -10,6 +10,7 @@ from __future__ import annotations
 import shutil
 import uuid
 from collections.abc import Iterator
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +21,7 @@ from sqlalchemy import delete, select, update
 
 from sensei_core.config import Settings
 from sensei_core.db import Database
+from sensei_core.indexing.state import IndexJobStateMachine
 from sensei_core.models import (
     IndexJob,
     JobKind,
@@ -28,19 +30,22 @@ from sensei_core.models import (
     Repo,
     RepoFile,
     RepoSource,
+    RepoStatus,
     Snapshot,
     SnapshotStatus,
+    Stage,
 )
 from sensei_core.storage import Bucket, artifact_key, repo_prefix, snapshot_key
 from sensei_engine.ingest.merkle import ARTIFACT_NAME, MAX_STORED_BYTES, MerkleTree
 from sensei_workers.runtime import Runtime, set_runtime
 from sensei_workers.tasks.discover import discover_files
-from sensei_workers.tasks.ingest import clone_snapshot
+from sensei_workers.tasks.ingest import clone_snapshot, sweep_stalled_jobs
 from sensei_workers.tasks.merkle import build_merkle
 
 pytestmark = pytest.mark.integration
 
 COMMITS_URL = "https://api.github.com/repos/acme-gh/demo/commits/main"
+REPO_URL = "https://api.github.com/repos/acme-gh/demo"
 
 
 @pytest.fixture
@@ -208,11 +213,43 @@ def test_an_unknown_branch_fails_the_job(
     runtime: Runtime, repo: tuple[uuid.UUID, uuid.UUID], github: respx.MockRouter
 ) -> None:
     github.get(COMMITS_URL).mock(return_value=httpx.Response(404, json={"message": "No commit"}))
+    github.get(REPO_URL).mock(return_value=httpx.Response(200, json={"id": 42}))
     org_id, repo_id = repo
     job_id = runtime.run(_new_job(runtime.system_database, org_id, repo_id))
     assert _clone(org_id, repo_id, job_id) is None
     job = runtime.run(_job(runtime.system_database, job_id))
     assert (job.status, (job.error or {}).get("code")) == (JobStatus.FAILED, "ref_not_found")
+
+
+def test_a_public_repository_gone_private_loses_access(
+    runtime: Runtime, repo: tuple[uuid.UUID, uuid.UUID], github: respx.MockRouter
+) -> None:
+    github.get(COMMITS_URL).mock(return_value=httpx.Response(404, json={"message": "Not Found"}))
+    github.get(REPO_URL).mock(return_value=httpx.Response(404, json={"message": "Not Found"}))
+    org_id, repo_id = repo
+    job_id = runtime.run(_new_job(runtime.system_database, org_id, repo_id))
+    assert _clone(org_id, repo_id, job_id) is None
+    job = runtime.run(_job(runtime.system_database, job_id))
+    assert (job.error or {}).get("code") == "repo_not_public"
+    # Members no longer read it just for being members (see RepoAccess).
+    assert runtime.run(_repo(runtime.system_database, repo_id)).status is RepoStatus.ACCESS_LOST
+
+
+def test_a_repository_far_too_large_on_github_is_never_fetched(
+    runtime: Runtime, repo: tuple[uuid.UUID, uuid.UUID], github: respx.MockRouter
+) -> None:
+    org_id, repo_id = repo
+    runtime.run(_set_size(runtime.system_database, repo_id, 30 * 1024**2))  # 30 GB
+    job_id = runtime.run(_new_job(runtime.system_database, org_id, repo_id))
+    assert _clone(org_id, repo_id, job_id) is None
+    job = runtime.run(_job(runtime.system_database, job_id))
+    assert (job.error or {}).get("code") == "repo_too_large"
+    assert not github.routes[0].called  # not even the branch was looked up
+
+
+async def _set_size(database: Database, repo_id: uuid.UUID, size_kb: int) -> None:
+    async with database.session() as db:
+        await db.execute(update(Repo).where(Repo.id == repo_id).values(size_kb=size_kb))
 
 
 def test_a_finished_or_cancelled_job_is_left_alone(
@@ -448,3 +485,50 @@ def test_merkle_waits_for_discover(
     assert _merkle(org_id, repo_id, job_id) is None
     job = runtime.run(_job(runtime.system_database, job_id))
     assert (job.stage, job.stages["clone"]["status"]) == ("clone", "done")
+
+
+# ------------------------------------------------------------------ giving up
+
+
+async def _running_at_discover(
+    database: Database, org_id: uuid.UUID, repo_id: uuid.UUID, started: datetime
+) -> uuid.UUID:
+    job_id = await _new_job(database, org_id, repo_id)
+    async with database.session() as db:
+        job = await db.get(IndexJob, job_id)
+        assert job is not None
+        machine = IndexJobStateMachine(job, now=lambda: started)
+        machine.start()
+        machine.advance(Stage.DISCOVER)
+    return job_id
+
+
+def test_a_dead_lettered_task_fails_its_job(
+    runtime: Runtime, repo: tuple[uuid.UUID, uuid.UUID]
+) -> None:
+    org_id, repo_id = repo
+    job_id = runtime.run(_running_at_discover(runtime.system_database, org_id, repo_id, _utc()))
+    kwargs = {"job_id": str(job_id), "org_id": str(org_id), "repo_id": str(repo_id)}
+    discover_files.on_dead_letter("task-1", (), kwargs)  # the worker kept dying
+    job = runtime.run(_job(runtime.system_database, job_id))
+    assert job.status is JobStatus.FAILED
+    assert (job.error or {}).get("code") == "worker_lost"
+
+
+def test_stalled_jobs_are_failed(runtime: Runtime, repo: tuple[uuid.UUID, uuid.UUID]) -> None:
+    org_id, repo_id = repo
+    system = runtime.system_database
+    stalled = runtime.run(
+        _running_at_discover(system, org_id, repo_id, _utc() - timedelta(hours=2))
+    )
+    assert sweep_stalled_jobs.apply().get() >= 1
+    job = runtime.run(_job(system, stalled))
+    assert (job.status, (job.error or {}).get("code")) == (JobStatus.FAILED, "stage_stalled")
+    # One that moved recently is left alone.
+    fresh = runtime.run(_running_at_discover(system, org_id, repo_id, _utc()))
+    sweep_stalled_jobs.apply().get()
+    assert runtime.run(_job(system, fresh)).status is JobStatus.RUNNING
+
+
+def _utc() -> datetime:
+    return datetime.now(UTC)

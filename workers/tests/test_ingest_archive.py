@@ -12,7 +12,7 @@ import pytest
 import zstandard
 
 from sensei_workers.ingest.archive import ArchiveTooLargeError, extract_archive, write_archive
-from sensei_workers.ingest.cache import evict
+from sensei_workers.ingest.cache import CacheBusyError, evict, repo_lock
 from sensei_workers.ingest.git import LAST_USED_MARKER
 
 
@@ -155,3 +155,31 @@ def test_nothing_happens_within_budget(tmp_path: Path) -> None:
     _copy(tmp_path, "a", 100, 0)
     assert evict(tmp_path, max_bytes=1000, keep=set(), now=1e9) == []
     assert evict(tmp_path / "missing", max_bytes=1, keep=set()) == []
+
+
+def test_a_copy_in_use_is_never_evicted(tmp_path: Path) -> None:
+    now = 1_000_000.0
+    busy = _copy(tmp_path, "busy", 400, now - 50_000)
+    idle = _copy(tmp_path, "idle", 400, now - 40_000)
+    with repo_lock(tmp_path, "busy"):
+        with pytest.raises(CacheBusyError), repo_lock(tmp_path, "busy", wait=False):
+            pass
+        assert evict(tmp_path, max_bytes=100, keep=set(), now=now) == [idle]
+    assert busy.exists()
+
+
+def test_bookkeeping_is_not_a_copy_and_stale_scratch_goes(tmp_path: Path) -> None:
+    now = time.time()
+    scratch = tmp_path / ".unpack-abc"
+    scratch.mkdir()
+    (tmp_path / ".archives").mkdir()
+    partial = tmp_path / ".archives" / "job.tar.zst"
+    partial.write_bytes(b"x" * 5000)
+    fresh = tmp_path / ".archives" / "now.tar.zst"
+    fresh.write_bytes(b"x")
+    for old in (scratch, partial):
+        os.utime(old, (now - 2 * 86_400, now - 2 * 86_400))
+    assert evict(tmp_path, max_bytes=1, keep=set(), now=now) == []  # dot names are no copies
+    assert not scratch.exists()
+    assert not partial.exists()
+    assert fresh.exists()  # an archive being written right now stays

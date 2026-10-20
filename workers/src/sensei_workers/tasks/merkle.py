@@ -17,7 +17,15 @@ from sqlalchemy import select
 from sensei_core.indexing.state import IndexJobStateMachine
 from sensei_core.jobs import TaskName
 from sensei_core.logging import get_logger
-from sensei_core.models import IndexJob, JobStatus, Repo, RepoFile, Snapshot, Stage
+from sensei_core.models import (
+    ACTIVE_JOB_STATUSES,
+    IndexJob,
+    JobStatus,
+    Repo,
+    RepoFile,
+    Snapshot,
+    Stage,
+)
 from sensei_core.storage import Bucket, artifact_key
 from sensei_engine.ingest.merkle import (
     ARTIFACT_NAME,
@@ -29,7 +37,7 @@ from sensei_engine.ingest.merkle import (
     diff,
 )
 from sensei_workers.app import celery_app
-from sensei_workers.base import SenseiTask
+from sensei_workers.base import NotYetError, SenseiTask
 from sensei_workers.runtime import get_runtime
 from sensei_workers.tasks.ingest import IngestTask
 
@@ -52,21 +60,27 @@ async def _begin(task: SenseiTask, org_id: str, job_id: uuid.UUID) -> Target | N
     """Start (or resume) the job's merkle stage; None if there is nothing to do."""
     async with task.org_session(org_id) as db:
         job = await db.scalar(select(IndexJob).where(IndexJob.id == job_id).with_for_update())
-        if job is None or job.status is not JobStatus.RUNNING or job.snapshot_id is None:
-            return None
+        if job is None or job.status not in ACTIVE_JOB_STATUSES:
+            return None  # finished, failed or cancelled meanwhile
         stages = job.stages or {}
         machine = IndexJobStateMachine(job)
-        if job.stage is Stage.DISCOVER and stages.get("discover", {}).get("status") == "done":
-            machine.advance(Stage.MERKLE)
-        elif job.stage is not Stage.MERKLE or stages["merkle"].get("status") != "running":
-            return None  # discover not finished, or past this stage already (a duplicate)
+        discover_done = (
+            job.stage is Stage.DISCOVER and stages.get("discover", {}).get("status") == "done"
+        )
+        resuming = job.stage is Stage.MERKLE and stages["merkle"].get("status") == "running"
+        if not discover_done and not resuming:
+            if job.stage in (None, Stage.CLONE, Stage.DISCOVER):
+                raise NotYetError("the discover stage hasn't finished")
+            return None  # past this stage already (a duplicate delivery)
         repo = await db.get(Repo, job.repo_id)
-        snapshot = await db.get(Snapshot, job.snapshot_id)
         if repo is None or repo.deleted_at is not None:
             machine.cancel()
             return None
+        snapshot = await db.get(Snapshot, job.snapshot_id) if job.snapshot_id else None
         if snapshot is None:
-            return None
+            raise NotYetError("the job has no snapshot yet")
+        if discover_done:
+            machine.advance(Stage.MERKLE)
         previous = repo.last_indexed_sha
         return Target(
             org_id=repo.org_id,

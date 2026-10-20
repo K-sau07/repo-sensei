@@ -35,8 +35,10 @@ from sensei_engine.ingest.discover import Discovery, discover
 from sensei_engine.ingest.store import save_discovery
 from sensei_engine.ingest.walk import TooManyFilesError
 from sensei_workers.app import celery_app
-from sensei_workers.base import RetryableError, SenseiTask
+from sensei_workers.base import NotYetError, RetryableError, SenseiTask
 from sensei_workers.ingest.archive import ArchiveTooLargeError, extract_archive
+from sensei_workers.ingest.cache import repo_lock
+from sensei_workers.ingest.git import CHECKED_OUT_MARKER
 from sensei_workers.runtime import get_runtime
 from sensei_workers.tasks.ingest import IngestTask, fail_job
 
@@ -60,21 +62,25 @@ async def _begin(task: SenseiTask, org_id: str, job_id: uuid.UUID) -> Target | N
     """Start (or resume) the job's discover stage; None if there is nothing to do."""
     async with task.org_session(org_id) as db:
         job = await db.scalar(select(IndexJob).where(IndexJob.id == job_id).with_for_update())
-        if job is None or job.status is not JobStatus.RUNNING or job.snapshot_id is None:
-            return None
+        if job is None or job.status not in ACTIVE_JOB_STATUSES:
+            return None  # finished, failed or cancelled meanwhile
         stages = job.stages or {}
         machine = IndexJobStateMachine(job)
-        if job.stage is Stage.CLONE and stages.get("clone", {}).get("status") == "done":
-            machine.advance(Stage.DISCOVER)
-        elif job.stage is not Stage.DISCOVER or stages["discover"].get("status") != "running":
-            return None  # clone not finished, or past this stage already (a duplicate)
+        clone_done = job.stage is Stage.CLONE and stages.get("clone", {}).get("status") == "done"
+        resuming = job.stage is Stage.DISCOVER and stages["discover"].get("status") == "running"
+        if not clone_done and not resuming:
+            if job.stage is None or job.stage is Stage.CLONE:
+                raise NotYetError("the clone stage hasn't finished")
+            return None  # past this stage already (a duplicate delivery)
         repo = await db.get(Repo, job.repo_id)
-        snapshot = await db.get(Snapshot, job.snapshot_id)
         if repo is None or repo.deleted_at is not None:
             machine.cancel()
             return None
+        snapshot = await db.get(Snapshot, job.snapshot_id) if job.snapshot_id else None
         if snapshot is None or snapshot.status is not SnapshotStatus.READY:
-            return None
+            raise NotYetError("the snapshot isn't ready")
+        if clone_done:
+            machine.advance(Stage.DISCOVER)  # only once everything it needs is there
         settings = RepoSettings.model_validate(repo.settings or {})
         return Target(
             org_id=repo.org_id,
@@ -85,13 +91,14 @@ async def _begin(task: SenseiTask, org_id: str, job_id: uuid.UUID) -> Target | N
         )
 
 
-def _head(worktree: Path) -> str | None:
-    """The commit a cached working copy has checked out (detached), if it is one."""
-    head = worktree / ".git" / "HEAD"
+def _checked_out(worktree: Path) -> str | None:
+    """The commit a cached working copy holds, once its checkout finished (not ``HEAD``: that
+    moves before the files are all written)."""
+    marker = worktree / ".git" / CHECKED_OUT_MARKER
     try:
-        if head.is_symlink():
+        if marker.is_symlink():
             return None
-        return head.read_text().strip()
+        return marker.read_text().strip()
     except OSError:
         return None
 
@@ -112,7 +119,7 @@ def _worktree(target: Target) -> Path:
     runtime = get_runtime()
     settings = runtime.settings.ingest
     worktree = settings.cache_dir / str(target.repo_id)
-    if _head(worktree) == target.commit_sha:
+    if _checked_out(worktree) == target.commit_sha:
         return worktree
     settings.cache_dir.mkdir(parents=True, exist_ok=True)
     scratch = Path(tempfile.mkdtemp(prefix=".unpack-", dir=settings.cache_dir))
@@ -123,6 +130,9 @@ def _worktree(target: Target) -> Path:
         extract_archive(archive, unpacked, max_bytes=settings.max_checkout_bytes)
         shutil.rmtree(worktree, ignore_errors=True)
         unpacked.rename(worktree)
+        # An unpacked copy has no .git: record the commit the same way a checkout does.
+        (worktree / ".git").mkdir()
+        (worktree / ".git" / CHECKED_OUT_MARKER).write_text(target.commit_sha)
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
     return worktree
@@ -185,13 +195,13 @@ def discover_files(self: IngestTask, *, job_id: str, org_id: str, repo_id: str) 
         runtime.run(_progress(self, org_id, job, done, total))
 
     try:
-        worktree = _worktree(target)
-        found = discover(
-            worktree,
-            ignore_globs=target.ignore_globs,
-            max_files=settings.max_files,
-            progress=progress,
-        )
+        with repo_lock(settings.cache_dir, str(target.repo_id)):  # no clone or eviction meanwhile
+            found = discover(
+                _worktree(target),
+                ignore_globs=target.ignore_globs,
+                max_files=settings.max_files,
+                progress=progress,
+            )
     except TooManyFilesError as exc:
         message = (
             f"The repository has more than {exc.limit:,} files to index. Add ignore patterns "
@@ -199,10 +209,15 @@ def discover_files(self: IngestTask, *, job_id: str, org_id: str, repo_id: str) 
         )
         runtime.run(fail_job(self, org_id, job, "too_many_files", message))
         return None
-    except (SnapshotUnavailableError, ArchiveTooLargeError) as exc:
-        log.warning("snapshot unavailable", error=type(exc).__name__)
+    except SnapshotUnavailableError:
+        log.warning("snapshot unavailable")
         message = "The snapshot of this commit is missing. Reindex the repository."
         runtime.run(fail_job(self, org_id, job, "snapshot_unavailable", message))
+        return None
+    except ArchiveTooLargeError:
+        log.warning("snapshot archive too large to unpack")
+        message = "The snapshot of this commit is larger than the size limit."
+        runtime.run(fail_job(self, org_id, job, "snapshot_too_large", message))
         return None
     except FileChangedError as exc:
         raise RetryableError("the working copy changed while it was read") from exc

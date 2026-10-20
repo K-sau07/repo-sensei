@@ -15,7 +15,13 @@ from typing import Any
 import pytest
 
 from sensei_core.config import IngestSettings
-from sensei_workers.ingest.git import ASKPASS_SCRIPT, CloneError, CloneSource, GitRunner
+from sensei_workers.ingest.git import (
+    ASKPASS_SCRIPT,
+    CHECKED_OUT_MARKER,
+    CloneError,
+    CloneSource,
+    GitRunner,
+)
 
 GIT = shutil.which("git") or "/usr/bin/git"
 # Shaped like an installation token, but assembled here so no token-like literal is in the source
@@ -82,6 +88,43 @@ def test_the_cache_is_reused_and_cleaned(runner: GitRunner, bare_repo: Any, tmp_
     assert not (dest / "vendor" / "lib" / "README.md").exists()  # submodules aren't fetched
 
 
+def test_the_marker_names_the_commit_once_checked_out(
+    runner: GitRunner, bare_repo: Any, tmp_path: Path
+) -> None:
+    dest = tmp_path / "copy"
+    runner.checkout(_source(bare_repo), bare_repo.first, dest, deadline=_deadline())
+    assert (dest / ".git" / CHECKED_OUT_MARKER).read_text() == bare_repo.first
+
+
+def test_a_copy_left_broken_by_a_killed_run_recovers(
+    runner: GitRunner, bare_repo: Any, tmp_path: Path
+) -> None:
+    dest = tmp_path / "copy"
+    runner.checkout(_source(bare_repo), bare_repo.first, dest, deadline=_deadline())
+    (dest / ".git" / "index.lock").write_text("")  # git was killed mid-write
+    (dest / ".git" / "shallow.lock").write_text("")
+    runner.checkout(_source(bare_repo), bare_repo.second, dest, deadline=_deadline())
+    assert _head(dest) == bare_repo.second
+    # Worse: the object store itself is broken. The copy is wiped and fetched again.
+    for pack in (dest / ".git" / "objects").rglob("*"):
+        if pack.is_file():
+            pack.chmod(0o644)  # git writes objects read-only
+            pack.write_bytes(b"garbage")
+    runner.checkout(_source(bare_repo), bare_repo.first, dest, deadline=_deadline())
+    assert _head(dest) == bare_repo.first
+    assert (dest / ".git" / CHECKED_OUT_MARKER).read_text() == bare_repo.first
+
+
+def test_too_many_files_are_refused_before_checkout(bare_repo: Any, tmp_path: Path) -> None:
+    git = GitRunner(IngestSettings(cache_dir=tmp_path, allow_file_protocol=True, max_files=1))
+    try:
+        with pytest.raises(CloneError) as exc:
+            git.checkout(_source(bare_repo), bare_repo.first, tmp_path / "c", deadline=_deadline())
+    finally:
+        git.close()
+    assert exc.value.code == "too_many_files"
+
+
 def test_lfs_files_stay_pointers(runner: GitRunner, bare_repo: Any, tmp_path: Path) -> None:
     dest = tmp_path / "copy"
     runner.checkout(_source(bare_repo), bare_repo.second, dest, deadline=_deadline())
@@ -99,7 +142,8 @@ def test_oversized_repositories_are_refused_before_checkout(bare_repo: Any, tmp_
     finally:
         git.close()
     assert exc.value.code == "repo_too_large"
-    assert [p.name for p in dest.iterdir()] == [".git"]  # nothing was written out
+    assert "10 bytes" in exc.value.message
+    assert not dest.exists()  # nothing checked out, and what was fetched is gone too
 
 
 def test_a_missing_commit_is_not_found(runner: GitRunner, bare_repo: Any, tmp_path: Path) -> None:

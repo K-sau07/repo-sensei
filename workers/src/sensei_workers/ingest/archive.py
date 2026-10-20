@@ -42,6 +42,8 @@ def _normalise(info: tarfile.TarInfo) -> tarfile.TarInfo:
         info.mode = 0o755
     elif info.isfile():
         info.mode = 0o755 if info.mode & stat.S_IXUSR else 0o644
+    elif info.issym():
+        info.mode = 0o777  # macOS reports 0755 for links, Linux 0777: the same bytes everywhere
     return info
 
 
