@@ -137,6 +137,8 @@ class IngestSettings(BaseSettings):
     # Checked-out size limit; bigger repositories are refused before checkout.
     max_checkout_bytes: int = Field(default=2 * 1024**3, gt=0)
     clone_timeout_seconds: float = Field(default=900.0, gt=0)
+    # Files kept after the ignore rules; a bigger tree fails discovery.
+    max_files: int = Field(default=250_000, gt=0)
     git_binary: str = "git"
     # file:// remotes (local test fixtures only; never in a deployment).
     allow_file_protocol: bool = False

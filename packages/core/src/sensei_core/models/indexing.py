@@ -88,6 +88,8 @@ class Snapshot(IdMixin, OrgScopedMixin, Base):
     loc: Mapped[int | None] = mapped_column(BigInteger)
     bytes: Mapped[int | None] = mapped_column(BigInteger)
     merkle_root: Mapped[str | None] = mapped_column(String(64))
+    # What discovery found: totals per language, role and flag, frameworks, skipped paths.
+    summary: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     ready_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 

@@ -38,6 +38,7 @@ class TaskName(enum.StrEnum):
     SWEEP_WEBHOOKS = "sensei.webhooks.sweep"
     PURGE_REPO = "sensei.maintenance.purge_repo"
     CLONE_SNAPSHOT = "sensei.ingest.clone_snapshot"
+    DISCOVER_FILES = "sensei.ingest.discover_files"
     EVICT_REPO_CACHE = "sensei.maintenance.evict_repo_cache"
 
 

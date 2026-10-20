@@ -88,7 +88,7 @@ class IngestTask(SenseiTask):
             return
         try:
             get_runtime().run(
-                _fail_job(
+                fail_job(
                     self,
                     org_id,
                     uuid.UUID(str(job_id)),
@@ -101,7 +101,7 @@ class IngestTask(SenseiTask):
             log.exception("could not mark the index job failed")
 
 
-async def _fail_job(
+async def fail_job(
     task: SenseiTask, org_id: str, job_id: uuid.UUID, code: str, message: str
 ) -> None:
     async with task.org_session(org_id) as db:
@@ -318,7 +318,7 @@ def clone_snapshot(self: IngestTask, *, job_id: str, org_id: str, repo_id: str) 
         )
     except CloneError as exc:
         log.warning("clone failed", code=exc.code)
-        runtime.run(_fail_job(self, org_id, job, exc.code, exc.message))
+        runtime.run(fail_job(self, org_id, job, exc.code, exc.message))
         return None
     except TransientGitError as exc:
         raise RetryableError("git server trouble") from exc

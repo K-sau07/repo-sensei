@@ -1,0 +1,212 @@
+"""The discover stage: which files of the snapshot get indexed, and what each one is.
+
+``discover_files`` runs after the clone stage, on the working copy the clone left in the cache.
+A worker that doesn't have it (another machine took the clone) unpacks the snapshot archive from
+object storage instead. The file list, the snapshot summary and the repository's languages are
+written in one transaction (see :mod:`sensei_engine.ingest.store`), which completes the stage.
+"""
+
+from __future__ import annotations
+
+import shutil
+import tempfile
+import uuid
+from dataclasses import dataclass
+from pathlib import Path
+
+from sqlalchemy import select
+
+from sensei_core.indexing.state import IndexJobStateMachine
+from sensei_core.jobs import TaskName
+from sensei_core.logging import get_logger
+from sensei_core.models import (
+    ACTIVE_JOB_STATUSES,
+    IndexJob,
+    JobStatus,
+    Repo,
+    Snapshot,
+    SnapshotStatus,
+    Stage,
+)
+from sensei_core.repos.service import RepoSettings
+from sensei_core.storage import Bucket, snapshot_key
+from sensei_engine.ingest.classify import FileChangedError
+from sensei_engine.ingest.discover import Discovery, discover
+from sensei_engine.ingest.store import save_discovery
+from sensei_engine.ingest.walk import TooManyFilesError
+from sensei_workers.app import celery_app
+from sensei_workers.base import RetryableError, SenseiTask
+from sensei_workers.ingest.archive import ArchiveTooLargeError, extract_archive
+from sensei_workers.runtime import get_runtime
+from sensei_workers.tasks.ingest import IngestTask, fail_job
+
+log = get_logger(__name__)
+
+
+@dataclass(frozen=True, slots=True)
+class Target:
+    org_id: uuid.UUID
+    repo_id: uuid.UUID
+    snapshot_id: uuid.UUID
+    commit_sha: str
+    ignore_globs: tuple[str, ...]
+
+
+class SnapshotUnavailableError(Exception):
+    """Neither the working copy nor the archive is there."""
+
+
+async def _begin(task: SenseiTask, org_id: str, job_id: uuid.UUID) -> Target | None:
+    """Start (or resume) the job's discover stage; None if there is nothing to do."""
+    async with task.org_session(org_id) as db:
+        job = await db.scalar(select(IndexJob).where(IndexJob.id == job_id).with_for_update())
+        if job is None or job.status is not JobStatus.RUNNING or job.snapshot_id is None:
+            return None
+        stages = job.stages or {}
+        machine = IndexJobStateMachine(job)
+        if job.stage is Stage.CLONE and stages.get("clone", {}).get("status") == "done":
+            machine.advance(Stage.DISCOVER)
+        elif job.stage is not Stage.DISCOVER or stages["discover"].get("status") != "running":
+            return None  # clone not finished, or past this stage already (a duplicate)
+        repo = await db.get(Repo, job.repo_id)
+        snapshot = await db.get(Snapshot, job.snapshot_id)
+        if repo is None or repo.deleted_at is not None:
+            machine.cancel()
+            return None
+        if snapshot is None or snapshot.status is not SnapshotStatus.READY:
+            return None
+        settings = RepoSettings.model_validate(repo.settings or {})
+        return Target(
+            org_id=repo.org_id,
+            repo_id=repo.id,
+            snapshot_id=snapshot.id,
+            commit_sha=snapshot.commit_sha,
+            ignore_globs=tuple(settings.ignore_globs),
+        )
+
+
+def _head(worktree: Path) -> str | None:
+    """The commit a cached working copy has checked out (detached), if it is one."""
+    head = worktree / ".git" / "HEAD"
+    try:
+        if head.is_symlink():
+            return None
+        return head.read_text().strip()
+    except OSError:
+        return None
+
+
+async def _download(target: Target, out: Path) -> None:
+    storage = await get_runtime().storage()
+    key = snapshot_key(target.org_id, target.repo_id, target.commit_sha)
+    if await storage.size(Bucket.SNAPSHOTS, key) is None:
+        raise SnapshotUnavailableError(key)
+    with out.open("wb") as handle:
+        async for chunk in storage.get_stream(Bucket.SNAPSHOTS, key):
+            handle.write(chunk)
+
+
+def _worktree(target: Target) -> Path:
+    """The snapshot's files on local disk: the cached working copy, or the archive unpacked in
+    its place."""
+    runtime = get_runtime()
+    settings = runtime.settings.ingest
+    worktree = settings.cache_dir / str(target.repo_id)
+    if _head(worktree) == target.commit_sha:
+        return worktree
+    settings.cache_dir.mkdir(parents=True, exist_ok=True)
+    scratch = Path(tempfile.mkdtemp(prefix=".unpack-", dir=settings.cache_dir))
+    try:
+        archive = scratch / "snapshot.tar.zst"
+        runtime.run(_download(target, archive))
+        unpacked = scratch / "tree"
+        extract_archive(archive, unpacked, max_bytes=settings.max_checkout_bytes)
+        shutil.rmtree(worktree, ignore_errors=True)
+        unpacked.rename(worktree)
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
+    return worktree
+
+
+async def _progress(
+    task: SenseiTask, org_id: str, job_id: uuid.UUID, done: int, total: int
+) -> None:
+    async with task.org_session(org_id) as db:
+        job = await db.scalar(select(IndexJob).where(IndexJob.id == job_id).with_for_update())
+        if job is None or job.status not in ACTIVE_JOB_STATUSES or job.stage is not Stage.DISCOVER:
+            return
+        previous = int((job.stages or {}).get("discover", {}).get("done") or 0)
+        IndexJobStateMachine(job).update_progress(Stage.DISCOVER, max(done, previous), total)
+
+
+async def _save(task: SenseiTask, target: Target, job_id: uuid.UUID, found: Discovery) -> bool:
+    """Write the discovery and complete the stage; False if the job moved on meanwhile."""
+    async with task.org_session(target.org_id) as db:
+        job = await db.scalar(select(IndexJob).where(IndexJob.id == job_id).with_for_update())
+        if job is None or job.status is not JobStatus.RUNNING or job.stage is not Stage.DISCOVER:
+            return False
+        snapshot = await db.get(Snapshot, target.snapshot_id)
+        if snapshot is None:
+            return False
+        rows = await save_discovery(db, snapshot, found)
+        summary = snapshot.summary or {}
+        machine = IndexJobStateMachine(job)
+        total = max(rows, 1)
+        machine.update_progress(Stage.DISCOVER, total, total)
+        machine.note(
+            Stage.DISCOVER,
+            files=rows,
+            loc=found.loc,
+            frameworks=sorted({f.name for f in found.frameworks}),
+            skipped=summary.get("skipped", {}),
+            invalid_ignore_globs=summary.get("invalid_ignore_globs", []),
+        )
+        machine.complete(Stage.DISCOVER)
+        return True
+
+
+@celery_app.task(
+    bind=True,
+    base=IngestTask,
+    name=TaskName.DISCOVER_FILES.value,
+    requires=("job_id", "org_id", "repo_id"),
+    idempotent_on=("job_id",),
+)
+def discover_files(self: IngestTask, *, job_id: str, org_id: str, repo_id: str) -> int | None:
+    """Discover the files of the job's snapshot; returns how many are indexed."""
+    runtime = get_runtime()
+    job = uuid.UUID(job_id)
+    target = runtime.run(_begin(self, org_id, job))
+    if target is None:
+        return None
+    settings = runtime.settings.ingest
+
+    def progress(done: int, total: int) -> None:
+        runtime.run(_progress(self, org_id, job, done, total))
+
+    try:
+        worktree = _worktree(target)
+        found = discover(
+            worktree,
+            ignore_globs=target.ignore_globs,
+            max_files=settings.max_files,
+            progress=progress,
+        )
+    except TooManyFilesError as exc:
+        message = (
+            f"The repository has more than {exc.limit:,} files to index. Add ignore patterns "
+            "in the repository settings to leave generated or vendored code out."
+        )
+        runtime.run(fail_job(self, org_id, job, "too_many_files", message))
+        return None
+    except (SnapshotUnavailableError, ArchiveTooLargeError) as exc:
+        log.warning("snapshot unavailable", error=type(exc).__name__)
+        message = "The snapshot of this commit is missing. Reindex the repository."
+        runtime.run(fail_job(self, org_id, job, "snapshot_unavailable", message))
+        return None
+    except FileChangedError as exc:
+        raise RetryableError("the working copy changed while it was read") from exc
+    if not runtime.run(_save(self, target, job, found)):
+        return None
+    log.info("files discovered", files=len(found.files), frameworks=len(found.frameworks))
+    return len(found.files)

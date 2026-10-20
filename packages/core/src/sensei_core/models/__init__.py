@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from sensei_core.db.base import Base
 from sensei_core.models.audit import ActorType, AuditEvent, UsageEvent, UsageKind
+from sensei_core.models.files import RepoFile
 from sensei_core.models.github import GitHubInstallation
 from sensei_core.models.indexing import (
     ACTIVE_JOB_STATUSES,
@@ -36,6 +37,7 @@ __all__ = [
     "OAuthToken",
     "Org",
     "Repo",
+    "RepoFile",
     "RepoSource",
     "RepoStatus",
     "Role",

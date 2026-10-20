@@ -31,7 +31,11 @@ class RepoOut(BaseModel):
     default_branch: str
     status: RepoStatus
     size_kb: int
-    languages: dict[str, int] = Field(description="Bytes of code per language, from GitHub.")
+    languages: dict[str, int] = Field(
+        description="Bytes of code per language, under GitHub's language names: GitHub's counts "
+        "until the first index, then repo-sensei's (generated, vendored and documentation files "
+        "left out)."
+    )
     settings: RepoSettings
     last_indexed_sha: str | None
     created_at: datetime

@@ -1,4 +1,5 @@
-"""The clone stage end to end: test database, local object storage, a local bare repository.
+"""The clone and discover stages end to end: test database, local object storage, a local bare
+repository.
 
 GitHub's REST API (branch → commit) is mocked; git talks to the bare repository over file://.
 Synchronous like a worker; database helpers run on the worker runtime's event loop.
@@ -6,6 +7,7 @@ Synchronous like a worker; database helpers run on the worker runtime's event lo
 
 from __future__ import annotations
 
+import shutil
 import uuid
 from collections.abc import Iterator
 from pathlib import Path
@@ -24,12 +26,14 @@ from sensei_core.models import (
     JobStatus,
     Org,
     Repo,
+    RepoFile,
     RepoSource,
     Snapshot,
     SnapshotStatus,
 )
 from sensei_core.storage import Bucket, repo_prefix, snapshot_key
 from sensei_workers.runtime import Runtime, set_runtime
+from sensei_workers.tasks.discover import discover_files
 from sensei_workers.tasks.ingest import clone_snapshot
 
 pytestmark = pytest.mark.integration
@@ -216,3 +220,130 @@ def test_a_finished_or_cancelled_job_is_left_alone(
     runtime.run(_new_job(runtime.system_database, org_id, repo_id))  # cancels the first
     assert _clone(org_id, repo_id, job_id) is None
     assert not github.routes[0].called
+
+
+# ------------------------------------------------------------------ discover
+
+
+def _discover(org_id: uuid.UUID, repo_id: uuid.UUID, job_id: uuid.UUID) -> int | None:
+    return discover_files.apply(
+        kwargs={"job_id": str(job_id), "org_id": str(org_id), "repo_id": str(repo_id)}
+    ).get()
+
+
+async def _files(database: Database, repo_id: uuid.UUID) -> dict[str, RepoFile]:
+    async with database.session() as db:
+        rows = await db.scalars(select(RepoFile).where(RepoFile.repo_id == repo_id))
+        return {row.path: row for row in rows}
+
+
+async def _repo(database: Database, repo_id: uuid.UUID) -> Repo:
+    async with database.session() as db:
+        repo = await db.get(Repo, repo_id)
+        assert repo is not None
+        return repo
+
+
+async def _set_ignore(database: Database, repo_id: uuid.UUID, globs: list[str]) -> None:
+    async with database.session() as db:
+        await db.execute(
+            update(Repo).where(Repo.id == repo_id).values(settings={"ignore_globs": globs})
+        )
+
+
+def _cloned(runtime: Runtime, org_id: uuid.UUID, repo_id: uuid.UUID) -> uuid.UUID:
+    job_id = runtime.run(_new_job(runtime.system_database, org_id, repo_id))
+    assert _clone(org_id, repo_id, job_id) is not None
+    return job_id
+
+
+SECOND_COMMIT_FILES = [".gitattributes", "README.md", "model.bin", "run.sh", "src/app.py"]
+
+
+def test_discover_records_the_snapshot_files(
+    runtime: Runtime, repo: tuple[uuid.UUID, uuid.UUID], github: respx.MockRouter
+) -> None:
+    org_id, repo_id = repo
+    system = runtime.system_database
+    job_id = _cloned(runtime, org_id, repo_id)
+    assert _discover(org_id, repo_id, job_id) == len(SECOND_COMMIT_FILES)
+
+    job = runtime.run(_job(system, job_id))
+    discover = job.stages["discover"]
+    assert (job.status, job.stage, discover["status"]) == (JobStatus.RUNNING, "discover", "done")
+    assert discover["details"]["files"] == len(SECOND_COMMIT_FILES)
+    assert discover["details"]["skipped"]["symlinks"] == 1  # "outside" points out of the tree
+    files = runtime.run(_files(system, repo_id))
+    assert sorted(files) == SECOND_COMMIT_FILES
+    app = files["src/app.py"]
+    assert (app.language, app.role, app.loc, app.snapshot_id) == (
+        "python",
+        "service",
+        1,
+        job.snapshot_id,
+    )
+    assert files["model.bin"].flags == ["lfs_pointer"]
+    assert files["run.sh"].role == "config"
+
+    snapshot = runtime.run(_snapshot(system, repo_id))
+    assert snapshot is not None
+    assert snapshot.file_count == len(SECOND_COMMIT_FILES)
+    assert snapshot.summary is not None
+    assert snapshot.summary["roles"]["service"]["files"] == 1
+    languages = runtime.run(_repo(system, repo_id)).languages
+    assert languages == {"Python": files["src/app.py"].size, "Shell": files["run.sh"].size}
+
+    # A duplicate delivery after the stage is done changes nothing.
+    assert _discover(org_id, repo_id, job_id) is None
+
+
+def test_discover_unpacks_the_archive_without_the_working_copy(
+    runtime: Runtime, repo: tuple[uuid.UUID, uuid.UUID], github: respx.MockRouter
+) -> None:
+    org_id, repo_id = repo
+    job_id = _cloned(runtime, org_id, repo_id)
+    # Another worker took the clone: this one's cache doesn't have the copy.
+    shutil.rmtree(runtime.settings.ingest.cache_dir / str(repo_id))
+    assert _discover(org_id, repo_id, job_id) == len(SECOND_COMMIT_FILES)
+    assert sorted(runtime.run(_files(runtime.system_database, repo_id))) == SECOND_COMMIT_FILES
+    assert (runtime.settings.ingest.cache_dir / str(repo_id) / "src" / "app.py").exists()
+
+
+def test_discover_follows_the_repository_ignore_globs(
+    runtime: Runtime, repo: tuple[uuid.UUID, uuid.UUID], github: respx.MockRouter
+) -> None:
+    org_id, repo_id = repo
+    runtime.run(_set_ignore(runtime.system_database, repo_id, ["*.md", "src/"]))
+    job_id = _cloned(runtime, org_id, repo_id)
+    assert _discover(org_id, repo_id, job_id) == 3
+    assert sorted(runtime.run(_files(runtime.system_database, repo_id))) == [
+        ".gitattributes",
+        "model.bin",
+        "run.sh",
+    ]
+
+
+def test_too_many_files_fails_the_job(
+    runtime: Runtime, repo: tuple[uuid.UUID, uuid.UUID], github: respx.MockRouter
+) -> None:
+    org_id, repo_id = repo
+    job_id = _cloned(runtime, org_id, repo_id)
+    runtime.settings = runtime.settings.model_copy(
+        update={"ingest": runtime.settings.ingest.model_copy(update={"max_files": 2})}
+    )
+    assert _discover(org_id, repo_id, job_id) is None
+    job = runtime.run(_job(runtime.system_database, job_id))
+    assert job.status is JobStatus.FAILED
+    assert job.error is not None
+    assert (job.error["stage"], job.error["code"]) == ("discover", "too_many_files")
+    assert runtime.run(_files(runtime.system_database, repo_id)) == {}
+
+
+def test_discover_waits_for_the_clone(
+    runtime: Runtime, repo: tuple[uuid.UUID, uuid.UUID], github: respx.MockRouter
+) -> None:
+    org_id, repo_id = repo
+    job_id = runtime.run(_new_job(runtime.system_database, org_id, repo_id))
+    assert _discover(org_id, repo_id, job_id) is None
+    job = runtime.run(_job(runtime.system_database, job_id))
+    assert (job.status, job.stage) == (JobStatus.QUEUED, None)

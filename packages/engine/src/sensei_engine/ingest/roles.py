@@ -1,0 +1,212 @@
+"""What part of the application a file belongs to (heuristic v1; the code graph refines it later).
+
+Checked in order, first match wins:
+
+1. ``test``: test directories and test file names (``test_*.py``, ``*.spec.ts``, ``conftest.py``);
+2. ``docs``: prose (Markdown, reStructuredText), READMEs, licences and changelogs, ``docs/``;
+3. ``config``: data and build files (JSON, YAML, TOML, Dockerfiles, CI), ``*.config.*``,
+   dotfiles, settings modules and scripts;
+4. ``db``: SQL, schemas and migrations, models and repositories;
+5. ``api``: route handlers and applications by framework decorator or registration anywhere,
+   and by directory (``api``, ``routes``, ``controllers``, ``endpoints``) outside frontend
+   packages;
+6. ``ui``: components that return JSX, Vue/Svelte/Astro files, stylesheets, HTML, and any code in
+   a frontend package (one whose manifest uses React, Vue, Svelte, Angular or Next.js);
+7. ``service``: the rest of the code;
+8. ``other``: everything else (images, data, plain text).
+"""
+
+from __future__ import annotations
+
+import enum
+import re
+from collections.abc import Callable
+from dataclasses import dataclass
+from pathlib import PurePosixPath
+
+from sensei_engine.ingest.languages import CODE_LANGUAGES
+
+
+class Role(enum.StrEnum):
+    UI = "ui"
+    API = "api"
+    SERVICE = "service"
+    DB = "db"
+    TEST = "test"
+    CONFIG = "config"
+    DOCS = "docs"
+    OTHER = "other"
+
+
+UI_FRAMEWORKS = frozenset(
+    {"react", "next", "vue", "nuxt", "svelte", "sveltekit", "angular", "astro", "solid-js"}
+)
+
+_TEST_DIRS = frozenset(
+    {"test", "tests", "__tests__", "spec", "specs", "e2e", "cypress", "playwright", "__mocks__"}
+)
+_TEST_NAME = re.compile(
+    r"^(?:test_.+\.py|.+_test\.(?:py|go|rb|exs?)|conftest\.py|.+\.(?:test|spec)\.[cm]?[jt]sx?"
+    r"|.+_spec\.rb|.+(?:Test|Tests|IT)\.(?:java|kt|cs|swift))$"
+)
+
+_DOC_LANGUAGES = frozenset({"markdown", "mdx", "rst", "asciidoc"})
+_DOC_DIRS = frozenset({"docs", "doc", "documentation"})
+_DOC_NAMES = re.compile(
+    r"^(?:readme|changelog|changes|history|contributing|license|licence|copying|notice|authors"
+    r"|code_of_conduct|security|support|release-notes|releasing)(?:[.-].*)?$",
+    re.IGNORECASE,
+)
+
+_CONFIG_LANGUAGES = frozenset(
+    {
+        "json",
+        "yaml",
+        "toml",
+        "ini",
+        "properties",
+        "dotenv",
+        "ignore",
+        "gitattributes",
+        "dockerfile",
+        "makefile",
+        "cmake",
+        "hcl",
+        "nix",
+        "procfile",
+        "just",
+        "pip-requirements",
+        "shell",
+        "fish",
+        "powershell",
+        "batch",
+    }
+)
+_CONFIG_DIRS = frozenset(
+    {".github", ".circleci", ".gitlab", ".husky", ".vscode", ".idea", ".devcontainer", "scripts"}
+)
+_CONFIG_NAME = re.compile(
+    r"^(?:.+\.config\.[cm]?[jt]s|tsconfig.*\.json|setup\.py|setup\.cfg|manage\.py|noxfile\.py"
+    r"|tasks\.py|fabfile\.py|gulpfile\.[cm]?js|gruntfile\.js|(?:config|settings|conf)\.py"
+    r"|config\.[cm]?[jt]s)$",
+    re.IGNORECASE,
+)
+
+_DB_LANGUAGES = frozenset({"sql", "prisma"})
+_DB_DIRS = frozenset(
+    {"migrations", "migration", "alembic", "models", "repositories", "repository", "db", "database"}
+)
+_DB_NAME = re.compile(
+    r"^(?:models?\.py|db\.py|database\.py|crud\.py|repositor(?:y|ies)\.py|schema\.prisma"
+    r"|.+\.(?:entity|model|repository|schema)\.[cm]?[jt]s)$"
+)
+_ORM_MODEL = re.compile(
+    r"^\s*class\s+\w+\s*\([^)]*\b(?:table\s*=\s*True|DeclarativeBase|declarative_base|db\.Model"
+    r"|models\.Model)\b",
+    re.MULTILINE,
+)
+
+_API_DIRS = frozenset(
+    {"api", "routes", "routers", "router", "controllers", "endpoints", "handlers"}
+)
+_API_NAME = re.compile(r"^(?:views\.py|urls\.py|.+\.(?:controller|resolver|routes?)\.[cm]?[jt]s)$")
+_API_CODE = re.compile(
+    # FastAPI/Flask/Starlette decorators, applications, routers and blueprints
+    r"^\s*@\s*\w+\.(?:get|post|put|patch|delete|head|options|route|api_route|websocket)\s*\("
+    r"|\b(?:APIRouter|Blueprint|FastAPI|Flask|Starlette)\s*\("
+    # Express/Koa/Fastify-style registration
+    r"|\b(?:app|router|server)\.(?:get|post|put|patch|delete|all)\s*\(\s*[\"'`]/"
+    # NestJS
+    r"|^\s*@(?:Controller|Get|Post|Put|Patch|Delete)\s*\(",
+    re.MULTILINE,
+)
+# Next.js route handlers and API routes (in a frontend package, but server endpoints).
+_NEXT_HANDLER = re.compile(r"(?:^|/)(?:app/(?:.+/)?route\.[cm]?[jt]s|pages/api/.+\.[cm]?[jt]sx?)$")
+
+_UI_LANGUAGES = frozenset(
+    {"vue", "svelte", "astro", "css", "scss", "sass", "less", "html", "jinja", "handlebars", "ejs"}
+)
+_JSX_RETURN = re.compile(r"(?:\breturn|=>)\s*\(?\s*<(?:[A-Za-z][\w.:-]*|>)")
+
+
+@dataclass(frozen=True, slots=True)
+class _File:
+    path: str
+    name: str
+    directories: frozenset[str]
+    language: str | None
+    code: str
+    ui_package: bool
+
+
+def _test(f: _File) -> bool:
+    return bool(f.directories & _TEST_DIRS or _TEST_NAME.match(f.name))
+
+
+def _docs(f: _File) -> bool:
+    return bool(
+        f.language in _DOC_LANGUAGES
+        or f.directories & _DOC_DIRS
+        or (_DOC_NAMES.match(f.name) and f.language not in CODE_LANGUAGES)
+    )
+
+
+def _config(f: _File) -> bool:
+    return bool(
+        f.language in _CONFIG_LANGUAGES
+        or f.directories & _CONFIG_DIRS
+        or _CONFIG_NAME.match(f.name)
+        or (f.name.startswith(".") and f.language not in CODE_LANGUAGES)
+    )
+
+
+def _db(f: _File) -> bool:
+    return bool(
+        f.language in _DB_LANGUAGES
+        or f.directories & _DB_DIRS
+        or _DB_NAME.match(f.name)
+        or (f.language == "python" and _ORM_MODEL.search(f.code))
+    )
+
+
+def _api(f: _File) -> bool:
+    if _NEXT_HANDLER.search(f.path) or (f.language in CODE_LANGUAGES and _API_CODE.search(f.code)):
+        return True
+    return not f.ui_package and bool(f.directories & _API_DIRS or _API_NAME.match(f.name))
+
+
+def _ui(f: _File) -> bool:
+    if f.language in _UI_LANGUAGES:
+        return True
+    if f.language in ("tsx", "jsx") and _JSX_RETURN.search(f.code):
+        return True
+    return f.ui_package and f.language in CODE_LANGUAGES
+
+
+def _service(f: _File) -> bool:
+    return f.language in CODE_LANGUAGES
+
+
+RULES: tuple[tuple[Role, Callable[[_File], bool]], ...] = (
+    (Role.TEST, _test),
+    (Role.DOCS, _docs),
+    (Role.CONFIG, _config),
+    (Role.DB, _db),
+    (Role.API, _api),
+    (Role.UI, _ui),
+    (Role.SERVICE, _service),
+)
+
+
+def assign_role(path: str, language: str | None, text: str | None, *, ui_package: bool) -> Role:
+    """``ui_package``: the file is in a frontend package (see the module docstring)."""
+    pure = PurePosixPath(path)
+    file = _File(
+        path=path,
+        name=pure.name,
+        directories=frozenset(part.lower() for part in pure.parts[:-1]),
+        language=language,
+        code=text or "",
+        ui_package=ui_package,
+    )
+    return next((role for role, matches in RULES if matches(file)), Role.OTHER)

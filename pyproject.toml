@@ -26,6 +26,7 @@ dev = [
     "celery-types>=0.26",
     "types-aiobotocore[s3]>=3.9",
     "honcho>=2.0",
+    "types-pyyaml>=6.0",
 ]
 
 [tool.uv]
