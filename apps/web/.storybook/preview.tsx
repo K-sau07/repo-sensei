@@ -2,6 +2,7 @@ import { withThemeByDataAttribute } from "@storybook/addon-themes";
 import type { Preview } from "@storybook/nextjs-vite";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { mswLoader } from "msw-storybook-addon/csf3";
+import { NuqsTestingAdapter } from "nuqs/adapters/testing";
 
 import { DEFAULT_THEME, MotionProvider, THEMES } from "../src/components/providers";
 import { TooltipProvider } from "../src/components/ui/tooltip";
@@ -30,20 +31,23 @@ const preview: Preview = {
     (Story, context) => (
       // A fresh query cache per story, so stories never share data.
       <QueryClientProvider client={makeQueryClient()}>
-        <MotionProvider>
-          <TooltipProvider>
-            {/* `bare` stories (like the app shell) bring their own <main> and layout. */}
-            {context.parameters.bare === true ? (
-              <div className="min-h-dvh bg-bg font-sans text-fg">
-                <Story />
-              </div>
-            ) : (
-              <main className="min-h-dvh bg-bg p-8 font-sans text-fg">
-                <Story />
-              </main>
-            )}
-          </TooltipProvider>
-        </MotionProvider>
+        {/* URL state (filters, tabs) without a router: kept in memory per story. */}
+        <NuqsTestingAdapter>
+          <MotionProvider>
+            <TooltipProvider>
+              {/* `bare` stories (like the app shell) bring their own <main> and layout. */}
+              {context.parameters.bare === true ? (
+                <div className="min-h-dvh bg-bg font-sans text-fg">
+                  <Story />
+                </div>
+              ) : (
+                <main className="min-h-dvh bg-bg p-8 font-sans text-fg">
+                  <Story />
+                </main>
+              )}
+            </TooltipProvider>
+          </MotionProvider>
+        </NuqsTestingAdapter>
       </QueryClientProvider>
     ),
     withThemeByDataAttribute({

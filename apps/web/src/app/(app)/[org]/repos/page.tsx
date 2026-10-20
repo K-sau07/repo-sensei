@@ -1,9 +1,14 @@
 import type { Metadata } from "next";
+import { Suspense } from "react";
 
-import { ComingSoon } from "@/components/coming-soon";
+import { RepoListPage } from "@/components/repos/repo-pages";
 
-export const metadata: Metadata = { title: "Repos" };
+export const metadata: Metadata = { title: "Repositories" };
 
 export default function ReposPage() {
-  return <ComingSoon title="Repos" />;
+  return (
+    <Suspense>
+      <RepoListPage />
+    </Suspense>
+  );
 }

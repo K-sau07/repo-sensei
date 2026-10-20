@@ -17,13 +17,23 @@ from sensei_api.orgs import OrgAccessDep
 from sensei_api.repos import RepoAccessDep, RepoDep, RepoServiceDep, ViewerDep, checked
 from sensei_api.routers.index_jobs import dispatch_index
 from sensei_core.indexing.events import JobOutbox
-from sensei_core.indexing.jobs import IndexJobService
+from sensei_core.indexing.jobs import IndexJobService, RepoSummary, repo_summaries
 from sensei_core.jobs import RepoJobs
-from sensei_core.models import Repo, RepoSource, RepoStatus
+from sensei_core.models import JobStatus, Repo, RepoSource, RepoStatus, Stage
 from sensei_core.orgs.service import OrgAccess
 from sensei_core.repos.service import RepoSettings
 
 router = APIRouter(prefix="/orgs/{org}", tags=["repos"])
+
+
+class ActiveJobOut(BaseModel):
+    """The repository's queued or running index run, for status dots and progress."""
+
+    id: uuid.UUID
+    status: JobStatus
+    stage: Stage | None
+    progress: float
+    eta_s: int | None
 
 
 class RepoOut(BaseModel):
@@ -47,11 +57,23 @@ class RepoOut(BaseModel):
     index_job_id: uuid.UUID | None = Field(
         default=None, description="The index run this request started, if it started one."
     )
+    file_count: int | None = Field(default=None, description="Files indexed at the last index.")
+    loc: int | None = Field(default=None, description="Lines in those files.")
+    last_indexed_at: datetime | None = None
+    active_job: ActiveJobOut | None = None
     created_at: datetime
     updated_at: datetime
 
     @classmethod
-    def build(cls, repo: Repo, *, index_job_id: uuid.UUID | None = None) -> RepoOut:
+    def build(
+        cls,
+        repo: Repo,
+        *,
+        index_job_id: uuid.UUID | None = None,
+        summary: RepoSummary | None = None,
+    ) -> RepoOut:
+        snapshot = summary.snapshot if summary else None
+        job = summary.job if summary else None
         return cls(
             id=repo.id,
             slug=repo.slug,
@@ -67,6 +89,20 @@ class RepoOut(BaseModel):
             settings=RepoSettings.model_validate(repo.settings or {}),
             last_indexed_sha=repo.last_indexed_sha,
             index_job_id=index_job_id,
+            file_count=snapshot.file_count if snapshot else None,
+            loc=snapshot.loc if snapshot else None,
+            last_indexed_at=snapshot.ready_at if snapshot else None,
+            active_job=(
+                ActiveJobOut(
+                    id=job.id,
+                    status=job.status,
+                    stage=job.stage,
+                    progress=job.progress,
+                    eta_s=job.eta_s,
+                )
+                if job
+                else None
+            ),
             created_at=repo.created_at,
             updated_at=repo.updated_at,
         )
@@ -251,12 +287,14 @@ async def list_repos(
 ) -> list[RepoOut]:
     """Connected repositories the signed-in user can read on GitHub."""
     visible = await checked(readers, access.user, await repos.list(db, access))
-    return [RepoOut.build(repo) for repo in visible]
+    summaries = await repo_summaries(db, visible)
+    return [RepoOut.build(repo, summary=summaries.get(repo.id)) for repo in visible]
 
 
 @router.get("/repos/{repo}", response_model=RepoOut)
-async def get_repo(repo: RepoDep) -> RepoOut:
-    return RepoOut.build(repo)
+async def get_repo(repo: RepoDep, db: DbSession) -> RepoOut:
+    summaries = await repo_summaries(db, [repo])
+    return RepoOut.build(repo, summary=summaries.get(repo.id))
 
 
 @router.patch("/repos/{repo}", response_model=RepoOut)

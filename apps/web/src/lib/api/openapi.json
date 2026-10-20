@@ -1,6 +1,53 @@
 {
   "components": {
     "schemas": {
+      "ActiveJobOut": {
+        "description": "The repository's queued or running index run, for status dots and progress.",
+        "properties": {
+          "eta_s": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Eta S"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "progress": {
+            "title": "Progress",
+            "type": "number"
+          },
+          "stage": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Stage"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "status": {
+            "$ref": "#/components/schemas/JobStatus"
+          }
+        },
+        "required": [
+          "id",
+          "status",
+          "stage",
+          "progress",
+          "eta_s"
+        ],
+        "title": "ActiveJobOut",
+        "type": "object"
+      },
       "ActorType": {
         "enum": [
           "user",
@@ -1219,6 +1266,16 @@
       },
       "RepoOut": {
         "properties": {
+          "active_job": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ActiveJobOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "created_at": {
             "format": "date-time",
             "title": "Created At",
@@ -1227,6 +1284,18 @@
           "default_branch": {
             "title": "Default Branch",
             "type": "string"
+          },
+          "file_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Files indexed at the last index.",
+            "title": "File Count"
           },
           "full_name": {
             "title": "Full Name",
@@ -1258,6 +1327,18 @@
             "title": "Languages",
             "type": "object"
           },
+          "last_indexed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Indexed At"
+          },
           "last_indexed_sha": {
             "anyOf": [
               {
@@ -1268,6 +1349,18 @@
               }
             ],
             "title": "Last Indexed Sha"
+          },
+          "loc": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Lines in those files.",
+            "title": "Loc"
           },
           "name": {
             "title": "Name",

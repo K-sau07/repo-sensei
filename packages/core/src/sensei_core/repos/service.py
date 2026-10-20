@@ -350,7 +350,9 @@ class RepoService:
         )
         if existing is not None:
             raise ConflictError(
-                f"{existing.full_name} is already connected.", code="repo_already_connected"
+                f"{existing.full_name} is already connected.",
+                code="repo_already_connected",
+                details={"slug": existing.slug},
             )
         # Always a new row: one disconnected earlier keeps waiting for its purge, so nothing of
         # its snapshots, jobs or settings comes back.

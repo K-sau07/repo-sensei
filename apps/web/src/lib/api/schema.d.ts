@@ -767,6 +767,23 @@ export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
         /**
+         * ActiveJobOut
+         * @description The repository's queued or running index run, for status dots and progress.
+         */
+        ActiveJobOut: {
+            /** Eta S */
+            eta_s: number | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Progress */
+            progress: number;
+            stage: components["schemas"]["Stage"] | null;
+            status: components["schemas"]["JobStatus"];
+        };
+        /**
          * ActorType
          * @enum {string}
          */
@@ -1230,6 +1247,7 @@ export interface components {
         };
         /** RepoOut */
         RepoOut: {
+            active_job?: components["schemas"]["ActiveJobOut"] | null;
             /**
              * Created At
              * Format: date-time
@@ -1237,6 +1255,11 @@ export interface components {
             created_at: string;
             /** Default Branch */
             default_branch: string;
+            /**
+             * File Count
+             * @description Files indexed at the last index.
+             */
+            file_count?: number | null;
             /** Full Name */
             full_name: string;
             /**
@@ -1256,8 +1279,15 @@ export interface components {
             languages: {
                 [key: string]: number;
             };
+            /** Last Indexed At */
+            last_indexed_at?: string | null;
             /** Last Indexed Sha */
             last_indexed_sha: string | null;
+            /**
+             * Loc
+             * @description Lines in those files.
+             */
+            loc?: number | null;
             /** Name */
             name: string;
             /** Owner */

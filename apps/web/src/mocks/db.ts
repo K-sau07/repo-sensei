@@ -3,7 +3,15 @@
  * API. In the browser it persists in localStorage, so multi-step flows (invite, switch user,
  * accept) survive page loads; `resetMockDb()` restores the seed.
  */
-import type { Invitation, Member, Org, Role, SessionInfo } from "@/lib/api/types";
+import type {
+  AvailableRepo,
+  Invitation,
+  Member,
+  Org,
+  Repo,
+  Role,
+  SessionInfo,
+} from "@/lib/api/types";
 
 export interface MockUser {
   id: string;
@@ -25,6 +33,9 @@ export interface MockInvitation extends Invitation {
   invited_by: string;
 }
 
+/** A connected repository, as the list endpoint returns it. */
+export type MockRepo = Repo;
+
 export interface MockDb {
   users: MockUser[];
   orgs: Omit<Org, "role">[];
@@ -32,9 +43,13 @@ export interface MockDb {
   invitations: MockInvitation[];
   sessions: SessionInfo[];
   lastOrg: Record<string, string | null>;
+  /** Connected repositories per org. */
+  repos: Record<string, MockRepo[]>;
+  /** What the org's GitHub App installation can read. */
+  available: Record<string, AvailableRepo[]>;
 }
 
-const STORAGE_KEY = "sensei.mock.db.v2";
+const STORAGE_KEY = "sensei.mock.db.v3";
 export const NOW = "2026-10-18T12:00:00Z";
 export const OCTO = "0199f000-0000-7000-8000-000000000001";
 export const HUBOT = "0199f000-0000-7000-8000-000000000002";
@@ -120,8 +135,61 @@ function seed(): MockDb {
       },
     ],
     lastOrg: { [OCTO]: "acme" },
+    repos: { acme: [seedRepo()] },
+    available: { acme: SEED_AVAILABLE },
   };
 }
+
+export const API_REPO_ID = "0199f000-0000-7000-8000-0000000000d1";
+
+function seedRepo(): MockRepo {
+  return {
+    id: API_REPO_ID,
+    slug: "api",
+    full_name: "acme-gh/api",
+    owner: "acme-gh",
+    name: "api",
+    source: "github_app",
+    visibility: "private",
+    default_branch: "main",
+    status: "ready",
+    size_kb: 2048,
+    languages: { Python: 90_980, TypeScript: 30_208, Shell: 1609, Dockerfile: 2144 },
+    settings: { tracked_branches: [], ignore_globs: [], auto_index: true },
+    last_indexed_sha: "b1125d8839482cb7bbae603ddc6d0081bf87532e",
+    index_job_id: null,
+    file_count: 245,
+    loc: 18_567,
+    last_indexed_at: "2026-10-18T11:30:00Z",
+    active_job: null,
+    created_at: "2026-10-18T11:00:00Z",
+    updated_at: "2026-10-18T11:30:00Z",
+  };
+}
+
+const available = (
+  id: number,
+  name: string,
+  language: string,
+  isPrivate = true,
+): AvailableRepo => ({
+  github_repo_id: id,
+  full_name: `acme-gh/${name}`,
+  private: isPrivate,
+  default_branch: "main",
+  description: `The ${name} of Acme.`,
+  language,
+  pushed_at: "2026-10-17T09:00:00Z",
+  account_login: "acme-gh",
+  connected: false,
+});
+
+const SEED_AVAILABLE: AvailableRepo[] = [
+  { ...available(101, "api", "Python"), connected: true },
+  available(102, "web", "TypeScript"),
+  available(103, "infra", "HCL"),
+  available(104, "docs", "MDX", false),
+];
 
 function load(): MockDb {
   if (typeof localStorage === "undefined") return seed();

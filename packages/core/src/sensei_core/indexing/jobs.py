@@ -10,6 +10,7 @@ then too. What the repository's status becomes when a job ends lives here as wel
 from __future__ import annotations
 
 import uuid
+from dataclasses import dataclass
 
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -27,10 +28,45 @@ from sensei_core.models import (
     Repo,
     RepoStatus,
     Role,
+    Snapshot,
 )
 from sensei_core.orgs.service import OrgAccess, require_role
 
 HISTORY_LIMIT = 50
+
+
+@dataclass(frozen=True, slots=True)
+class RepoSummary:
+    snapshot: Snapshot | None  # the last index
+    job: IndexJob | None  # queued or running
+
+
+async def repo_summaries(db: AsyncSession, repos: list[Repo]) -> dict[uuid.UUID, RepoSummary]:
+    """The last indexed snapshot and the active job of each repository, in two queries."""
+    if not repos:
+        return {}
+    shas = {repo.id: repo.last_indexed_sha for repo in repos if repo.last_indexed_sha}
+    snapshots: dict[uuid.UUID, Snapshot] = {}
+    if shas:
+        rows = await db.scalars(
+            select(Snapshot).where(
+                Snapshot.repo_id.in_(list(shas)), Snapshot.commit_sha.in_(set(shas.values()))
+            )
+        )
+        snapshots = {s.repo_id: s for s in rows if shas.get(s.repo_id) == s.commit_sha}
+    jobs = {
+        job.repo_id: job
+        for job in await db.scalars(
+            select(IndexJob).where(
+                IndexJob.repo_id.in_([repo.id for repo in repos]),
+                IndexJob.status.in_(ACTIVE_JOB_STATUSES),
+            )
+        )
+    }
+    return {
+        repo.id: RepoSummary(snapshot=snapshots.get(repo.id), job=jobs.get(repo.id))
+        for repo in repos
+    }
 
 
 def settle_repo(repo: Repo, outcome: JobStatus) -> None:

@@ -15,4 +15,14 @@ export const queryKeys = {
     $api.queryOptions("get", "/api/v1/orgs/{org}/members", org(slug)).queryKey,
   invitations: (slug: string) =>
     $api.queryOptions("get", "/api/v1/orgs/{org}/invitations", org(slug)).queryKey,
+  repos: (slug: string) => $api.queryOptions("get", "/api/v1/orgs/{org}/repos", org(slug)).queryKey,
+  repo: (slug: string, repo: string) =>
+    $api.queryOptions("get", "/api/v1/orgs/{org}/repos/{repo}", {
+      params: { path: { org: slug, repo } },
+    }).queryKey,
+  /** Every page and search of the "connect a repository" picker. */
+  availableRepos: (slug: string) =>
+    $api.queryOptions("get", "/api/v1/orgs/{org}/github/repos", org(slug)).queryKey.slice(0, 2),
+  installations: (slug: string) =>
+    $api.queryOptions("get", "/api/v1/orgs/{org}/github/installations", org(slug)).queryKey,
 };

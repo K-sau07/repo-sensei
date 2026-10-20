@@ -1,13 +1,12 @@
 "use client";
 
 import { cn } from "cn";
-import { FolderGit2, PanelLeft, Search } from "lucide-react";
-import Link from "next/link";
+import { PanelLeft, Search } from "lucide-react";
 
 import { KeyHint } from "@/components/primitives/key-hint";
+import { SidebarRepos } from "@/components/repos/sidebar-repos";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { orgPath } from "@/lib/routes";
 import { shortcut } from "@/lib/shortcut-registry";
 
 import { PRIMARY_NAV, SECONDARY_NAV } from "./nav-items";
@@ -54,14 +53,7 @@ export function SidebarContent({ org, onNavigate }: SidebarContentProps) {
           >
             Repositories
           </h2>
-          {/* Filled with live index status in P1. */}
-          <Link
-            href={orgPath(org, "repos")}
-            className="flex h-control-md items-center gap-2.5 rounded-sm px-2 text-sm text-fg-faint hover:bg-surface-3 hover:text-fg focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none sidebar-collapsed:justify-center sidebar-collapsed:px-0"
-          >
-            <FolderGit2 aria-hidden className="size-4 shrink-0" />
-            <span className="sidebar-collapsed:sr-only">Connect a repository</span>
-          </Link>
+          <SidebarRepos org={org} {...(onNavigate ? { onNavigate } : {})} />
         </section>
 
         <div className="mt-auto flex flex-col gap-0.5 pt-4">

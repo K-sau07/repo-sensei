@@ -6,6 +6,7 @@ export type OrgSection =
   | "activity"
   | "insights"
   | "repos"
+  | "repos/new"
   | "settings"
   | "settings/general"
   | "settings/members";
@@ -16,5 +17,11 @@ export type OrgSection =
  */
 export function orgPath(org: string, section: OrgSection = ""): Route {
   const base = `/${encodeURIComponent(org)}`;
+  return (section ? `${base}/${section}` : base) as Route;
+}
+
+/** A repository's pages: `/[org]/[repo]` and its tabs. */
+export function repoPath(org: string, repo: string, section = ""): Route {
+  const base = `/${encodeURIComponent(org)}/${encodeURIComponent(repo)}`;
   return (section ? `${base}/${section}` : base) as Route;
 }

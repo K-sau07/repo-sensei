@@ -4,6 +4,7 @@ import { Suspense, useEffect, type ReactNode } from "react";
 
 import { CommandBar } from "./command-bar";
 import { MobileBottomBar, MobileTopBar } from "./mobile-nav";
+import { OrgEventsStream } from "./org-events-stream";
 import { OrgGate } from "./org-gate";
 import { RememberLastOrg } from "./remember-last-org";
 import { RightRail } from "./right-rail";
@@ -53,6 +54,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         <CommandBar />
         <ShellHotkeys />
         <RememberLastOrg />
+        <OrgEventsStream />
       </Suspense>
     </div>
   );

@@ -1,6 +1,7 @@
 "use client";
 
 import { useQueryClient } from "@tanstack/react-query";
+import type { Route } from "next";
 import { useRouter } from "next/navigation";
 import { useState, type SubmitEvent } from "react";
 
@@ -11,7 +12,6 @@ import { api } from "@/lib/api/client";
 import { ApiError } from "@/lib/api/errors";
 import { slugify, SLUG_MESSAGES } from "@/lib/orgs/slug";
 import { queryKeys } from "@/lib/query/keys";
-import { orgPath } from "@/lib/routes";
 
 import { SlugField, useSlugStatus } from "./slug-field";
 
@@ -36,7 +36,8 @@ export function CreateOrgForm() {
     try {
       const { data } = await api.POST("/api/v1/orgs", { body: { name: name.trim(), slug } });
       await queryClient.invalidateQueries({ queryKey: queryKeys.me() });
-      router.push(orgPath(data?.slug ?? slug));
+      // On to installing the GitHub App (step 2 of onboarding).
+      router.push(`/onboarding?step=2&org=${encodeURIComponent(data?.slug ?? slug)}` as Route);
     } catch (caught) {
       const message =
         caught instanceof ApiError

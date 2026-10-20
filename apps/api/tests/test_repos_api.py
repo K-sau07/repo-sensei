@@ -400,6 +400,7 @@ async def test_connect_a_repository(
         f"{API}/orgs/acme/repos", json={"github_repo_id": 101}, headers=headers
     )
     assert (again.status_code, again.json()["error"]["code"]) == (409, "repo_already_connected")
+    assert again.json()["error"]["details"] == {"slug": "api"}  # so the UI can link to it
 
 
 async def test_a_repository_outside_the_installations_is_not_found(
@@ -1207,3 +1208,22 @@ async def test_browsing_needs_an_index_and_access(
     fake.user_can_read[f"ghu_{member.login}"] = set()  # can't read acme-gh/api on GitHub
     hidden = await client.get(f"{API}/orgs/acme/repos/api/file", params={"path": "a.py"})
     assert hidden.json()["error"]["code"] == "repo_not_found_or_no_access"
+
+
+async def test_repo_rows_carry_index_summaries(
+    app: FastAPI,
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    fake: FakeGitHub,
+    storage: ObjectStorage,
+    tmp_path: Path,
+) -> None:
+    _, _, job_id = await _connected(app, client, db_session, fake)
+    queued = (await client.get(f"{API}/orgs/acme/repos")).json()[0]
+    assert queued["active_job"]["id"] == job_id
+    assert (queued["active_job"]["status"], queued["file_count"]) == ("queued", None)
+    await _index(app, db_session, storage, tmp_path, FILES, SHA_ONE)
+    row = (await client.get(f"{API}/orgs/acme/repos/api")).json()
+    assert row["file_count"] == len(FILES)
+    assert row["loc"] > 0
+    assert row["last_indexed_at"] is not None

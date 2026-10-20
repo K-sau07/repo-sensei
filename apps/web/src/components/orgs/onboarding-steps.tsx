@@ -8,7 +8,7 @@ const STEPS = [
   { title: "Ask a first question", description: "See it work" },
 ];
 
-/** Where the user is in onboarding. Steps after the first arrive with repository indexing. */
+/** Where the user is in onboarding. The first question arrives with Ask (a later release). */
 export function OnboardingSteps({ current }: { current: number }) {
   return (
     <ol aria-label="Onboarding steps" className="flex flex-col gap-3">
@@ -34,7 +34,9 @@ export function OnboardingSteps({ current }: { current: number }) {
             <span className="flex flex-col">
               <span className="text-sm font-medium">{step.title}</span>
               <span className="text-xs text-fg-muted">
-                {state === "later" ? "Available soon" : step.description}
+                {state === "later" && index === STEPS.length - 1
+                  ? "Available soon"
+                  : step.description}
               </span>
             </span>
           </li>

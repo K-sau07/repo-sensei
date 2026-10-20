@@ -22,6 +22,8 @@ export const SHORTCUTS = [
   { id: "go-inbox", keys: "g i", label: "Go to inbox", group: "Navigation" },
   { id: "go-activity", keys: "g y", label: "Go to activity", group: "Navigation" },
   { id: "go-settings", keys: "g s", label: "Go to settings", group: "Navigation" },
+  { id: "list-next", keys: "j", label: "Next item in a list", group: "Navigation" },
+  { id: "list-prev", keys: "k", label: "Previous item in a list", group: "Navigation" },
   { id: "toggle-sidebar", keys: "[", label: "Toggle the sidebar", group: "View" },
   { id: "toggle-rail", keys: "]", label: "Toggle the right rail", group: "View" },
 ] as const satisfies readonly { id: string; keys: string; label: string; group: ShortcutGroup }[];

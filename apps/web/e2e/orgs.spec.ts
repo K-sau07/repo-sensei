@@ -49,6 +49,14 @@ test.describe("onboarding", () => {
     await expect(page.getByText("Available.")).toBeVisible();
     await create.click();
 
+    // Step 2: install the GitHub App, or skip it for now.
+    await expect(page).toHaveURL(/\/onboarding\?step=2&org=beta-labs$/);
+    await expect(page.getByRole("heading", { name: "Install the GitHub App" })).toBeVisible();
+    await expect(page.getByRole("link", { name: "Install the GitHub App" })).toHaveAttribute(
+      "href",
+      "/api/v1/github/install?org=beta-labs&from=onboarding",
+    );
+    await page.getByRole("link", { name: "Skip for now" }).click();
     await expect(page).toHaveURL(/\/beta-labs$/);
     await expect(
       page.getByRole("button", { name: "Beta Labs (switch organization)" }),
@@ -60,6 +68,7 @@ test.describe("onboarding", () => {
     await page.getByLabel("Organization name").fill("Gamma");
     await expect(page.getByText("Available.")).toBeVisible();
     await page.getByRole("button", { name: "Create organization" }).click();
+    await page.getByRole("link", { name: "Skip for now" }).click();
     await expect(page).toHaveURL(/\/gamma$/);
     await expect(page.locator("html")).toHaveAttribute("data-shell-ready", "true");
 
