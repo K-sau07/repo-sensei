@@ -139,6 +139,10 @@ class IngestSettings(BaseSettings):
     clone_timeout_seconds: float = Field(default=900.0, gt=0)
     # Files kept after the ignore rules; a bigger tree fails discovery.
     max_files: int = Field(default=250_000, gt=0)
+    # Where the API unpacks snapshots to serve files from (it has no working copies), and the
+    # disk budget for them.
+    snapshot_cache_dir: Path = Path.home() / ".cache" / "repo-sensei" / "snapshots"
+    snapshot_cache_max_bytes: int = Field(default=20 * 1024**3, gt=0)
     git_binary: str = "git"
     # file:// remotes (local test fixtures only; never in a deployment).
     allow_file_protocol: bool = False

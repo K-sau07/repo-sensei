@@ -28,13 +28,15 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 
 COPY apps/api apps/api
 COPY packages/core packages/core
+COPY packages/engine packages/engine
 COPY scripts/healthcheck.py scripts/healthcheck.py
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev --no-editable --package sensei-api
 
 FROM ${PYTHON_IMAGE} AS runtime
 RUN groupadd --system --gid 10001 sensei \
-    && useradd --system --uid 10001 --gid sensei --home-dir /app --shell /usr/sbin/nologin sensei
+    && useradd --system --uid 10001 --gid sensei --home-dir /app --shell /usr/sbin/nologin sensei \
+    && mkdir -p /data/snapshots && chown -R sensei:sensei /data
 WORKDIR /app
 # The virtualenv holds the installed packages; alembic.ini and migrations ship for the release step.
 COPY --from=build --chown=sensei:sensei /app/.venv /app/.venv
@@ -45,7 +47,8 @@ ENV PATH=/app/.venv/bin:$PATH \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PORT=8000 \
-    SENSEI_API_WORKERS=2
+    SENSEI_API_WORKERS=2 \
+    SENSEI_INGEST_SNAPSHOT_CACHE_DIR=/data/snapshots
 USER sensei
 EXPOSE 8000
 HEALTHCHECK --interval=15s --timeout=5s --start-period=20s --retries=3 \

@@ -29,9 +29,9 @@ from sensei_engine.ingest.classify import FileChangedError
 from sensei_engine.ingest.discover import Discovery, discover
 from sensei_engine.ingest.store import save_discovery
 from sensei_engine.ingest.walk import TooManyFilesError
+from sensei_engine.snapshots import ArchiveTooLargeError, extract_archive
 from sensei_workers.app import celery_app
 from sensei_workers.base import NotYetError, RetryableError, SenseiTask
-from sensei_workers.ingest.archive import ArchiveTooLargeError, extract_archive
 from sensei_workers.ingest.cache import repo_lock
 from sensei_workers.ingest.git import CHECKED_OUT_MARKER
 from sensei_workers.jobstate import JobGoneError, job_scope

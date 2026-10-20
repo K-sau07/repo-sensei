@@ -11,7 +11,8 @@ from pathlib import Path
 import pytest
 import zstandard
 
-from sensei_workers.ingest.archive import ArchiveTooLargeError, extract_archive, write_archive
+from sensei_engine.snapshots import ArchiveTooLargeError, extract_archive
+from sensei_workers.ingest.archive import write_archive
 from sensei_workers.ingest.cache import CacheBusyError, evict, repo_lock
 from sensei_workers.ingest.git import LAST_USED_MARKER
 

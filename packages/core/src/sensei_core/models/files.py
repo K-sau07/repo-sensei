@@ -32,6 +32,13 @@ class RepoFile(IdMixin, OrgScopedMixin, Base):
     __table_args__ = (
         UniqueConstraint("snapshot_id", "path"),
         Index("ix_files_repo_id", "repo_id"),  # deleting a repository cascades here
+        # Fuzzy path search (⌘K): trigram matching on the path.
+        Index(
+            "ix_files_path_trgm",
+            "path",
+            postgresql_using="gin",
+            postgresql_ops={"path": "gin_trgm_ops"},
+        ),
         # With org_id: a file can't point at another org's repository or snapshot.
         ForeignKeyConstraint(
             ["repo_id", "org_id"], ["repos.id", "repos.org_id"], ondelete="CASCADE"

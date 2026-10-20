@@ -561,6 +561,47 @@ export interface paths {
         patch: operations["update_repo_api_v1_orgs__org__repos__repo__patch"];
         trace?: never;
     };
+    "/api/v1/orgs/{org}/repos/{repo}/file": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * File
+         * @description A text file's content. ETag: the content's hash.
+         */
+        get: operations["file_api_v1_orgs__org__repos__repo__file_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/repos/{repo}/files/search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Search Files
+         * @description Fuzzy path search (for ⌘K): a path matches if it contains the query's characters in
+         *     order, or looks like it by trigrams; file names that match rank first.
+         */
+        get: operations["search_files_api_v1_orgs__org__repos__repo__files_search_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/orgs/{org}/repos/{repo}/index-jobs": {
         parameters: {
             query?: never;
@@ -655,6 +696,26 @@ export interface paths {
          *     ``index_job_running`` while a run is queued or running.
          */
         post: operations["reindex_api_v1_orgs__org__repos__repo__reindex_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/repos/{repo}/tree": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Tree
+         * @description The direct children of a directory, directories first. ETag: the directory's hash.
+         */
+        get: operations["tree_api_v1_orgs__org__repos__repo__tree_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -843,6 +904,32 @@ export interface components {
          * @enum {string}
          */
         Feature: "code_browser" | "goto_definition" | "keyword_search" | "semantic_search" | "ask" | "wiki" | "graph_view" | "callers" | "trace" | "diagrams" | "fixes" | "changes";
+        /** FileOut */
+        FileOut: {
+            /** Commit Sha */
+            commit_sha: string;
+            /** Content */
+            content: string;
+            /** Encoding */
+            encoding: string;
+            /** Flags */
+            flags: string[];
+            /** Language */
+            language: string | null;
+            /** Loc */
+            loc: number | null;
+            /** Path */
+            path: string;
+            /** Role */
+            role: string;
+            /**
+             * Sha
+             * @description Git's object id for the content.
+             */
+            sha: string;
+            /** Size */
+            size: number;
+        };
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
@@ -1237,6 +1324,30 @@ export interface components {
         RoleUpdate: {
             role: components["schemas"]["Role"];
         };
+        /** SearchHit */
+        SearchHit: {
+            /** Language */
+            language: string | null;
+            /** Name */
+            name: string;
+            /** Path */
+            path: string;
+            /** Role */
+            role: string;
+            /** Score */
+            score: number;
+            /** Size */
+            size: number;
+        };
+        /** SearchOut */
+        SearchOut: {
+            /** Commit Sha */
+            commit_sha: string;
+            /** Query */
+            query: string;
+            /** Results */
+            results: components["schemas"]["SearchHit"][];
+        };
         /** SessionInfo */
         SessionInfo: {
             /**
@@ -1297,6 +1408,42 @@ export interface components {
              * @description In the order they run.
              */
             stages: components["schemas"]["StageInfo"][];
+        };
+        /** TreeEntry */
+        TreeEntry: {
+            /**
+             * Child Count
+             * @description Entries in a directory.
+             */
+            child_count?: number | null;
+            /** Flags */
+            flags?: string[] | null;
+            /** Language */
+            language?: string | null;
+            /** Loc */
+            loc?: number | null;
+            /** Name */
+            name: string;
+            /** Path */
+            path: string;
+            /** Role */
+            role?: string | null;
+            /** Size */
+            size?: number | null;
+            /**
+             * Type
+             * @enum {string}
+             */
+            type: "dir" | "file";
+        };
+        /** TreeOut */
+        TreeOut: {
+            /** Commit Sha */
+            commit_sha: string;
+            /** Entries */
+            entries: components["schemas"]["TreeEntry"][];
+            /** Path */
+            path: string;
         };
         /** ValidationError */
         ValidationError: {
@@ -2481,6 +2628,105 @@ export interface operations {
             };
         };
     };
+    file_api_v1_orgs__org__repos__repo__file_get: {
+        parameters: {
+            query: {
+                /** @description Relative path; empty for the root. */
+                path: string;
+                /** @description Branch or commit (or its first 7+ characters). */
+                ref?: string | null;
+            };
+            header?: never;
+            path: {
+                /** @description Repository slug */
+                repo: string;
+                /** @description Organization slug */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FileOut"];
+                };
+            };
+            /** @description Not modified */
+            304: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Over 2 MB: metadata and a download URL instead */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Binary: metadata only */
+            415: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    search_files_api_v1_orgs__org__repos__repo__files_search_get: {
+        parameters: {
+            query: {
+                q: string;
+                /** @description Branch or commit (or its first 7+ characters). */
+                ref?: string | null;
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                /** @description Repository slug */
+                repo: string;
+                /** @description Organization slug */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SearchOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_index_jobs_api_v1_orgs__org__repos__repo__index_jobs_get: {
         parameters: {
             query?: never;
@@ -2645,6 +2891,52 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["IndexJobOut"];
                 };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    tree_api_v1_orgs__org__repos__repo__tree_get: {
+        parameters: {
+            query?: {
+                /** @description Relative path; empty for the root. */
+                path?: string;
+                /** @description Branch or commit (or its first 7+ characters). */
+                ref?: string | null;
+            };
+            header?: never;
+            path: {
+                /** @description Repository slug */
+                repo: string;
+                /** @description Organization slug */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TreeOut"];
+                };
+            };
+            /** @description Not modified */
+            304: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Validation Error */
             422: {

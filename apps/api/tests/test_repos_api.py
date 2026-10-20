@@ -4,10 +4,12 @@ permission mirroring, against a mocked GitHub."""
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import uuid
 from collections.abc import AsyncGenerator, Awaitable, Iterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any, cast
 
 import httpx
@@ -23,6 +25,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from sensei_api import streams
+from sensei_api.browse import TreeCache
 from sensei_core.auth.github_login import store_tokens
 from sensei_core.config import GitHubSettings, Settings
 from sensei_core.db.tenancy import set_org_context
@@ -41,12 +44,20 @@ from sensei_core.models import (
     RepoSource,
     RepoStatus,
     Role,
+    Snapshot,
+    SnapshotStatus,
     Stage,
     User,
 )
 from sensei_core.orgs.service import OrgService
 from sensei_core.repos.access import RepoAccess
+from sensei_core.storage import Bucket, ObjectStorage, artifact_key, repo_prefix, snapshot_key
+from sensei_engine.ingest.discover import discover
+from sensei_engine.ingest.merkle import ARTIFACT_NAME, Leaf, build_tree
+from sensei_engine.ingest.store import save_discovery
+from sensei_engine.snapshots import SnapshotCache
 from sensei_testing import make_user, sign_in
+from sensei_workers.ingest.archive import write_archive
 
 pytestmark = pytest.mark.integration
 
@@ -947,3 +958,252 @@ async def test_org_events_only_show_readable_repositories(
     seen = {orjson.loads(e["data"])["job_id"] for e in _sse(body)}
     assert seen == {second}
     assert first not in seen
+
+
+# ------------------------------------------------------------------ browsing a snapshot
+
+SHA_ONE = "1" * 40
+SHA_TWO = "2" * 40
+BIG = 2 * 1024 * 1024 + 10
+
+
+@pytest.fixture
+async def storage(app: FastAPI, tmp_path: Path) -> AsyncGenerator[ObjectStorage]:
+    store = ObjectStorage(Settings(env="test").s3)
+    await store.start()
+    app.state.storage = store
+    app.state.snapshot_cache = SnapshotCache(
+        tmp_path / "snapshots", max_bytes=10**9, max_snapshot_bytes=10**9
+    )
+    app.state.tree_cache = TreeCache()
+    created: list[tuple[uuid.UUID, uuid.UUID]] = []
+    app.state.created_repos = created
+    yield store
+    for org_id, repo_id in created:
+        for bucket in Bucket:
+            await store.delete_prefix(bucket, repo_prefix(bucket, org_id, repo_id))
+    await store.close()
+
+
+async def _index(
+    app: FastAPI,
+    db: AsyncSession,
+    store: ObjectStorage,
+    tmp_path: Path,
+    files: dict[str, bytes],
+    sha: str,
+) -> None:
+    """acme-gh/api indexed at ``sha`` with ``files``, the way the workers leave it."""
+    repo = await db.scalar(select(Repo).where(Repo.slug == "api"))
+    assert repo is not None
+    app.state.created_repos.append((repo.org_id, repo.id))
+    root = tmp_path / sha
+    for path, data in files.items():
+        (root / path).parent.mkdir(parents=True, exist_ok=True)
+        (root / path).write_bytes(data)
+    found = discover(root, max_files=1000)
+    snapshot = Snapshot(
+        org_id=repo.org_id,
+        repo_id=repo.id,
+        ref="main",
+        commit_sha=sha,
+        status=SnapshotStatus.READY,
+        ready_at=datetime.now(UTC),
+    )
+    db.add(snapshot)
+    await db.flush()
+    await save_discovery(db, snapshot, found)
+    tree = build_tree(Leaf(f.path, f.content_hash, f.fast_hash, f.size) for f in found.files)
+    key = artifact_key(repo.org_id, repo.id, sha, ARTIFACT_NAME)
+    await store.put_bytes(Bucket.ARTIFACTS, key, tree.to_bytes())
+    archive = write_archive(root, tmp_path / f"{sha}.tar.zst")
+    await store.put_file(Bucket.SNAPSHOTS, snapshot_key(repo.org_id, repo.id, sha), archive.path)
+    snapshot.merkle_root = tree.root.hex()
+    repo.last_indexed_sha = sha
+    await db.flush()
+
+
+FILES = {
+    "README.md": b"# Demo\n",
+    "src/app.py": b"def main():\n    return 1\n",
+    "src/user_controller.py": b"class UserController: ...\n",
+    "src/lib/util.py": b"X = 1\n",
+    "docs/guide.md": b"Guide\n",
+    "logo.png": b"\x89PNG\r\n\x1a\n\0\0",
+    "Zeta.txt": b"z\n",
+    "big.txt": b"y" * BIG,
+}
+
+
+async def test_tree_lists_directories_first_with_etags(
+    app: FastAPI,
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    fake: FakeGitHub,
+    storage: ObjectStorage,
+    tmp_path: Path,
+) -> None:
+    await _connected(app, client, db_session, fake)
+    await _index(app, db_session, storage, tmp_path, FILES, SHA_ONE)
+    root = await client.get(f"{API}/orgs/acme/repos/api/tree")
+    assert root.status_code == 200, root.text
+    body = root.json()
+    assert body["commit_sha"] == SHA_ONE
+    assert [(e["name"], e["type"]) for e in body["entries"]] == [
+        ("docs", "dir"),
+        ("src", "dir"),
+        ("big.txt", "file"),
+        ("logo.png", "file"),
+        ("README.md", "file"),
+        ("Zeta.txt", "file"),
+    ]
+    src = next(e for e in body["entries"] if e["name"] == "src")
+    assert src["child_count"] == 3
+    readme = next(e for e in body["entries"] if e["name"] == "README.md")
+    assert (readme["language"], readme["role"], readme["loc"]) == ("markdown", "docs", 1)
+    etag = root.headers["etag"]
+    again = await client.get(f"{API}/orgs/acme/repos/api/tree", headers={"If-None-Match": etag})
+    assert (again.status_code, again.headers["etag"]) == (304, etag)
+
+    nested = (await client.get(f"{API}/orgs/acme/repos/api/tree", params={"path": "src/"})).json()
+    assert [e["path"] for e in nested["entries"]] == [
+        "src/lib",
+        "src/app.py",
+        "src/user_controller.py",
+    ]
+    not_dir = await client.get(f"{API}/orgs/acme/repos/api/tree", params={"path": "README.md"})
+    assert not_dir.json()["error"]["code"] == "not_a_directory"
+    missing = await client.get(f"{API}/orgs/acme/repos/api/tree", params={"path": "nope"})
+    assert (missing.status_code, missing.json()["error"]["code"]) == (404, "path_not_found")
+
+    # A later commit that only touched src/: docs/ answers 304 to the old ETag, src/ doesn't.
+    docs_etag = (
+        await client.get(f"{API}/orgs/acme/repos/api/tree", params={"path": "docs"})
+    ).headers["etag"]
+    src_etag = (
+        await client.get(f"{API}/orgs/acme/repos/api/tree", params={"path": "src"})
+    ).headers["etag"]
+    await _index(app, db_session, storage, tmp_path, {**FILES, "src/app.py": b"changed\n"}, SHA_TWO)
+    for path, etag, code in (("docs", docs_etag, 304), ("src", src_etag, 200)):
+        response = await client.get(
+            f"{API}/orgs/acme/repos/api/tree",
+            params={"path": path},
+            headers={"If-None-Match": etag},
+        )
+        assert response.status_code == code, path
+    old = await client.get(f"{API}/orgs/acme/repos/api/tree", params={"ref": SHA_ONE[:8]})
+    assert old.json()["commit_sha"] == SHA_ONE
+    branch = await client.get(f"{API}/orgs/acme/repos/api/tree", params={"ref": "main"})
+    assert branch.json()["commit_sha"] == SHA_TWO
+    unknown = await client.get(f"{API}/orgs/acme/repos/api/tree", params={"ref": "nope"})
+    assert unknown.json()["error"]["code"] == "ref_not_indexed"
+
+
+async def test_files_text_binary_and_large(
+    app: FastAPI,
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    fake: FakeGitHub,
+    github: respx.MockRouter,
+    storage: ObjectStorage,
+    tmp_path: Path,
+) -> None:
+    await _connected(app, client, db_session, fake)
+    await _index(app, db_session, storage, tmp_path, FILES, SHA_ONE)
+    url = f"{API}/orgs/acme/repos/api/file"
+    response = await client.get(url, params={"path": "src/app.py"})
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert (body["content"], body["encoding"], body["language"], body["loc"]) == (
+        "def main():\n    return 1\n",
+        "utf-8",
+        "python",
+        2,
+    )
+    content = FILES["src/app.py"]
+    assert (
+        body["sha"]
+        == hashlib.sha1(b"blob %d\0" % len(content) + content, usedforsecurity=False).hexdigest()
+    )
+    etag = response.headers["etag"]
+    assert etag == f'"f1-{hashlib.sha256(content).hexdigest()}"'
+    cached = await client.get(url, params={"path": "src/app.py"}, headers={"If-None-Match": etag})
+    assert cached.status_code == 304
+
+    binary = await client.get(url, params={"path": "logo.png"})
+    assert (binary.status_code, binary.json()["error"]["code"]) == (415, "binary_file")
+    assert binary.json()["error"]["details"]["size"] == len(FILES["logo.png"])
+
+    large = await client.get(url, params={"path": "big.txt"})
+    assert (large.status_code, large.json()["error"]["code"]) == (413, "file_too_large")
+    link = large.json()["error"]["details"]["download_url"]
+    github.route(host="localhost", port=9000).pass_through()  # the local object storage
+    async with httpx.AsyncClient() as http:
+        downloaded = await http.get(link)
+    assert downloaded.content == FILES["big.txt"]
+
+    missing = await client.get(url, params={"path": "src/nope.py"})
+    assert (missing.status_code, missing.json()["error"]["code"]) == (404, "path_not_found")
+
+
+@pytest.mark.parametrize(
+    "path",
+    ["../etc/passwd", "/etc/passwd", "src/../../etc/passwd", "src/./app.py", "src//app.py", "a\\b"],
+)
+async def test_path_traversal_is_refused(
+    app: FastAPI,
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    fake: FakeGitHub,
+    storage: ObjectStorage,
+    tmp_path: Path,
+    path: str,
+) -> None:
+    await _connected(app, client, db_session, fake)
+    await _index(app, db_session, storage, tmp_path, {"src/app.py": b"x\n"}, SHA_ONE)
+    for endpoint in ("file", "tree"):
+        response = await client.get(f"{API}/orgs/acme/repos/api/{endpoint}", params={"path": path})
+        assert (response.status_code, response.json()["error"]["code"]) == (400, "invalid_path")
+
+
+async def test_fuzzy_path_search(
+    app: FastAPI,
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    fake: FakeGitHub,
+    storage: ObjectStorage,
+    tmp_path: Path,
+) -> None:
+    await _connected(app, client, db_session, fake)
+    await _index(app, db_session, storage, tmp_path, FILES, SHA_ONE)
+    url = f"{API}/orgs/acme/repos/api/files/search"
+
+    async def paths(q: str) -> list[str]:
+        response = await client.get(url, params={"q": q})
+        assert response.status_code == 200, response.text
+        return [hit["path"] for hit in response.json()["results"]]
+
+    assert (await paths("app"))[0] == "src/app.py"
+    assert (await paths("usrctrl"))[0] == "src/user_controller.py"  # characters in order
+    assert (await paths("UserController"))[0] == "src/user_controller.py"
+    assert "docs/guide.md" in await paths("guide")
+    assert await paths("zzzzqqq") == []
+    assert (await paths("util"))[0] == "src/lib/util.py"
+
+
+async def test_browsing_needs_an_index_and_access(
+    app: FastAPI,
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    fake: FakeGitHub,
+    storage: ObjectStorage,
+    tmp_path: Path,
+) -> None:
+    await _connected(app, client, db_session, fake)
+    not_yet = await client.get(f"{API}/orgs/acme/repos/api/tree")
+    assert (not_yet.status_code, not_yet.json()["error"]["code"]) == (404, "repo_not_indexed")
+    await _index(app, db_session, storage, tmp_path, {"a.py": b"x\n"}, SHA_ONE)
+    member, _ = await _member(app, client, db_session)
+    fake.user_can_read[f"ghu_{member.login}"] = set()  # can't read acme-gh/api on GitHub
+    hidden = await client.get(f"{API}/orgs/acme/repos/api/file", params={"path": "a.py"})
+    assert hidden.json()["error"]["code"] == "repo_not_found_or_no_access"

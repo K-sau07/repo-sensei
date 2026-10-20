@@ -155,17 +155,24 @@ def _wide_encoding(head: bytes) -> str | None:
     return next((encoding for bom, encoding in _UNICODE_BOMS if head.startswith(bom)), None)
 
 
-def _decode(data: bytes) -> str | None:
-    """The text, or None if no text encoding explains the bytes (binary)."""
+def decode_text(data: bytes) -> tuple[str, str] | None:
+    """``(text, encoding)``, or None if no text encoding explains the bytes (binary)."""
     wide = _wide_encoding(data)
     if wide is not None:
-        return data.decode(wide, "replace")
+        return data.decode(wide, "replace"), wide
+    if b"\0" in data[:SAMPLE_BYTES]:
+        return None
     try:
-        return codecs.decode(data, "utf-8-sig")
+        return codecs.decode(data, "utf-8-sig"), "utf-8"
     except UnicodeDecodeError:
         pass
     best = from_bytes(data[:SAMPLE_BYTES]).best()
-    return None if best is None else data.decode(best.encoding, "replace")
+    return None if best is None else (data.decode(best.encoding, "replace"), best.encoding)
+
+
+def _decode(data: bytes) -> str | None:
+    decoded = decode_text(data)
+    return None if decoded is None else decoded[0]
 
 
 def _is_text_sample(sample: bytes) -> bool:
