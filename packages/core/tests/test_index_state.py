@@ -213,6 +213,21 @@ def test_eta_uses_a_moving_average_of_the_rate(clock: Clock) -> None:
     assert machine.job.eta_s == 54  # ceil(700 / 13)
 
 
+def test_a_stall_slows_the_rate_down(clock: Clock) -> None:
+    machine = _machine(clock)
+    machine.start()
+    _run_to(machine, Stage.PARSE)
+    machine.update_progress(Stage.PARSE, 0, 1000)
+    clock.tick(10)
+    machine.update_progress(Stage.PARSE, 10, 1000)  # 1 file/s
+    for _ in range(9):  # stuck: the same count, every second
+        clock.tick(1)
+        machine.update_progress(Stage.PARSE, 10, 1000)
+    clock.tick(1)
+    machine.update_progress(Stage.PARSE, 20, 1000)  # 10 more in 10 s: still 1 file/s
+    assert machine.job.stages["parse"]["rate"] == pytest.approx(1.0)
+
+
 def test_eta_adds_expected_time_for_later_stages(clock: Clock) -> None:
     machine = _machine(clock, expected_seconds={Stage.SYMBOLS: 30, Stage.EMBEDDINGS: 120})
     machine.start()

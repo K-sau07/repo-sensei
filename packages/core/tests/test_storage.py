@@ -35,13 +35,15 @@ def test_key_layout() -> None:
     assert snapshot_key(ORG, REPO, "b" * 64).endswith(f"{'b' * 64}.tar.zst")  # SHA-256 repos
 
 
-@pytest.mark.parametrize("sha", ["", "main", "A" * 40, "a" * 39, "a" * 41, "../" + "a" * 37])
+@pytest.mark.parametrize(
+    "sha", ["", "main", "A" * 40, "a" * 39, "a" * 41, "../" + "a" * 37, "a" * 40 + "\n"]
+)
 def test_only_commit_shas_name_snapshots(sha: str) -> None:
     with pytest.raises(ValueError, match="not a commit sha"):
         snapshot_key(ORG, REPO, sha)
 
 
-@pytest.mark.parametrize("parts", [(), ("..",), (".", "x"), ("a/b",), ("x y",), ("",)])
+@pytest.mark.parametrize("parts", [(), ("..",), (".", "x"), ("a/b",), ("x y",), ("",), ("x\n",)])
 def test_artifact_names_cannot_escape(parts: tuple[str, ...]) -> None:
     with pytest.raises(ValueError, match="plain path segments"):
         artifact_key(ORG, REPO, SHA, *parts)

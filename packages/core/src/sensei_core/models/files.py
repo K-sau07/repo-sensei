@@ -6,7 +6,7 @@ import uuid
 
 from sqlalchemy import (
     BigInteger,
-    ForeignKey,
+    ForeignKeyConstraint,
     Index,
     Integer,
     LargeBinary,
@@ -32,10 +32,17 @@ class RepoFile(IdMixin, OrgScopedMixin, Base):
     __table_args__ = (
         UniqueConstraint("snapshot_id", "path"),
         Index("ix_files_repo_id", "repo_id"),  # deleting a repository cascades here
+        # With org_id: a file can't point at another org's repository or snapshot.
+        ForeignKeyConstraint(
+            ["repo_id", "org_id"], ["repos.id", "repos.org_id"], ondelete="CASCADE"
+        ),
+        ForeignKeyConstraint(
+            ["snapshot_id", "org_id"], ["snapshots.id", "snapshots.org_id"], ondelete="CASCADE"
+        ),
     )
 
-    repo_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("repos.id", ondelete="CASCADE"))
-    snapshot_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("snapshots.id", ondelete="CASCADE"))
+    repo_id: Mapped[uuid.UUID] = mapped_column()
+    snapshot_id: Mapped[uuid.UUID] = mapped_column()
     path: Mapped[str] = mapped_column(Text)
     blob_sha: Mapped[str] = mapped_column(String(64))  # git's object id for the content
     content_hash: Mapped[bytes] = mapped_column(LargeBinary)  # SHA-256 of the content

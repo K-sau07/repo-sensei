@@ -7,7 +7,16 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import BigInteger, DateTime, Enum, ForeignKey, Index, String, text
+from sqlalchemy import (
+    BigInteger,
+    DateTime,
+    Enum,
+    ForeignKey,
+    Index,
+    String,
+    UniqueConstraint,
+    text,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -39,6 +48,8 @@ class Repo(IdMixin, OrgScopedMixin, TimestampMixin, Base):
 
     __tablename__ = "repos"
     __table_args__ = (
+        # Child tables reference (id, org_id), so a row can only point at its own org's repo.
+        UniqueConstraint("id", "org_id"),
         # Live rows only: a repository connected again after a disconnect is a new row, while
         # the old one waits for its purge.
         Index(

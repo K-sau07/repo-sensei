@@ -13,6 +13,7 @@ from sqlalchemy import (
     DateTime,
     Enum,
     ForeignKey,
+    ForeignKeyConstraint,
     Index,
     Integer,
     Numeric,
@@ -74,9 +75,16 @@ class Snapshot(IdMixin, OrgScopedMixin, Base):
     """One commit of a repository, archived to object storage. Unique per (repo, commit)."""
 
     __tablename__ = "snapshots"
-    __table_args__ = (UniqueConstraint("repo_id", "commit_sha"),)
+    __table_args__ = (
+        UniqueConstraint("repo_id", "commit_sha"),
+        UniqueConstraint("id", "org_id"),
+        # (repo, org) together: a snapshot can't belong to another org's repository.
+        ForeignKeyConstraint(
+            ["repo_id", "org_id"], ["repos.id", "repos.org_id"], ondelete="CASCADE"
+        ),
+    )
 
-    repo_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("repos.id", ondelete="CASCADE"))
+    repo_id: Mapped[uuid.UUID] = mapped_column()
     ref: Mapped[str] = mapped_column(String(255))  # the branch or tag it was taken from
     commit_sha: Mapped[str] = mapped_column(String(64))
     status: Mapped[SnapshotStatus] = mapped_column(
@@ -111,9 +119,12 @@ class IndexJob(IdMixin, OrgScopedMixin, Base):
             postgresql_where=text("status IN ('queued', 'running')"),
         ),
         Index("ix_index_jobs_repo_id_created_at", "repo_id", "created_at"),
+        ForeignKeyConstraint(
+            ["repo_id", "org_id"], ["repos.id", "repos.org_id"], ondelete="CASCADE"
+        ),
     )
 
-    repo_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("repos.id", ondelete="CASCADE"))
+    repo_id: Mapped[uuid.UUID] = mapped_column()
     snapshot_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("snapshots.id", ondelete="SET NULL")
     )

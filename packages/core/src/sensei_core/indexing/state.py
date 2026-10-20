@@ -150,7 +150,11 @@ class IndexJobStateMachine:
             entry["rate"] = (
                 sample if rate is None else EMA_ALPHA * sample + (1 - EMA_ALPHA) * float(rate)
             )
-        entry.update(done=done, total=total, updated_at=now.isoformat())
+        entry.update(done=done, total=total)
+        if done > previous_done or entry.get("updated_at") is None:
+            # Only on progress: a stall then counts in the next sample (time since the last
+            # step forward), instead of disappearing into repeated reports of the same count.
+            entry["updated_at"] = now.isoformat()
         self._save(stages)
         self._emit("stage.progress", stage, done=done, total=total)
 

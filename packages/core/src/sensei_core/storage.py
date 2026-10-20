@@ -28,8 +28,8 @@ from sensei_core.config import S3Settings
 if TYPE_CHECKING:
     from types_aiobotocore_s3 import S3Client
 
-_SHA = re.compile(r"^[0-9a-f]{40}(?:[0-9a-f]{24})?$")  # SHA-1 or SHA-256 object names
-_PART = re.compile(r"^[A-Za-z0-9._-]{1,200}$")
+_SHA = re.compile(r"[0-9a-f]{40}(?:[0-9a-f]{24})?")  # SHA-1 or SHA-256 object names
+_PART = re.compile(r"[A-Za-z0-9._-]{1,200}")
 MAX_PRESIGN_SECONDS = 3600
 _DELETE_BATCH = 1000  # S3's DeleteObjects limit
 
@@ -40,7 +40,7 @@ class Bucket(enum.StrEnum):
 
 
 def _sha(commit_sha: str) -> str:
-    if not _SHA.match(commit_sha):
+    if not _SHA.fullmatch(commit_sha):
         msg = f"not a commit sha: {commit_sha!r}"
         raise ValueError(msg)
     return commit_sha
@@ -56,7 +56,7 @@ def snapshot_key(org_id: uuid.UUID, repo_id: uuid.UUID, commit_sha: str) -> str:
 
 
 def artifact_key(org_id: uuid.UUID, repo_id: uuid.UUID, commit_sha: str, *parts: str) -> str:
-    if not parts or not all(_PART.match(part) and part not in (".", "..") for part in parts):
+    if not parts or not all(_PART.fullmatch(part) and part not in (".", "..") for part in parts):
         msg = f"artifact names must be plain path segments: {parts!r}"
         raise ValueError(msg)
     prefix = repo_prefix(Bucket.ARTIFACTS, org_id, repo_id)
@@ -154,7 +154,18 @@ class ObjectStorage:
         if size > max_bytes:
             msg = f"{key} is {size} bytes, more than {max_bytes}"
             raise ValueError(msg)
-        parts = [chunk async for chunk in self.get_stream(bucket, key)]
+        parts: list[bytes] = []
+        received = 0
+        stream = self.get_stream(bucket, key)
+        try:
+            async for chunk in stream:
+                received += len(chunk)
+                if received > max_bytes:  # replaced by something bigger since the size check
+                    msg = f"{key} is more than {max_bytes} bytes"
+                    raise ValueError(msg)
+                parts.append(chunk)
+        finally:
+            await stream.aclose()
         return b"".join(parts)
 
     async def size(self, bucket: Bucket, key: str) -> int | None:

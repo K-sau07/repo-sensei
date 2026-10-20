@@ -107,3 +107,14 @@ async def test_jobs_and_snapshots_are_org_scoped(db_session: AsyncSession) -> No
     await set_org_context(db_session, uuid.uuid4())  # another org
     assert (await db_session.scalars(select(IndexJob))).all() == []
     assert (await db_session.scalars(select(Snapshot))).all() == []
+
+
+async def test_a_snapshot_cannot_point_at_another_orgs_repository(
+    owner_session: AsyncSession,
+) -> None:
+    repo = await _repo(owner_session)
+    other = await _repo(owner_session)
+    # Foreign keys ignore row-level security; the (repo, org) pair is what stops this.
+    stray = Snapshot(org_id=other.org_id, repo_id=repo.id, ref="main", commit_sha="e" * 40)
+    with pytest.raises(IntegrityError, match="fk_snapshots_repo_id_repos"):
+        await _insert(owner_session, stray)
