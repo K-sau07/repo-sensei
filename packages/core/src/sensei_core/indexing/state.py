@@ -44,6 +44,7 @@ STAGE_WEIGHTS: dict[Stage, int] = {
     Stage.FINALIZE: 2,
 }
 EMA_ALPHA = 0.3  # weight of the newest rate sample
+LOG_LEVELS = frozenset({"info", "warn", "error"})
 
 _TRANSITIONS: dict[JobStatus, frozenset[JobStatus]] = {
     JobStatus.QUEUED: frozenset({JobStatus.RUNNING, JobStatus.CANCELLED}),
@@ -197,6 +198,13 @@ class IndexJobStateMachine:
         self._save(stages)
         self.job.eta_s = None
         self._emit("job.cancelled", current)
+
+    def log(self, message: str, *, level: str = "info", stage: Stage | None = None) -> None:
+        """A line for the job's log as the user sees it (no state change; nothing secret)."""
+        if level not in LOG_LEVELS:
+            msg = f"log level must be one of {sorted(LOG_LEVELS)}"
+            raise ValueError(msg)
+        self._emit("job.log", stage or self.job.stage, level=level, message=message)
 
     # ------------------------------------------------------------------ reading
 

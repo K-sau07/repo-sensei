@@ -40,6 +40,8 @@ class TaskName(enum.StrEnum):
     CLONE_SNAPSHOT = "sensei.ingest.clone_snapshot"
     DISCOVER_FILES = "sensei.ingest.discover_files"
     BUILD_MERKLE = "sensei.ingest.build_merkle"
+    FINALIZE_INDEX = "sensei.ingest.finalize_index"
+    RUN_INDEX_JOB = "sensei.ingest.run_index_job"
     EVICT_REPO_CACHE = "sensei.maintenance.evict_repo_cache"
     SWEEP_STALLED_JOBS = "sensei.maintenance.sweep_stalled_jobs"
 
@@ -97,10 +99,19 @@ def make_celery(settings: Settings, main: str = "sensei") -> Celery:
     return app
 
 
+def chain_key(job_id: uuid.UUID | str) -> str:
+    """Where the ids of an index job's stage tasks are kept (to revoke them on cancel)."""
+    return f"index-job:{job_id}:tasks"
+
+
 class RepoJobs(Protocol):
     """Background work for repositories, requested by the API."""
 
     async def purge(self, org_id: uuid.UUID, repo_id: uuid.UUID) -> None: ...
+
+    async def index(self, org_id: uuid.UUID, repo_id: uuid.UUID, job_id: uuid.UUID) -> None: ...
+
+    async def revoke(self, task_ids: list[str]) -> None: ...
 
 
 class CeleryRepoJobs:
@@ -119,6 +130,29 @@ class CeleryRepoJobs:
             )
         except Exception:
             log.warning("could not queue repository purge", repo=str(repo_id), exc_info=True)
+
+    async def index(self, org_id: uuid.UUID, repo_id: uuid.UUID, job_id: uuid.UUID) -> None:
+        # The job row exists already; if the broker is down it stays queued and the stalled-job
+        # sweep sends it again, so a failure here is logged, not raised.
+        kwargs = {"job_id": str(job_id), "org_id": str(org_id), "repo_id": str(repo_id)}
+        try:
+            await asyncio.to_thread(
+                self._app.send_task,
+                TaskName.RUN_INDEX_JOB.value,
+                kwargs=kwargs,
+                queue=Queue.INGEST.value,
+            )
+        except Exception:
+            log.warning("could not queue index job", job=str(job_id), exc_info=True)
+
+    async def revoke(self, task_ids: list[str]) -> None:
+        # Best effort: a stage that still starts finds its job cancelled and stops.
+        if not task_ids:
+            return
+        try:
+            await asyncio.to_thread(self._app.control.revoke, task_ids)
+        except Exception:
+            log.warning("could not revoke index tasks", exc_info=True)
 
 
 class CeleryDispatcher:

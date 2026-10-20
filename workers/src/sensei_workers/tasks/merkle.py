@@ -14,13 +14,10 @@ from typing import Any
 
 from sqlalchemy import select
 
-from sensei_core.indexing.state import IndexJobStateMachine
 from sensei_core.jobs import TaskName
 from sensei_core.logging import get_logger
 from sensei_core.models import (
     ACTIVE_JOB_STATUSES,
-    IndexJob,
-    JobStatus,
     Repo,
     RepoFile,
     Snapshot,
@@ -38,6 +35,7 @@ from sensei_engine.ingest.merkle import (
 )
 from sensei_workers.app import celery_app
 from sensei_workers.base import NotYetError, SenseiTask
+from sensei_workers.jobstate import job_scope
 from sensei_workers.runtime import get_runtime
 from sensei_workers.tasks.ingest import IngestTask
 
@@ -58,12 +56,12 @@ class Target:
 
 async def _begin(task: SenseiTask, org_id: str, job_id: uuid.UUID) -> Target | None:
     """Start (or resume) the job's merkle stage; None if there is nothing to do."""
-    async with task.org_session(org_id) as db:
-        job = await db.scalar(select(IndexJob).where(IndexJob.id == job_id).with_for_update())
+    async with job_scope(task, org_id, job_id) as scope:
+        db, job = scope.db, scope.job
         if job is None or job.status not in ACTIVE_JOB_STATUSES:
             return None  # finished, failed or cancelled meanwhile
         stages = job.stages or {}
-        machine = IndexJobStateMachine(job)
+        machine = scope.machine
         discover_done = (
             job.stage is Stage.DISCOVER and stages.get("discover", {}).get("status") == "done"
         )
@@ -92,12 +90,10 @@ async def _begin(task: SenseiTask, org_id: str, job_id: uuid.UUID) -> Target | N
 
 
 async def _step(task: SenseiTask, org_id: str, job_id: uuid.UUID, done: int) -> None:
-    async with task.org_session(org_id) as db:
-        job = await db.scalar(select(IndexJob).where(IndexJob.id == job_id).with_for_update())
-        if job is None or job.status is not JobStatus.RUNNING or job.stage is not Stage.MERKLE:
-            return
+    async with job_scope(task, org_id, job_id) as scope:
+        job = scope.require(Stage.MERKLE)
         previous = int((job.stages or {}).get("merkle", {}).get("done") or 0)
-        IndexJobStateMachine(job).update_progress(Stage.MERKLE, max(done, previous), STEPS)
+        scope.machine.update_progress(Stage.MERKLE, max(done, previous), STEPS)
 
 
 async def _leaves(task: SenseiTask, target: Target) -> list[Leaf]:
@@ -134,16 +130,21 @@ async def _previous(target: Target) -> MerkleTree | None:
 async def _finish(
     task: SenseiTask, target: Target, job_id: uuid.UUID, root: str, details: dict[str, Any]
 ) -> bool:
-    async with task.org_session(target.org_id) as db:
-        job = await db.scalar(select(IndexJob).where(IndexJob.id == job_id).with_for_update())
-        if job is None or job.status is not JobStatus.RUNNING or job.stage is not Stage.MERKLE:
-            return False
-        snapshot = await db.get(Snapshot, target.snapshot_id)
+    async with job_scope(task, target.org_id, job_id) as scope:
+        scope.require(Stage.MERKLE)
+        snapshot = await scope.db.get(Snapshot, target.snapshot_id)
         if snapshot is not None:
             snapshot.merkle_root = root
-        machine = IndexJobStateMachine(job)
+        machine = scope.machine
         machine.update_progress(Stage.MERKLE, STEPS, STEPS)
         machine.note(Stage.MERKLE, root=root, **details)
+        since = details.get("since")
+        if since:
+            machine.log(
+                f"Since {str(since['commit_sha'])[:12]}: {since['added']} added, "
+                f"{since['modified']} changed, {since['deleted']} deleted, "
+                f"{since['renamed']} renamed."
+            )
         machine.complete(Stage.MERKLE)
         return True
 

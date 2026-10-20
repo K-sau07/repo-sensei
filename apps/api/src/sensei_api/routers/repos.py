@@ -9,12 +9,18 @@ from typing import Annotated
 
 from fastapi import APIRouter, BackgroundTasks, Query, Request, Response, status
 from pydantic import BaseModel, Field
+from redis.asyncio import Redis
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from sensei_api.deps import DbSession
+from sensei_api.deps import DbSession, RedisClient
 from sensei_api.orgs import OrgAccessDep
 from sensei_api.repos import RepoAccessDep, RepoDep, RepoServiceDep, ViewerDep, checked
+from sensei_api.routers.index_jobs import dispatch_index
+from sensei_core.indexing.events import JobOutbox
+from sensei_core.indexing.jobs import IndexJobService
 from sensei_core.jobs import RepoJobs
 from sensei_core.models import Repo, RepoSource, RepoStatus
+from sensei_core.orgs.service import OrgAccess
 from sensei_core.repos.service import RepoSettings
 
 router = APIRouter(prefix="/orgs/{org}", tags=["repos"])
@@ -38,11 +44,14 @@ class RepoOut(BaseModel):
     )
     settings: RepoSettings
     last_indexed_sha: str | None
+    index_job_id: uuid.UUID | None = Field(
+        default=None, description="The index run this request started, if it started one."
+    )
     created_at: datetime
     updated_at: datetime
 
     @classmethod
-    def build(cls, repo: Repo) -> RepoOut:
+    def build(cls, repo: Repo, *, index_job_id: uuid.UUID | None = None) -> RepoOut:
         return cls(
             id=repo.id,
             slug=repo.slug,
@@ -57,6 +66,7 @@ class RepoOut(BaseModel):
             languages=repo.languages,
             settings=RepoSettings.model_validate(repo.settings or {}),
             last_indexed_sha=repo.last_indexed_sha,
+            index_job_id=index_job_id,
             created_at=repo.created_at,
             updated_at=repo.updated_at,
         )
@@ -151,28 +161,64 @@ async def available_repos(
 
 @router.post("/repos", response_model=RepoOut, status_code=status.HTTP_201_CREATED)
 async def connect_repo(
+    *,
+    request: Request,
     body: ConnectRepo,
     access: OrgAccessDep,
     db: DbSession,
+    redis: RedisClient,
     repos: RepoServiceDep,
     viewer: ViewerDep,
+    background: BackgroundTasks,
 ) -> RepoOut:
     """Connect a repository one of the org's installations covers and the admin can read on
-    GitHub (admins)."""
-    return RepoOut.build(await repos.connect(db, access, body.github_repo_id, viewer))
+    GitHub (admins). Indexing starts right away unless the repository's settings say not to."""
+    repo = await repos.connect(db, access, body.github_repo_id, viewer)
+    return await _first_index(request, db, access, repo, redis=redis, background=background)
+
+
+async def _first_index(
+    request: Request,
+    db: AsyncSession,
+    access: OrgAccess,
+    repo: Repo,
+    *,
+    redis: Redis,
+    background: BackgroundTasks,
+) -> RepoOut:
+    if not RepoSettings.model_validate(repo.settings or {}).auto_index:
+        return RepoOut.build(repo)
+    outbox = JobOutbox()
+    job = await IndexJobService().start(db, access, repo, outbox)
+    background.add_task(
+        dispatch_index,
+        redis,
+        _jobs(request),
+        outbox,
+        org_id=repo.org_id,
+        repo_id=repo.id,
+        job_id=job.id,
+    )
+    return RepoOut.build(repo, index_job_id=job.id)
 
 
 @router.post("/repos/import", response_model=RepoOut, status_code=status.HTTP_201_CREATED)
 async def import_repo(
+    *,
+    request: Request,
     body: ImportRepo,
     access: OrgAccessDep,
     db: DbSession,
+    redis: RedisClient,
     repos: RepoServiceDep,
     viewer: ViewerDep,
+    background: BackgroundTasks,
 ) -> RepoOut:
     """Import a public GitHub repository by URL (admins). Private ones answer 422
-    ``repo_not_public``: they connect through the GitHub App."""
-    return RepoOut.build(await repos.import_public(db, access, body.url, viewer))
+    ``repo_not_public``: they connect through the GitHub App. Indexing starts right away unless
+    the repository's settings say not to."""
+    repo = await repos.import_public(db, access, body.url, viewer)
+    return await _first_index(request, db, access, repo, redis=redis, background=background)
 
 
 @router.post("/repos/estimate", response_model=EstimateOut)

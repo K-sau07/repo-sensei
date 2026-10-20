@@ -320,6 +320,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/orgs/{org}/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Org Events
+         * @description The org's index runs starting and ending, as server-sent events (for status dots and the
+         *     inbox), limited to repositories the signed-in user can read. Never closes by itself.
+         */
+        get: operations["org_events_api_v1_orgs__org__events_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/orgs/{org}/github/installations": {
         parameters: {
             query?: never;
@@ -464,7 +485,7 @@ export interface paths {
         /**
          * Connect Repo
          * @description Connect a repository one of the org's installations covers and the admin can read on
-         *     GitHub (admins).
+         *     GitHub (admins). Indexing starts right away unless the repository's settings say not to.
          */
         post: operations["connect_repo_api_v1_orgs__org__repos_post"];
         delete?: never;
@@ -505,7 +526,8 @@ export interface paths {
         /**
          * Import Repo
          * @description Import a public GitHub repository by URL (admins). Private ones answer 422
-         *     ``repo_not_public``: they connect through the GitHub App.
+         *     ``repo_not_public``: they connect through the GitHub App. Indexing starts right away unless
+         *     the repository's settings say not to.
          */
         post: operations["import_repo_api_v1_orgs__org__repos_import_post"];
         delete?: never;
@@ -537,6 +559,106 @@ export interface paths {
          * @description Tracked branches, ignore patterns and automatic indexing (admins).
          */
         patch: operations["update_repo_api_v1_orgs__org__repos__repo__patch"];
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/repos/{repo}/index-jobs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Index Jobs
+         * @description The repository's index runs, newest first (at most 50).
+         */
+        get: operations["list_index_jobs_api_v1_orgs__org__repos__repo__index_jobs_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/repos/{repo}/index-jobs/{job}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Index Job */
+        get: operations["get_index_job_api_v1_orgs__org__repos__repo__index_jobs__job__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/repos/{repo}/index-jobs/{job}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Cancel Index Job
+         * @description Cancel a queued or running run (admins): its stages stop at their next step.
+         */
+        post: operations["cancel_index_job_api_v1_orgs__org__repos__repo__index_jobs__job__cancel_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/repos/{repo}/index-jobs/{job}/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Index Job Events
+         * @description The run's progress as server-sent events (types: queued, stage_started, progress,
+         *     stage_done, unlock, log, done, failed, cancelled). Replays from ``Last-Event-ID``; closes
+         *     after the final event.
+         */
+        get: operations["index_job_events_api_v1_orgs__org__repos__repo__index_jobs__job__events_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/repos/{repo}/reindex": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Reindex
+         * @description Index the repository again at its branch's current commit (admins). 409
+         *     ``index_job_running`` while a run is queued or running.
+         */
+        post: operations["reindex_api_v1_orgs__org__repos__repo__reindex_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/api/v1/readyz": {
@@ -592,7 +714,7 @@ export interface components {
          * AuditAction
          * @enum {string}
          */
-        AuditAction: "auth.login" | "auth.logout" | "auth.logout_all" | "org.create" | "org.update" | "org.delete" | "invitation.create" | "invitation.revoke" | "invitation.accept" | "member.role_change" | "member.remove" | "member.leave" | "github.install.linked" | "github.install.deleted" | "github.install.suspended" | "github.install.unsuspended" | "github.install.permissions_accepted" | "repo.connected" | "repo.settings_update" | "repo.disconnected";
+        AuditAction: "auth.login" | "auth.logout" | "auth.logout_all" | "org.create" | "org.update" | "org.delete" | "invitation.create" | "invitation.revoke" | "invitation.accept" | "member.role_change" | "member.remove" | "member.leave" | "github.install.linked" | "github.install.deleted" | "github.install.suspended" | "github.install.unsuspended" | "github.install.permissions_accepted" | "repo.connected" | "repo.settings_update" | "repo.disconnected" | "repo.index_started" | "repo.index_cancelled";
         /** AuditEventOut */
         AuditEventOut: {
             /** Action */
@@ -741,6 +863,59 @@ export interface components {
             /** Url */
             url: string;
         };
+        /** IndexJobOut */
+        IndexJobOut: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Error */
+            error: {
+                [key: string]: unknown;
+            } | null;
+            /**
+             * Eta S
+             * @description Seconds left, when there is a rate to go by.
+             */
+            eta_s: number | null;
+            /**
+             * Features
+             * @description What the repository can do after this run.
+             */
+            features: components["schemas"]["Feature"][];
+            /** Finished At */
+            finished_at: string | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            kind: components["schemas"]["JobKind"];
+            /**
+             * Progress
+             * @description 0 to 1, weighted by how long stages usually take.
+             */
+            progress: number;
+            /**
+             * Repo Id
+             * Format: uuid
+             */
+            repo_id: string;
+            /** Snapshot Id */
+            snapshot_id: string | null;
+            stage: components["schemas"]["Stage"] | null;
+            /**
+             * Stages
+             * @description Per-stage progress: status, done/total, rate, timestamps, details, error.
+             */
+            stages: {
+                [key: string]: unknown;
+            };
+            /** Started At */
+            started_at: string | null;
+            status: components["schemas"]["JobStatus"];
+        };
         /**
          * InstallReturn
          * @description Where the browser goes after installing.
@@ -858,6 +1033,16 @@ export interface components {
             /** Status */
             status: string;
         };
+        /**
+         * JobKind
+         * @enum {string}
+         */
+        JobKind: "full" | "incremental";
+        /**
+         * JobStatus
+         * @enum {string}
+         */
+        JobStatus: "queued" | "running" | "succeeded" | "failed" | "cancelled";
         /** MeResponse */
         MeResponse: {
             /** Avatar Url */
@@ -972,6 +1157,11 @@ export interface components {
              * Format: uuid
              */
             id: string;
+            /**
+             * Index Job Id
+             * @description The index run this request started, if it started one.
+             */
+            index_job_id?: string | null;
             /**
              * Languages
              * @description Bytes of code per language, under GitHub's language names: GitHub's counts until the first index, then repo-sensei's (generated, vendored and documentation files left out).
@@ -1718,6 +1908,38 @@ export interface operations {
             };
         };
     };
+    org_events_api_v1_orgs__org__events_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization slug */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/event-stream": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_installations_api_v1_orgs__org__github_installations_get: {
         parameters: {
             query?: never;
@@ -2246,6 +2468,182 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RepoOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_index_jobs_api_v1_orgs__org__repos__repo__index_jobs_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Repository slug */
+                repo: string;
+                /** @description Organization slug */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IndexJobOut"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_index_job_api_v1_orgs__org__repos__repo__index_jobs__job__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Index job id */
+                job: string;
+                /** @description Repository slug */
+                repo: string;
+                /** @description Organization slug */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IndexJobOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    cancel_index_job_api_v1_orgs__org__repos__repo__index_jobs__job__cancel_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Index job id */
+                job: string;
+                /** @description Repository slug */
+                repo: string;
+                /** @description Organization slug */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IndexJobOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    index_job_events_api_v1_orgs__org__repos__repo__index_jobs__job__events_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Index job id */
+                job: string;
+                /** @description Repository slug */
+                repo: string;
+                /** @description Organization slug */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/event-stream": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    reindex_api_v1_orgs__org__repos__repo__reindex_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Repository slug */
+                repo: string;
+                /** @description Organization slug */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IndexJobOut"];
                 };
             };
             /** @description Validation Error */

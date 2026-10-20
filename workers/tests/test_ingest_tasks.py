@@ -39,8 +39,9 @@ from sensei_core.storage import Bucket, artifact_key, repo_prefix, snapshot_key
 from sensei_engine.ingest.merkle import ARTIFACT_NAME, MAX_STORED_BYTES, MerkleTree
 from sensei_workers.runtime import Runtime, set_runtime
 from sensei_workers.tasks.discover import discover_files
-from sensei_workers.tasks.ingest import clone_snapshot, sweep_stalled_jobs
+from sensei_workers.tasks.ingest import clone_snapshot
 from sensei_workers.tasks.merkle import build_merkle
+from sensei_workers.tasks.orchestrate import sweep_stalled_jobs
 
 pytestmark = pytest.mark.integration
 

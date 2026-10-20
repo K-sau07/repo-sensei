@@ -12,14 +12,14 @@ from __future__ import annotations
 import time
 import uuid
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import quote
 
 from sqlalchemy import select
 
 from sensei_core.github.client import Credential, GitHubError, RateLimited, as_object
-from sensei_core.indexing.state import IndexJobStateMachine
+from sensei_core.indexing.jobs import settle_repo
 from sensei_core.jobs import TaskName
 from sensei_core.logging import get_logger
 from sensei_core.models import (
@@ -40,6 +40,7 @@ from sensei_workers.base import RetryableError, SenseiTask, is_retryable
 from sensei_workers.ingest.archive import write_archive
 from sensei_workers.ingest.cache import evict, repo_lock
 from sensei_workers.ingest.git import CloneError, CloneSource, GitRunner, TransientGitError
+from sensei_workers.jobstate import JobGoneError, job_scope
 from sensei_workers.runtime import get_runtime
 
 log = get_logger(__name__)
@@ -51,8 +52,6 @@ CLONE_PERMISSIONS = {"contents": "read", "metadata": "read"}
 # GitHub's repository size counts the history too; far beyond the checkout limit, don't even
 # start fetching.
 HISTORY_SIZE_FACTOR = 10
-# A running stage with no progress for the task time limit plus this is dead.
-STALL_MARGIN_SECONDS = 600
 
 INTERNAL_MESSAGE = (
     "Indexing stopped unexpectedly. Try again; if it keeps happening, contact support with the "
@@ -128,11 +127,11 @@ class IngestTask(SenseiTask):
 async def fail_job(
     task: SenseiTask, org_id: str, job_id: uuid.UUID, code: str, message: str
 ) -> None:
-    async with task.org_session(org_id) as db:
-        job = await db.scalar(select(IndexJob).where(IndexJob.id == job_id).with_for_update())
+    async with job_scope(task, org_id, job_id) as scope:
+        job = scope.job
         if job is None or job.status not in ACTIVE_JOB_STATUSES:
             return
-        machine = IndexJobStateMachine(job)
+        machine = scope.machine
         if job.status is JobStatus.QUEUED:
             machine.start()
         stage = job.stage or Stage.CLONE
@@ -144,9 +143,12 @@ async def fail_job(
                 stage = following[0]
         machine.fail(stage, {"code": code, "message": message})
         if job.snapshot_id is not None:
-            snapshot = await db.get(Snapshot, job.snapshot_id)
+            snapshot = await scope.db.get(Snapshot, job.snapshot_id)
             if snapshot is not None and snapshot.status is SnapshotStatus.PENDING:
                 snapshot.status = SnapshotStatus.FAILED
+        repo = await scope.db.get(Repo, job.repo_id)
+        if repo is not None:
+            settle_repo(repo, JobStatus.FAILED)
 
 
 class AccessLostError(CloneError):
@@ -162,21 +164,25 @@ async def _access_lost(task: SenseiTask, target: Target) -> None:
 
 async def _begin(task: SenseiTask, org_id: str, job_id: uuid.UUID) -> Target | None:
     """Start (or resume) the job's clone stage; None if there is nothing to do."""
-    async with task.org_session(org_id) as db:
-        job = await db.scalar(select(IndexJob).where(IndexJob.id == job_id).with_for_update())
+    async with job_scope(task, org_id, job_id) as scope:
+        job = scope.job
         if job is None or job.status not in ACTIVE_JOB_STATUSES:
             return None
-        repo = await db.get(Repo, job.repo_id)
-        machine = IndexJobStateMachine(job)
+        repo = await scope.db.get(Repo, job.repo_id)
+        machine = scope.machine
         if repo is None or repo.deleted_at is not None:
             machine.cancel()
             return None
         if job.status is JobStatus.QUEUED:
             machine.start(Stage.CLONE)
+            if repo.status is not RepoStatus.ACCESS_LOST:
+                repo.status = RepoStatus.INDEXING
         elif job.stage is not Stage.CLONE or job.stages["clone"].get("status") != "running":
             return None  # past this stage already (a duplicate delivery)
         installation = (
-            await db.get(GitHubInstallation, repo.installation_id) if repo.installation_id else None
+            await scope.db.get(GitHubInstallation, repo.installation_id)
+            if repo.installation_id
+            else None
         )
         return Target(
             repo_id=repo.id,
@@ -190,13 +196,16 @@ async def _begin(task: SenseiTask, org_id: str, job_id: uuid.UUID) -> Target | N
         )
 
 
-async def _step(task: SenseiTask, org_id: str, job_id: uuid.UUID, done: int) -> None:
-    async with task.org_session(org_id) as db:
-        job = await db.scalar(select(IndexJob).where(IndexJob.id == job_id).with_for_update())
-        if job is None:
-            return
+async def _step(
+    task: SenseiTask, org_id: str, job_id: uuid.UUID, done: int, *, log_line: str | None = None
+) -> None:
+    """Clone progress; stops the task if the job was cancelled meanwhile."""
+    async with job_scope(task, org_id, job_id) as scope:
+        job = scope.require(Stage.CLONE)
         previous = int((job.stages or {}).get("clone", {}).get("done") or 0)
-        IndexJobStateMachine(job).update_progress(Stage.CLONE, max(done, previous), STEPS)
+        scope.machine.update_progress(Stage.CLONE, max(done, previous), STEPS)
+        if log_line:
+            scope.machine.log(log_line)
 
 
 async def _token(target: Target) -> str | None:
@@ -281,8 +290,9 @@ async def _snapshot(task: SenseiTask, target: Target, job_id: uuid.UUID, sha: st
             db.add(snapshot)
             await db.flush()
         job = await db.get(IndexJob, job_id)
-        if job is not None:
-            job.snapshot_id = snapshot.id
+        if job is None or job.status is not JobStatus.RUNNING:
+            raise JobGoneError("the job ended meanwhile")
+        job.snapshot_id = snapshot.id
         key = snapshot_key(target.org_id, target.repo_id, sha)
         archived = await storage.size(Bucket.SNAPSHOTS, key) is not None
         if snapshot.status is SnapshotStatus.READY and archived:
@@ -307,8 +317,9 @@ async def _finish(
     file_count: int,
     size: int,
 ) -> None:
-    async with task.org_session(target.org_id) as db:
-        snapshot = await db.scalar(
+    async with job_scope(task, target.org_id, job_id) as scope:
+        scope.require(Stage.CLONE)
+        snapshot = await scope.db.scalar(
             select(Snapshot).where(Snapshot.repo_id == target.repo_id, Snapshot.commit_sha == sha)
         )
         if snapshot is not None and snapshot.status is not SnapshotStatus.READY:
@@ -316,12 +327,15 @@ async def _finish(
             snapshot.file_count = file_count
             snapshot.bytes = size
             snapshot.ready_at = _now()
-        job = await db.scalar(select(IndexJob).where(IndexJob.id == job_id).with_for_update())
-        if job is None:
-            return
-        machine = IndexJobStateMachine(job)
+        machine = scope.machine
         machine.update_progress(Stage.CLONE, STEPS, STEPS)
         machine.note(Stage.CLONE, commit_sha=sha, **details)
+        machine.log(f"Checked out {sha[:12]}: {details['files']:,} files.")
+        if details.get("submodules_skipped"):
+            count = details["submodules_skipped"]
+            machine.log(
+                f"{count} submodule(s) not fetched: their code isn't indexed.", level="warn"
+            )
         machine.complete(Stage.CLONE)
 
 
@@ -417,45 +431,3 @@ def evict_repo_cache(self: SenseiTask) -> int:
     if removed:
         log.info("repo cache evicted", copies=len(removed))
     return len(removed)
-
-
-STALLED_MESSAGE = (
-    "Indexing stopped making progress (the worker running it went away). Try again; if it keeps "
-    "happening, contact support with the job id."
-)
-
-
-@celery_app.task(bind=True, base=SenseiTask, name=TaskName.SWEEP_STALLED_JOBS.value, system=True)
-def sweep_stalled_jobs(self: SenseiTask) -> int:
-    """Fail running jobs whose running stage hasn't moved for longer than any task may run
-    (the time limit, plus margin): their worker died in a way nothing else reported."""
-    runtime = get_runtime()
-    limit = timedelta(seconds=runtime.settings.worker.time_limit_seconds + STALL_MARGIN_SECONDS)
-
-    async def _sweep() -> int:
-        failed = 0
-        cutoff = _now() - limit
-        async with self.system_session() as db:
-            jobs = await db.scalars(
-                select(IndexJob).where(IndexJob.status == JobStatus.RUNNING).with_for_update()
-            )
-            for job in jobs:
-                stage = job.stage
-                if stage is None:
-                    continue
-                entry: dict[str, Any] = (job.stages or {}).get(stage.value, {})
-                if entry.get("status") != "running":
-                    continue  # between stages: the next task is queued
-                moved = entry.get("updated_at") or entry.get("started_at")
-                if not isinstance(moved, str) or datetime.fromisoformat(moved) > cutoff:
-                    continue
-                IndexJobStateMachine(job).fail(
-                    stage, {"code": "stage_stalled", "message": STALLED_MESSAGE}
-                )
-                failed += 1
-        return failed
-
-    failed = runtime.run(_sweep())
-    if failed:
-        log.warning("stalled index jobs failed", jobs=failed)
-    return failed

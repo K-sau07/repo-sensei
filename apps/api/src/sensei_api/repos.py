@@ -8,6 +8,7 @@ import httpx
 import structlog
 from fastapi import Depends, Path, Request
 from redis.asyncio import Redis
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from sensei_api.deps import DbSession
 from sensei_api.orgs import OrgAccessDep
@@ -18,7 +19,7 @@ from sensei_core.config import Settings
 from sensei_core.errors import NotFoundError
 from sensei_core.github.client import Credential, GitHubClient, GitHubError
 from sensei_core.github.etags import RedisETagCache
-from sensei_core.github.oauth import OAuthError
+from sensei_core.github.oauth import GitHubOAuth, OAuthError
 from sensei_core.models import Repo, User
 from sensei_core.repos.access import RepoAccess
 from sensei_core.repos.service import (
@@ -57,6 +58,12 @@ RepoServiceDep = Annotated[RepoService, Depends(get_repo_service)]
 
 
 def get_repo_access(request: Request, db: DbSession, oauth: GitHubOAuthDep) -> RepoAccess:
+    return repo_access(request, db, oauth)
+
+
+def repo_access(request: Request, db: AsyncSession, oauth: GitHubOAuth | None) -> RepoAccess:
+    """Access mirroring that refreshes tokens in ``db`` (also for streams, with their own
+    short sessions)."""
     cipher: TokenCipher = request.app.state.token_cipher
 
     async def token_for(user: User) -> str:

@@ -14,15 +14,10 @@ import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
-from sqlalchemy import select
-
-from sensei_core.indexing.state import IndexJobStateMachine
 from sensei_core.jobs import TaskName
 from sensei_core.logging import get_logger
 from sensei_core.models import (
     ACTIVE_JOB_STATUSES,
-    IndexJob,
-    JobStatus,
     Repo,
     Snapshot,
     SnapshotStatus,
@@ -39,6 +34,7 @@ from sensei_workers.base import NotYetError, RetryableError, SenseiTask
 from sensei_workers.ingest.archive import ArchiveTooLargeError, extract_archive
 from sensei_workers.ingest.cache import repo_lock
 from sensei_workers.ingest.git import CHECKED_OUT_MARKER
+from sensei_workers.jobstate import JobGoneError, job_scope
 from sensei_workers.runtime import get_runtime
 from sensei_workers.tasks.ingest import IngestTask, fail_job
 
@@ -60,12 +56,12 @@ class SnapshotUnavailableError(Exception):
 
 async def _begin(task: SenseiTask, org_id: str, job_id: uuid.UUID) -> Target | None:
     """Start (or resume) the job's discover stage; None if there is nothing to do."""
-    async with task.org_session(org_id) as db:
-        job = await db.scalar(select(IndexJob).where(IndexJob.id == job_id).with_for_update())
+    async with job_scope(task, org_id, job_id) as scope:
+        db, job = scope.db, scope.job
         if job is None or job.status not in ACTIVE_JOB_STATUSES:
             return None  # finished, failed or cancelled meanwhile
         stages = job.stages or {}
-        machine = IndexJobStateMachine(job)
+        machine = scope.machine
         clone_done = job.stage is Stage.CLONE and stages.get("clone", {}).get("status") == "done"
         resuming = job.stage is Stage.DISCOVER and stages["discover"].get("status") == "running"
         if not clone_done and not resuming:
@@ -141,26 +137,23 @@ def _worktree(target: Target) -> Path:
 async def _progress(
     task: SenseiTask, org_id: str, job_id: uuid.UUID, done: int, total: int
 ) -> None:
-    async with task.org_session(org_id) as db:
-        job = await db.scalar(select(IndexJob).where(IndexJob.id == job_id).with_for_update())
-        if job is None or job.status not in ACTIVE_JOB_STATUSES or job.stage is not Stage.DISCOVER:
-            return
+    """Discover progress; stops the walk if the job was cancelled meanwhile."""
+    async with job_scope(task, org_id, job_id) as scope:
+        job = scope.require(Stage.DISCOVER)
         previous = int((job.stages or {}).get("discover", {}).get("done") or 0)
-        IndexJobStateMachine(job).update_progress(Stage.DISCOVER, max(done, previous), total)
+        scope.machine.update_progress(Stage.DISCOVER, max(done, previous), total)
 
 
 async def _save(task: SenseiTask, target: Target, job_id: uuid.UUID, found: Discovery) -> bool:
-    """Write the discovery and complete the stage; False if the job moved on meanwhile."""
-    async with task.org_session(target.org_id) as db:
-        job = await db.scalar(select(IndexJob).where(IndexJob.id == job_id).with_for_update())
-        if job is None or job.status is not JobStatus.RUNNING or job.stage is not Stage.DISCOVER:
-            return False
-        snapshot = await db.get(Snapshot, target.snapshot_id)
+    """Write the discovery and complete the stage (stops quietly if the job moved on)."""
+    async with job_scope(task, target.org_id, job_id) as scope:
+        scope.require(Stage.DISCOVER)
+        snapshot = await scope.db.get(Snapshot, target.snapshot_id)
         if snapshot is None:
-            return False
-        rows = await save_discovery(db, snapshot, found)
+            raise JobGoneError("the snapshot is gone")
+        rows = await save_discovery(scope.db, snapshot, found)
         summary = snapshot.summary or {}
-        machine = IndexJobStateMachine(job)
+        machine = scope.machine
         total = max(rows, 1)
         machine.update_progress(Stage.DISCOVER, total, total)
         machine.note(
@@ -171,6 +164,16 @@ async def _save(task: SenseiTask, target: Target, job_id: uuid.UUID, found: Disc
             skipped=summary.get("skipped", {}),
             invalid_ignore_globs=summary.get("invalid_ignore_globs", []),
         )
+        machine.log(
+            f"Found {rows:,} files to index ({found.loc:,} lines)"
+            + (
+                f"; frameworks: {', '.join(sorted({f.name for f in found.frameworks}))}."
+                if found.frameworks
+                else "."
+            )
+        )
+        for glob in summary.get("invalid_ignore_globs", []):
+            machine.log(f"Ignore pattern {glob!r} isn't valid and was skipped.", level="warn")
         machine.complete(Stage.DISCOVER)
         return True
 

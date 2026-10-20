@@ -45,6 +45,8 @@ class AuditAction(enum.StrEnum):
     REPO_CONNECTED = "repo.connected"
     REPO_SETTINGS_UPDATE = "repo.settings_update"
     REPO_DISCONNECTED = "repo.disconnected"
+    REPO_INDEX_STARTED = "repo.index_started"
+    REPO_INDEX_CANCELLED = "repo.index_cancelled"
 
 
 def _clean_meta(meta: dict[str, Any] | None) -> dict[str, Any]:

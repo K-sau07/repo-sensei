@@ -31,7 +31,9 @@
           "github.install.permissions_accepted",
           "repo.connected",
           "repo.settings_update",
-          "repo.disconnected"
+          "repo.disconnected",
+          "repo.index_started",
+          "repo.index_cancelled"
         ],
         "title": "AuditAction",
         "type": "string"
@@ -437,6 +439,138 @@
         "title": "ImportRepo",
         "type": "object"
       },
+      "IndexJobOut": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "eta_s": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Seconds left, when there is a rate to go by.",
+            "title": "Eta S"
+          },
+          "features": {
+            "description": "What the repository can do after this run.",
+            "items": {
+              "$ref": "#/components/schemas/Feature"
+            },
+            "title": "Features",
+            "type": "array"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/JobKind"
+          },
+          "progress": {
+            "description": "0 to 1, weighted by how long stages usually take.",
+            "title": "Progress",
+            "type": "number"
+          },
+          "repo_id": {
+            "format": "uuid",
+            "title": "Repo Id",
+            "type": "string"
+          },
+          "snapshot_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Snapshot Id"
+          },
+          "stage": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Stage"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "stages": {
+            "additionalProperties": true,
+            "description": "Per-stage progress: status, done/total, rate, timestamps, details, error.",
+            "title": "Stages",
+            "type": "object"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "status": {
+            "$ref": "#/components/schemas/JobStatus"
+          }
+        },
+        "required": [
+          "id",
+          "repo_id",
+          "snapshot_id",
+          "kind",
+          "status",
+          "stage",
+          "stages",
+          "progress",
+          "eta_s",
+          "error",
+          "features",
+          "created_at",
+          "started_at",
+          "finished_at"
+        ],
+        "title": "IndexJobOut",
+        "type": "object"
+      },
       "InstallReturn": {
         "description": "Where the browser goes after installing.",
         "enum": [
@@ -691,6 +825,25 @@
         ],
         "title": "InvitationPreviewOut",
         "type": "object"
+      },
+      "JobKind": {
+        "enum": [
+          "full",
+          "incremental"
+        ],
+        "title": "JobKind",
+        "type": "string"
+      },
+      "JobStatus": {
+        "enum": [
+          "queued",
+          "running",
+          "succeeded",
+          "failed",
+          "cancelled"
+        ],
+        "title": "JobStatus",
+        "type": "string"
       },
       "MeResponse": {
         "properties": {
@@ -1007,6 +1160,19 @@
             "format": "uuid",
             "title": "Id",
             "type": "string"
+          },
+          "index_job_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The index run this request started, if it started one.",
+            "title": "Index Job Id"
           },
           "languages": {
             "additionalProperties": {
@@ -2259,6 +2425,47 @@
         ]
       }
     },
+    "/api/v1/orgs/{org}/events": {
+      "get": {
+        "description": "The org's index runs starting and ending, as server-sent events (for status dots and the\ninbox), limited to repositories the signed-in user can read. Never closes by itself.",
+        "operationId": "org_events_api_v1_orgs__org__events_get",
+        "parameters": [
+          {
+            "description": "Organization slug",
+            "in": "path",
+            "name": "org",
+            "required": true,
+            "schema": {
+              "description": "Organization slug",
+              "title": "Org",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "text/event-stream": {}
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Org Events",
+        "tags": [
+          "indexing"
+        ]
+      }
+    },
     "/api/v1/orgs/{org}/github/installations": {
       "get": {
         "description": "GitHub accounts connected to the org.",
@@ -2777,7 +2984,7 @@
         ]
       },
       "post": {
-        "description": "Connect a repository one of the org's installations covers and the admin can read on\nGitHub (admins).",
+        "description": "Connect a repository one of the org's installations covers and the admin can read on\nGitHub (admins). Indexing starts right away unless the repository's settings say not to.",
         "operationId": "connect_repo_api_v1_orgs__org__repos_post",
         "parameters": [
           {
@@ -2887,7 +3094,7 @@
     },
     "/api/v1/orgs/{org}/repos/import": {
       "post": {
-        "description": "Import a public GitHub repository by URL (admins). Private ones answer 422\n``repo_not_public``: they connect through the GitHub App.",
+        "description": "Import a public GitHub repository by URL (admins). Private ones answer 422\n``repo_not_public``: they connect through the GitHub App. Indexing starts right away unless\nthe repository's settings say not to.",
         "operationId": "import_repo_api_v1_orgs__org__repos_import_post",
         "parameters": [
           {
@@ -3106,6 +3313,326 @@
         "summary": "Update Repo",
         "tags": [
           "repos"
+        ]
+      }
+    },
+    "/api/v1/orgs/{org}/repos/{repo}/index-jobs": {
+      "get": {
+        "description": "The repository's index runs, newest first (at most 50).",
+        "operationId": "list_index_jobs_api_v1_orgs__org__repos__repo__index_jobs_get",
+        "parameters": [
+          {
+            "description": "Repository slug",
+            "in": "path",
+            "name": "repo",
+            "required": true,
+            "schema": {
+              "description": "Repository slug",
+              "maxLength": 201,
+              "title": "Repo",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Organization slug",
+            "in": "path",
+            "name": "org",
+            "required": true,
+            "schema": {
+              "description": "Organization slug",
+              "title": "Org",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/IndexJobOut"
+                  },
+                  "title": "Response List Index Jobs Api V1 Orgs  Org  Repos  Repo  Index Jobs Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Index Jobs",
+        "tags": [
+          "indexing"
+        ]
+      }
+    },
+    "/api/v1/orgs/{org}/repos/{repo}/index-jobs/{job}": {
+      "get": {
+        "operationId": "get_index_job_api_v1_orgs__org__repos__repo__index_jobs__job__get",
+        "parameters": [
+          {
+            "description": "Index job id",
+            "in": "path",
+            "name": "job",
+            "required": true,
+            "schema": {
+              "description": "Index job id",
+              "format": "uuid",
+              "title": "Job",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Repository slug",
+            "in": "path",
+            "name": "repo",
+            "required": true,
+            "schema": {
+              "description": "Repository slug",
+              "maxLength": 201,
+              "title": "Repo",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Organization slug",
+            "in": "path",
+            "name": "org",
+            "required": true,
+            "schema": {
+              "description": "Organization slug",
+              "title": "Org",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IndexJobOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Index Job",
+        "tags": [
+          "indexing"
+        ]
+      }
+    },
+    "/api/v1/orgs/{org}/repos/{repo}/index-jobs/{job}/cancel": {
+      "post": {
+        "description": "Cancel a queued or running run (admins): its stages stop at their next step.",
+        "operationId": "cancel_index_job_api_v1_orgs__org__repos__repo__index_jobs__job__cancel_post",
+        "parameters": [
+          {
+            "description": "Index job id",
+            "in": "path",
+            "name": "job",
+            "required": true,
+            "schema": {
+              "description": "Index job id",
+              "format": "uuid",
+              "title": "Job",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Repository slug",
+            "in": "path",
+            "name": "repo",
+            "required": true,
+            "schema": {
+              "description": "Repository slug",
+              "maxLength": 201,
+              "title": "Repo",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Organization slug",
+            "in": "path",
+            "name": "org",
+            "required": true,
+            "schema": {
+              "description": "Organization slug",
+              "title": "Org",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IndexJobOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Cancel Index Job",
+        "tags": [
+          "indexing"
+        ]
+      }
+    },
+    "/api/v1/orgs/{org}/repos/{repo}/index-jobs/{job}/events": {
+      "get": {
+        "description": "The run's progress as server-sent events (types: queued, stage_started, progress,\nstage_done, unlock, log, done, failed, cancelled). Replays from ``Last-Event-ID``; closes\nafter the final event.",
+        "operationId": "index_job_events_api_v1_orgs__org__repos__repo__index_jobs__job__events_get",
+        "parameters": [
+          {
+            "description": "Index job id",
+            "in": "path",
+            "name": "job",
+            "required": true,
+            "schema": {
+              "description": "Index job id",
+              "format": "uuid",
+              "title": "Job",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Repository slug",
+            "in": "path",
+            "name": "repo",
+            "required": true,
+            "schema": {
+              "description": "Repository slug",
+              "maxLength": 201,
+              "title": "Repo",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Organization slug",
+            "in": "path",
+            "name": "org",
+            "required": true,
+            "schema": {
+              "description": "Organization slug",
+              "title": "Org",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "text/event-stream": {}
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Index Job Events",
+        "tags": [
+          "indexing"
+        ]
+      }
+    },
+    "/api/v1/orgs/{org}/repos/{repo}/reindex": {
+      "post": {
+        "description": "Index the repository again at its branch's current commit (admins). 409\n``index_job_running`` while a run is queued or running.",
+        "operationId": "reindex_api_v1_orgs__org__repos__repo__reindex_post",
+        "parameters": [
+          {
+            "description": "Repository slug",
+            "in": "path",
+            "name": "repo",
+            "required": true,
+            "schema": {
+              "description": "Repository slug",
+              "maxLength": 201,
+              "title": "Repo",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Organization slug",
+            "in": "path",
+            "name": "org",
+            "required": true,
+            "schema": {
+              "description": "Organization slug",
+              "title": "Org",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IndexJobOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Reindex",
+        "tags": [
+          "indexing"
         ]
       }
     },
