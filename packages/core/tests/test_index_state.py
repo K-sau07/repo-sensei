@@ -262,3 +262,28 @@ def test_weights_cover_every_stage() -> None:
     assert set(STAGE_WEIGHTS) == set(Stage)
     assert sum(STAGE_WEIGHTS.values()) == 100
     assert tuple(Stage) == STAGES
+
+
+def test_a_stage_completes_on_its_own_and_the_next_task_advances(clock: Clock) -> None:
+    machine = _machine(clock)
+    machine.start()
+    machine.update_progress(Stage.CLONE, 3, 5)
+    machine.note(Stage.CLONE, submodules=2, lfs="pointers")
+    machine.complete(Stage.CLONE)
+    clone = machine.job.stages["clone"]
+    assert (clone["status"], clone["done"], clone["details"]) == (
+        "done",
+        5,
+        {"submodules": 2, "lfs": "pointers"},
+    )
+    assert machine.job.stage is Stage.CLONE  # waiting for the next task
+    for move in (
+        lambda: machine.complete(Stage.CLONE),
+        lambda: machine.update_progress(Stage.CLONE, 5, 5),
+        lambda: machine.fail(Stage.CLONE, {"code": "x", "message": "x"}),
+    ):
+        with pytest.raises(IllegalTransitionError):
+            move()
+    machine.advance(Stage.DISCOVER)
+    assert machine.job.stages["discover"]["status"] == "running"
+    assert machine.features() == []  # discover isn't done yet

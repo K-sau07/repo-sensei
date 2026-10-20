@@ -7,7 +7,8 @@ Status::
        └─────────┴────► cancelled
 
 Stages only move forward (``clone`` … ``finalize``); a stage that isn't needed (an incremental
-run) is passed over and recorded as ``skipped``. A job succeeds only from ``finalize``.
+run) is passed over and recorded as ``skipped``. A stage can be completed on its own (one task
+does one stage; the next task advances), and a job succeeds only from ``finalize``.
 
 Progress (0..1) weighs stages by their usual share of the work. The ETA for the running stage
 comes from a moving average of its rate (items per second); later stages add their expected
@@ -105,17 +106,32 @@ class IndexJobStateMachine:
             msg = f"can't go from {current.value} back or sideways to {stage.value}"
             raise IllegalTransitionError(msg)
         stages = self._stages()
-        self._complete(stages, current)
+        if stages[current.value].get("status") == "running":
+            self._complete(stages, current)
         for between in STAGES[STAGES.index(current) + 1 : STAGES.index(stage)]:
             stages[between.value] = {"status": "skipped"}
         self._enter(stages, stage)
         self._save(stages)
 
-    def update_progress(self, stage: Stage, done: int, total: int) -> None:
+    def complete(self, stage: Stage) -> None:
+        """Mark the running ``stage`` done without starting the next one."""
+        self._require_current_running(stage)
+        stages = self._stages()
+        self._complete(stages, stage)
+        self._save(stages)
+
+    def note(self, stage: Stage, **details: Any) -> None:
+        """Attach facts to a stage (limitations, counts) for the UI and for debugging."""
         current = self._require_running_stage()
         if stage is not current:
-            msg = f"{stage.value} isn't running (the job is at {current.value})"
+            msg = f"{stage.value} isn't the current stage (the job is at {current.value})"
             raise IllegalTransitionError(msg)
+        stages = self._stages()
+        stages[stage.value].setdefault("details", {}).update(details)
+        self._save(stages)
+
+    def update_progress(self, stage: Stage, done: int, total: int) -> None:
+        self._require_current_running(stage)
         if total < 0 or not 0 <= done <= total:
             msg = f"progress must satisfy 0 <= done <= total (got {done}/{total})"
             raise ValueError(msg)
@@ -144,7 +160,8 @@ class IndexJobStateMachine:
             msg = f"a job finishes from {Stage.FINALIZE.value}, not {current.value}"
             raise IllegalTransitionError(msg)
         stages = self._stages()
-        self._complete(stages, current)
+        if stages[current.value].get("status") == "running":
+            self._complete(stages, current)
         self._move_to(JobStatus.SUCCEEDED)
         self.job.finished_at = self._now()
         self._save(stages)
@@ -153,10 +170,7 @@ class IndexJobStateMachine:
 
     def fail(self, stage: Stage, error: Mapping[str, Any]) -> None:
         """``error``: at least a ``code`` and a ``message`` safe to show."""
-        current = self._require_running_stage()
-        if stage is not current:
-            msg = f"{stage.value} isn't running (the job is at {current.value})"
-            raise IllegalTransitionError(msg)
+        self._require_current_running(stage)
         stages = self._stages()
         details = {"stage": stage.value, **dict(error)}
         stages[stage.value].update(
@@ -196,6 +210,13 @@ class IndexJobStateMachine:
             msg = f"a {self.job.status.value} job can't become {status.value}"
             raise IllegalTransitionError(msg)
         self.job.status = status
+
+    def _require_current_running(self, stage: Stage) -> None:
+        current = self._require_running_stage()
+        status = (self.job.stages or {}).get(current.value, {}).get("status")
+        if stage is not current or status != "running":
+            msg = f"{stage.value} isn't running (the job is at {current.value}, {status})"
+            raise IllegalTransitionError(msg)
 
     def _require_running_stage(self) -> Stage:
         if self.job.status is not JobStatus.RUNNING or self.job.stage is None:

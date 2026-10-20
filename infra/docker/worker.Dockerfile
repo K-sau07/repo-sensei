@@ -35,8 +35,13 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev --no-editable --package sensei-workers
 
 FROM ${PYTHON_IMAGE} AS runtime
+# git for cloning (the clone stage); nothing else from the distribution.
+RUN apt-get update \
+    && apt-get install --yes --no-install-recommends git ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
 RUN groupadd --system --gid 10001 sensei \
-    && useradd --system --uid 10001 --gid sensei --home-dir /app --shell /usr/sbin/nologin sensei
+    && useradd --system --uid 10001 --gid sensei --home-dir /app --shell /usr/sbin/nologin sensei \
+    && mkdir -p /data/repos && chown -R sensei:sensei /data
 WORKDIR /app
 COPY --from=build --chown=sensei:sensei /app/.venv /app/.venv
 COPY --from=build --chown=sensei:sensei /app/scripts/worker_healthcheck.py /app/scripts/worker_healthcheck.py
@@ -44,7 +49,8 @@ ENV PATH=/app/.venv/bin:$PATH \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     SENSEI_WORKER_QUEUES=default,webhooks,ingest,parse,embed,llm,graph,agent,sandbox,maintenance \
-    SENSEI_WORKER_CONCURRENCY=2
+    SENSEI_WORKER_CONCURRENCY=2 \
+    SENSEI_INGEST_CACHE_DIR=/data/repos
 USER sensei
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
     CMD ["python", "/app/scripts/worker_healthcheck.py"]

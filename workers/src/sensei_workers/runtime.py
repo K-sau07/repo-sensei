@@ -23,6 +23,7 @@ from sensei_core.github.client import GitHubClient
 from sensei_core.github.etags import RedisETagCache
 from sensei_core.redis import make_redis
 from sensei_core.security.crypto import TokenCipher
+from sensei_core.storage import ObjectStorage
 from sensei_core.telemetry import instrument_engine
 
 T = TypeVar("T")
@@ -37,7 +38,9 @@ class Runtime:
         self._redis: Redis | None = None
         self._sync_redis: redis.Redis | None = None
         self._http: httpx.AsyncClient | None = None
+        self._github_client: GitHubClient | None = None
         self._github_app: GitHubApp | None = None
+        self._storage: ObjectStorage | None = None
 
     def run(self, coro: Coroutine[Any, Any, T]) -> T:
         if self._runner is None:
@@ -98,19 +101,40 @@ class Runtime:
         return self._sync_redis
 
     @property
+    def github_client(self) -> GitHubClient:
+        """GitHub's REST API with the shared (encrypted) ETag cache; any credential."""
+        if self._github_client is None:
+            self._http = httpx.AsyncClient(timeout=self.settings.github.timeout_seconds)
+            self._github_client = GitHubClient(
+                self.settings.github, self._http, etags=RedisETagCache(self.redis, self._cipher)
+            )
+        return self._github_client
+
+    @property
     def github_app(self) -> GitHubApp | None:
         """Acting as the GitHub App (None when this deployment has none configured)."""
         if self._github_app is None and self.settings.github.app_configured:
-            cipher = TokenCipher.from_settings(self.settings.auth)
-            self._http = httpx.AsyncClient(timeout=self.settings.github.timeout_seconds)
-            client = GitHubClient(
-                self.settings.github, self._http, etags=RedisETagCache(self.redis, cipher)
+            self._github_app = GitHubApp(
+                self.settings.github, self.github_client, self.redis, self._cipher
             )
-            self._github_app = GitHubApp(self.settings.github, client, self.redis, cipher)
         return self._github_app
+
+    @property
+    def _cipher(self) -> TokenCipher:
+        return TokenCipher.from_settings(self.settings.auth)
+
+    async def storage(self) -> ObjectStorage:
+        """Object storage, started on first use (on this runtime's event loop)."""
+        if self._storage is None:
+            storage = ObjectStorage(self.settings.s3)
+            await storage.start()
+            self._storage = storage
+        return self._storage
 
     def close(self) -> None:
         async def _close() -> None:
+            if self._storage is not None:
+                await self._storage.close()
             if self._http is not None:
                 await self._http.aclose()
             if self._redis is not None:
@@ -131,7 +155,9 @@ class Runtime:
         self._redis = None
         self._sync_redis = None
         self._http = None
+        self._github_client = None
         self._github_app = None
+        self._storage = None
 
 
 _runtime: Runtime | None = None

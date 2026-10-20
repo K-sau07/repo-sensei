@@ -7,6 +7,7 @@ dependencies = [
     "sensei-core",
     "sensei-engine",
     "opentelemetry-instrumentation-celery>=0.66b1",
+    "zstandard>=0.25",
 ]
 
 [build-system]

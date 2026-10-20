@@ -126,6 +126,22 @@ class WorkerSettings(BaseSettings):
         return self
 
 
+class IngestSettings(BaseSettings):
+    """Cloning repositories into the workers' cache."""
+
+    model_config = _config("SENSEI_INGEST_")
+
+    # One working copy per repository, reused between index runs (the image sets /data/repos).
+    cache_dir: Path = Path.home() / ".cache" / "repo-sensei" / "repos"
+    cache_max_bytes: int = Field(default=50 * 1024**3, gt=0)
+    # Checked-out size limit; bigger repositories are refused before checkout.
+    max_checkout_bytes: int = Field(default=2 * 1024**3, gt=0)
+    clone_timeout_seconds: float = Field(default=900.0, gt=0)
+    git_binary: str = "git"
+    # file:// remotes (local test fixtures only; never in a deployment).
+    allow_file_protocol: bool = False
+
+
 class S3Settings(BaseSettings):
     model_config = _config("SENSEI_S3_")
 
@@ -250,6 +266,7 @@ class Settings(BaseSettings):
     telemetry: TelemetrySettings = Field(default_factory=TelemetrySettings)
     pricing: PricingSettings = Field(default_factory=PricingSettings)
     worker: WorkerSettings = Field(default_factory=WorkerSettings)
+    ingest: IngestSettings = Field(default_factory=IngestSettings)
 
     @model_validator(mode="after")
     def _refuse_dev_secrets_outside_dev(self) -> Settings:

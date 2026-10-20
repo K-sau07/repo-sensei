@@ -37,6 +37,8 @@ class TaskName(enum.StrEnum):
     PROCESS_GITHUB_WEBHOOK = "sensei.webhooks.process_github"
     SWEEP_WEBHOOKS = "sensei.webhooks.sweep"
     PURGE_REPO = "sensei.maintenance.purge_repo"
+    CLONE_SNAPSHOT = "sensei.ingest.clone_snapshot"
+    EVICT_REPO_CACHE = "sensei.maintenance.evict_repo_cache"
 
 
 # Tasks go to the queue named by the second part of their name ("sensei.<queue>.<task>").

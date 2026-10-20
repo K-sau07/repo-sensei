@@ -29,6 +29,13 @@ primary_region = "iad"
   size = "shared-cpu-1x"
   memory = "512mb"
 
+# The working-copy cache (clones are reused between index runs; evicted to fit
+# SENSEI_INGEST_CACHE_MAX_BYTES). One volume per worker machine.
+[[mounts]]
+  source = "repo_cache"
+  destination = "/data"
+  processes = ["worker"]
+
 [[restart]]
   policy = "always"
   processes = ["worker", "beat"]
