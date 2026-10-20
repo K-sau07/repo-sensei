@@ -1,6 +1,6 @@
 import { http, HttpResponse, sse } from "msw";
 
-import type { AvailablePage, Estimate, Installation, Repo, Stage } from "@/lib/api/types";
+import type { AvailablePage, Estimate, IndexJob, Installation, Repo, Stage } from "@/lib/api/types";
 import { atLeast, db, NOW, saveDb, type MockRepo } from "@/mocks/db";
 
 import { apiError } from "./errors";
@@ -88,6 +88,64 @@ export function current(repo: MockRepo): MockRepo {
     : job;
   repo.status = step ? "indexing" : repo.status;
   return repo;
+}
+
+const STAGE_ORDER: Stage[] = [
+  "clone",
+  "discover",
+  "merkle",
+  "parse",
+  "symbols",
+  "chunks",
+  "embeddings",
+  "summaries",
+  "graph",
+  "links",
+  "finalize",
+];
+
+/** The repository's index runs, as the API lists them (newest first). */
+function indexJobsOf(repo: MockRepo): IndexJob[] {
+  const job = repo.active_job;
+  const base = {
+    repo_id: repo.id,
+    snapshot_id: null,
+    kind: "full" as const,
+    error: null,
+    created_at: repo.created_at,
+    started_at: repo.created_at,
+    finished_at: null,
+    eta_s: null,
+  };
+  if (job) {
+    const at = job.stage ? STAGE_ORDER.indexOf(job.stage) : -1;
+    const done = STAGE_ORDER.slice(0, Math.max(0, at));
+    return [
+      {
+        ...base,
+        id: job.id,
+        status: job.status,
+        stage: job.stage,
+        progress: job.progress,
+        eta_s: job.eta_s,
+        stages: Object.fromEntries(done.map((stage) => [stage, { status: "done" }])),
+        features: done.includes("discover") ? ["code_browser"] : [],
+      },
+    ];
+  }
+  if (repo.status !== "ready") return [];
+  return [
+    {
+      ...base,
+      id: `${repo.id}-last`,
+      status: "succeeded",
+      stage: "finalize",
+      progress: 1,
+      finished_at: repo.last_indexed_at ?? null,
+      stages: {},
+      features: ["code_browser"],
+    },
+  ];
 }
 
 function reposOf(org: string): MockRepo[] {
@@ -340,6 +398,35 @@ export const repoHandlers = [
     });
     return HttpResponse.json<Repo>(repo, { status: 201 });
   }),
+
+  http.get("*/api/v1/indexing/stages", () =>
+    HttpResponse.json({
+      stages: [
+        ["clone", 5, []],
+        ["discover", 3, ["code_browser"]],
+        ["merkle", 2, []],
+        ["parse", 20, []],
+        ["symbols", 10, ["goto_definition"]],
+        ["chunks", 10, ["keyword_search"]],
+        ["embeddings", 30, ["semantic_search", "ask"]],
+        ["summaries", 10, ["wiki"]],
+        ["graph", 5, ["graph_view", "callers"]],
+        ["links", 3, ["trace", "diagrams", "fixes", "changes"]],
+        ["finalize", 2, []],
+      ].map(([stage, weight, unlocks]) => ({ stage, weight, unlocks })),
+    }),
+  ),
+
+  http.get<{ org: string; repo: string }>(
+    "*/api/v1/orgs/:org/repos/:repo/index-jobs",
+    ({ params }) => {
+      const access = orgAccess(params.org);
+      if (access instanceof Response) return access;
+      const repo = reposOf(params.org).find((r) => r.slug === params.repo);
+      if (!repo) return apiError(404, "repo_not_found_or_no_access", "Repository not found.");
+      return HttpResponse.json<IndexJob[]>(indexJobsOf(current(repo)));
+    },
+  ),
 
   http.get<{ org: string; repo: string }>("*/api/v1/orgs/:org/repos/:repo", ({ params }) => {
     const access = orgAccess(params.org);

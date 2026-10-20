@@ -4,21 +4,18 @@ import { ArrowLeft } from "lucide-react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 
-import { ErrorState } from "@/components/feedback/error-state";
 import { PermissionState } from "@/components/feedback/permission-state";
 import { RelativeTime } from "@/components/primitives/relative-time";
 import { useOrgSlug } from "@/components/shell/use-org-slug";
 import { Progress } from "@/components/ui/progress";
-import { Skeleton } from "@/components/ui/skeleton";
 import { roleAtLeast, useOrgRole } from "@/hooks/use-org-role";
 import { $api } from "@/lib/api/client";
-import { ApiError } from "@/lib/api/errors";
 import { orgPath } from "@/lib/routes";
 
 import { ConnectRepo } from "./connect-repo";
 import { LanguageBar } from "./language-bar";
 import { RepoList } from "./repo-list";
-import { describeStatus, RepoStatus } from "./repo-status";
+import { describeStatus } from "./repo-status";
 
 export function RepoListPage() {
   return <RepoList org={useOrgSlug()} />;
@@ -53,53 +50,18 @@ export function ConnectRepoPage() {
   );
 }
 
-/** `/[org]/[repo]` until the repository workspace arrives: what it is and how indexing goes. */
+/** The overview tab until the live indexing view (1.13): progress while indexing, then the
+ * repository's numbers. The header and tabs come from the repository layout. */
 export function RepoLandingPage() {
-  const org = useOrgSlug();
-  const { repo: slug } = useParams<{ repo: string }>();
+  const { org, repo: slug } = useRepoParams();
   const repo = $api.useQuery("get", "/api/v1/orgs/{org}/repos/{repo}", {
     params: { path: { org, repo: slug } },
   });
-  if (repo.isPending) {
-    return (
-      <div role="status" aria-label="Loading repository" className="flex flex-col gap-3 p-8">
-        <Skeleton className="h-8 w-64" />
-        <Skeleton className="h-24" />
-      </div>
-    );
-  }
-  if (repo.isError) {
-    const error = repo.error as unknown;
-    return (
-      <div className="p-8">
-        <ErrorState
-          title={
-            error instanceof ApiError && error.status === 404
-              ? "Repository not found"
-              : "Couldn't load the repository"
-          }
-          description={error instanceof ApiError ? error.message : undefined}
-          onRetry={() => void repo.refetch()}
-          action={
-            <Link href={orgPath(org, "repos")} className="text-sm underline underline-offset-4">
-              All repositories
-            </Link>
-          }
-        />
-      </div>
-    );
-  }
+  if (!repo.data) return null; // the layout shows loading and errors
   const data = repo.data;
   const job = data.active_job;
   return (
-    <div className="mx-auto flex w-full max-w-4xl flex-col gap-6 p-8">
-      <header className="flex flex-col gap-2">
-        <h1 className="text-2xl font-semibold tracking-[-0.015em]">{data.name}</h1>
-        <p className="text-sm text-fg-muted">
-          {data.full_name} · {data.visibility} · {data.default_branch}
-        </p>
-        <RepoStatus repo={data} showLabel />
-      </header>
+    <div className="mx-auto flex w-full max-w-4xl flex-col gap-6 p-6">
       {job && (
         <section
           aria-label="Indexing"
@@ -123,4 +85,10 @@ export function RepoLandingPage() {
       )}
     </div>
   );
+}
+
+function useRepoParams() {
+  const org = useOrgSlug();
+  const { repo } = useParams<{ repo: string }>();
+  return { org, repo };
 }
