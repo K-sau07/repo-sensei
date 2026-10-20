@@ -13,6 +13,8 @@ import type {
   SessionInfo,
 } from "@/lib/api/types";
 
+import type { MockJob } from "./jobs";
+
 export interface MockUser {
   id: string;
   login: string;
@@ -47,9 +49,11 @@ export interface MockDb {
   repos: Record<string, MockRepo[]>;
   /** What the org's GitHub App installation can read. */
   available: Record<string, AvailableRepo[]>;
+  /** Index jobs per repository id, oldest first (see mocks/jobs.ts). */
+  jobs: Record<string, MockJob[]>;
 }
 
-const STORAGE_KEY = "sensei.mock.db.v3";
+const STORAGE_KEY = "sensei.mock.db.v4";
 export const NOW = "2026-10-18T12:00:00Z";
 export const OCTO = "0199f000-0000-7000-8000-000000000001";
 export const HUBOT = "0199f000-0000-7000-8000-000000000002";
@@ -137,6 +141,16 @@ function seed(): MockDb {
     lastOrg: { [OCTO]: "acme" },
     repos: { acme: [seedRepo()] },
     available: { acme: SEED_AVAILABLE },
+    jobs: {
+      [API_REPO_ID]: [
+        {
+          id: "0199f000-0000-7000-8000-0000000000f1",
+          repo_id: API_REPO_ID,
+          created_at: "2026-10-18T11:29:50Z",
+          queued_ms: Date.parse("2026-10-18T11:29:50Z"),
+        },
+      ],
+    },
   };
 }
 

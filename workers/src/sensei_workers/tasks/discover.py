@@ -161,6 +161,9 @@ async def _save(task: SenseiTask, target: Target, job_id: uuid.UUID, found: Disc
             files=rows,
             loc=found.loc,
             frameworks=sorted({f.name for f in found.frameworks}),
+            # For the live view: bytes per language (GitHub's names) and Compose services.
+            languages=found.github_languages(),
+            services=sorted({s for f in found.frameworks for s in f.details.get("services", [])}),
             skipped=summary.get("skipped", {}),
             invalid_ignore_globs=summary.get("invalid_ignore_globs", []),
         )

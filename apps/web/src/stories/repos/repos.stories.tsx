@@ -1,6 +1,6 @@
 import type { Meta, StoryObj } from "@storybook/nextjs-vite";
 import { delay, http, HttpResponse } from "msw";
-import { expect, screen, userEvent } from "storybook/test";
+import { expect, screen, userEvent, waitFor } from "storybook/test";
 
 import { RepoList } from "@/components/repos/repo-list";
 import type { Repo } from "@/lib/api/types";
@@ -116,5 +116,7 @@ export const FilteredToNothing: ListStory = {
     await userEvent.click(canvas.getByRole("combobox", { name: "Filter by language" }));
     await userEvent.click(await screen.findByRole("option", { name: "HCL" })); // in a portal
     await expect(await canvas.findByText("1 of 3")).toBeVisible();
+    // Let the list close before the accessibility check (its focus guards are mid-exit).
+    await waitFor(() => expect(screen.queryByRole("listbox")).toBeNull());
   },
 };

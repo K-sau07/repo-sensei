@@ -1,26 +1,31 @@
 import { http, HttpResponse, sse } from "msw";
 
-import type { AvailablePage, Estimate, IndexJob, Installation, Repo, Stage } from "@/lib/api/types";
+import type { AvailablePage, Estimate, IndexJob, Installation, Repo } from "@/lib/api/types";
 import { atLeast, db, NOW, saveDb, type MockRepo } from "@/mocks/db";
+import {
+  cancelJob,
+  eventsOf,
+  isActive,
+  jobsOf,
+  jobView,
+  startJob,
+  syncRepo,
+  upcomingEvents,
+  type RunFailure,
+} from "@/mocks/jobs";
 
 import { apiError } from "./errors";
 import { orgAccess } from "./orgs";
 import { insufficientRole } from "./session";
 
-/**
- * A mock index run takes a few seconds, worked out from the clock rather than timers, so it
- * carries on across reloads: queued, then clone, discover and merkle, then the repository is
- * ready. The org event stream reports each step as the real one does.
- */
-const PLAN: { stage: Stage; at: number; progress: number }[] = [
-  { stage: "clone", at: 0.4, progress: 0.0 },
-  { stage: "discover", at: 1.6, progress: 0.05 },
-  { stage: "merkle", at: 3.2, progress: 0.08 },
-  { stage: "finalize", at: 4.2, progress: 0.98 },
-];
-const DONE_AT = 4.8;
-
-const jobStarts = new Map<string, number>();
+/** Imports that fail to index, for the failure states. */
+const FAILING: Record<string, RunFailure> = {
+  "big-corp/monorepo": {
+    stage: "clone",
+    code: "repo_too_large",
+    message: "The repository is over 2.0 GB checked out, the limit.",
+  },
+};
 
 /** Public repositories the mock "GitHub" knows. */
 const PUBLIC: Record<string, { stars: number; languages: Record<string, number>; size: number }> = {
@@ -28,6 +33,11 @@ const PUBLIC: Record<string, { stars: number; languages: Record<string, number>;
     stars: 120_000,
     languages: { Python: 31_500_000, TypeScript: 24_800_000, CSS: 400_000 },
     size: 1_600_000,
+  },
+  "big-corp/monorepo": {
+    stars: 1200,
+    languages: { Java: 900_000_000, Kotlin: 400_000_000 },
+    size: 3_000_000,
   },
   "fastapi/full-stack-fastapi-template": {
     stars: 40_000,
@@ -59,93 +69,13 @@ function estimateFor(fullName: string, isPrivate: boolean, languages: Record<str
   } satisfies Estimate;
 }
 
-/** The repository as of now: a queued or running mock job moves on with the clock. */
-export function current(repo: MockRepo): MockRepo {
-  const job = repo.active_job;
-  if (!job) return repo;
-  const started = jobStarts.get(job.id) ?? Date.now();
-  jobStarts.set(job.id, started);
-  const elapsed = (Date.now() - started) / 1000;
-  if (elapsed >= DONE_AT) {
-    repo.active_job = null;
-    repo.status = "ready";
-    repo.last_indexed_sha = "c0ffee0000000000000000000000000000000001";
-    repo.last_indexed_at = new Date().toISOString();
-    repo.file_count = repo.file_count ?? 1234;
-    repo.loc = repo.loc ?? 98_765;
-    saveDb();
-    return repo;
-  }
-  const step = PLAN.filter((s) => elapsed >= s.at).at(-1);
-  repo.active_job = step
-    ? {
-        ...job,
-        status: "running",
-        stage: step.stage,
-        progress: step.progress,
-        eta_s: Math.ceil(DONE_AT - elapsed),
-      }
-    : job;
-  repo.status = step ? "indexing" : repo.status;
-  return repo;
-}
-
-const STAGE_ORDER: Stage[] = [
-  "clone",
-  "discover",
-  "merkle",
-  "parse",
-  "symbols",
-  "chunks",
-  "embeddings",
-  "summaries",
-  "graph",
-  "links",
-  "finalize",
-];
-
-/** The repository's index runs, as the API lists them (newest first). */
-function indexJobsOf(repo: MockRepo): IndexJob[] {
-  const job = repo.active_job;
-  const base = {
-    repo_id: repo.id,
-    snapshot_id: null,
-    kind: "full" as const,
-    error: null,
-    created_at: repo.created_at,
-    started_at: repo.created_at,
-    finished_at: null,
-    eta_s: null,
-  };
-  if (job) {
-    const at = job.stage ? STAGE_ORDER.indexOf(job.stage) : -1;
-    const done = STAGE_ORDER.slice(0, Math.max(0, at));
-    return [
-      {
-        ...base,
-        id: job.id,
-        status: job.status,
-        stage: job.stage,
-        progress: job.progress,
-        eta_s: job.eta_s,
-        stages: Object.fromEntries(done.map((stage) => [stage, { status: "done" }])),
-        features: done.includes("discover") ? ["code_browser"] : [],
-      },
-    ];
-  }
-  if (repo.status !== "ready") return [];
-  return [
-    {
-      ...base,
-      id: `${repo.id}-last`,
-      status: "succeeded",
-      stage: "finalize",
-      progress: 1,
-      finished_at: repo.last_indexed_at ?? null,
-      stages: {},
-      features: ["code_browser"],
-    },
-  ];
+function repoOf(org: string, slug: string): MockRepo | Response {
+  const access = orgAccess(org);
+  if (access instanceof Response) return access;
+  const repo = reposOf(org).find((r) => r.slug === slug);
+  return repo
+    ? syncRepo(repo)
+    : apiError(404, "repo_not_found_or_no_access", "Repository not found.");
 }
 
 function reposOf(org: string): MockRepo[] {
@@ -163,8 +93,6 @@ function slugFor(org: string, owner: string, name: string): string {
 
 function connect(org: string, fields: Partial<Repo> & Pick<Repo, "full_name">): MockRepo {
   const [owner = "", name = ""] = fields.full_name.split("/");
-  const jobId = crypto.randomUUID();
-  jobStarts.set(jobId, Date.now());
   const repo: MockRepo = {
     id: crypto.randomUUID(),
     slug: slugFor(org, owner, name),
@@ -179,15 +107,18 @@ function connect(org: string, fields: Partial<Repo> & Pick<Repo, "full_name">): 
     languages: fields.languages ?? {},
     settings: { tracked_branches: [], ignore_globs: [], auto_index: true },
     last_indexed_sha: null,
-    index_job_id: jobId,
+    index_job_id: null,
     file_count: null,
     loc: null,
     last_indexed_at: null,
-    active_job: { id: jobId, status: "queued", stage: null, progress: 0, eta_s: null },
+    active_job: null,
     created_at: NOW,
     updated_at: NOW,
   };
   reposOf(org).push(repo);
+  const job = startJob(repo.id, FAILING[fields.full_name]);
+  repo.index_job_id = job.id;
+  syncRepo(repo);
   saveDb();
   return repo;
 }
@@ -198,6 +129,50 @@ function adminOf(org: string) {
   if (!atLeast(access.role, "admin")) return insufficientRole("admin", access.role);
   return access;
 }
+
+const TERMINAL = new Set(["done", "failed", "cancelled"]);
+
+const jobEvents =
+  typeof EventSource === "undefined"
+    ? []
+    : [
+        sse<{ message: string }, { org: string; repo: string; job: string }>(
+          "*/api/v1/orgs/:org/repos/:repo/index-jobs/:job/events",
+          ({ client, params, request }) => {
+            const found = reposOf(params.org).find((r) => r.slug === params.repo);
+            const job = found ? jobsOf(found.id).find((j) => j.id === params.job) : undefined;
+            if (!job) {
+              client.close();
+              return;
+            }
+            // Resume after the last event the browser saw, as the real stream does.
+            const after = request.headers.get("last-event-id");
+            const past = eventsOf(job);
+            const start = after ? past.findIndex((e) => e.id === after) + 1 : 0;
+            const send = (event: (typeof past)[number]) => {
+              const { at: _at, id, ...payload } = event;
+              client.send({
+                id,
+                event: event.type,
+                data: JSON.stringify({
+                  ...payload,
+                  id,
+                  job_id: job.id,
+                  ts: new Date(job.queued_ms + event.at).toISOString(),
+                }),
+              } as never);
+              if (TERMINAL.has(event.type)) client.close();
+            };
+            for (const event of past.slice(start)) send(event);
+            if (past.some((e) => TERMINAL.has(e.type))) return;
+            for (const { delay, event } of upcomingEvents(job)) {
+              setTimeout(() => {
+                if (job.cancelled_after_ms === undefined) send(event);
+              }, delay);
+            }
+          },
+        ),
+      ];
 
 const orgEvents =
   typeof EventSource === "undefined"
@@ -211,7 +186,7 @@ const orgEvents =
             const tick = () => {
               for (const repo of reposOf(params.org)) {
                 const before = repo.active_job;
-                const now = current(repo);
+                const now = syncRepo(repo);
                 const key = now.active_job
                   ? `${now.active_job.status}:${now.active_job.stage ?? ""}`
                   : now.status;
@@ -246,6 +221,7 @@ const orgEvents =
 
 export const repoHandlers = [
   ...orgEvents,
+  ...jobEvents,
 
   http.get<{ org: string }>("*/api/v1/orgs/:org/github/installations", ({ params }) => {
     const access = adminOf(params.org);
@@ -287,7 +263,7 @@ export const repoHandlers = [
   http.get<{ org: string }>("*/api/v1/orgs/:org/repos", ({ params }) => {
     const access = orgAccess(params.org);
     if (access instanceof Response) return access;
-    return HttpResponse.json<Repo[]>(reposOf(params.org).map(current));
+    return HttpResponse.json<Repo[]>(reposOf(params.org).map(syncRepo));
   }),
 
   http.post<{ org: string }>("*/api/v1/orgs/:org/repos/estimate", async ({ params, request }) => {
@@ -420,11 +396,55 @@ export const repoHandlers = [
   http.get<{ org: string; repo: string }>(
     "*/api/v1/orgs/:org/repos/:repo/index-jobs",
     ({ params }) => {
-      const access = orgAccess(params.org);
+      const found = repoOf(params.org, params.repo);
+      if (found instanceof Response) return found;
+      return HttpResponse.json<IndexJob[]>(jobsOf(found.id).map(jobView).reverse());
+    },
+  ),
+
+  http.get<{ org: string; repo: string; job: string }>(
+    "*/api/v1/orgs/:org/repos/:repo/index-jobs/:job",
+    ({ params }) => {
+      const found = repoOf(params.org, params.repo);
+      if (found instanceof Response) return found;
+      const job = jobsOf(found.id).find((j) => j.id === params.job);
+      if (!job) return apiError(404, "index_job_not_found", "Index job not found.");
+      return HttpResponse.json<IndexJob>(jobView(job));
+    },
+  ),
+
+  http.post<{ org: string; repo: string }>(
+    "*/api/v1/orgs/:org/repos/:repo/reindex",
+    ({ params }) => {
+      const access = adminOf(params.org);
       if (access instanceof Response) return access;
-      const repo = reposOf(params.org).find((r) => r.slug === params.repo);
-      if (!repo) return apiError(404, "repo_not_found_or_no_access", "Repository not found.");
-      return HttpResponse.json<IndexJob[]>(indexJobsOf(current(repo)));
+      const found = repoOf(params.org, params.repo);
+      if (found instanceof Response) return found;
+      const latest = jobsOf(found.id).at(-1);
+      if (latest && isActive(jobView(latest))) {
+        return apiError(409, "index_job_running", "This repository is already being indexed.");
+      }
+      const job = startJob(found.id, FAILING[found.full_name]);
+      syncRepo(found);
+      return HttpResponse.json<IndexJob>(jobView(job), { status: 202 });
+    },
+  ),
+
+  http.post<{ org: string; repo: string; job: string }>(
+    "*/api/v1/orgs/:org/repos/:repo/index-jobs/:job/cancel",
+    ({ params }) => {
+      const access = adminOf(params.org);
+      if (access instanceof Response) return access;
+      const found = repoOf(params.org, params.repo);
+      if (found instanceof Response) return found;
+      const job = jobsOf(found.id).find((j) => j.id === params.job);
+      if (!job) return apiError(404, "index_job_not_found", "Index job not found.");
+      if (!isActive(jobView(job))) {
+        return apiError(409, "index_job_finished", "This index job has already ended.");
+      }
+      cancelJob(job);
+      syncRepo(found);
+      return HttpResponse.json<IndexJob>(jobView(job));
     },
   ),
 
@@ -433,6 +453,6 @@ export const repoHandlers = [
     if (access instanceof Response) return access;
     const repo = reposOf(params.org).find((r) => r.slug === params.repo);
     if (!repo) return apiError(404, "repo_not_found_or_no_access", "Repository not found.");
-    return HttpResponse.json<Repo>(current(repo));
+    return HttpResponse.json<Repo>(syncRepo(repo));
   }),
 ];

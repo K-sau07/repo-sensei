@@ -125,3 +125,8 @@ export function tabForPath(rest: string): RepoTab {
 }
 
 export const BRANCH_ICON = GitBranch;
+
+/** The tab a feature lives on (for "available now →" links). */
+export function tabForFeature(feature: Feature): RepoTab | undefined {
+  return ALL_TABS.find((tab) => tab.feature === feature);
+}

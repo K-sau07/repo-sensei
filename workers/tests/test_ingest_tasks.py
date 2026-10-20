@@ -314,6 +314,8 @@ def test_discover_records_the_snapshot_files(
     assert (job.status, job.stage, discover["status"]) == (JobStatus.RUNNING, "discover", "done")
     assert discover["details"]["files"] == len(SECOND_COMMIT_FILES)
     assert discover["details"]["skipped"]["symlinks"] == 1  # "outside" points out of the tree
+    assert set(discover["details"]["languages"]) == {"Python", "Shell"}
+    assert discover["details"]["services"] == []
     files = runtime.run(_files(system, repo_id))
     assert sorted(files) == SECOND_COMMIT_FILES
     app = files["src/app.py"]

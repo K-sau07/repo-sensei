@@ -23,6 +23,14 @@ export const queryKeys = {
   /** Every page and search of the "connect a repository" picker. */
   availableRepos: (slug: string) =>
     $api.queryOptions("get", "/api/v1/orgs/{org}/github/repos", org(slug)).queryKey.slice(0, 2),
+  indexJobs: (slug: string, repo: string) =>
+    $api.queryOptions("get", "/api/v1/orgs/{org}/repos/{repo}/index-jobs", {
+      params: { path: { org: slug, repo } },
+    }).queryKey,
+  indexJob: (slug: string, repo: string, job: string) =>
+    $api.queryOptions("get", "/api/v1/orgs/{org}/repos/{repo}/index-jobs/{job}", {
+      params: { path: { org: slug, repo, job } },
+    }).queryKey,
   installations: (slug: string) =>
     $api.queryOptions("get", "/api/v1/orgs/{org}/github/installations", org(slug)).queryKey,
 };

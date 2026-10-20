@@ -1,11 +1,11 @@
 import { Suspense } from "react";
 
-import { RepoLandingPage } from "@/components/repos/repo-pages";
+import { RepoOverview } from "@/components/indexing/index-pages";
 
 export default function RepoPage() {
   return (
     <Suspense>
-      <RepoLandingPage />
+      <RepoOverview />
     </Suspense>
   );
 }

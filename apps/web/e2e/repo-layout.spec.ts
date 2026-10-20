@@ -35,7 +35,8 @@ test.describe("repository layout", () => {
     await page.getByRole("button", { name: "More" }).click();
     await page.getByRole("menuitem", { name: "Index" }).click();
     await expect(page).toHaveURL(/\/acme\/api\/index$/);
-    await expect(page.getByRole("button", { name: "Index" })).toBeVisible(); // the menu names it
+    // The menu now names the tab it is on.
+    await expect(page.getByRole("button", { name: "Index", exact: true })).toBeVisible();
   });
 
   test("an unknown repository is not found", async ({ page }) => {
