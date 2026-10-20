@@ -37,6 +37,13 @@ class GitHubError(Exception):
         self.status = status
 
 
+class GitHubUnreachable(GitHubError):
+    """No answer from GitHub (network failure or timeout), after retries."""
+
+    def __init__(self, cause: Exception) -> None:
+        super().__init__(503, f"unreachable ({type(cause).__name__})")
+
+
 class RateLimited(GitHubError):
     """Out of requests until ``reset_at``; reschedule rather than retry now."""
 
@@ -125,9 +132,9 @@ class GitHubClient:
                     json=json_body,
                     timeout=self._settings.timeout_seconds,
                 )
-            except httpx.TransportError:
+            except httpx.TransportError as exc:
                 if attempt > self._settings.max_retries:
-                    raise
+                    raise GitHubUnreachable(exc) from exc
                 await self._sleep(self._backoff(attempt))
                 continue
 

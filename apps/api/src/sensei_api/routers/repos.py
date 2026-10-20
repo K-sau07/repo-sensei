@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field
 
 from sensei_api.deps import DbSession
 from sensei_api.orgs import OrgAccessDep
-from sensei_api.repos import RepoAccessDep, RepoDep, RepoServiceDep, checked
+from sensei_api.repos import RepoAccessDep, RepoDep, RepoServiceDep, ViewerDep, checked
 from sensei_core.jobs import RepoJobs
 from sensei_core.models import Repo, RepoSource, RepoStatus
 from sensei_core.repos.service import RepoSettings
@@ -123,12 +123,14 @@ async def available_repos(
     access: OrgAccessDep,
     db: DbSession,
     repos: RepoServiceDep,
+    viewer: ViewerDep,
     q: Annotated[str, Query(max_length=100)] = "",
     page: Annotated[int, Query(ge=1)] = 1,
     per_page: Annotated[int, Query(ge=1, le=100)] = 30,
 ) -> AvailablePage:
-    """Repositories the org's GitHub installations can read (admins), marking connected ones."""
-    found = await repos.available(db, access, query=q)
+    """Repositories the org's GitHub installations cover that the admin can read on GitHub
+    themselves (admins), marking connected ones."""
+    found = await repos.available(db, access, viewer, query=q)
     start = (page - 1) * per_page
     items = [
         AvailableRepoOut(
@@ -149,28 +151,41 @@ async def available_repos(
 
 @router.post("/repos", response_model=RepoOut, status_code=status.HTTP_201_CREATED)
 async def connect_repo(
-    body: ConnectRepo, access: OrgAccessDep, db: DbSession, repos: RepoServiceDep
+    body: ConnectRepo,
+    access: OrgAccessDep,
+    db: DbSession,
+    repos: RepoServiceDep,
+    viewer: ViewerDep,
 ) -> RepoOut:
-    """Connect a repository one of the org's installations can read (admins)."""
-    return RepoOut.build(await repos.connect(db, access, body.github_repo_id))
+    """Connect a repository one of the org's installations covers and the admin can read on
+    GitHub (admins)."""
+    return RepoOut.build(await repos.connect(db, access, body.github_repo_id, viewer))
 
 
 @router.post("/repos/import", response_model=RepoOut, status_code=status.HTTP_201_CREATED)
 async def import_repo(
-    body: ImportRepo, access: OrgAccessDep, db: DbSession, repos: RepoServiceDep
+    body: ImportRepo,
+    access: OrgAccessDep,
+    db: DbSession,
+    repos: RepoServiceDep,
+    viewer: ViewerDep,
 ) -> RepoOut:
     """Import a public GitHub repository by URL (admins). Private ones answer 422
     ``repo_not_public``: they connect through the GitHub App."""
-    return RepoOut.build(await repos.import_public(db, access, body.url))
+    return RepoOut.build(await repos.import_public(db, access, body.url, viewer))
 
 
 @router.post("/repos/estimate", response_model=EstimateOut)
 async def estimate_repo(
-    body: EstimateRequest, access: OrgAccessDep, db: DbSession, repos: RepoServiceDep
+    body: EstimateRequest,
+    access: OrgAccessDep,
+    db: DbSession,
+    repos: RepoServiceDep,
+    viewer: ViewerDep,
 ) -> EstimateOut:
     """Size, index time and cost before connecting, by public URL or GitHub repository id."""
     facts, estimate = await repos.estimate(
-        db, access, url=body.url, github_repo_id=body.github_repo_id
+        db, access, viewer=viewer, url=body.url, github_repo_id=body.github_repo_id
     )
     return EstimateOut(
         full_name=str(facts.body.get("full_name")),

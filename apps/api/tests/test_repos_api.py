@@ -22,10 +22,20 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sensei_core.auth.github_login import store_tokens
 from sensei_core.config import GitHubSettings, Settings
 from sensei_core.db.tenancy import set_org_context
-from sensei_core.github.client import GitHubClient
+from sensei_core.github.client import Credential, GitHubClient
 from sensei_core.github.oauth import GitHubTokens
 from sensei_core.mail import MemoryMailer
-from sensei_core.models import AuditEvent, GitHubInstallation, Membership, Org, Repo, Role, User
+from sensei_core.models import (
+    AuditEvent,
+    GitHubInstallation,
+    Membership,
+    Org,
+    Repo,
+    RepoSource,
+    RepoStatus,
+    Role,
+    User,
+)
 from sensei_core.orgs.service import OrgService
 from sensei_core.repos.access import RepoAccess
 from sensei_testing import make_user, sign_in
@@ -87,6 +97,7 @@ class FakeGitHub:
     def __init__(self, router: respx.MockRouter) -> None:
         self.user_can_read: dict[str, set[int]] = {}  # user token -> readable repository ids
         self.user_checks = 0
+        self.public_lookups: list[str] = []
         router.post(f"{GITHUB_API}/app/installations/{INSTALLATION}/access_tokens").mock(
             return_value=httpx.Response(
                 201,
@@ -103,6 +114,9 @@ class FakeGitHub:
             return_value=httpx.Response(
                 200, json={"total_count": len(INSTALLED), "repositories": INSTALLED}
             )
+        )
+        router.get(f"{GITHUB_API}/user/installations/{INSTALLATION}/repositories").mock(
+            side_effect=self._user_installation
         )
         router.get(url__regex=rf"{GITHUB_API}/repositories/\d+$").mock(side_effect=self._by_id)
         router.get(url__regex=rf"{GITHUB_API}/repos/[^/]+/[^/]+/languages$").mock(
@@ -125,10 +139,17 @@ class FakeGitHub:
             return httpx.Response(200, json=repo)
         return httpx.Response(404, json={"message": "Not Found"})
 
-    @staticmethod
-    def _anonymous(repo: dict[str, Any] | None):
+    def _user_installation(self, request: httpx.Request) -> httpx.Response:
+        """What the user's own token can see of the installation."""
+        token = request.headers.get("authorization", "").removeprefix("Bearer ")
+        assert token.startswith("ghu_")  # never the installation's token
+        readable = [r for r in INSTALLED if r["id"] in self.user_can_read.get(token, set())]
+        return httpx.Response(200, json={"total_count": len(readable), "repositories": readable})
+
+    def _anonymous(self, repo: dict[str, Any] | None):
         def answer(request: httpx.Request) -> httpx.Response:
-            assert "authorization" not in request.headers  # public data, asked anonymously
+            # Public data, asked with the admin's own token (their rate limit, not the server's).
+            self.public_lookups.append(request.headers.get("authorization", ""))
             return httpx.Response(200, json=repo) if repo else httpx.Response(404)
 
         return answer
@@ -240,7 +261,8 @@ async def _member(
 async def test_admins_see_what_the_installations_offer(
     app: FastAPI, client: httpx.AsyncClient, db_session: AsyncSession, fake: FakeGitHub
 ) -> None:
-    _, headers = await _admin_org(app, client, db_session)
+    admin, headers = await _admin_org(app, client, db_session)
+    fake.user_can_read[f"ghu_{admin.login}"] = {101, 102, 103, 104}
     page = (await client.get(f"{API}/orgs/acme/github/repos")).json()
     assert page["total"] == 4
     assert [r["full_name"] for r in page["items"]] == [
@@ -261,6 +283,25 @@ async def test_admins_see_what_the_installations_offer(
         await client.get(f"{API}/orgs/acme/github/repos", params={"page": 2, "per_page": 3})
     ).json()
     assert [r["full_name"] for r in paged["items"]] == ["other-gh/api"]
+
+
+async def test_admins_only_get_what_they_can_read_on_github(
+    app: FastAPI, client: httpx.AsyncClient, db_session: AsyncSession, fake: FakeGitHub
+) -> None:
+    admin, headers = await _admin_org(app, client, db_session)
+    fake.user_can_read[f"ghu_{admin.login}"] = {101, 102}
+    page = (await client.get(f"{API}/orgs/acme/github/repos")).json()
+    assert [r["full_name"] for r in page["items"]] == ["acme-gh/api", "acme-gh/web"]
+    # The installation covers 103, but this admin can't read it on GitHub.
+    for call in (
+        client.post(f"{API}/orgs/acme/repos", json={"github_repo_id": 103}, headers=headers),
+        client.post(
+            f"{API}/orgs/acme/repos/estimate", json={"github_repo_id": 103}, headers=headers
+        ),
+    ):
+        response = await call
+        assert response.status_code == 404
+        assert response.json()["error"]["code"] == "repo_not_in_installation"
 
 
 async def test_members_cannot_list_or_connect(
@@ -288,6 +329,7 @@ async def test_connect_a_repository(
     app: FastAPI, client: httpx.AsyncClient, db_session: AsyncSession, fake: FakeGitHub
 ) -> None:
     admin, headers = await _admin_org(app, client, db_session)
+    fake.user_can_read[f"ghu_{admin.login}"] = {101, 102, 103, 104}
     response = await client.post(
         f"{API}/orgs/acme/repos", json={"github_repo_id": 101}, headers=headers
     )
@@ -336,7 +378,8 @@ async def test_a_repository_outside_the_installations_is_not_found(
 async def test_slugs_avoid_collisions_and_org_pages(
     app: FastAPI, client: httpx.AsyncClient, db_session: AsyncSession, fake: FakeGitHub
 ) -> None:
-    _, headers = await _admin_org(app, client, db_session)
+    admin, headers = await _admin_org(app, client, db_session)
+    fake.user_can_read[f"ghu_{admin.login}"] = {101, 102, 103, 104}
     slugs: list[str] = []
     for repo_id in (101, 104, 103):
         response = await client.post(
@@ -394,7 +437,8 @@ async def test_imports_that_are_refused(
 async def test_estimate_before_connecting(
     app: FastAPI, client: httpx.AsyncClient, db_session: AsyncSession, fake: FakeGitHub
 ) -> None:
-    _, headers = await _admin_org(app, client, db_session)
+    admin, headers = await _admin_org(app, client, db_session)
+    fake.user_can_read[f"ghu_{admin.login}"] = {101}
     by_url = await client.post(
         f"{API}/orgs/acme/repos/estimate",
         json={"url": "github.com/langflow-ai/langflow"},
@@ -403,6 +447,7 @@ async def test_estimate_before_connecting(
     assert by_url.status_code == 200, by_url.text
     estimate = by_url.json()
     assert estimate["full_name"] == "langflow-ai/langflow"
+    assert fake.public_lookups == [f"Bearer ghu_{admin.login}"]  # not anonymous
     # The mocked GitHub reports 10 KB of code in two languages.
     assert (estimate["files"], estimate["tokens"]) == (1, 2857)  # 10,000 bytes / 3.5
     assert estimate["languages"] == {"Python": 9000, "TypeScript": 1000}
@@ -470,12 +515,13 @@ async def test_access_answers_are_cached_and_can_be_dropped(
     admin, headers = await _admin_org(app, client, db_session)
     fake.user_can_read[f"ghu_{admin.login}"] = {101}
     await client.post(f"{API}/orgs/acme/repos", json={"github_repo_id": 101}, headers=headers)
+    assert fake.user_checks == 1  # connecting checks the admin can read it
     for _ in range(3):
         assert (await client.get(f"{API}/orgs/acme/repos/api")).status_code == 200
-    assert fake.user_checks == 1  # one GitHub call, then the cache
+    assert fake.user_checks == 2  # one GitHub call, then the cache
     repo = await db_session.scalar(select(Repo).where(Repo.github_repo_id == 101))
     assert repo is not None
-    key = f"access:{admin.id}:{repo.id}"
+    key = f"access:{admin.id}:{repo.id}:0.0"
     assert 0 < await fake_redis.ttl(key) <= 300
 
     # Access revoked on GitHub: still allowed until the cache is dropped, then refused.
@@ -483,15 +529,53 @@ async def test_access_answers_are_cached_and_can_be_dropped(
     assert (await client.get(f"{API}/orgs/acme/repos/api")).status_code == 200
     readers = _readers(fake_redis)
     await readers.forget_repo(repo.id)
-    assert await fake_redis.exists(key) == 0
     assert (await client.get(f"{API}/orgs/acme/repos/api")).status_code == 404
-    assert fake.user_checks == 2
+    assert fake.user_checks == 3
+    assert await fake_redis.exists(f"access:{admin.id}:{repo.id}:0.1") == 1
 
     # Dropping by user works the same way.
     fake.user_can_read[f"ghu_{admin.login}"] = {101}
     await readers.forget_user(admin.id)
     assert (await client.get(f"{API}/orgs/acme/repos/api")).status_code == 200
-    assert fake.user_checks == 3
+    assert fake.user_checks == 4
+
+
+async def test_an_answer_from_before_a_forget_is_never_read(
+    db_session: AsyncSession, fake: FakeGitHub, fake_redis: FakeAsyncRedis
+) -> None:
+    """GitHub answers, a forget lands, then the (stale) answer is written: it must not count."""
+    user = await make_user(db_session)
+
+    async def token_for(_: User) -> str:
+        return f"ghu_{user.login}"
+
+    async with httpx.AsyncClient() as http:
+        readers = RepoAccess(fake_redis, GitHubClient(GH_SETTINGS, http), token_for)
+        await _forget_race(readers, user, fake)
+
+
+async def _forget_race(readers: RepoAccess, user: User, fake: FakeGitHub) -> None:
+    repo = Repo(
+        id=uuid.uuid4(),
+        org_id=uuid.uuid4(),
+        source=RepoSource.GITHUB_APP,
+        status=RepoStatus.READY,
+        github_repo_id=101,
+    )
+    token = f"ghu_{user.login}"
+    fake.user_can_read[token] = {101}
+    original = readers._ask_github  # pyright: ignore[reportPrivateUsage]
+
+    async def slow_answer(credential: Credential, asked: Repo) -> bool:
+        allowed = await original(credential, asked)
+        await readers.forget_repo(asked.id)  # revoked while GitHub was answering
+        fake.user_can_read[token] = set()
+        return allowed
+
+    readers._ask_github = slow_answer  # type: ignore[method-assign]  # pyright: ignore[reportPrivateUsage]
+    assert await readers.can_read(user, repo) is True  # the answer GitHub gave at the time
+    readers._ask_github = original  # type: ignore[method-assign]  # pyright: ignore[reportPrivateUsage]
+    assert await readers.can_read(user, repo) is False  # asked again, not the stale answer
 
 
 async def test_without_a_github_token_members_are_asked_to_sign_in_again(

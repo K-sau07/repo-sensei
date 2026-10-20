@@ -13,7 +13,13 @@ import respx.models
 from fakeredis import FakeAsyncRedis
 
 from sensei_core.config import AuthSettings, GitHubSettings
-from sensei_core.github.client import Credential, GitHubClient, GitHubError, RateLimited
+from sensei_core.github.client import (
+    Credential,
+    GitHubClient,
+    GitHubError,
+    GitHubUnreachable,
+    RateLimited,
+)
 from sensei_core.github.etags import RedisETagCache
 from sensei_core.security.crypto import TokenCipher
 
@@ -98,8 +104,11 @@ async def test_retries_network_errors(sleeps: Sleeps) -> None:
         )
         assert await _client(http, sleeps).get_json("/user", ALICE) == {"ok": True}
         router.get(f"{API}/orgs").mock(side_effect=httpx.ConnectError("down"))
-        with pytest.raises(httpx.ConnectError):
+        # After the retries it is a GitHubError like any other: callers handle one kind.
+        with pytest.raises(GitHubUnreachable) as exc:
             await _client(http, sleeps, max_retries=1).get_json("/orgs", ALICE)
+        assert exc.value.status == 503
+        assert isinstance(exc.value.__cause__, httpx.ConnectError)
 
 
 async def test_client_errors_are_not_retried(sleeps: Sleeps) -> None:

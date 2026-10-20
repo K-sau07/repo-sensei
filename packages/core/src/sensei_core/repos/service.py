@@ -43,6 +43,17 @@ class GitHubUnavailableError(DomainError):
     code = "github_unavailable"
 
 
+class GitHubReauthRequiredError(DomainError):
+    """The user's GitHub token no longer works: they must sign in with GitHub again."""
+
+    status_code = 401
+    code = "github_reauth_required"
+
+
+def _reauth() -> GitHubReauthRequiredError:
+    return GitHubReauthRequiredError("Sign in with GitHub again to continue.")
+
+
 def _now() -> datetime:
     return datetime.now(UTC)
 
@@ -135,9 +146,10 @@ class RepoService:
         return list(rows)
 
     async def available(
-        self, db: AsyncSession, access: OrgAccess, *, query: str = ""
+        self, db: AsyncSession, access: OrgAccess, viewer: Credential, *, query: str = ""
     ) -> list[AvailableRepo]:
-        """Every repository the org's installations can read, filtered by ``query``."""
+        """The repositories the org's installations cover that the admin (``viewer``, their own
+        GitHub credential) can read too, filtered by ``query``."""
         require_role(access, Role.ADMIN)
         if self._app is None:
             return []
@@ -151,11 +163,9 @@ class RepoService:
         needle = query.strip().lower()
         found: dict[int, AvailableRepo] = {}
         for installation in await self._installations(db, access):
-            credential = await self._app.installation_credential(installation.installation_id)
+            path = f"/user/installations/{installation.installation_id}/repositories"
             try:
-                async for item in self._app.client.paginate(
-                    "/installation/repositories", credential, item_key="repositories"
-                ):
+                async for item in self._app.client.paginate(path, viewer, item_key="repositories"):
                     repo = as_object(item)
                     if repo is None or not isinstance(repo.get("id"), int):
                         continue
@@ -179,13 +189,24 @@ class RepoService:
                     if len(found) >= MAX_LISTED:
                         break
             except GitHubError as exc:
+                if exc.status in (403, 404):  # the admin can't see this installation on GitHub
+                    continue
+                if exc.status == 401:
+                    raise _reauth() from exc
                 raise GitHubUnavailableError("Couldn't list repositories on GitHub.") from exc
         return sorted(found.values(), key=lambda repo: repo.full_name.lower())
 
     async def _facts_via_installation(
-        self, db: AsyncSession, access: OrgAccess, github_repo_id: int
+        self, db: AsyncSession, access: OrgAccess, github_repo_id: int, viewer: Credential
     ) -> RepoFacts:
-        """Find which of the org's installations covers ``github_repo_id``."""
+        """Find which of the org's installations covers ``github_repo_id``, which the admin
+        (``viewer``) must be able to read on GitHub themselves."""
+        not_found = NotFoundError(
+            "None of this organization's GitHub installations can read that repository.",
+            code="repo_not_in_installation",
+        )
+        if self._app is not None and not await self._viewer_reads(viewer, github_repo_id):
+            raise not_found
         if self._app is not None:
             for installation in await self._installations(db, access):
                 credential = await self._app.installation_credential(installation.installation_id)
@@ -205,15 +226,25 @@ class RepoService:
                         continue
                     raise GitHubUnavailableError("GitHub is not responding.") from exc
                 return RepoFacts(body=body, languages=languages, installation=installation)
-        raise NotFoundError(
-            "None of this organization's GitHub installations can read that repository.",
-            code="repo_not_in_installation",
-        )
+        raise not_found
 
-    async def _facts_public(self, url: str) -> RepoFacts:
+    async def _viewer_reads(self, viewer: Credential, github_repo_id: int) -> bool:
+        try:
+            await self._client.get_json(f"/repositories/{github_repo_id}", viewer)
+        except GitHubError as exc:
+            if exc.status in (403, 404):
+                return False
+            if exc.status == 401:
+                raise _reauth() from exc
+            raise GitHubUnavailableError("GitHub is not responding.") from exc
+        return True
+
+    async def _facts_public(self, url: str, viewer: Credential | None) -> RepoFacts:
+        """Facts about a public repository, asked with the admin's own credential when there is
+        one (their own rate limit, not the server's shared anonymous one)."""
         owner, name = parse_github_url(url, web_url=self._client.web_url)
         path = f"/repos/{quote(owner)}/{quote(name)}"
-        anonymous = Credential.anonymous()
+        anonymous = viewer or Credential.anonymous()
         not_public = InvalidError(
             f"{owner}/{name} isn't a public GitHub repository (or doesn't exist). Private "
             "repositories connect through the GitHub App.",
@@ -221,13 +252,14 @@ class RepoService:
         )
         try:
             body = _repo_object(await self._client.get_json(path, anonymous))
+            # Asked with the admin's token, a private repository they can read answers too.
             if body.get("private") or body.get("visibility") not in (None, "public"):
                 raise not_public
             languages = _languages(await self._client.get_json(f"{path}/languages", anonymous))
         except RateLimited as exc:
             raise GitHubUnavailableError(
-                "GitHub's limit for anonymous requests is reached. Try again later, or connect "
-                "the repository through the GitHub App.",
+                "GitHub's request limit is reached. Try again later, or connect the repository "
+                "through the GitHub App.",
                 code="github_rate_limited",
             ) from exc
         except GitHubError as exc:
@@ -238,14 +270,18 @@ class RepoService:
 
     # ------------------------------------------------------------------ connect / import
 
-    async def connect(self, db: AsyncSession, access: OrgAccess, github_repo_id: int) -> Repo:
+    async def connect(
+        self, db: AsyncSession, access: OrgAccess, github_repo_id: int, viewer: Credential
+    ) -> Repo:
         require_role(access, Role.ADMIN)
-        facts = await self._facts_via_installation(db, access, github_repo_id)
+        facts = await self._facts_via_installation(db, access, github_repo_id, viewer)
         return await self._save(db, access, facts, RepoSource.GITHUB_APP)
 
-    async def import_public(self, db: AsyncSession, access: OrgAccess, url: str) -> Repo:
+    async def import_public(
+        self, db: AsyncSession, access: OrgAccess, url: str, viewer: Credential | None
+    ) -> Repo:
         require_role(access, Role.ADMIN)
-        facts = await self._facts_public(url)
+        facts = await self._facts_public(url, viewer)
         return await self._save(db, access, facts, RepoSource.PUBLIC_URL)
 
     async def estimate(
@@ -253,6 +289,7 @@ class RepoService:
         db: AsyncSession,
         access: OrgAccess,
         *,
+        viewer: Credential,
         url: str | None = None,
         github_repo_id: int | None = None,
     ) -> tuple[RepoFacts, IndexEstimate]:
@@ -260,9 +297,9 @@ class RepoService:
         if (url is None) == (github_repo_id is None):
             raise InvalidError("Give either a URL or a GitHub repository id.", code="invalid_input")
         facts = (
-            await self._facts_public(url)
+            await self._facts_public(url, viewer)
             if url is not None
-            else await self._facts_via_installation(db, access, github_repo_id or 0)
+            else await self._facts_via_installation(db, access, github_repo_id or 0, viewer)
         )
         return facts, estimate_index(facts.size_kb, facts.languages, self._calc)
 

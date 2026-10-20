@@ -15,13 +15,17 @@ from sensei_api.routers.auth import GitHubOAuthDep
 from sensei_api.routers.github import GitHubAppDep
 from sensei_core.auth.github_login import fresh_access_token
 from sensei_core.config import Settings
-from sensei_core.errors import DomainError, NotFoundError
-from sensei_core.github.client import GitHubClient, GitHubError
+from sensei_core.errors import NotFoundError
+from sensei_core.github.client import Credential, GitHubClient, GitHubError
 from sensei_core.github.etags import RedisETagCache
 from sensei_core.github.oauth import OAuthError
 from sensei_core.models import Repo, User
 from sensei_core.repos.access import RepoAccess
-from sensei_core.repos.service import GitHubUnavailableError, RepoService
+from sensei_core.repos.service import (
+    GitHubReauthRequiredError,
+    GitHubUnavailableError,
+    RepoService,
+)
 from sensei_core.security.crypto import TokenCipher
 from sensei_core.usage import CostCalculator
 
@@ -66,9 +70,17 @@ def get_repo_access(request: Request, db: DbSession, oauth: GitHubOAuthDep) -> R
 RepoAccessDep = Annotated[RepoAccess, Depends(get_repo_access)]
 
 
-class GitHubReauthRequiredError(DomainError):
-    status_code = 401
-    code = "github_reauth_required"
+async def get_viewer(access: OrgAccessDep, readers: RepoAccessDep) -> Credential:
+    """The signed-in user's own GitHub credential, for asking GitHub what they can see."""
+    try:
+        return await readers.credential(access.user)
+    except OAuthError as exc:
+        raise GitHubReauthRequiredError(
+            "Sign in with GitHub again to see this organization's repositories."
+        ) from exc
+
+
+ViewerDep = Annotated[Credential, Depends(get_viewer)]
 
 
 async def checked(readers: RepoAccess, user: User, repos: list[Repo]) -> list[Repo]:

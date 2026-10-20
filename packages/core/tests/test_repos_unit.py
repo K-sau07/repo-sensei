@@ -46,6 +46,9 @@ def test_github_urls(url: str, expected: tuple[str, str]) -> None:
         "https://github.com/a/na me",
         "git@gitlab.com:a/b.git",
         "",
+        "https://[github.com/a/b",  # urlsplit: invalid IPv6 URL
+        "https://github.com\uff03@evil.com/a/b",  # NFKC normalisation into a separator
+        "https://github.com:99999999/a/b",  # port out of range
     ],
 )
 def test_other_urls_are_refused(url: str) -> None:

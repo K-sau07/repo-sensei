@@ -33,10 +33,15 @@ def parse_github_url(value: str, *, web_url: str = "https://github.com") -> tupl
     else:
         if "://" not in text:
             text = f"https://{text}"
-        parts = urlsplit(text)
-        if parts.scheme not in ("http", "https") or parts.username or parts.password:
+        try:
+            parts = urlsplit(text)
+            host, path = (parts.hostname or "").lower(), parts.path
+            credentials = parts.username or parts.password
+            port = parts.port
+        except ValueError:  # brackets, bad ports, characters that normalise into separators
+            raise _invalid() from None
+        if parts.scheme not in ("http", "https") or credentials or port is not None:
             raise _invalid()
-        host, path = (parts.hostname or "").lower(), parts.path
     if host not in allowed:
         raise _invalid()
 

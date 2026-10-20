@@ -349,7 +349,8 @@ export interface paths {
         };
         /**
          * Available Repos
-         * @description Repositories the org's GitHub installations can read (admins), marking connected ones.
+         * @description Repositories the org's GitHub installations cover that the admin can read on GitHub
+         *     themselves (admins), marking connected ones.
          */
         get: operations["available_repos_api_v1_orgs__org__github_repos_get"];
         put?: never;
@@ -462,7 +463,8 @@ export interface paths {
         put?: never;
         /**
          * Connect Repo
-         * @description Connect a repository one of the org's installations can read (admins).
+         * @description Connect a repository one of the org's installations covers and the admin can read on
+         *     GitHub (admins).
          */
         post: operations["connect_repo_api_v1_orgs__org__repos_post"];
         delete?: never;

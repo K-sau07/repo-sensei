@@ -2310,7 +2310,7 @@
     },
     "/api/v1/orgs/{org}/github/repos": {
       "get": {
-        "description": "Repositories the org's GitHub installations can read (admins), marking connected ones.",
+        "description": "Repositories the org's GitHub installations cover that the admin can read on GitHub\nthemselves (admins), marking connected ones.",
         "operationId": "available_repos_api_v1_orgs__org__github_repos_get",
         "parameters": [
           {
@@ -2777,7 +2777,7 @@
         ]
       },
       "post": {
-        "description": "Connect a repository one of the org's installations can read (admins).",
+        "description": "Connect a repository one of the org's installations covers and the admin can read on\nGitHub (admins).",
         "operationId": "connect_repo_api_v1_orgs__org__repos_post",
         "parameters": [
           {
