@@ -24,6 +24,7 @@ dev = [
     "freezegun>=1.5",
     "anyio>=4.9",
     "celery-types>=0.26",
+    "types-aiobotocore[s3]>=3.9",
     "honcho>=2.0",
 ]
 

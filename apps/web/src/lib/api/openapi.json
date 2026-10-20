@@ -372,6 +372,24 @@
         "title": "EstimateRequest",
         "type": "object"
       },
+      "Feature": {
+        "enum": [
+          "code_browser",
+          "goto_definition",
+          "keyword_search",
+          "semantic_search",
+          "ask",
+          "wiki",
+          "graph_view",
+          "callers",
+          "trace",
+          "diagrams",
+          "fixes",
+          "changes"
+        ],
+        "title": "Feature",
+        "type": "string"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -1265,6 +1283,68 @@
         "title": "SlugAvailability",
         "type": "object"
       },
+      "Stage": {
+        "description": "Indexing stages, in the order they run.",
+        "enum": [
+          "clone",
+          "discover",
+          "merkle",
+          "parse",
+          "symbols",
+          "chunks",
+          "embeddings",
+          "summaries",
+          "graph",
+          "links",
+          "finalize"
+        ],
+        "title": "Stage",
+        "type": "string"
+      },
+      "StageInfo": {
+        "properties": {
+          "stage": {
+            "$ref": "#/components/schemas/Stage"
+          },
+          "unlocks": {
+            "description": "Features available once this stage is done.",
+            "items": {
+              "$ref": "#/components/schemas/Feature"
+            },
+            "title": "Unlocks",
+            "type": "array"
+          },
+          "weight": {
+            "description": "Typical share of an index run, out of 100.",
+            "title": "Weight",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "stage",
+          "weight",
+          "unlocks"
+        ],
+        "title": "StageInfo",
+        "type": "object"
+      },
+      "StagesOut": {
+        "properties": {
+          "stages": {
+            "description": "In the order they run.",
+            "items": {
+              "$ref": "#/components/schemas/StageInfo"
+            },
+            "title": "Stages",
+            "type": "array"
+          }
+        },
+        "required": [
+          "stages"
+        ],
+        "title": "StagesOut",
+        "type": "object"
+      },
       "ValidationError": {
         "properties": {
           "ctx": {
@@ -1621,6 +1701,28 @@
         "summary": "Healthz",
         "tags": [
           "health"
+        ]
+      }
+    },
+    "/api/v1/indexing/stages": {
+      "get": {
+        "description": "Indexing stages in order, and the features each one unlocks.",
+        "operationId": "indexing_stages_api_v1_indexing_stages_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StagesOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Indexing Stages",
+        "tags": [
+          "indexing"
         ]
       }
     },

@@ -140,6 +140,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/indexing/stages": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Indexing Stages
+         * @description Indexing stages in order, and the features each one unlocks.
+         */
+        get: operations["indexing_stages_api_v1_indexing_stages_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/invitations/{token}": {
         parameters: {
             query?: never;
@@ -694,6 +714,11 @@ export interface components {
             /** Url */
             url?: string | null;
         };
+        /**
+         * Feature
+         * @enum {string}
+         */
+        Feature: "code_browser" | "goto_definition" | "keyword_search" | "semantic_search" | "ask" | "wiki" | "graph_view" | "callers" | "trace" | "diagrams" | "fixes" | "changes";
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
@@ -1053,6 +1078,34 @@ export interface components {
             /** Slug */
             slug: string;
         };
+        /**
+         * Stage
+         * @description Indexing stages, in the order they run.
+         * @enum {string}
+         */
+        Stage: "clone" | "discover" | "merkle" | "parse" | "symbols" | "chunks" | "embeddings" | "summaries" | "graph" | "links" | "finalize";
+        /** StageInfo */
+        StageInfo: {
+            stage: components["schemas"]["Stage"];
+            /**
+             * Unlocks
+             * @description Features available once this stage is done.
+             */
+            unlocks: components["schemas"]["Feature"][];
+            /**
+             * Weight
+             * @description Typical share of an index run, out of 100.
+             */
+            weight: number;
+        };
+        /** StagesOut */
+        StagesOut: {
+            /**
+             * Stages
+             * @description In the order they run.
+             */
+            stages: components["schemas"]["StageInfo"][];
+        };
         /** ValidationError */
         ValidationError: {
             /** Context */
@@ -1257,6 +1310,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HealthResponse"];
+                };
+            };
+        };
+    };
+    indexing_stages_api_v1_indexing_stages_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StagesOut"];
                 };
             };
         };
