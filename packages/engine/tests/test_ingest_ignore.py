@@ -4,6 +4,8 @@ linguist attributes; plus the walk itself (no symlinks, stable order, file limit
 from __future__ import annotations
 
 import os
+import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -171,3 +173,99 @@ def test_too_many_files(tmp_path: Path) -> None:
     assert len(_paths(root, max_files=5)) == 5
     with pytest.raises(TooManyFilesError):
         _paths(root, max_files=4)
+
+
+# ------------------------------------------------------------------ git's own answer
+
+GIT = shutil.which("git")
+
+
+def _git_keeps(root: Path) -> list[str]:
+    """What git itself leaves unignored in ``root`` (no repository config, no global excludes)."""
+    git_binary = GIT
+    assert git_binary is not None
+    env = {"PATH": os.environ["PATH"], "HOME": str(root), "GIT_CONFIG_NOSYSTEM": "1"}
+
+    def git(*args: str) -> str:
+        return subprocess.run(  # noqa: S603 - the system git, fixed arguments
+            [git_binary, *args], cwd=root, env=env, check=True, capture_output=True, text=True
+        ).stdout
+
+    git("init", "--quiet")
+    listed = git("ls-files", "--others", "--exclude-standard").splitlines()
+    shutil.rmtree(root / ".git")
+    return sorted(listed)
+
+
+@pytest.mark.skipif(GIT is None, reason="needs git")
+@pytest.mark.parametrize(
+    "files",
+    [
+        # The whitelist idiom: ignore everything, then bring back directories and Python files.
+        {
+            ".gitignore": "*\n!*/\n!*.py\n!.gitignore\n",
+            "a.py": "",
+            "b.txt": "",
+            "src/b.py": "",
+            "src/c.txt": "",
+            "src/deep/d.py": "",
+        },
+        # "a/**" is what is inside a, so a/b can be re-included.
+        {".gitignore": "a/**\n!a/b\n", "a/b": "", "a/c": "", "a/d/e": "", "keep": ""},
+        # A name without a slash matches files and directories at any depth.
+        {".gitignore": "logs\n", "logs/x": "", "y/logs": "", "z/logs/w": "", "z/ok": ""},
+        # A pattern with a slash in it is relative to its file's directory.
+        {".gitignore": "doc/*.txt\n", "doc/a.txt": "", "doc/sub/b.txt": "", "x/doc/c.txt": ""},
+        {".gitignore": "**/foo/bar\n", "foo/bar": "", "x/foo/bar": "", "x/foo/baz": ""},
+        # Files ignored by name, one directory re-included by a deeper file.
+        {
+            ".gitignore": "*.log\n",
+            "b.log": "",
+            "important/.gitignore": "!*.log\n",
+            "important/a.log": "",
+            "important/sub/c.log": "",
+        },
+        # Re-including a directory doesn't re-include files ignored by name inside it.
+        {".gitignore": "*.log\nlogs/\n!logs/\n", "logs/a.log": "", "logs/a.txt": ""},
+    ],
+)
+def test_matches_what_git_ignores(tmp_path: Path, files: dict[str, str]) -> None:
+    root = _tree(tmp_path, files)
+    assert _paths(root) == _git_keeps(root)
+
+
+def test_re_including_a_directory_keeps_the_builtins_inside_it(tmp_path: Path) -> None:
+    root = _tree(
+        tmp_path,
+        {
+            ".gitignore": "!build/\n",
+            "build/app.py": "",
+            "build/node_modules/x/index.js": "",
+            "build/__pycache__/m.pyc": "",
+            "build/bundle.min.js": "",
+        },
+    )
+    assert _paths(root) == [".gitignore", "build/app.py"]
+
+
+def test_git_internals_are_never_walked(tmp_path: Path) -> None:
+    root = _tree(tmp_path, {".gitignore": "!.git/\n", ".git/config": "", "a.py": ""})
+    rules = IgnoreRules(["!.git/", "!.git"])
+    files, _ = walk(root, rules, max_files=10)
+    assert [f.path for f in files] == [".gitignore", "a.py"]
+
+
+def test_a_byte_order_mark_does_not_eat_the_first_pattern(tmp_path: Path) -> None:
+    root = _tree(tmp_path, {"a.log": "", "b.py": ""})
+    (root / ".gitignore").write_bytes(b"\xef\xbb\xbf*.log\n")
+    assert _paths(root) == [".gitignore", "b.py"]
+
+
+def test_attributes_never_apply_through_directory_patterns(tmp_path: Path) -> None:
+    root = _tree(
+        tmp_path,
+        {".gitattributes": "gen/ linguist-generated\ngen/** linguist-vendored\n", "gen/a.py": ""},
+    )
+    files, _ = walk(root, IgnoreRules(), max_files=10)
+    # As `git check-attr`: "gen/" sets nothing on gen/a.py, "gen/**" does.
+    assert {f.path: f.attributes for f in files}["gen/a.py"] == {Attribute.VENDORED}

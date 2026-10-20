@@ -1,9 +1,9 @@
 """Walk a checked-out tree: the regular files worth indexing, in a stable order.
 
 Symbolic links are never followed (a link can point anywhere on the worker's disk) and are left
-out, as are sockets, devices and fifos, paths that aren't valid UTF-8 and everything the ignore
-rules skip (see :mod:`sensei_engine.ingest.ignore`). Directories are listed in name order, so two
-walks of the same tree give the same list.
+out, as are sockets, devices and fifos, paths that aren't valid UTF-8, ``.git`` (whatever the
+rules say) and everything the ignore rules skip (see :mod:`sensei_engine.ingest.ignore`).
+Directories are listed in name order, so two walks of the same tree give the same list.
 """
 
 from __future__ import annotations
@@ -63,6 +63,8 @@ def walk(root: Path, rules: IgnoreRules, *, max_files: int) -> tuple[list[Walked
             if not _valid_name(entry.name):
                 stats.bad_names += 1
                 continue
+            if entry.name == ".git":
+                continue  # repository internals, whatever any rule says
             path = f"{relative}/{entry.name}" if relative else entry.name
             info = entry.stat(follow_symlinks=False)
             if stat.S_ISLNK(info.st_mode):
