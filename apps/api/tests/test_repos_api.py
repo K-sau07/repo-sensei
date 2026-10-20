@@ -145,10 +145,10 @@ def app(api_app: FastAPI, migrated_test_db: Settings, fake_redis: FakeAsyncRedis
 
 class PurgeLog:
     def __init__(self) -> None:
-        self.purged: list[uuid.UUID] = []
+        self.purged: list[tuple[uuid.UUID, uuid.UUID]] = []
 
-    async def purge(self, repo_id: uuid.UUID) -> None:
-        self.purged.append(repo_id)
+    async def purge(self, org_id: uuid.UUID, repo_id: uuid.UUID) -> None:
+        self.purged.append((org_id, repo_id))
 
 
 @pytest.fixture
@@ -579,7 +579,9 @@ async def test_disconnect_hides_then_purges(
     assert response.status_code == 204
     # Its cached access answer is gone with it.
     assert await app.state.redis.exists(f"access:{admin.id}:{repo_id}") == 0
-    assert app.state.repo_jobs.purged == [repo_id]
+    org = await db_session.scalar(select(Org).where(Org.slug == "acme"))
+    assert org is not None
+    assert app.state.repo_jobs.purged == [(org.id, repo_id)]
     assert (await client.get(f"{API}/orgs/acme/repos")).json() == []
     assert (await client.get(f"{API}/orgs/acme/repos/api")).status_code == 404
     event = await db_session.scalar(
@@ -587,9 +589,13 @@ async def test_disconnect_hides_then_purges(
     )
     assert event is not None
 
-    # Connecting it again before the purge brings the same row back.
+    # Connecting it again before the purge makes a new repository: nothing of the old one
+    # (snapshots, jobs, settings) comes back, and the old row still gets purged.
     again = await client.post(
         f"{API}/orgs/acme/repos", json={"github_repo_id": 101}, headers=headers
     )
     assert again.status_code == 201
-    assert again.json()["id"] == str(repo_id)
+    assert again.json()["id"] != str(repo_id)
+    old = await db_session.get(Repo, repo_id)
+    assert old is not None
+    assert old.deleted_at is not None

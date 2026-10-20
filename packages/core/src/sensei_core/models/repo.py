@@ -7,7 +7,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import BigInteger, DateTime, Enum, ForeignKey, Index, String, UniqueConstraint, text
+from sqlalchemy import BigInteger, DateTime, Enum, ForeignKey, Index, String, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -35,11 +35,19 @@ def _values(enum_type: type[enum.StrEnum]) -> list[str]:
 
 class Repo(IdMixin, OrgScopedMixin, TimestampMixin, Base):
     """A GitHub repository connected to an org. ``slug`` names it in URLs (``/acme/langflow``),
-    unique among the org's live repositories."""
+    unique among the org's live repositories, as is the GitHub repository itself."""
 
     __tablename__ = "repos"
     __table_args__ = (
-        UniqueConstraint("org_id", "github_repo_id"),
+        # Live rows only: a repository connected again after a disconnect is a new row, while
+        # the old one waits for its purge.
+        Index(
+            "uq_repos_org_id_github_repo_id_live",
+            "org_id",
+            "github_repo_id",
+            unique=True,
+            postgresql_where=text("deleted_at IS NULL"),
+        ),
         Index(
             "uq_repos_org_id_slug_live",
             "org_id",

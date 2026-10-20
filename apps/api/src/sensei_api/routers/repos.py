@@ -222,5 +222,5 @@ async def disconnect_repo(
     repo_id = await repos.disconnect(db, access, repo)
     await readers.forget_repo(repo_id)
     # After the response, so after the commit: the purge always finds the repository deleted.
-    background.add_task(_jobs(request).purge, repo_id)
+    background.add_task(_jobs(request).purge, access.org.id, repo_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)

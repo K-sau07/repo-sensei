@@ -18,6 +18,7 @@ from sensei_core.config import Settings
 from sensei_core.db import Database
 from sensei_core.github.webhooks import record_delivery
 from sensei_core.models import DeliveryStatus, JobFailure, Org, Repo, RepoSource, WebhookDelivery
+from sensei_core.storage import Bucket, artifact_key, repo_prefix, snapshot_key
 from sensei_workers.app import celery_app
 from sensei_workers.base import SenseiTask
 from sensei_workers.runtime import Runtime, set_runtime
@@ -182,17 +183,57 @@ async def _drop_org(system_db: Database, org_id: uuid.UUID) -> None:
         await db.execute(delete(Org).where(Org.id == org_id))
 
 
+async def _store_objects(runtime: Runtime, org_id: uuid.UUID, repo_id: uuid.UUID) -> None:
+    storage = await runtime.storage()
+    await storage.put_bytes(Bucket.SNAPSHOTS, snapshot_key(org_id, repo_id, "a" * 40), b"tar")
+    key = artifact_key(org_id, repo_id, "a" * 40, "merkle.msgpack.zst")
+    await storage.put_bytes(Bucket.ARTIFACTS, key, b"tree")
+
+
+async def _stored_objects(runtime: Runtime, org_id: uuid.UUID, repo_id: uuid.UUID) -> int:
+    storage = await runtime.storage()
+    found = 0
+    for key in (
+        snapshot_key(org_id, repo_id, "a" * 40),
+        artifact_key(org_id, repo_id, "a" * 40, "merkle.msgpack.zst"),
+    ):
+        bucket = Bucket.SNAPSHOTS if key.startswith("snapshots/") else Bucket.ARTIFACTS
+        found += await storage.size(bucket, key) is not None
+    return found
+
+
+async def _drop_objects(runtime: Runtime, org_id: uuid.UUID, repo_id: uuid.UUID) -> None:
+    storage = await runtime.storage()
+    for bucket in Bucket:
+        await storage.delete_prefix(bucket, repo_prefix(bucket, org_id, repo_id))
+
+
 def test_purge_removes_only_disconnected_repositories(
     runtime: Runtime, system_db: Database
 ) -> None:
     org_id, disconnected, live = runtime.run(_org_with_repos(system_db))
+
+    def purge(repo_id: uuid.UUID) -> bool:
+        kwargs = {"org_id": str(org_id), "repo_id": str(repo_id)}
+        return purge_repo.apply(kwargs=kwargs).get()
+
     try:
-        assert purge_repo.apply(kwargs={"repo_id": str(disconnected)}).get() is True
-        # A repository that is connected (again) is never purged.
-        assert purge_repo.apply(kwargs={"repo_id": str(live)}).get() is False
+        runtime.run(_store_objects(runtime, org_id, disconnected))
+        runtime.run(_store_objects(runtime, org_id, live))
+        assert purge(disconnected) is True
+        assert runtime.run(_stored_objects(runtime, org_id, disconnected)) == 0
+        # A repository that is connected (again) is never purged, nor are its objects.
+        assert purge(live) is False
         assert runtime.run(_repo_ids(system_db, org_id)) == {live}
+        assert runtime.run(_stored_objects(runtime, org_id, live)) == 2
         # Disconnected later after all: the next purge still runs.
         runtime.run(_disconnect(system_db, live))
-        assert purge_repo.apply(kwargs={"repo_id": str(live)}).get() is True
+        assert purge(live) is True
+        # The row is gone already (purged, or the org was deleted): objects still go.
+        runtime.run(_store_objects(runtime, org_id, live))
+        assert purge(live) is True
+        assert runtime.run(_stored_objects(runtime, org_id, live)) == 0
     finally:
         runtime.run(_drop_org(system_db, org_id))
+        for repo_id in (disconnected, live):
+            runtime.run(_drop_objects(runtime, org_id, repo_id))

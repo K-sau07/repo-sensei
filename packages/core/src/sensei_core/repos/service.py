@@ -288,15 +288,19 @@ class RepoService:
         owner = str((as_object(body.get("owner")) or {}).get("login") or "")
         name = str(body.get("name") or "")
         existing = await db.scalar(
-            select(Repo)
-            .where(Repo.org_id == access.org.id, Repo.github_repo_id == github_repo_id)
-            .with_for_update()
+            select(Repo).where(
+                Repo.org_id == access.org.id,
+                Repo.github_repo_id == github_repo_id,
+                Repo.deleted_at.is_(None),
+            )
         )
-        if existing is not None and existing.deleted_at is None:
+        if existing is not None:
             raise ConflictError(
                 f"{existing.full_name} is already connected.", code="repo_already_connected"
             )
-        repo = existing or Repo(org_id=access.org.id, github_repo_id=github_repo_id)
+        # Always a new row: one disconnected earlier keeps waiting for its purge, so nothing of
+        # its snapshots, jobs or settings comes back.
+        repo = Repo(org_id=access.org.id, github_repo_id=github_repo_id)
         repo.slug = await self._slug_for(db, access, owner, name)
         repo.source = source
         repo.installation_id = facts.installation.id if facts.installation else None
@@ -310,15 +314,12 @@ class RepoService:
         repo.size_kb = facts.size_kb
         repo.languages = facts.languages
         repo.status = RepoStatus.PENDING
-        repo.settings = repo.settings or RepoSettings().model_dump()
+        repo.settings = RepoSettings().model_dump()
         repo.connected_by = access.user.id
-        repo.deleted_at = None
-        repo.last_indexed_sha = None
         try:
             # A concurrent connect of the same repository (or slug) loses at the unique index.
             async with db.begin_nested():
-                if existing is None:
-                    db.add(repo)
+                db.add(repo)
                 await db.flush()
         except IntegrityError as exc:
             raise ConflictError(

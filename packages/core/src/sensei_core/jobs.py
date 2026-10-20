@@ -99,21 +99,21 @@ def make_celery(settings: Settings, main: str = "sensei") -> Celery:
 class RepoJobs(Protocol):
     """Background work for repositories, requested by the API."""
 
-    async def purge(self, repo_id: uuid.UUID) -> None: ...
+    async def purge(self, org_id: uuid.UUID, repo_id: uuid.UUID) -> None: ...
 
 
 class CeleryRepoJobs:
     def __init__(self, app: Celery) -> None:
         self._app = app
 
-    async def purge(self, repo_id: uuid.UUID) -> None:
+    async def purge(self, org_id: uuid.UUID, repo_id: uuid.UUID) -> None:
         # The repository is already hidden (soft-deleted); if the broker is down it stays that
         # way until purged later, so a failure here is logged, not raised.
         try:
             await asyncio.to_thread(
                 self._app.send_task,
                 TaskName.PURGE_REPO.value,
-                kwargs={"repo_id": str(repo_id)},
+                kwargs={"org_id": str(org_id), "repo_id": str(repo_id)},
                 queue=Queue.MAINTENANCE.value,
             )
         except Exception:
