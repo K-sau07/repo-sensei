@@ -46,6 +46,9 @@ test("sign in with GitHub, create an org, invite a teammate who joins", async ({
   await expect(page.getByText("Available.")).toBeVisible();
   await page.getByRole("button", { name: "Create organization" }).click();
   const slug = `team-${run}`;
+  // Step 2 offers the GitHub App; this test doesn't need it.
+  await expect(page).toHaveURL(new RegExp(`/onboarding\\?step=2&org=${slug}$`));
+  await page.getByRole("link", { name: "Skip for now" }).click();
   await expect(page).toHaveURL(new RegExp(`/${slug}$`));
 
   // Invite by GitHub username; the link is shown once.
