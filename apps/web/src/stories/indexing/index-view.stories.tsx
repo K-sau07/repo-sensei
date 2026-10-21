@@ -142,7 +142,7 @@ function LongLog() {
 export const FiveThousandLineLog: StoryObj = {
   render: () => <LongLog />,
   play: async () => {
-    const log = await screen.findByRole("log", { name: "Log lines" });
+    const log = await screen.findByRole("region", { name: "Log lines" });
     await expect(screen.getByText("5000 lines")).toBeVisible();
     await expect(within(log).getAllByRole("listitem").length).toBeLessThan(120);
     await userEvent.click(screen.getByRole("button", { name: "info" }));

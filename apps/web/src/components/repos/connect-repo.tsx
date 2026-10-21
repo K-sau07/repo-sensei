@@ -2,7 +2,7 @@
 
 import { useQueryClient } from "@tanstack/react-query";
 import { cn } from "cn";
-import { ExternalLink, Lock, RefreshCw, Search } from "lucide-react";
+import { ExternalLink, Lock, RefreshCw, Search, Star } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { parseAsStringLiteral, useQueryState } from "nuqs";
@@ -71,7 +71,15 @@ function Problem({ org, error }: { org: string; error: unknown }) {
   );
 }
 
-/** Size, time and cost before connecting. */
+/** GitHub's size (in KiB) for people: "12 kB", "3.4 MB", "48 MB", "1.2 GB". */
+export function formatSize(sizeKb: number): string {
+  if (sizeKb < 1024) return `${String(Math.max(1, Math.round(sizeKb)))} kB`;
+  const mb = sizeKb / 1024;
+  if (mb < 1024) return `${mb < 10 ? mb.toFixed(1) : String(Math.round(mb))} MB`;
+  return `${(mb / 1024).toFixed(1)} GB`;
+}
+
+/** Stars, size, time and cost before connecting. */
 export function EstimateCard({ estimate }: { estimate: Estimate }) {
   return (
     <section
@@ -81,10 +89,18 @@ export function EstimateCard({ estimate }: { estimate: Estimate }) {
       <header className="flex items-center gap-2">
         <span className="font-medium">{estimate.full_name}</span>
         <Badge variant="secondary">{estimate.private ? "private" : "public"}</Badge>
+        {typeof estimate.stars === "number" && (
+          <span className="inline-flex items-center gap-1 text-xs text-fg-muted">
+            <Star aria-hidden className="size-3.5" />
+            {compact.format(estimate.stars)}
+            <span className="sr-only">stars on GitHub</span>
+          </span>
+        )}
       </header>
       <LanguageBar languages={estimate.languages} legend />
-      <dl className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
+      <dl className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-5">
         {[
+          ["Size", formatSize(estimate.size_kb)],
           ["Files", `~${compact.format(estimate.files)}`],
           ["Tokens", `~${compact.format(estimate.tokens)}`],
           ["Indexing time", minutes(estimate.index_minutes)],

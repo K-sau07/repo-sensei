@@ -117,7 +117,8 @@ export function StageChecklist({ job, stages }: { job: IndexJob; stages: Stage[]
                     : null}
                 {running && job.eta_s ? ` · ~${formatEta(job.eta_s)}` : null}
               </span>
-              <span className="sr-only">{STATUS_WORDS[status] ?? "waiting"}</span>
+              {/* The live dot already says "Running". */}
+              {!running && <span className="sr-only">{STATUS_WORDS[status] ?? "waiting"}</span>}
             </div>
             {running && share !== null && (
               <div aria-hidden className="ml-6.5 h-1 overflow-hidden rounded-full bg-surface-3">
@@ -348,6 +349,21 @@ function JobFailure({ job, onLogs }: { job: IndexJob; onLogs: () => void }) {
   );
 }
 
+function announcement(job: IndexJob): string {
+  switch (job.status) {
+    case "queued":
+      return "Indexing is queued.";
+    case "running":
+      return job.stage ? `Indexing: ${STAGE_LABELS[job.stage]}.` : "Indexing.";
+    case "succeeded":
+      return "Indexing finished.";
+    case "failed":
+      return "Indexing failed.";
+    case "cancelled":
+      return "Indexing was cancelled.";
+  }
+}
+
 /** Files, lines, languages and frameworks: final once discovery is done, the file count live
  * while it runs. */
 function counters(job: IndexJob) {
@@ -405,6 +421,11 @@ export function IndexView({ org, repo, jobId }: { org: string; repo: string; job
   const running = data.status === "queued" || data.status === "running";
   return (
     <IndexContext value={{ org, repo }}>
+      {/* What screen readers hear as the run moves: each stage, and how it ended (not every
+          percent). */}
+      <p role="status" aria-live="polite" className="sr-only">
+        {announcement(data)}
+      </p>
       <div className="grid gap-6 md:grid-cols-[18rem_1fr]">
         <aside className="flex flex-col gap-3">
           <div className="flex items-center justify-between">

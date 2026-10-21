@@ -54,13 +54,19 @@ function parseUrl(raw: string): string | null {
   return match ? `${match[1]}/${match[2]}`.toLowerCase() : null;
 }
 
-function estimateFor(fullName: string, isPrivate: boolean, languages: Record<string, number>) {
+function estimateFor(
+  fullName: string,
+  isPrivate: boolean,
+  languages: Record<string, number>,
+  github: { stars?: number; sizeKb?: number } = {},
+) {
   const bytes = Object.values(languages).reduce((sum, value) => sum + value, 0);
   const files = Math.max(1, Math.round(bytes / 8000));
   return {
     full_name: fullName,
     private: isPrivate,
-    size_kb: Math.round(bytes / 1024),
+    size_kb: github.sizeKb ?? Math.round(bytes / 1024),
+    stars: github.stars ?? null,
     languages,
     files,
     tokens: Math.round(bytes / 3.5),
@@ -132,6 +138,14 @@ function adminOf(org: string) {
 }
 
 const TERMINAL = new Set(["done", "failed", "cancelled"]);
+/** The org stream's event for a run that ended, by how it ended. */
+const END_EVENT: Record<IndexJob["status"], string> = {
+  queued: "queued",
+  running: "stage_started",
+  succeeded: "done",
+  failed: "failed",
+  cancelled: "cancelled",
+};
 
 const jobEvents =
   typeof EventSource === "undefined"
@@ -171,11 +185,25 @@ const jobEvents =
                 if (job.cancelled_after_ms === undefined) send(event);
               }, delay),
             );
-            onCancel(job, () => {
+            const clear = () => {
               for (const timer of timers) clearTimeout(timer);
+            };
+            const unsubscribe = onCancel(job, () => {
+              clear();
               const cancelled = eventsOf(job).at(-1);
               if (cancelled?.type === "cancelled") send(cancelled);
             });
+            // The request was aborted: nothing more to send. (MSW's EventSource stand-in doesn't
+            // report the page calling close(), so a run hidden mid-way can still log "Failed to
+            // write" for its remaining few seconds; the real stream has no such timers.)
+            request.signal.addEventListener(
+              "abort",
+              () => {
+                clear();
+                unsubscribe();
+              },
+              { once: true },
+            );
           },
         ),
       ];
@@ -186,7 +214,7 @@ const orgEvents =
     : [
         sse<{ message: string }, { org: string }>(
           "*/api/v1/orgs/:org/events",
-          ({ client, params }) => {
+          ({ client, params, request }) => {
             // Report what changes, as the real org stream does: a stage starts, a run ends.
             const seen = new Map<string, string>();
             const tick = () => {
@@ -199,11 +227,14 @@ const orgEvents =
                 const jobId = before?.id ?? now.active_job?.id;
                 if (!jobId || seen.get(repo.id) === key) continue;
                 seen.set(repo.id, key);
+                const ended = jobsOf(repo.id).at(-1);
                 const type = now.active_job
                   ? now.active_job.stage
                     ? "stage_started"
                     : "queued"
-                  : "done";
+                  : ended
+                    ? END_EVENT[jobView(ended).status]
+                    : "done";
                 client.send({
                   data: JSON.stringify({
                     type,
@@ -217,10 +248,15 @@ const orgEvents =
               }
             };
             tick();
+            // Like the real stream, it stays open until the browser closes it.
             const timer = setInterval(tick, 300);
-            setTimeout(() => {
-              clearInterval(timer);
-            }, 60_000);
+            request.signal.addEventListener(
+              "abort",
+              () => {
+                clearInterval(timer);
+              },
+              { once: true },
+            );
           },
         ),
       ];
@@ -307,7 +343,9 @@ export const repoHandlers = [
         `${name} isn't a public GitHub repository (or doesn't exist). Private repositories connect through the GitHub App.`,
       );
     }
-    return HttpResponse.json(estimateFor(name, false, known.languages));
+    return HttpResponse.json(
+      estimateFor(name, false, known.languages, { stars: known.stars, sizeKb: known.size }),
+    );
   }),
 
   http.post<{ org: string }>("*/api/v1/orgs/:org/repos/import", async ({ params, request }) => {

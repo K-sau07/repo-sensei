@@ -22,7 +22,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Skeleton } from "@/components/ui/skeleton";
 import { $api, api } from "@/lib/api/client";
 import { ApiError } from "@/lib/api/errors";
-import type { AvailableRepo, Repo } from "@/lib/api/types";
+import type { AvailableRepo } from "@/lib/api/types";
 import { queryKeys } from "@/lib/query/keys";
 import { orgPath, repoPath } from "@/lib/routes";
 
@@ -132,6 +132,13 @@ function PickRow({
   );
 }
 
+/** The slug in a `repo_already_connected` error's details, if there is one. */
+function connectedSlug(error: ApiError): string | null {
+  const details = error.details;
+  if (typeof details !== "object" || details === null || !("slug" in details)) return null;
+  return typeof details.slug === "string" ? details.slug : null;
+}
+
 function PickStep({ org }: { org: string }) {
   const router = useRouter();
   const queryClient = useQueryClient();
@@ -142,25 +149,39 @@ function PickStep({ org }: { org: string }) {
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<unknown>(null);
 
+  // One at a time; each one connected leaves the selection, so after a failure, trying again
+  // carries on with the rest (and one connected meanwhile counts as done).
   const connect = async () => {
     setBusy(true);
     setProblem(null);
-    const connected: Repo[] = [];
+    let first: string | null = null;
     try {
       for (const githubRepoId of selected) {
-        const { data } = await api.POST("/api/v1/orgs/{org}/repos", {
-          params: { path: { org } },
-          body: { github_repo_id: githubRepoId },
+        try {
+          const { data } = await api.POST("/api/v1/orgs/{org}/repos", {
+            params: { path: { org } },
+            body: { github_repo_id: githubRepoId },
+          });
+          first ??= data?.slug ?? null;
+        } catch (error) {
+          if (!(error instanceof ApiError && error.code === "repo_already_connected")) throw error;
+          first ??= connectedSlug(error);
+        }
+        setSelected((current) => {
+          const next = new Set(current);
+          next.delete(githubRepoId);
+          return next;
         });
-        if (data) connected.push(data);
       }
-      await queryClient.invalidateQueries({ queryKey: queryKeys.repos(org) });
-      const first = connected[0];
-      router.push(first ? repoPath(org, first.slug) : orgPath(org, "repos"));
+      router.push(first ? repoPath(org, first) : orgPath(org, "repos"));
     } catch (error) {
       setProblem(error);
       setBusy(false);
-      await queryClient.invalidateQueries({ queryKey: queryKeys.availableRepos(org) });
+    } finally {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeys.repos(org) }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.availableRepos(org) }),
+      ]);
     }
   };
 

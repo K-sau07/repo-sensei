@@ -33,7 +33,8 @@ export interface FeatureState {
 
 /**
  * What the repository can do: everything the last successful index unlocked, plus what the run
- * in progress has unlocked so far. Updated live: the org event stream refetches the job list.
+ * in progress has unlocked so far. Updated live: the org and job event streams refetch the job
+ * list.
  */
 export function useRepoFeatures() {
   const { org, repo } = useRepoSlug();
@@ -62,5 +63,14 @@ export function useRepoFeatures() {
       coming,
     };
   };
-  return { state, ready: jobs.isSuccess && stages.isSuccess, active: active ?? null };
+  return {
+    state,
+    ready: jobs.isSuccess && stages.isSuccess,
+    failed: jobs.isError || stages.isError,
+    retry: () => {
+      if (jobs.isError) void jobs.refetch();
+      if (stages.isError) void stages.refetch();
+    },
+    active: active ?? null,
+  };
 }

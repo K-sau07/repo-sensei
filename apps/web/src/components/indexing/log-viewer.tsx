@@ -102,11 +102,12 @@ export function LogViewer({
             <CopyButton value={shown.map(formatLine).join("\n")} label="Copy the lines shown" />
           </span>
         </div>
-        {/* Focusable so the scrolling list can be read and scrolled from the keyboard. */}
-        {}
+        {/* Focusable so the scrolling list can be read and scrolled from the keyboard. A
+            region, not role="log": that is a live region, and a virtualized list would announce
+            rows as they scroll into view. */}
         <div
           ref={scroller}
-          role="log"
+          role="region"
           aria-label="Log lines"
           // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- see above
           tabIndex={0}

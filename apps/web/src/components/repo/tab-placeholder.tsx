@@ -4,7 +4,9 @@ import { Construction, Lock } from "lucide-react";
 import Link from "next/link";
 
 import { EmptyState } from "@/components/feedback/empty-state";
+import { ErrorState } from "@/components/feedback/error-state";
 import { LockedState } from "@/components/feedback/locked-state";
+import { Skeleton } from "@/components/ui/skeleton";
 import { STAGE_LABELS } from "@/lib/indexing";
 import { repoPath } from "@/lib/routes";
 
@@ -15,9 +17,31 @@ import { useRepoFeatures, useRepoSlug } from "./use-repo";
  * phase X". */
 export function TabPlaceholder({ tab: id }: { tab: string }) {
   const { org, repo } = useRepoSlug();
-  const { state, ready } = useRepoFeatures();
+  const { state, ready, failed, retry } = useRepoFeatures();
   const tab = ALL_TABS.find((item) => item.id === id);
-  if (!tab || !ready) return null;
+  if (!tab) return null;
+  if (failed) {
+    return (
+      <div className="mx-auto flex w-full max-w-3xl flex-col p-8">
+        <ErrorState
+          title={`Couldn't check whether ${tab.label} is ready`}
+          description="Its index status didn't load."
+          onRetry={retry}
+        />
+      </div>
+    );
+  }
+  if (!ready) {
+    return (
+      <div
+        className="mx-auto flex w-full max-w-3xl flex-col p-8"
+        role="status"
+        aria-label="Loading"
+      >
+        <Skeleton className="h-40" />
+      </div>
+    );
+  }
   const feature = tab.feature ? state(tab.feature) : null;
   const stage = feature?.stage ? STAGE_LABELS[feature.stage] : "indexing";
   let content;

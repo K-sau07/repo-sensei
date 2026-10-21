@@ -4,7 +4,7 @@ import type { IndexJob } from "@/lib/api/types";
 import { jobAt, runEvents } from "@/mocks/index-run";
 
 import { filterLines, formatLine } from "./log-viewer";
-import { applyEvent, type JobEvent, type LogLine } from "./use-job-events";
+import { applyEvent, withDetails, type JobEvent, type LogLine } from "./use-job-events";
 
 const BASE = { id: "job-1", repo_id: "repo-1", created_at: "2026-10-20T12:00:00Z" };
 
@@ -85,6 +85,22 @@ describe("applying the event stream", () => {
     ].reduce(applyEvent, job);
     expect(replayed.stages.clone).toMatchObject({ status: "done" });
     expect([replayed.stage, replayed.progress]).toEqual(["discover", 0.1]);
+  });
+
+  it("adds stage details from a refetch without undoing what the stream has since", () => {
+    let job = applyEvent(queued(), event({ type: "stage_started", stage: "discover" }));
+    job = applyEvent(job, event({ type: "stage_done", stage: "discover" }));
+    // The refetch went out at stage_done; the next stage started before it came back.
+    const fetched = structuredClone(job);
+    (fetched.stages as Record<string, Record<string, unknown>>).discover = {
+      status: "done",
+      details: { files: 245 },
+    };
+    job = applyEvent(job, event({ type: "stage_started", stage: "merkle" }));
+    const merged = withDetails(job, fetched);
+    expect([merged.status, merged.stage]).toEqual(["running", "merkle"]);
+    expect(merged.stages.merkle).toMatchObject({ status: "running" });
+    expect(merged.stages.discover).toMatchObject({ status: "done", details: { files: 245 } });
   });
 
   it("matches what the recorded stream ends with", () => {

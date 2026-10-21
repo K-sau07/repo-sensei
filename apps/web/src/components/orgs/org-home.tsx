@@ -4,6 +4,7 @@ import { FolderGit2 } from "lucide-react";
 import Link from "next/link";
 
 import { EmptyState } from "@/components/feedback/empty-state";
+import { ErrorState } from "@/components/feedback/error-state";
 import { LanguageBar } from "@/components/repos/language-bar";
 import { RepoStatus } from "@/components/repos/repo-status";
 import { useOrgSlug } from "@/components/shell/use-org-slug";
@@ -11,6 +12,7 @@ import { buttonVariants } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { roleAtLeast, useOrgRole } from "@/hooks/use-org-role";
 import { $api } from "@/lib/api/client";
+import { ApiError } from "@/lib/api/errors";
 import { orgPath, repoPath } from "@/lib/routes";
 
 const SHOWN = 6;
@@ -27,6 +29,13 @@ export function OrgHome() {
     <div className="mx-auto flex w-full max-w-4xl flex-col gap-6 p-8">
       <h1 className="text-2xl font-semibold tracking-[-0.015em]">{org?.name ?? "Home"}</h1>
       {repos.isPending && <Skeleton className="h-32" />}
+      {repos.isError && (
+        <ErrorState
+          title="Couldn't load your repositories"
+          description={repos.error instanceof ApiError ? repos.error.message : undefined}
+          onRetry={() => void repos.refetch()}
+        />
+      )}
       {repos.isSuccess && list.length === 0 && (
         <EmptyState
           icon={<FolderGit2 />}

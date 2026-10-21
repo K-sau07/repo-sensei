@@ -1,10 +1,12 @@
 "use client";
 
 import { useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
+import { api } from "@/lib/api/client";
 import type { IndexJob, Stage } from "@/lib/api/types";
+import { followStream } from "@/lib/event-stream";
 import { FEATURE_LABELS, type Feature } from "@/lib/indexing";
 import { queryKeys } from "@/lib/query/keys";
 
@@ -118,10 +120,48 @@ export function applyEvent(job: IndexJob, event: JobEvent): IndexJob {
   return next;
 }
 
+/** ``job`` with the stage details of ``fetched`` (counts, frameworks: events don't carry them),
+ * and otherwise as the stream left it. A refetch can be older than the events since, so it only
+ * adds what the stream can't know. */
+export function withDetails(job: IndexJob, fetched: IndexJob): IndexJob {
+  const stages: Stages = { ...(job.stages as Stages) };
+  let changed = false;
+  for (const [stage, entry] of Object.entries(fetched.stages as Stages)) {
+    const details = entry.details;
+    if (details === undefined) continue;
+    stages[stage] = { ...(stages[stage] ?? {}), details };
+    changed = true;
+  }
+  return changed ? { ...job, stages } : job;
+}
+
+const FLUSH_MS = 100; // log lines and unlocks reach React in batches, not one render per line
+
+interface Progress {
+  job: string | null;
+  /** The last event handled (to resume after), and every id seen (no event twice). */
+  lastId: string | null;
+  seen: Set<string>;
+  toasted: Set<Feature>;
+  ended: boolean;
+}
+
+const fresh = (job: string | null): Progress => ({
+  job,
+  lastId: null,
+  seen: new Set(),
+  toasted: new Set(),
+  ended: false,
+});
+
 /**
  * Follow an index job's event stream: the cached job (`queryKeys.indexJob`) moves with every
  * event, logs and fresh unlocks are collected, and the stream closes after the final event.
- * `EventSource` reconnects by itself and resumes from the last event id (`Last-Event-ID`).
+ *
+ * Where the stream got to is kept across the effect running again (the page hidden and shown,
+ * a reconnect), so it resumes after the last event instead of replaying the run: no event is
+ * applied twice and no unlock toasts twice. The job list (`queryKeys.indexJobs`) is refreshed
+ * when a stage finishes or unlocks something, so tab locks follow the run.
  */
 export function useJobEvents(org: string, repo: string, jobId: string | null) {
   const queryClient = useQueryClient();
@@ -132,25 +172,54 @@ export function useJobEvents(org: string, repo: string, jobId: string | null) {
     unlocked: Feature[];
   }>({ job: null, logs: [], unlocked: [] });
   const [live, setLive] = useState(false);
+  const progress = useRef<Progress>(fresh(null));
   const mine = collected.job === jobId ? collected : { logs: [], unlocked: [] };
 
   useEffect(() => {
     if (!jobId || typeof EventSource === "undefined") return;
+    if (progress.current.job !== jobId) progress.current = fresh(jobId);
+    const state = progress.current;
+    if (state.ended) return; // it ended while this was open before: nothing more will come
     const key = queryKeys.indexJob(org, repo, jobId);
-    let source: EventSource | null = null;
-    let closed = false;
-    const update = (
-      change: (state: { logs: LogLine[]; unlocked: Feature[] }) => {
-        logs: LogLine[];
-        unlocked: Feature[];
-      },
-    ) => {
-      setCollected((state) => {
-        const current = state.job === jobId ? state : { job: jobId, logs: [], unlocked: [] };
-        return { job: jobId, ...change(current) };
+    const listKey = queryKeys.indexJobs(org, repo);
+
+    let lines: LogLine[] = [];
+    let unlocks: Feature[] = [];
+    let flushTimer: ReturnType<typeof setTimeout> | undefined;
+    const flush = () => {
+      clearTimeout(flushTimer);
+      flushTimer = undefined;
+      if (lines.length === 0 && unlocks.length === 0) return;
+      const [newLines, newUnlocks] = [lines, unlocks];
+      lines = [];
+      unlocks = [];
+      setCollected((current) => {
+        const base = current.job === jobId ? current : { job: jobId, logs: [], unlocked: [] };
+        return {
+          job: jobId,
+          logs: newLines.length ? [...base.logs, ...newLines] : base.logs,
+          unlocked: newUnlocks.length
+            ? [...new Set([...base.unlocked, ...newUnlocks])]
+            : base.unlocked,
+        };
       });
     };
+    const later = () => {
+      flushTimer ??= setTimeout(flush, FLUSH_MS);
+    };
+    const refreshDetails = () => {
+      api
+        .GET("/api/v1/orgs/{org}/repos/{repo}/index-jobs/{job}", {
+          params: { path: { org, repo, job: jobId } },
+        })
+        .then(({ data }) => {
+          if (data)
+            queryClient.setQueryData<IndexJob>(key, (job) => (job ? withDetails(job, data) : data));
+        })
+        .catch(() => undefined); // the next stage brings them again
+    };
 
+    let close: (() => void) | null = null; // set once the stream is open
     const onEvent = (message: MessageEvent<string>) => {
       let event: JobEvent;
       try {
@@ -159,67 +228,68 @@ export function useJobEvents(org: string, repo: string, jobId: string | null) {
         return;
       }
       event.id ||= message.lastEventId;
+      if (event.id) {
+        if (state.seen.has(event.id)) return;
+        state.seen.add(event.id);
+        state.lastId = event.id;
+      }
       // A run that had already finished when the stream opened only replays its history: it
       // feeds the log, while the job and the repository stay as the API returned them.
       const settled = isSettled(queryClient.getQueryData<IndexJob>(key));
       queryClient.setQueryData<IndexJob>(key, (job) => (job ? applyEvent(job, event) : job));
-      // A finished stage has details (counts, frameworks) that events don't carry.
-      if (event.type === "stage_done" && !settled) {
-        void queryClient.invalidateQueries({ queryKey: key });
+      if (!settled && event.type === "stage_done") refreshDetails();
+      if (!settled && (event.type === "stage_done" || event.type === "unlock")) {
+        void queryClient.invalidateQueries({ queryKey: listKey });
       }
       if (event.type === "log" && event.message) {
-        const line: LogLine = {
+        lines.push({
           id: event.id,
           ts: event.ts,
           level: event.level ?? "info",
           stage: event.stage,
           message: event.message,
-        };
-        update((state) => ({
-          ...state,
-          logs: state.logs.some((l) => l.id === line.id) ? state.logs : [...state.logs, line],
-        }));
+        });
+        later();
       }
       if (event.type === "unlock" && event.unlocks?.length) {
-        const unlocks = event.unlocks;
-        update((state) => ({ ...state, unlocked: [...new Set([...state.unlocked, ...unlocks])] }));
+        unlocks.push(...event.unlocks);
+        later();
         if (Date.now() - Date.parse(event.ts) < FRESH_MS) {
-          for (const feature of event.unlocks) toast.success(`${FEATURE_LABELS[feature]} is ready`);
+          for (const feature of event.unlocks) {
+            if (state.toasted.has(feature)) continue;
+            state.toasted.add(feature);
+            toast.success(`${FEATURE_LABELS[feature]} is ready`);
+          }
         }
       }
       if (TERMINAL.has(event.type)) {
-        source?.close();
+        state.ended = true;
+        close?.();
         setLive(false);
+        flush();
         if (settled) return;
         // The final word comes from the API (stage details, the repository's new status).
         void queryClient.invalidateQueries({ queryKey: key });
-        void queryClient.invalidateQueries({ queryKey: queryKeys.indexJobs(org, repo) });
+        void queryClient.invalidateQueries({ queryKey: listKey });
         void queryClient.invalidateQueries({ queryKey: queryKeys.repo(org, repo) });
         void queryClient.invalidateQueries({ queryKey: queryKeys.repos(org) });
       }
     };
 
-    const open = () => {
-      if (closed) return;
-      source = new EventSource(
-        `/api/v1/orgs/${encodeURIComponent(org)}/repos/${encodeURIComponent(repo)}/index-jobs/${encodeURIComponent(jobId)}/events`,
-      );
-      source.onopen = () => {
-        setLive(true);
-      };
-      source.onerror = () => {
-        setLive(false); // the browser retries on its own
-      };
-      for (const type of TYPES) source.addEventListener(type, onEvent);
-    };
-    if (process.env.NEXT_PUBLIC_MOCKS === "1") {
-      void import("@/mocks/start").then(({ startMocks }) => startMocks()).then(open);
-    } else {
-      open();
-    }
+    const stop = followStream(
+      `/api/v1/orgs/${encodeURIComponent(org)}/repos/${encodeURIComponent(repo)}/index-jobs/${encodeURIComponent(jobId)}/events`,
+      {
+        types: TYPES,
+        onEvent,
+        onLive: setLive,
+        lastId: () => state.lastId,
+        finished: () => state.ended,
+      },
+    );
+    close = stop;
     return () => {
-      closed = true;
-      source?.close();
+      stop();
+      flush(); // what arrived in the last moment still counts
     };
   }, [org, repo, jobId, queryClient]);
 

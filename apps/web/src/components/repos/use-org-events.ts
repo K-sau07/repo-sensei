@@ -4,6 +4,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
 
 import type { Repo, Stage } from "@/lib/api/types";
+import { followStream } from "@/lib/event-stream";
 import { queryKeys } from "@/lib/query/keys";
 
 interface OrgEvent {
@@ -15,19 +16,28 @@ interface OrgEvent {
 }
 
 /**
- * Follow the org's event stream (index runs starting stages and ending) and keep the repository
- * list current: progress moves the status dots in place, a finished run refetches. The browser
- * reconnects by itself (resuming from the last event id); one stream per tab.
+ * Follow the org's event stream (index runs starting stages and ending) and keep what shows
+ * index runs current: progress moves the status dots in place, and each event refreshes the
+ * repository's job list (tab locks, the overview) and, when a run ends, its page. The stream
+ * reconnects and resumes from the last event id (see `followStream`); one stream per tab.
  */
 export function useOrgEvents(org: string | null) {
   const queryClient = useQueryClient();
   useEffect(() => {
     if (!org || typeof EventSource === "undefined") return;
-    let source: EventSource | null = null;
-    let closed = false;
     const key = queryKeys.repos(org);
-    // Every repository's own page (by prefix: the repository is in the rest of the key).
+    // Every repository's own page and job list (by prefix: the repository is in the rest).
     const details = queryKeys.repo(org, "").slice(0, 2);
+    const allJobLists = queryKeys.indexJobs(org, "").slice(0, 2);
+    let lastId: string | null = null;
+
+    const refreshJobs = (repoId: string) => {
+      const slug = queryClient.getQueryData<Repo[]>(key)?.find((repo) => repo.id === repoId)?.slug;
+      void queryClient.invalidateQueries({
+        queryKey: slug ? queryKeys.indexJobs(org, slug) : allJobLists,
+      });
+    };
+
     const onEvent = (message: MessageEvent<string>) => {
       let event: OrgEvent;
       try {
@@ -35,6 +45,8 @@ export function useOrgEvents(org: string | null) {
       } catch {
         return;
       }
+      if (message.lastEventId) lastId = message.lastEventId;
+      refreshJobs(event.repo_id);
       if (event.type === "stage_started" || event.type === "queued") {
         const known = queryClient
           .getQueryData<Repo[]>(key)
@@ -63,24 +75,12 @@ export function useOrgEvents(org: string | null) {
       void queryClient.invalidateQueries({ queryKey: key });
       void queryClient.invalidateQueries({ queryKey: details });
     };
-    const open = () => {
-      if (closed) return;
-      source = new EventSource(`/api/v1/orgs/${encodeURIComponent(org)}/events`);
-      for (const type of ["queued", "stage_started", "done", "failed", "cancelled"]) {
-        source.addEventListener(type, onEvent);
-      }
-      source.addEventListener("message", onEvent); // the mock API sends unnamed events
-    };
-    // In mock mode the stream must start after the mock worker does, or it reaches the dev
-    // server's proxy instead. The env check is inline so real builds drop this branch.
-    if (process.env.NEXT_PUBLIC_MOCKS === "1") {
-      void import("@/mocks/start").then(({ startMocks }) => startMocks()).then(open);
-    } else {
-      open();
-    }
-    return () => {
-      closed = true;
-      source?.close();
-    };
+
+    return followStream(`/api/v1/orgs/${encodeURIComponent(org)}/events`, {
+      types: ["queued", "stage_started", "done", "failed", "cancelled"],
+      onEvent, // the mock API sends unnamed events, which come as "message"
+      onLive: () => undefined,
+      lastId: () => lastId,
+    });
   }, [org, queryClient]);
 }

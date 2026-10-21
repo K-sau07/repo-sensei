@@ -30,6 +30,15 @@ test.describe("indexing", () => {
     await expect(summary).toContainText("18,567");
   });
 
+  test("a locked tab unlocks while you watch it, without reloading", async ({ page }) => {
+    await connect(page, "https://github.com/fastapi/full-stack-fastapi-template");
+    await expect(page).toHaveURL(/\/acme\/full-stack-fastapi-template$/);
+    await page.getByRole("link", { name: /^Code/ }).click();
+    await expect(page.getByRole("region", { name: "Code is not ready yet" })).toBeVisible();
+    // Discovery finishes on the run's own schedule; the tab follows the org stream.
+    await expect(page.getByText("Code is on its way")).toBeVisible({ timeout: 15_000 });
+  });
+
   test("a failed run says why, and Retry starts another", async ({ page }) => {
     await connect(page, "https://github.com/big-corp/monorepo");
     const alert = page.getByRole("alert").filter({ hasText: "over 2.0 GB" });
@@ -51,6 +60,9 @@ test.describe("indexing", () => {
     await expect(page.getByText("Indexing cancelled")).toBeVisible();
     await expect(page.getByRole("table")).toContainText("Cancelled");
     await expect(page.getByRole("button", { name: "Index again" })).toBeVisible();
+    // The repository keeps its last index: the overview shows it, not the cancelled run.
+    await page.getByRole("link", { name: "Overview" }).click();
+    await expect(page.getByRole("region", { name: /^Indexed/ })).toBeVisible();
   });
 
   test("index history: every run, pick one, read and filter its log", async ({ page }) => {

@@ -5,6 +5,7 @@ import Link from "next/link";
 import { parseAsString, useQueryState } from "nuqs";
 
 import { EmptyState } from "@/components/feedback/empty-state";
+import { ErrorState } from "@/components/feedback/error-state";
 import { RelativeTime } from "@/components/primitives/relative-time";
 import { useRepo, useRepoSlug } from "@/components/repo/use-repo";
 import { LanguageBar } from "@/components/repos/language-bar";
@@ -19,6 +20,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { $api } from "@/lib/api/client";
+import { ApiError } from "@/lib/api/errors";
 import type { IndexJob } from "@/lib/api/types";
 import { STAGE_LABELS } from "@/lib/indexing";
 import { repoPath } from "@/lib/routes";
@@ -52,6 +54,17 @@ export function RepoOverview() {
   const { org, repo } = useRepoSlug();
   const detail = useRepo();
   const jobs = useJobs();
+  if (jobs.isError) {
+    return (
+      <div className="mx-auto w-full max-w-3xl p-6">
+        <ErrorState
+          title="Couldn't load this repository's index runs"
+          description={jobs.error instanceof ApiError ? jobs.error.message : undefined}
+          onRetry={() => void jobs.refetch()}
+        />
+      </div>
+    );
+  }
   if (!detail.data || jobs.isPending) {
     return (
       <div className="p-6" role="status" aria-label="Loading the overview">
@@ -59,8 +72,16 @@ export function RepoOverview() {
       </div>
     );
   }
-  const latest = jobs.data?.[0];
-  const showRun = latest && (latest.status !== "succeeded" || detail.data.status !== "ready");
+  const latest = jobs.data[0];
+  // The live view while a run is on, or after one failed (to show why, with Retry), or until
+  // the repository has an index at all; otherwise the summary of the last index. A cancelled
+  // run leaves the last index as it was.
+  const showRun =
+    latest !== undefined &&
+    (latest.status === "queued" ||
+      latest.status === "running" ||
+      latest.status === "failed" ||
+      !detail.data.last_indexed_sha);
   if (showRun) {
     return (
       <div className="mx-auto w-full max-w-6xl p-6">
@@ -133,6 +154,17 @@ export function IndexHistory() {
   const { org, repo } = useRepoSlug();
   const jobs = useJobs();
   const [picked, setPicked] = useQueryState("job", parseAsString);
+  if (jobs.isError) {
+    return (
+      <div className="mx-auto w-full max-w-3xl p-6">
+        <ErrorState
+          title="Couldn't load the index runs"
+          description={jobs.error instanceof ApiError ? jobs.error.message : undefined}
+          onRetry={() => void jobs.refetch()}
+        />
+      </div>
+    );
+  }
   if (jobs.isPending) {
     return (
       <div className="p-6" role="status" aria-label="Loading index runs">
@@ -140,7 +172,7 @@ export function IndexHistory() {
       </div>
     );
   }
-  const list = jobs.data ?? [];
+  const list = jobs.data;
   if (list.length === 0) {
     return (
       <div className="mx-auto w-full max-w-3xl p-6">
