@@ -50,7 +50,8 @@ export function RepoLayout({ children }: { children: ReactNode }) {
       <div className="mt-3">
         <RepoTabs />
       </div>
-      <div className="min-h-0 flex-1">{children}</div>
+      {/* A column, so a page can fill the height left (the code browser does). */}
+      <div className="flex min-h-0 flex-1 flex-col">{children}</div>
     </div>
   );
 }

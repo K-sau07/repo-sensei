@@ -1,3 +1,4 @@
+import { browseHandlers } from "./browse";
 import { constellationHandlers } from "./constellation";
 import { invitationHandlers } from "./invitations";
 import { meHandlers } from "./me";
@@ -11,6 +12,7 @@ export { apiError } from "./errors";
 export const handlers = [
   ...meHandlers,
   ...constellationHandlers,
+  ...browseHandlers,
   ...repoHandlers,
   ...orgHandlers,
   ...memberHandlers,

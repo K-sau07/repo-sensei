@@ -27,3 +27,7 @@ export type JobStatus = Schemas["JobStatus"];
 export type ConstellationPage = Schemas["ConstellationOut"];
 export type ConstellationPoint = Schemas["ConstellationPoint"];
 export type ConstellationDir = Schemas["ConstellationDir"];
+export type TreeEntry = Schemas["TreeEntry"];
+export type TreeListing = Schemas["TreeOut"];
+export type FileContent = Schemas["FileOut"];
+export type FileSearch = Schemas["SearchOut"];

@@ -35,8 +35,10 @@ test.describe("indexing", () => {
     await expect(page).toHaveURL(/\/acme\/full-stack-fastapi-template$/);
     await page.getByRole("link", { name: /^Code/ }).click();
     await expect(page.getByRole("region", { name: "Code is not ready yet" })).toBeVisible();
-    // Discovery finishes on the run's own schedule; the tab follows the org stream.
-    await expect(page.getByText("Code is on its way")).toBeVisible({ timeout: 15_000 });
+    // The run finishes on its own schedule; the tab follows the org stream to the files.
+    await expect(page.getByRole("tree", { name: "Repository files" })).toBeVisible({
+      timeout: 15_000,
+    });
   });
 
   test("a failed run says why, and Retry starts another", async ({ page }) => {
