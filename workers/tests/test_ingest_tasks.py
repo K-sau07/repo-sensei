@@ -22,6 +22,7 @@ from sqlalchemy import delete, select, update
 from sensei_core.config import Settings
 from sensei_core.db import Database
 from sensei_core.indexing.state import IndexJobStateMachine
+from sensei_core.jobs import chain_key
 from sensei_core.models import (
     IndexJob,
     JobKind,
@@ -37,7 +38,8 @@ from sensei_core.models import (
 )
 from sensei_core.storage import Bucket, artifact_key, repo_prefix, snapshot_key
 from sensei_engine.ingest.merkle import ARTIFACT_NAME, MAX_STORED_BYTES, MerkleTree
-from sensei_workers.runtime import Runtime, set_runtime
+from sensei_workers.runtime import Runtime, get_runtime, set_runtime
+from sensei_workers.tasks import orchestrate
 from sensei_workers.tasks.discover import discover_files
 from sensei_workers.tasks.ingest import clone_snapshot
 from sensei_workers.tasks.merkle import build_merkle
@@ -531,6 +533,108 @@ def test_stalled_jobs_are_failed(runtime: Runtime, repo: tuple[uuid.UUID, uuid.U
     fresh = runtime.run(_running_at_discover(system, org_id, repo_id, _utc()))
     sweep_stalled_jobs.apply().get()
     assert runtime.run(_job(system, fresh)).status is JobStatus.RUNNING
+
+
+def test_finalize_before_merkle_is_done_changes_nothing(
+    runtime: Runtime, repo: tuple[uuid.UUID, uuid.UUID]
+) -> None:
+    org_id, repo_id = repo
+    job_id = runtime.run(_running_at_discover(runtime.system_database, org_id, repo_id, _utc()))
+    kwargs = {"job_id": str(job_id), "org_id": str(org_id), "repo_id": str(repo_id)}
+    assert orchestrate.finalize_index.apply(kwargs=kwargs).get() is None  # too early: skipped
+    job = runtime.run(_job(runtime.system_database, job_id))
+    assert (job.status, job.stage) == (JobStatus.RUNNING, Stage.DISCOVER)
+    assert runtime.run(_repo(runtime.system_database, repo_id)).last_indexed_sha is None
+
+
+def test_a_stage_waiting_out_a_retry_is_left_alone(
+    runtime: Runtime, repo: tuple[uuid.UUID, uuid.UUID]
+) -> None:
+    org_id, repo_id = repo
+    system = runtime.system_database
+    waiting = runtime.run(
+        _running_at_discover(system, org_id, repo_id, _utc() - timedelta(hours=2))
+    )
+    kwargs = {"job_id": str(waiting), "org_id": str(org_id), "repo_id": str(repo_id)}
+    # A rate-limited attempt said it comes back in 20 minutes: not stalled.
+    discover_files.on_retry_scheduled(kwargs, 1200)
+    sweep_stalled_jobs.apply().get()
+    job = runtime.run(_job(system, waiting))
+    assert job.status is JobStatus.RUNNING
+    assert "alive_until" in job.stages["discover"]
+
+
+async def _between_stages(
+    database: Database, org_id: uuid.UUID, repo_id: uuid.UUID, finished: datetime
+) -> uuid.UUID:
+    """A running job whose clone stage is done and whose discover stage never started."""
+    job_id = await _new_job(database, org_id, repo_id)
+    async with database.session() as db:
+        job = await db.get(IndexJob, job_id)
+        assert job is not None
+        machine = IndexJobStateMachine(job, now=lambda: finished)
+        machine.start()
+        machine.complete(Stage.CLONE)
+    return job_id
+
+
+@pytest.fixture
+def sent(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """What the sweep sends again (recorded, not run: eager chains would run in place)."""
+    calls: list[str] = []
+
+    def record(job_id: str, org_id: str, repo_id: str, *, eager: bool = False) -> list[str]:
+        calls.append(job_id)
+        get_runtime().sync_redis.set(f"{chain_key(job_id)}:sent-at", _utc().isoformat(), ex=60)
+        return []
+
+    monkeypatch.setattr(orchestrate, "send_stages", record)
+    return calls
+
+
+def test_a_job_stuck_between_stages_is_sent_again_then_given_up(
+    runtime: Runtime, repo: tuple[uuid.UUID, uuid.UUID], sent: list[str]
+) -> None:
+    org_id, repo_id = repo
+    system = runtime.system_database
+    stuck = runtime.run(_between_stages(system, org_id, repo_id, _utc() - timedelta(hours=1)))
+    runtime.sync_redis.delete(f"{chain_key(stuck)}:sent-at")
+    sweep_stalled_jobs.apply().get()
+    assert str(stuck) in sent  # its next message may be lost: the chain carries on
+    sweep_stalled_jobs.apply().get()
+    assert sent.count(str(stuck)) == 1  # not again while that send is recent
+    assert runtime.run(_job(system, stuck)).status is JobStatus.RUNNING
+
+    abandoned = runtime.run(_between_stages(system, org_id, repo_id, _utc() - timedelta(hours=25)))
+    sweep_stalled_jobs.apply().get()
+    job = runtime.run(_job(system, abandoned))
+    assert (job.status, (job.error or {}).get("code")) == (JobStatus.FAILED, "stage_stalled")
+    assert job.stages["clone"]["status"] == "done"  # the finished stage stays done
+
+
+def test_an_old_queued_job_is_sent_again_only_if_its_chain_wasnt(
+    runtime: Runtime, repo: tuple[uuid.UUID, uuid.UUID], sent: list[str]
+) -> None:
+    org_id, repo_id = repo
+    system = runtime.system_database
+    queued = runtime.run(_new_job(system, org_id, repo_id))
+
+    async def age(job_id: uuid.UUID) -> None:
+        async with system.session() as db:
+            await db.execute(
+                update(IndexJob)
+                .where(IndexJob.id == job_id)
+                .values(created_at=_utc() - timedelta(hours=1))
+            )
+
+    runtime.run(age(queued))
+    # Its chain went out recently: it's waiting in a long queue, not lost.
+    runtime.sync_redis.set(f"{chain_key(queued)}:sent-at", _utc().isoformat(), ex=60)
+    sweep_stalled_jobs.apply().get()
+    assert str(queued) not in sent
+    runtime.sync_redis.delete(f"{chain_key(queued)}:sent-at")
+    sweep_stalled_jobs.apply().get()
+    assert str(queued) in sent
 
 
 def _utc() -> datetime:

@@ -159,6 +159,19 @@ class IndexJobStateMachine:
         self._save(stages)
         self._emit("stage.progress", stage, done=done, total=total)
 
+    def keep_alive(self, stage: Stage, until: datetime) -> None:
+        """Record that ``stage`` is alive until ``until`` without progress: a retry waiting out
+        a rate limit or a backoff. The stall sweep counts from the later of this and the last
+        progress. No event: nothing the user sees changes."""
+        self._require_current_running(stage)
+        stages = self._stages()
+        entry = stages[stage.value]
+        known = _time(entry.get("alive_until"))
+        if known is not None and known >= until:
+            return
+        entry["alive_until"] = until.isoformat()
+        self._save(stages)
+
     def finish(self) -> None:
         current = self._require_running_stage()
         if current is not Stage.FINALIZE:
@@ -187,6 +200,21 @@ class IndexJobStateMachine:
         self._save(stages)
         self.job.eta_s = None
         self._emit("job.failed", stage, error=details)
+
+    def fail_waiting(self, error: Mapping[str, Any]) -> None:
+        """Fail a running job between two stages (its stage is done, the next never started).
+        The finished stage stays done; the error is the job's."""
+        current = self._require_running_stage()
+        status = (self.job.stages or {}).get(current.value, {}).get("status")
+        if status == "running":
+            msg = f"{current.value} is running: use fail()"
+            raise IllegalTransitionError(msg)
+        details = {"stage": current.value, **dict(error)}
+        self._move_to(JobStatus.FAILED)
+        self.job.error = details
+        self.job.finished_at = self._now()
+        self.job.eta_s = None
+        self._emit("job.failed", current, error=details)
 
     def cancel(self) -> None:
         current = self.job.stage

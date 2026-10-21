@@ -12,7 +12,7 @@ from __future__ import annotations
 import time
 import uuid
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from urllib.parse import quote
 
@@ -112,6 +112,17 @@ class IngestTask(SenseiTask):
         super().on_dead_letter(task_id, args, kwargs)
         self._give_up(kwargs, "worker_lost", WORKER_LOST_MESSAGE)
 
+    def on_retry_scheduled(self, kwargs: dict[str, Any], delay: float) -> None:
+        """A retry is waiting (a rate limit, a backoff): tell the stall sweep when it's due."""
+        job_id, org_id = kwargs.get("job_id"), kwargs.get("org_id")
+        if not job_id or not org_id:
+            return
+        until = datetime.now(UTC) + timedelta(seconds=delay)
+        try:
+            get_runtime().run(keep_job_alive(self, org_id, uuid.UUID(str(job_id)), until))
+        except Exception:
+            log.exception("could not record the retry on the index job")
+
     def _give_up(
         self, kwargs: dict[str, Any], code: str = "internal_error", message: str = INTERNAL_MESSAGE
     ) -> None:
@@ -122,6 +133,16 @@ class IngestTask(SenseiTask):
             get_runtime().run(fail_job(self, org_id, uuid.UUID(str(job_id)), code, message))
         except Exception:
             log.exception("could not mark the index job failed")
+
+
+async def keep_job_alive(task: SenseiTask, org_id: str, job_id: uuid.UUID, until: datetime) -> None:
+    async with job_scope(task, org_id, job_id) as scope:
+        job = scope.job
+        if job is None or job.status is not JobStatus.RUNNING or job.stage is None:
+            return
+        if (job.stages or {}).get(job.stage.value, {}).get("status") != "running":
+            return
+        scope.machine.keep_alive(job.stage, until)
 
 
 async def fail_job(

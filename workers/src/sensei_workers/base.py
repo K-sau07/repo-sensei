@@ -326,7 +326,12 @@ class SenseiTask(_TaskBase):
             attempt=retries + 1,
             delay_seconds=round(delay, 1),
         )
+        self.on_retry_scheduled(dict(self.request.kwargs or {}), delay)
         raise self.retry(exc=exc, countdown=delay, max_retries=limit)
+
+    def on_retry_scheduled(self, kwargs: dict[str, Any], delay: float) -> None:
+        """Called when the task will run again in ``delay`` seconds. For subclasses whose work
+        is watched for stalls."""
 
     # ------------------------------------------------------------------ sessions
 

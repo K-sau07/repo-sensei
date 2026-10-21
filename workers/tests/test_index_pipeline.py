@@ -23,6 +23,7 @@ from sensei_core.models import IndexJob, JobKind, JobStatus, Org, Repo, RepoSour
 from sensei_core.storage import Bucket, repo_prefix
 from sensei_workers.ingest.git import GitRunner
 from sensei_workers.runtime import Runtime, set_runtime
+from sensei_workers.tasks.merkle import build_merkle
 from sensei_workers.tasks.orchestrate import run_index_job
 
 pytestmark = pytest.mark.integration
@@ -201,3 +202,36 @@ def test_cancelling_while_cloning_stops_the_rest(
     events = runtime.run(_events(runtime, job_stream(job_id)))
     assert events[-1]["type"] == "cancelled"
     assert not [e for e in events if e["stage"] == "discover"]
+
+
+def test_cancelling_before_finalize_keeps_the_last_index(
+    runtime: Runtime,
+    ids: tuple[uuid.UUID, uuid.UUID, uuid.UUID],
+    github: respx.MockRouter,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    org_id, repo_id, job_id = ids
+    real_merkle = build_merkle.run
+
+    async def cancel() -> None:
+        async with runtime.system_database.session() as db:
+            job = await db.scalar(select(IndexJob).where(IndexJob.id == job_id).with_for_update())
+            repo = await db.get(Repo, repo_id)
+            assert job is not None
+            assert repo is not None
+            IndexJobStateMachine(job).cancel()
+            settle_repo(repo, JobStatus.CANCELLED)
+
+    def merkle_then_cancel(*args: Any, **kwargs: Any) -> Any:
+        result = real_merkle(*args, **kwargs)
+        runtime.run(cancel())  # the admin cancels just before finalize picks it up
+        return result
+
+    monkeypatch.setattr(build_merkle, "run", merkle_then_cancel)
+    _run(org_id, repo_id, job_id)
+
+    repo, job = runtime.run(_state(runtime.system_database, repo_id, job_id))
+    assert job.status is JobStatus.CANCELLED
+    assert job.stages["merkle"]["status"] == "done"
+    assert "finalize" not in job.stages  # finalize saw the cancel and did nothing
+    assert (repo.status, repo.last_indexed_sha) == (RepoStatus.PENDING, None)

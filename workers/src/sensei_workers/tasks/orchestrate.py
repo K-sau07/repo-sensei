@@ -38,8 +38,13 @@ log = get_logger(__name__)
 CHAIN_TTL_SECONDS = 2 * 86_400
 # A running stage with no progress for the task time limit plus this is dead.
 STALL_MARGIN_SECONDS = 600
-# A job still queued this long after it was created never got its message.
+# A job waiting this long for its next task (queued, or between two stages) may have lost its
+# message: the chain is sent again, unless it was sent within RESEND_AFTER_SECONDS (a long
+# queue is not a lost message, and resending into it only makes it longer).
 REQUEUE_AFTER_SECONDS = 600
+RESEND_AFTER_SECONDS = 6 * 3600
+# A job still waiting between stages after this, resends included, has failed.
+GIVE_UP_AFTER_SECONDS = 24 * 3600
 
 
 @celery_app.task(
@@ -108,8 +113,16 @@ def run_index_job(self: SenseiTask, *, job_id: str, org_id: str, repo_id: str) -
     return task_ids
 
 
+def _sent_key(job_id: str) -> str:
+    return f"{chain_key(job_id)}:sent-at"
+
+
 def send_stages(job_id: str, org_id: str, repo_id: str, *, eager: bool = False) -> list[str]:
-    """Send the stage chain (run it in place when ``eager``: tests, eager dev setups)."""
+    """Send the stage chain (run it in place when ``eager``: tests, eager dev setups).
+
+    Sending it again is safe: every stage checks the job first, so stages already done do
+    nothing and the run carries on where it stopped. The task ids of every send are kept, so
+    cancelling revokes all of them."""
     kwargs: dict[str, Any] = {"job_id": job_id, "org_id": org_id, "repo_id": repo_id}
     task_ids = [str(uuid.uuid4()) for _ in STAGES]
     signatures = [
@@ -118,9 +131,9 @@ def send_stages(job_id: str, org_id: str, repo_id: str, *, eager: bool = False) 
     ]
     redis = get_runtime().sync_redis
     key = chain_key(job_id)
-    redis.delete(key)
     redis.rpush(key, *task_ids)
     redis.expire(key, CHAIN_TTL_SECONDS)
+    redis.set(_sent_key(job_id), _now().isoformat(), ex=CHAIN_TTL_SECONDS)
     workflow = chain(*signatures)
     if eager:
         workflow.apply()
@@ -133,59 +146,101 @@ STALLED_MESSAGE = (
     "Indexing stopped making progress (the worker running it went away). Try again; if it keeps "
     "happening, contact support with the job id."
 )
+WAITING_MESSAGE = (
+    "Indexing stopped between two steps and didn't pick up again. Try again; if it keeps "
+    "happening, contact support with the job id."
+)
+
+
+def _sent_recently(job_id: str, now: datetime) -> bool:
+    raw = get_runtime().sync_redis.get(_sent_key(job_id))
+    if raw is None:
+        return False
+    text = raw.decode() if isinstance(raw, bytes) else str(raw)
+    try:
+        sent = datetime.fromisoformat(text)
+    except ValueError:
+        return False
+    return now - sent < timedelta(seconds=RESEND_AFTER_SECONDS)
+
+
+def _time(value: object) -> datetime | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        return datetime.fromisoformat(value)
+    except ValueError:
+        return None
 
 
 @celery_app.task(bind=True, base=SenseiTask, name=TaskName.SWEEP_STALLED_JOBS.value, system=True)
 def sweep_stalled_jobs(self: SenseiTask) -> int:
-    """Fail running jobs whose running stage hasn't moved for longer than any task may run
-    (the time limit, plus margin): their worker died in a way nothing else reported. Queued jobs
-    that never started (their message was lost) are sent again."""
-    runtime = get_runtime()
-    limit = timedelta(seconds=runtime.settings.worker.time_limit_seconds + STALL_MARGIN_SECONDS)
+    """Look after index jobs nothing is moving any more. Returns how many it failed.
 
-    async def _sweep() -> int:
+    * A running stage with no sign of life (progress, or a retry it said it's waiting for) for
+      longer than any task may run (the time limit, plus margin) lost its worker: it fails.
+    * A job waiting for its next task (queued, or between two stages) for a while may have lost
+      that message: its chain is sent again, at most every ``RESEND_AFTER_SECONDS``.
+    * A job still waiting between stages after ``GIVE_UP_AFTER_SECONDS`` fails.
+    """
+    runtime = get_runtime()
+    limit = runtime.settings.worker.time_limit_seconds + STALL_MARGIN_SECONDS
+    now = _now()
+
+    async def _sweep() -> tuple[int, list[tuple[str, str, str]]]:
         failed = 0
-        cutoff = _now() - limit
+        waiting: list[tuple[str, str, str]] = []
         outbox = JobOutbox()
         async with self.system_session() as db:
             jobs = await db.scalars(
-                select(IndexJob).where(IndexJob.status == JobStatus.RUNNING).with_for_update()
+                select(IndexJob).where(IndexJob.status.in_(ACTIVE_JOB_STATUSES)).with_for_update()
             )
             for job in jobs:
+                ids = (str(job.id), str(job.org_id), str(job.repo_id))
+                if job.status is JobStatus.QUEUED:
+                    queued_for = (now - job.created_at).total_seconds()
+                    if queued_for >= REQUEUE_AFTER_SECONDS:
+                        waiting.append(ids)
+                    continue
                 stage = job.stage
                 if stage is None:
                     continue
                 entry: dict[str, Any] = (job.stages or {}).get(stage.value, {})
-                if entry.get("status") != "running":
-                    continue  # between stages: the next task is queued
-                moved = entry.get("updated_at") or entry.get("started_at")
-                if not isinstance(moved, str) or datetime.fromisoformat(moved) > cutoff:
-                    continue
                 machine = IndexJobStateMachine(job)
-                machine.fail(stage, {"code": "stage_stalled", "message": STALLED_MESSAGE})
+                if entry.get("status") == "running":
+                    signs = (
+                        _time(entry.get("updated_at") or entry.get("started_at")),
+                        _time(entry.get("alive_until")),
+                    )
+                    last = max((sign for sign in signs if sign is not None), default=None)
+                    if last is None or (now - last).total_seconds() <= limit:
+                        continue
+                    machine.fail(stage, {"code": "stage_stalled", "message": STALLED_MESSAGE})
+                else:
+                    # Between stages: this one is done and the next hasn't started.
+                    finished = _time(entry.get("finished_at"))
+                    idle = (now - finished).total_seconds() if finished else None
+                    if idle is None or idle < REQUEUE_AFTER_SECONDS:
+                        continue
+                    if idle < GIVE_UP_AFTER_SECONDS:
+                        waiting.append(ids)
+                        continue
+                    machine.fail_waiting({"code": "stage_stalled", "message": WAITING_MESSAGE})
                 outbox.collect(machine)
                 repo = await db.get(Repo, job.repo_id)
                 if repo is not None:
                     settle_repo(repo, JobStatus.FAILED)
                 failed += 1
         await outbox.publish(runtime.redis)
-        return failed
+        return failed, waiting
 
-    async def _unsent() -> list[tuple[str, str, str]]:
-        cutoff = _now() - timedelta(seconds=REQUEUE_AFTER_SECONDS)
-        async with self.system_session() as db:
-            rows = await db.execute(
-                select(IndexJob.id, IndexJob.org_id, IndexJob.repo_id).where(
-                    IndexJob.status == JobStatus.QUEUED, IndexJob.created_at < cutoff
-                )
-            )
-            return [(str(job), str(org), str(repo)) for job, org, repo in rows]
-
-    failed = runtime.run(_sweep())
+    failed, waiting = runtime.run(_sweep())
     if failed:
         log.warning("stalled index jobs failed", jobs=failed)
-    for job_id, org_id, repo_id in runtime.run(_unsent()):
-        log.warning("queued index job sent again", job_id=job_id)
+    for job_id, org_id, repo_id in waiting:
+        if _sent_recently(job_id, now):
+            continue
+        log.warning("waiting index job sent again", job_id=job_id)
         send_stages(job_id, org_id, repo_id, eager=bool(self.request.is_eager))
     return failed
 
