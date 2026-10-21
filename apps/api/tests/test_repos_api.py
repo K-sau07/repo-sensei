@@ -19,13 +19,14 @@ import respx
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from fakeredis import FakeAsyncRedis
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from pydantic import SecretStr
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from sensei_api import streams
 from sensei_api.browse import TreeCache
+from sensei_api.routers import index_jobs
 from sensei_core.auth.github_login import store_tokens
 from sensei_core.config import GitHubSettings, Settings
 from sensei_core.db.tenancy import set_org_context
@@ -38,6 +39,8 @@ from sensei_core.models import (
     AuditEvent,
     GitHubInstallation,
     IndexJob,
+    JobKind,
+    JobStatus,
     Membership,
     Org,
     Repo,
@@ -48,6 +51,7 @@ from sensei_core.models import (
     SnapshotStatus,
     Stage,
     User,
+    UserSession,
 )
 from sensei_core.orgs.service import OrgService
 from sensei_core.repos.access import RepoAccess
@@ -106,7 +110,10 @@ PRIVATE_API = _repo(101, "acme-gh/api")
 PRIVATE_WEB = _repo(102, "acme-gh/web")
 SETTINGS_NAMED = _repo(103, "acme-gh/settings")
 OTHER_API = _repo(104, "other-gh/api")
-PUBLIC = _repo(201, "langflow-ai/langflow", private=False, size=150_000)
+PUBLIC = {
+    **_repo(201, "langflow-ai/langflow", private=False, size=150_000),
+    "stargazers_count": 120,
+}
 INSTALLED = [PRIVATE_API, PRIVATE_WEB, SETTINGS_NAMED, OTHER_API]
 
 
@@ -495,6 +502,7 @@ async def test_estimate_before_connecting(
     assert estimate["index_minutes"] > 0
     assert float(estimate["cost_usd"]) > 0
     assert estimate["heuristic"] is True
+    assert (estimate["size_kb"], estimate["stars"]) == (150_000, 120)
 
     by_id = await client.post(
         f"{API}/orgs/acme/repos/estimate", json={"github_repo_id": 101}, headers=headers
@@ -961,6 +969,101 @@ async def test_org_events_only_show_readable_repositories(
     assert first not in seen
 
 
+async def test_a_run_whose_final_event_was_lost_still_ends_its_stream(
+    app: FastAPI,
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    fake: FakeGitHub,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(streams, "READ_BLOCK_MS", 50)
+    monkeypatch.setattr(streams, "RECHECK_SECONDS", 0.1)
+    _, _, job_id = await _connected(app, client, db_session, fake)
+    # The run ends in the database, but its final event never reaches Redis (a blip after the
+    # commit): the open stream finds out from the database and ends with the outcome.
+    job = await db_session.get(IndexJob, uuid.UUID(job_id))
+    assert job is not None
+    machine = IndexJobStateMachine(job)
+    machine.start()
+    machine.advance(Stage.FINALIZE)
+    machine.finish()
+    await db_session.flush()
+    url = f"{API}/orgs/acme/repos/api/index-jobs/{job_id}/events"
+    events = _sse((await client.get(url)).text)
+    assert [e["event"] for e in events] == ["queued", "done"]
+
+    # Resuming after the last event seen, with the stream long gone, gets the outcome too.
+    seen = events[0]["id"]
+    resumed = _sse((await client.get(url, headers={"Last-Event-ID": seen})).text)
+    assert [e["event"] for e in resumed] == ["done"]
+
+
+async def test_an_expired_stream_resumed_mid_way_still_gets_the_outcome(
+    app: FastAPI,
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    fake: FakeGitHub,
+    fake_redis: FakeAsyncRedis,
+) -> None:
+    _, _, job_id = await _connected(app, client, db_session, fake)
+    await _finish(db_session, job_id, fake_redis)
+    await fake_redis.delete(f"jobs:{job_id}")
+    url = f"{API}/orgs/acme/repos/api/index-jobs/{job_id}/events"
+    resumed = _sse((await client.get(url, headers={"Last-Event-ID": "1-0"})).text)
+    assert [e["event"] for e in resumed] == ["done"]
+
+
+async def test_the_org_stream_ends_when_its_viewer_loses_access(
+    app: FastAPI,
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    fake: FakeGitHub,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(streams, "READ_BLOCK_MS", 50)
+    monkeypatch.setattr(index_jobs, "MEMBERSHIP_RECHECK_SECONDS", 0.0)
+    await _connected(app, client, db_session, fake)
+
+    async def gone(*_args: object) -> bool:
+        return False
+
+    monkeypatch.setattr(index_jobs, "_still_member", gone)
+    # The stream would replay the queued run; it ends instead, and sends nothing.
+    response = await client.get(f"{API}/orgs/acme/events?last_event_id=0")
+    assert response.status_code == 200
+    assert _sse(response.text) == []
+
+
+async def test_still_member_follows_the_session_and_the_membership(
+    app: FastAPI, client: httpx.AsyncClient, db_session: AsyncSession, fake: FakeGitHub
+) -> None:
+    admin, _, _ = await _connected(app, client, db_session, fake)
+    org_id = await _org_id(db_session, "acme")
+    session = await db_session.scalar(
+        select(UserSession)
+        .where(UserSession.user_id == admin.id)
+        .order_by(UserSession.created_at.desc())
+    )
+    assert session is not None
+    request = Request({"type": "http", "app": app})
+
+    async def check() -> bool:
+        return await index_jobs._still_member(  # pyright: ignore[reportPrivateUsage]
+            request, org_id, admin.id, session.id
+        )
+
+    assert await check()
+    session.revoked_at = datetime.now(UTC)
+    await db_session.flush()
+    assert not await check()
+    session.revoked_at = None
+    membership = await db_session.get(Membership, (org_id, admin.id))
+    assert membership is not None
+    await db_session.delete(membership)
+    await db_session.flush()
+    assert not await check()
+
+
 # ------------------------------------------------------------------ browsing a snapshot
 
 SHA_ONE = "1" * 40
@@ -993,8 +1096,12 @@ async def _index(
     tmp_path: Path,
     files: dict[str, bytes],
     sha: str,
+    *,
+    outcome: JobStatus = JobStatus.SUCCEEDED,
+    links: dict[str, Path] | None = None,
 ) -> None:
-    """acme-gh/api indexed at ``sha`` with ``files``, the way the workers leave it."""
+    """acme-gh/api indexed at ``sha`` with ``files``, the way the workers leave it (a run that
+    ended with ``outcome``: only a succeeded one moves the repository's last index)."""
     repo = await db.scalar(select(Repo).where(Repo.slug == "api"))
     assert repo is not None
     app.state.created_repos.append((repo.org_id, repo.id))
@@ -1002,6 +1109,9 @@ async def _index(
     for path, data in files.items():
         (root / path).parent.mkdir(parents=True, exist_ok=True)
         (root / path).write_bytes(data)
+    for path, target in (links or {}).items():
+        (root / path).parent.mkdir(parents=True, exist_ok=True)
+        (root / path).symlink_to(target, target_is_directory=target.is_dir())
     found = discover(root, max_files=1000)
     snapshot = Snapshot(
         org_id=repo.org_id,
@@ -1013,6 +1123,15 @@ async def _index(
     )
     db.add(snapshot)
     await db.flush()
+    db.add(
+        IndexJob(
+            org_id=repo.org_id,
+            repo_id=repo.id,
+            snapshot_id=snapshot.id,
+            kind=JobKind.FULL,
+            status=outcome,
+        )
+    )
     await save_discovery(db, snapshot, found)
     tree = build_tree(Leaf(f.path, f.content_hash, f.fast_hash, f.size) for f in found.files)
     key = artifact_key(repo.org_id, repo.id, sha, ARTIFACT_NAME)
@@ -1020,7 +1139,8 @@ async def _index(
     archive = write_archive(root, tmp_path / f"{sha}.tar.zst")
     await store.put_file(Bucket.SNAPSHOTS, snapshot_key(repo.org_id, repo.id, sha), archive.path)
     snapshot.merkle_root = tree.root.hex()
-    repo.last_indexed_sha = sha
+    if outcome is JobStatus.SUCCEEDED:
+        repo.last_indexed_sha = sha
     await db.flush()
 
 
@@ -1049,7 +1169,8 @@ async def test_tree_lists_directories_first_with_etags(
     root = await client.get(f"{API}/orgs/acme/repos/api/tree")
     assert root.status_code == 200, root.text
     body = root.json()
-    assert body["commit_sha"] == SHA_ONE
+    assert root.headers["x-commit-sha"] == SHA_ONE
+    assert "commit_sha" not in body  # the body depends only on the directory
     assert [(e["name"], e["type"]) for e in body["entries"]] == [
         ("docs", "dir"),
         ("src", "dir"),
@@ -1092,12 +1213,63 @@ async def test_tree_lists_directories_first_with_etags(
             headers={"If-None-Match": etag},
         )
         assert response.status_code == code, path
+        # Even a 304 says which commit it's from now (it updates the cached headers).
+        assert response.headers["x-commit-sha"] == SHA_TWO, path
     old = await client.get(f"{API}/orgs/acme/repos/api/tree", params={"ref": SHA_ONE[:8]})
-    assert old.json()["commit_sha"] == SHA_ONE
+    assert old.headers["x-commit-sha"] == SHA_ONE
     branch = await client.get(f"{API}/orgs/acme/repos/api/tree", params={"ref": "main"})
-    assert branch.json()["commit_sha"] == SHA_TWO
+    assert branch.headers["x-commit-sha"] == SHA_TWO
     unknown = await client.get(f"{API}/orgs/acme/repos/api/tree", params={"ref": "nope"})
     assert unknown.json()["error"]["code"] == "ref_not_indexed"
+
+
+async def test_a_snapshot_whose_run_failed_is_not_browsable(
+    app: FastAPI,
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    fake: FakeGitHub,
+    storage: ObjectStorage,
+    tmp_path: Path,
+) -> None:
+    await _connected(app, client, db_session, fake)
+    await _index(app, db_session, storage, tmp_path, FILES, SHA_ONE)
+    # A later run got as far as the tree, then failed: that commit was never indexed.
+    await _index(app, db_session, storage, tmp_path, FILES, SHA_TWO, outcome=JobStatus.FAILED)
+    tree = f"{API}/orgs/acme/repos/api/tree"
+    branch = await client.get(tree, params={"ref": "main"})
+    assert branch.headers["x-commit-sha"] == SHA_ONE
+    commit = await client.get(tree, params={"ref": SHA_TWO[:8]})
+    assert (commit.status_code, commit.json()["error"]["code"]) == (404, "ref_not_indexed")
+
+
+async def test_symlinks_never_lead_outside_the_snapshot(
+    app: FastAPI,
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    fake: FakeGitHub,
+    storage: ObjectStorage,
+    tmp_path: Path,
+) -> None:
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "secret.txt").write_text("not yours\n")
+    await _connected(app, client, db_session, fake)
+    await _index(
+        app,
+        db_session,
+        storage,
+        tmp_path,
+        FILES,
+        SHA_ONE,
+        links={"src/secret.txt": outside / "secret.txt", "linked": outside},
+    )
+    url = f"{API}/orgs/acme/repos/api/file"
+    for path in ("src/secret.txt", "linked/secret.txt"):
+        response = await client.get(url, params={"path": path})
+        assert response.status_code == 404, path
+        assert "not yours" not in response.text
+    listing = (await client.get(f"{API}/orgs/acme/repos/api/tree", params={"path": "src"})).json()
+    assert "src/secret.txt" not in [e["path"] for e in listing["entries"]]
 
 
 async def test_files_text_binary_and_large(
@@ -1129,7 +1301,8 @@ async def test_files_text_binary_and_large(
     etag = response.headers["etag"]
     assert etag == f'"f1-{hashlib.sha256(content).hexdigest()}"'
     cached = await client.get(url, params={"path": "src/app.py"}, headers={"If-None-Match": etag})
-    assert cached.status_code == 304
+    assert (cached.status_code, cached.headers["x-commit-sha"]) == (304, SHA_ONE)
+    assert response.headers["x-commit-sha"] == SHA_ONE
 
     binary = await client.get(url, params={"path": "logo.png"})
     assert (binary.status_code, binary.json()["error"]["code"]) == (415, "binary_file")

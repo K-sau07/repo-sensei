@@ -16,6 +16,7 @@ from sensei_engine.snapshots import (
     SnapshotCache,
     UnsafePathError,
     check_path,
+    open_file,
     read_file,
 )
 
@@ -52,6 +53,11 @@ def test_reads_never_follow_links(tmp_path: Path) -> None:
             read_file(root, path, max_bytes=100)
     with pytest.raises(ValueError, match="larger than"):
         read_file(root, "src/app.py", max_bytes=3)
+    # Only regular files open: a directory isn't one.
+    with pytest.raises(FileNotFoundError):
+        open_file(root, "src")
+    with open_file(root, "src/app.py") as handle:
+        assert handle.read() == b"x = 1\n"
 
 
 def _archive(files: dict[str, bytes]) -> bytes:

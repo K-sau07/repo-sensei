@@ -9,8 +9,9 @@ commits too. A file's ETag is its content hash. Paths are checked before anythin
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path as FilePath
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, BinaryIO, Literal
 
 from fastapi import APIRouter, Query, Request, Response, status
 from pydantic import BaseModel, Field
@@ -25,7 +26,7 @@ from sensei_core.models import RepoFile, Snapshot
 from sensei_core.storage import Bucket, ObjectStorage, artifact_key, snapshot_key
 from sensei_engine.ingest.classify import decode_text
 from sensei_engine.ingest.merkle import DIR, FILE
-from sensei_engine.snapshots import SnapshotCache, UnsafePathError, check_path, read_file
+from sensei_engine.snapshots import SnapshotCache, UnsafePathError, check_path, open_file
 
 router = APIRouter(prefix="/orgs/{org}/repos/{repo}", tags=["browse"])
 
@@ -68,13 +69,17 @@ class TreeEntry(BaseModel):
 
 
 class TreeOut(BaseModel):
-    commit_sha: str
+    """A directory listing. It depends only on what's in the directory (so its ETag holds across
+    commits that didn't touch it); the commit it was read from is in ``X-Commit-Sha``."""
+
     path: str
     entries: list[TreeEntry]
 
 
 class FileOut(BaseModel):
-    commit_sha: str
+    """A file. Like a listing, it depends only on the content; the commit is in
+    ``X-Commit-Sha``."""
+
     path: str
     language: str | None
     role: str
@@ -120,16 +125,25 @@ def _not_modified(request: Request, etag: str) -> bool:
     return etag in tags or "*" in tags
 
 
-def _cache_headers(response: Response, etag: str) -> None:
+COMMIT_HEADER = "X-Commit-Sha"
+
+
+def _cache_headers(response: Response, etag: str, snapshot: Snapshot) -> None:
     response.headers["ETag"] = etag
     # Private (it's behind sign-in), and always revalidated: the ETag makes that cheap.
     response.headers["Cache-Control"] = "private, no-cache"
+    response.headers[COMMIT_HEADER] = snapshot.commit_sha
 
 
-def _not_modified_response(etag: str) -> Response:
+def _not_modified_response(etag: str, snapshot: Snapshot) -> Response:
+    # A 304 updates the cached response's headers, so the commit stays current with it.
     return Response(
         status_code=status.HTTP_304_NOT_MODIFIED,
-        headers={"ETag": etag, "Cache-Control": "private, no-cache"},
+        headers={
+            "ETag": etag,
+            "Cache-Control": "private, no-cache",
+            COMMIT_HEADER: snapshot.commit_sha,
+        },
     )
 
 
@@ -138,7 +152,22 @@ def _storage(request: Request) -> ObjectStorage:
     return storage
 
 
-@router.get("/tree", response_model=TreeOut, responses={304: {"description": "Not modified"}})
+_COMMIT_HEADER_DOC = {
+    "X-Commit-Sha": {
+        "description": "The commit the response was read from.",
+        "schema": {"type": "string"},
+    }
+}
+
+
+@router.get(
+    "/tree",
+    response_model=TreeOut,
+    responses={
+        200: {"headers": _COMMIT_HEADER_DOC},
+        304: {"description": "Not modified", "headers": _COMMIT_HEADER_DOC},
+    },
+)
 async def tree(
     *,
     request: Request,
@@ -148,7 +177,8 @@ async def tree(
     path: PathParam = "",
     ref: RefParam = None,
 ) -> TreeOut | Response:
-    """The direct children of a directory, directories first. ETag: the directory's hash."""
+    """The direct children of a directory, directories first. ETag: the directory's hash (its
+    ``t1`` version changes whenever what a listing shows does); ``X-Commit-Sha``: the commit."""
     directory = _path(path)
     snapshot = await resolve_snapshot(db, repo, ref)
     cache: TreeCache = request.app.state.tree_cache
@@ -160,7 +190,7 @@ async def tree(
         raise NotFoundError("No such directory in this snapshot.", code="path_not_found")
     etag = f'"t1-{dir_hash.hex()}"'
     if _not_modified(request, etag):
-        return _not_modified_response(etag)
+        return _not_modified_response(etag, snapshot)
 
     children = merkle.children[directory]
     file_paths = [_join(directory, e.name) for e in children if e.kind == FILE]
@@ -192,8 +222,8 @@ async def tree(
                 flags=list(row.flags) if row else None,
             )
         )
-    _cache_headers(response, etag)
-    return TreeOut(commit_sha=snapshot.commit_sha, path=directory, entries=entries)
+    _cache_headers(response, etag, snapshot)
+    return TreeOut(path=directory, entries=entries)
 
 
 def _metadata(snapshot: Snapshot, row: RepoFile) -> dict[str, Any]:
@@ -227,17 +257,27 @@ async def _unpacked(request: Request, snapshot: Snapshot) -> FilePath:
     return await cache.unpacked(snapshot.id, download)
 
 
-async def _read(request: Request, snapshot: Snapshot, path: str, limit: int) -> bytes:
+async def _open(request: Request, snapshot: Snapshot, path: str) -> BinaryIO:
+    """The snapshot's file, opened safely (see ``open_file``), unpacking the snapshot first."""
     root = await _unpacked(request, snapshot)
     try:
-        return read_file(root, path, max_bytes=limit)
+        return await asyncio.to_thread(open_file, root, path)
     except FileNotFoundError:
         pass  # evicted between finding the snapshot and reading it: unpack again, once
     try:
-        return read_file(await _unpacked(request, snapshot), path, max_bytes=limit)
+        return await asyncio.to_thread(open_file, await _unpacked(request, snapshot), path)
     except FileNotFoundError:
         # Recorded by discovery, yet not in the archive.
         raise NotFoundError("No such file in this snapshot.", code="path_not_found") from None
+
+
+async def _read(request: Request, snapshot: Snapshot, path: str, limit: int) -> bytes:
+    with await _open(request, snapshot, path) as handle:
+        data = await asyncio.to_thread(handle.read, limit + 1)
+    if len(data) > limit:
+        msg = f"{path} is larger than {limit} bytes"
+        raise ValueError(msg)
+    return data
 
 
 async def _download_url(request: Request, snapshot: Snapshot, row: RepoFile) -> str:
@@ -247,9 +287,9 @@ async def _download_url(request: Request, snapshot: Snapshot, row: RepoFile) -> 
         snapshot.org_id, snapshot.repo_id, snapshot.commit_sha, "files", row.blob_sha
     )
     if await storage.size(Bucket.ARTIFACTS, key) is None:
-        root = await _unpacked(request, snapshot)
-        data = read_file(root, row.path, max_bytes=max(row.size, 1))
-        await storage.put_bytes(Bucket.ARTIFACTS, key, data)
+        # Streamed from the unpacked snapshot: large files never sit in memory.
+        with await _open(request, snapshot, row.path) as handle:
+            await storage.put_stream(Bucket.ARTIFACTS, key, handle)
     return await storage.presign_get(Bucket.ARTIFACTS, key, expires_in=DOWNLOAD_URL_SECONDS)
 
 
@@ -257,7 +297,8 @@ async def _download_url(request: Request, snapshot: Snapshot, row: RepoFile) -> 
     "/file",
     response_model=FileOut,
     responses={
-        304: {"description": "Not modified"},
+        200: {"headers": _COMMIT_HEADER_DOC},
+        304: {"description": "Not modified", "headers": _COMMIT_HEADER_DOC},
         413: {"description": "Over 2 MB: metadata and a download URL instead"},
         415: {"description": "Binary: metadata only"},
     },
@@ -271,7 +312,7 @@ async def file(
     path: PathParam,
     ref: RefParam = None,
 ) -> FileOut | Response:
-    """A text file's content. ETag: the content's hash."""
+    """A text file's content. ETag: the content's hash; ``X-Commit-Sha``: the commit."""
     wanted = _path(path)
     if not wanted:
         raise BadPathError("Give the path of a file.")
@@ -283,7 +324,7 @@ async def file(
         raise NotFoundError("No such file in this snapshot.", code="path_not_found")
     etag = f'"f1-{row.content_hash.hex()}"'
     if _not_modified(request, etag):
-        return _not_modified_response(etag)
+        return _not_modified_response(etag, snapshot)
     metadata = _metadata(snapshot, row)
     if "binary" in row.flags:
         raise BinaryFileError("This file isn't text.", details=metadata)
@@ -296,9 +337,8 @@ async def file(
     if decoded is None:
         raise BinaryFileError("This file isn't text.", details=metadata)
     content, encoding = decoded
-    _cache_headers(response, etag)
+    _cache_headers(response, etag, snapshot)
     return FileOut(
-        commit_sha=snapshot.commit_sha,
         path=row.path,
         language=row.language,
         role=row.role,

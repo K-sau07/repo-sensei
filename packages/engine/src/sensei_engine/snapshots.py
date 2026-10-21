@@ -18,12 +18,14 @@ import contextlib
 import fcntl
 import os
 import shutil
+import stat
 import tarfile
 import tempfile
 import time
 import uuid
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from pathlib import Path
+from typing import BinaryIO
 
 import zstandard
 
@@ -92,9 +94,9 @@ def check_path(path: str) -> str:
     return cleaned
 
 
-def read_file(root: Path, path: str, *, max_bytes: int) -> bytes:
-    """The bytes of ``path`` under ``root`` (at most ``max_bytes``; more raises ValueError),
-    opening each directory and the file itself without following symbolic links."""
+def open_file(root: Path, path: str) -> BinaryIO:
+    """``path`` under ``root``, opened for reading: each directory and the file itself without
+    following symbolic links, and only if it is a regular file (else ``FileNotFoundError``)."""
     parts = check_path(path).split("/")
     if parts == [""]:
         raise UnsafePathError(path)
@@ -108,7 +110,16 @@ def read_file(root: Path, path: str, *, max_bytes: int) -> bytes:
         fd = os.open(parts[-1], flags, dir_fd=directory)
     finally:
         os.close(directory)
-    with os.fdopen(fd, "rb") as handle:
+    if not stat.S_ISREG(os.fstat(fd).st_mode):
+        os.close(fd)
+        raise FileNotFoundError(path)
+    return os.fdopen(fd, "rb")
+
+
+def read_file(root: Path, path: str, *, max_bytes: int) -> bytes:
+    """The bytes of ``path`` under ``root`` (at most ``max_bytes``; more raises ValueError),
+    opened as :func:`open_file` does."""
+    with open_file(root, path) as handle:
         data = handle.read(max_bytes + 1)
     if len(data) > max_bytes:
         msg = f"{path} is larger than {max_bytes} bytes"

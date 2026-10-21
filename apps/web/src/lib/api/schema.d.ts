@@ -330,7 +330,9 @@ export interface paths {
         /**
          * Org Events
          * @description The org's index runs starting and ending, as server-sent events (for status dots and the
-         *     inbox), limited to repositories the signed-in user can read. Never closes by itself.
+         *     inbox), limited to repositories the signed-in user can read. Closes only when the session
+         *     ends or the user leaves the org (checked every minute); the browser's reconnect then gets
+         *     the error.
          */
         get: operations["org_events_api_v1_orgs__org__events_get"];
         put?: never;
@@ -570,7 +572,7 @@ export interface paths {
         };
         /**
          * File
-         * @description A text file's content. ETag: the content's hash.
+         * @description A text file's content. ETag: the content's hash; ``X-Commit-Sha``: the commit.
          */
         get: operations["file_api_v1_orgs__org__repos__repo__file_get"];
         put?: never;
@@ -711,7 +713,8 @@ export interface paths {
         };
         /**
          * Tree
-         * @description The direct children of a directory, directories first. ETag: the directory's hash.
+         * @description The direct children of a directory, directories first. ETag: the directory's hash (its
+         *     ``t1`` version changes whenever what a listing shows does); ``X-Commit-Sha``: the commit.
          */
         get: operations["tree_api_v1_orgs__org__repos__repo__tree_get"];
         put?: never;
@@ -904,6 +907,11 @@ export interface components {
             /** Size Kb */
             size_kb: number;
             /**
+             * Stars
+             * @description GitHub stars, when GitHub says.
+             */
+            stars?: number | null;
+            /**
              * Tokens
              * @description Estimated tokens to embed.
              */
@@ -921,10 +929,12 @@ export interface components {
          * @enum {string}
          */
         Feature: "code_browser" | "goto_definition" | "keyword_search" | "semantic_search" | "ask" | "wiki" | "graph_view" | "callers" | "trace" | "diagrams" | "fixes" | "changes";
-        /** FileOut */
+        /**
+         * FileOut
+         * @description A file. Like a listing, it depends only on the content; the commit is in
+         *     ``X-Commit-Sha``.
+         */
         FileOut: {
-            /** Commit Sha */
-            commit_sha: string;
             /** Content */
             content: string;
             /** Encoding */
@@ -1466,10 +1476,12 @@ export interface components {
              */
             type: "dir" | "file";
         };
-        /** TreeOut */
+        /**
+         * TreeOut
+         * @description A directory listing. It depends only on what's in the directory (so its ETag holds across
+         *     commits that didn't touch it); the commit it was read from is in ``X-Commit-Sha``.
+         */
         TreeOut: {
-            /** Commit Sha */
-            commit_sha: string;
             /** Entries */
             entries: components["schemas"]["TreeEntry"][];
             /** Path */
@@ -2680,6 +2692,8 @@ export interface operations {
             /** @description Successful Response */
             200: {
                 headers: {
+                    /** @description The commit the response was read from. */
+                    "X-Commit-Sha"?: string;
                     [name: string]: unknown;
                 };
                 content: {
@@ -2689,6 +2703,8 @@ export interface operations {
             /** @description Not modified */
             304: {
                 headers: {
+                    /** @description The commit the response was read from. */
+                    "X-Commit-Sha"?: string;
                     [name: string]: unknown;
                 };
                 content?: never;
@@ -2955,6 +2971,8 @@ export interface operations {
             /** @description Successful Response */
             200: {
                 headers: {
+                    /** @description The commit the response was read from. */
+                    "X-Commit-Sha"?: string;
                     [name: string]: unknown;
                 };
                 content: {
@@ -2964,6 +2982,8 @@ export interface operations {
             /** @description Not modified */
             304: {
                 headers: {
+                    /** @description The commit the response was read from. */
+                    "X-Commit-Sha"?: string;
                     [name: string]: unknown;
                 };
                 content?: never;

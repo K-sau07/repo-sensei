@@ -11,13 +11,14 @@ file path inside a repository can't escape its prefix.
 
 from __future__ import annotations
 
+import asyncio
 import enum
 import re
 import uuid
 from collections.abc import AsyncGenerator
 from contextlib import AbstractAsyncContextManager, AsyncExitStack
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, BinaryIO, cast
 
 import aioboto3
 from botocore.config import Config
@@ -122,6 +123,20 @@ class ObjectStorage:
             str(path), self.bucket_name(bucket), key, ExtraArgs=extra
         )
 
+    async def put_stream(
+        self, bucket: Bucket, key: str, source: BinaryIO, *, content_type: str | None = None
+    ) -> None:
+        """Upload from an open file, in parts (multipart for large ones), reading it in a
+        thread: never all in memory, and the event loop never waits on the disk."""
+        extra = {"ContentType": content_type} if content_type else None
+        await self._client.upload_fileobj(  # pyright: ignore[reportUnknownMemberType]
+            # The stubs only know sync bodies; aioboto3 awaits a ``read`` that returns one.
+            cast("Any", _ThreadedReader(source)),
+            self.bucket_name(bucket),
+            key,
+            ExtraArgs=extra,
+        )
+
     async def put_bytes(
         self, bucket: Bucket, key: str, data: bytes, *, content_type: str | None = None
     ) -> None:
@@ -220,3 +235,13 @@ class ObjectStorage:
             msg = f"could not delete {len(errors)} objects (first: {errors[0].get('Key')})"
             raise RuntimeError(msg)
         return len(keys)
+
+
+class _ThreadedReader:
+    """A file whose ``read`` is awaitable (runs in a thread), for ``upload_fileobj``."""
+
+    def __init__(self, source: BinaryIO) -> None:
+        self._source = source
+
+    async def read(self, size: int = -1) -> bytes:
+        return await asyncio.to_thread(self._source.read, size)

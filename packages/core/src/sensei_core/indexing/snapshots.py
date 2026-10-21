@@ -8,7 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from sensei_core.errors import InvalidError, NotFoundError
-from sensei_core.models import Repo, Snapshot, SnapshotStatus
+from sensei_core.models import IndexJob, JobStatus, Repo, Snapshot, SnapshotStatus
 
 _SHA_PREFIX = re.compile(r"[0-9a-f]{7,64}")
 MAX_REF_LENGTH = 255
@@ -23,11 +23,22 @@ def _not_indexed(ref: str | None) -> NotFoundError:
 async def resolve_snapshot(db: AsyncSession, repo: Repo, ref: str | None) -> Snapshot:
     """The browsable snapshot for ``ref``: None means the last index; a hex string of 7 or more
     characters is a commit id (or the start of one); anything else is a branch, whose most
-    recently indexed commit is used."""
+    recently indexed commit is used. Only snapshots an index run finished count (one left by a
+    failed or cancelled run may have its tree, but was never indexed)."""
+    finished = (
+        select(IndexJob.id)
+        .where(
+            IndexJob.repo_id == repo.id,
+            IndexJob.snapshot_id == Snapshot.id,
+            IndexJob.status == JobStatus.SUCCEEDED,
+        )
+        .exists()
+    )
     browsable = select(Snapshot).where(
         Snapshot.repo_id == repo.id,
         Snapshot.status == SnapshotStatus.READY,
         Snapshot.merkle_root.is_not(None),
+        finished,
     )
     if ref is None:
         if repo.last_indexed_sha is None:

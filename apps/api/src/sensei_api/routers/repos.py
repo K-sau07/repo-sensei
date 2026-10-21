@@ -144,6 +144,7 @@ class EstimateOut(BaseModel):
     full_name: str
     private: bool
     size_kb: int
+    stars: int | None = Field(default=None, description="GitHub stars, when GitHub says.")
     languages: dict[str, int]
     files: int = Field(description="Estimated number of source files.")
     tokens: int = Field(description="Estimated tokens to embed.")
@@ -269,10 +270,12 @@ async def estimate_repo(
     facts, estimate = await repos.estimate(
         db, access, viewer=viewer, url=body.url, github_repo_id=body.github_repo_id
     )
+    stars = facts.body.get("stargazers_count")
     return EstimateOut(
         full_name=str(facts.body.get("full_name")),
         private=bool(facts.body.get("private")),
         size_kb=facts.size_kb,
+        stars=stars if isinstance(stars, int) else None,
         languages=facts.languages,
         files=estimate.files,
         tokens=estimate.tokens,

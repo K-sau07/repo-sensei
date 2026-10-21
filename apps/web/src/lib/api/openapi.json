@@ -372,6 +372,18 @@
             "title": "Size Kb",
             "type": "integer"
           },
+          "stars": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "GitHub stars, when GitHub says.",
+            "title": "Stars"
+          },
           "tokens": {
             "description": "Estimated tokens to embed.",
             "title": "Tokens",
@@ -440,11 +452,8 @@
         "type": "string"
       },
       "FileOut": {
+        "description": "A file. Like a listing, it depends only on the content; the commit is in\n``X-Commit-Sha``.",
         "properties": {
-          "commit_sha": {
-            "title": "Commit Sha",
-            "type": "string"
-          },
           "content": {
             "title": "Content",
             "type": "string"
@@ -501,7 +510,6 @@
           }
         },
         "required": [
-          "commit_sha",
           "path",
           "language",
           "role",
@@ -1849,11 +1857,8 @@
         "type": "object"
       },
       "TreeOut": {
+        "description": "A directory listing. It depends only on what's in the directory (so its ETag holds across\ncommits that didn't touch it); the commit it was read from is in ``X-Commit-Sha``.",
         "properties": {
-          "commit_sha": {
-            "title": "Commit Sha",
-            "type": "string"
-          },
           "entries": {
             "items": {
               "$ref": "#/components/schemas/TreeEntry"
@@ -1867,7 +1872,6 @@
           }
         },
         "required": [
-          "commit_sha",
           "path",
           "entries"
         ],
@@ -2790,7 +2794,7 @@
     },
     "/api/v1/orgs/{org}/events": {
       "get": {
-        "description": "The org's index runs starting and ending, as server-sent events (for status dots and the\ninbox), limited to repositories the signed-in user can read. Never closes by itself.",
+        "description": "The org's index runs starting and ending, as server-sent events (for status dots and the\ninbox), limited to repositories the signed-in user can read. Closes only when the session\nends or the user leaves the org (checked every minute); the browser's reconnect then gets\nthe error.",
         "operationId": "org_events_api_v1_orgs__org__events_get",
         "parameters": [
           {
@@ -3681,7 +3685,7 @@
     },
     "/api/v1/orgs/{org}/repos/{repo}/file": {
       "get": {
-        "description": "A text file's content. ETag: the content's hash.",
+        "description": "A text file's content. ETag: the content's hash; ``X-Commit-Sha``: the commit.",
         "operationId": "file_api_v1_orgs__org__repos__repo__file_get",
         "parameters": [
           {
@@ -3748,10 +3752,26 @@
                 }
               }
             },
-            "description": "Successful Response"
+            "description": "Successful Response",
+            "headers": {
+              "X-Commit-Sha": {
+                "description": "The commit the response was read from.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           },
           "304": {
-            "description": "Not modified"
+            "description": "Not modified",
+            "headers": {
+              "X-Commit-Sha": {
+                "description": "The commit the response was read from.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           },
           "413": {
             "description": "Over 2 MB: metadata and a download URL instead"
@@ -4197,7 +4217,7 @@
     },
     "/api/v1/orgs/{org}/repos/{repo}/tree": {
       "get": {
-        "description": "The direct children of a directory, directories first. ETag: the directory's hash.",
+        "description": "The direct children of a directory, directories first. ETag: the directory's hash (its\n``t1`` version changes whenever what a listing shows does); ``X-Commit-Sha``: the commit.",
         "operationId": "tree_api_v1_orgs__org__repos__repo__tree_get",
         "parameters": [
           {
@@ -4265,10 +4285,26 @@
                 }
               }
             },
-            "description": "Successful Response"
+            "description": "Successful Response",
+            "headers": {
+              "X-Commit-Sha": {
+                "description": "The commit the response was read from.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           },
           "304": {
-            "description": "Not modified"
+            "description": "Not modified",
+            "headers": {
+              "X-Commit-Sha": {
+                "description": "The commit the response was read from.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           },
           "422": {
             "content": {

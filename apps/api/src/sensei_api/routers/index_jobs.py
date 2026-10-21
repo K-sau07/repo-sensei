@@ -12,6 +12,7 @@ from typing import Annotated, Any, cast
 from fastapi import APIRouter, BackgroundTasks, Path, Request, status
 from pydantic import BaseModel, Field
 from redis.asyncio import Redis
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sse_starlette import EventSourceResponse, ServerSentEvent
 
@@ -20,8 +21,9 @@ from sensei_api.deps import DbSession, RedisClient
 from sensei_api.orgs import OrgAccessDep
 from sensei_api.repos import RepoDep, repo_access
 from sensei_api.routers.auth import GitHubOAuthDep
+from sensei_core.auth.sessions import ActiveSession
 from sensei_core.db import Database
-from sensei_core.db.tenancy import set_org_context
+from sensei_core.db.tenancy import set_org_context, set_user_context
 from sensei_core.github.client import GitHubError
 from sensei_core.github.oauth import GitHubOAuth, OAuthError
 from sensei_core.indexing.events import TERMINAL, EventType, JobOutbox, job_stream, org_stream
@@ -33,14 +35,18 @@ from sensei_core.models import (
     IndexJob,
     JobKind,
     JobStatus,
+    Membership,
+    Org,
     Repo,
     Stage,
     User,
+    UserSession,
 )
 
 router = APIRouter(prefix="/orgs/{org}", tags=["indexing"])
 JobId = Annotated[uuid.UUID, Path(description="Index job id")]
 ACCESS_RECHECK_SECONDS = 300.0  # how long an org stream trusts its answer about one repository
+MEMBERSHIP_RECHECK_SECONDS = 60.0  # how often an org stream checks its session and membership
 
 
 class IndexJobOut(BaseModel):
@@ -175,7 +181,8 @@ async def cancel_index_job(
 
 
 def _final_event(job: IndexJob) -> dict[str, Any]:
-    """A stand-in for the last event of a run whose stream has expired."""
+    """A stand-in for the last event of an ended run whose stream doesn't have it (expired, or
+    the event was never published)."""
     kind = {
         JobStatus.SUCCEEDED: EventType.DONE,
         JobStatus.FAILED: EventType.FAILED,
@@ -208,19 +215,34 @@ async def index_job_events(
     found = await _service(request).get(db, repo, job)
     cursor = streams.last_event_id(request)
     active = found.status in ACTIVE_JOB_STATUSES
-    final = None if active else _final_event(found)
     key = job_stream(job)
     stop_on = frozenset(t.value for t in TERMINAL)
+    org_id = repo.org_id
+    latest: list[IndexJob] = [found]
+
+    async def still_active() -> bool:
+        async with _short_session(request) as session:
+            await set_org_context(session, org_id)
+            current = await session.get(IndexJob, job)
+            if current is None:
+                return False
+            latest[0] = current
+            return current.status in ACTIVE_JOB_STATUSES
 
     async def events() -> AsyncGenerator[ServerSentEvent]:
         ended = False
         async for item in streams.follow(
-            request, redis, key, cursor, stop_on=stop_on, follow_new=active
+            request, redis, key, cursor, stop_on=stop_on, follow_new=active, still=still_active
         ):
             ended = ended or item.event in stop_on
             yield item
-        if final is not None and not ended and cursor == "0":
-            yield streams.event(final)  # the stream expired: what the database still knows
+        if ended or await request.is_disconnected():
+            return
+        if latest[0].status in ACTIVE_JOB_STATUSES:
+            await still_active()  # the last word from the database
+        if latest[0].status not in ACTIVE_JOB_STATUSES:
+            # The run is over but its stream doesn't say so: what the database knows.
+            yield streams.event(_final_event(latest[0]))
 
     return streams.response(events())
 
@@ -234,8 +256,12 @@ async def org_events(
     request: Request, access: OrgAccessDep, redis: RedisClient, oauth: GitHubOAuthDep
 ) -> EventSourceResponse:
     """The org's index runs starting and ending, as server-sent events (for status dots and the
-    inbox), limited to repositories the signed-in user can read. Never closes by itself."""
+    inbox), limited to repositories the signed-in user can read. Closes only when the session
+    ends or the user leaves the org (checked every minute); the browser's reconnect then gets
+    the error."""
     org_id, user_id = access.org.id, access.user.id
+    active: ActiveSession = request.state.active_session
+    session_id = active.session.id
     key = org_stream(org_id)
     cursor = (
         streams.last_event_id(request)
@@ -243,8 +269,16 @@ async def org_events(
         else await streams.latest_id(redis, key)
     )
     known: dict[str, tuple[bool, float]] = {}
+    allowed = True
+
+    async def still_allowed() -> bool:
+        nonlocal allowed
+        allowed = await _still_member(request, org_id, user_id, session_id)
+        return allowed
 
     async def keep(payload: dict[str, Any]) -> bool:
+        if not allowed:
+            return False  # nothing more, not even what was already in the stream
         repo_id = str(payload.get("repo_id"))
         cached = known.get(repo_id)
         if cached is None or time.monotonic() - cached[1] > ACCESS_RECHECK_SECONDS:
@@ -252,7 +286,45 @@ async def org_events(
             known[repo_id] = cached = (readable, time.monotonic())
         return cached[0]
 
-    return streams.response(streams.follow(request, redis, key, cursor, keep=keep))
+    return streams.response(
+        streams.follow(
+            request,
+            redis,
+            key,
+            cursor,
+            keep=keep,
+            still=still_allowed,
+            recheck_seconds=MEMBERSHIP_RECHECK_SECONDS,
+        )
+    )
+
+
+async def _still_member(
+    request: Request, org_id: uuid.UUID, user_id: uuid.UUID, session_id: uuid.UUID
+) -> bool:
+    """Whether the stream's session is still live and its user still in the org. Read-only: a
+    stream mustn't keep a session alive the way a request does."""
+    async with _short_session(request) as db:
+        await set_user_context(db, user_id)
+        await set_org_context(db, org_id)
+        live = await db.scalar(
+            select(UserSession.id).where(
+                UserSession.id == session_id,
+                UserSession.revoked_at.is_(None),
+                UserSession.idle_expires_at > func.now(),
+                UserSession.absolute_expires_at > func.now(),
+            )
+        )
+        member = await db.scalar(
+            select(Membership.user_id)
+            .join(Org, Org.id == Membership.org_id)
+            .where(
+                Membership.org_id == org_id,
+                Membership.user_id == user_id,
+                Org.deleted_at.is_(None),
+            )
+        )
+        return live is not None and member is not None
 
 
 def _resuming(request: Request) -> bool:

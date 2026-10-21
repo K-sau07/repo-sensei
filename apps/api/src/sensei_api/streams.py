@@ -11,6 +11,7 @@ Postgres is read before streaming starts, or in short sessions of its own.
 from __future__ import annotations
 
 import re
+import time
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from typing import Any, cast
 
@@ -30,7 +31,10 @@ READ_COUNT = 200
 HEADERS = {"Cache-Control": "no-cache, no-transform", "X-Accel-Buffering": "no"}
 _ENTRY_ID = re.compile(r"\d{1,20}(?:-\d{1,20})?")  # "0" is the start
 
+RECHECK_SECONDS = 30.0  # how often a following stream asks whether it should go on
+
 Filter = Callable[[dict[str, Any]], Awaitable[bool]]
+Check = Callable[[], Awaitable[bool]]
 
 
 def last_event_id(request: Request) -> str:
@@ -76,10 +80,23 @@ async def follow(
     stop_on: frozenset[str] = frozenset(),
     keep: Filter | None = None,
     follow_new: bool = True,
+    still: Check | None = None,
+    recheck_seconds: float | None = None,
 ) -> AsyncGenerator[ServerSentEvent]:
     """Events after ``cursor``; with ``follow_new``, keep waiting for more until one of
-    ``stop_on`` (or the client goes away). ``keep`` drops events the viewer mustn't see."""
+    ``stop_on`` (or the client goes away). ``keep`` drops events the viewer mustn't see.
+
+    ``still`` is asked every ``recheck_seconds`` (default ``RECHECK_SECONDS``) while following:
+    once it says no, what the stream already has is sent (through ``keep``) and it ends. That
+    covers what Redis alone can't tell, like a final event that was never published or a viewer
+    who lost access."""
+    every = RECHECK_SECONDS if recheck_seconds is None else recheck_seconds
+    checked = time.monotonic()
     while True:
+        if follow_new and still is not None and time.monotonic() - checked >= every:
+            checked = time.monotonic()
+            if not await still():
+                follow_new = False  # drain what's there, then stop
         batches = await _read(redis, key, cursor, block=READ_BLOCK_MS if follow_new else None)
         for _stream, entries in batches:
             for entry_id, fields in entries:
