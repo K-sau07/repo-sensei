@@ -210,8 +210,8 @@ async def index_job_events(
     request: Request, repo: RepoDep, job: JobId, db: DbSession, redis: RedisClient
 ) -> EventSourceResponse:
     """The run's progress as server-sent events (types: queued, stage_started, progress,
-    stage_done, unlock, log, done, failed, cancelled). Replays from ``Last-Event-ID``; closes
-    after the final event."""
+    stage_done, unlock, log, constellation, done, failed, cancelled). Replays from
+    ``Last-Event-ID``; closes after the final event."""
     found = await _service(request).get(db, repo, job)
     cursor = streams.last_event_id(request)
     active = found.status in ACTIVE_JOB_STATUSES

@@ -6,7 +6,7 @@ import uuid
 
 import pytest
 
-from sensei_core.indexing.events import ORG_TYPES, payloads_for
+from sensei_core.indexing.events import ORG_TYPES, JobOutbox, payloads_for
 from sensei_core.indexing.state import IndexJobStateMachine
 from sensei_core.models import IndexJob, JobKind, JobStatus, Stage
 
@@ -77,3 +77,16 @@ def test_the_org_stream_gets_the_lifecycle_only() -> None:
         "failed",
         "cancelled",
     }
+
+
+def test_constellation_events_say_how_far_points_can_be_read() -> None:
+    machine = _machine()
+    machine.start()
+    machine.advance(Stage.DISCOVER)
+    outbox = JobOutbox()
+    outbox.constellation(machine.job, cursor=500, total=1200, generation="g1")
+    [(job_id, org_id, payload)] = outbox.items
+    assert (job_id, org_id) == (str(machine.job.id), str(machine.job.org_id))
+    assert (payload["type"], payload["stage"]) == ("constellation", "discover")
+    assert (payload["cursor"], payload["total"], payload["generation"]) == (500, 1200, "g1")
+    assert "constellation" not in {t.value for t in ORG_TYPES}  # the run's own stream only

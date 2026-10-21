@@ -63,6 +63,15 @@ describe("applying the event stream", () => {
     ]);
   });
 
+  it("leaves the job as it is for constellation events (they only say there are points)", () => {
+    const running = applyEvent(queued(), event({ type: "stage_started", stage: "discover" }));
+    const after = applyEvent(
+      running,
+      event({ type: "constellation", stage: "discover", cursor: 500, total: 900 }),
+    );
+    expect(after).toEqual(running);
+  });
+
   it("leaves a finished run as it is while its history replays", () => {
     const finished = jobAt(BASE, Number.MAX_SAFE_INTEGER);
     for (const recorded of runEvents()) {

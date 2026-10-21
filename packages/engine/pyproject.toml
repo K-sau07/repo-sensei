@@ -7,10 +7,13 @@ dependencies = [
     "charset-normalizer>=3.4",
     "identify>=2.6",
     "msgpack>=1.1",
+    "orjson>=3.11",
     "packaging>=24",
     "pathspec>=0.12",
     "pyyaml>=6.0",
+    "redis>=6.2",
     "sensei-core",
+    "uuid-utils>=0.11",
     "xxhash>=3.5",
     "zstandard>=0.25",
 ]

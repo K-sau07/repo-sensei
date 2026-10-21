@@ -24,3 +24,6 @@ export type Installation = Schemas["InstallationOut"];
 export type IndexJob = Schemas["IndexJobOut"];
 export type Stage = Schemas["Stage"];
 export type JobStatus = Schemas["JobStatus"];
+export type ConstellationPage = Schemas["ConstellationOut"];
+export type ConstellationPoint = Schemas["ConstellationPoint"];
+export type ConstellationDir = Schemas["ConstellationDir"];

@@ -12,15 +12,17 @@ import uuid
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import httpx
+import orjson
 import pytest
 import respx
 from sqlalchemy import delete, select, update
 
 from sensei_core.config import Settings
 from sensei_core.db import Database
+from sensei_core.indexing.events import job_stream
 from sensei_core.indexing.state import IndexJobStateMachine
 from sensei_core.jobs import chain_key
 from sensei_core.models import (
@@ -37,6 +39,8 @@ from sensei_core.models import (
     Stage,
 )
 from sensei_core.storage import Bucket, artifact_key, repo_prefix, snapshot_key
+from sensei_engine.ingest import constellation
+from sensei_engine.ingest.constellation import Constellation, live_keys, read_live
 from sensei_engine.ingest.merkle import ARTIFACT_NAME, MAX_STORED_BYTES, MerkleTree
 from sensei_workers.runtime import Runtime, get_runtime, set_runtime
 from sensei_workers.tasks import orchestrate
@@ -340,6 +344,65 @@ def test_discover_records_the_snapshot_files(
 
     # A duplicate delivery after the stage is done changes nothing.
     assert _discover(org_id, repo_id, job_id) is None
+
+
+def _stored_constellation(
+    runtime: Runtime, org_id: uuid.UUID, repo_id: uuid.UUID, sha: str
+) -> Constellation:
+    async def load() -> bytes | None:
+        storage = await runtime.storage()
+        key = artifact_key(org_id, repo_id, sha, constellation.ARTIFACT_NAME)
+        return await storage.get_bytes(
+            Bucket.ARTIFACTS, key, max_bytes=constellation.MAX_STORED_BYTES
+        )
+
+    data = runtime.run(load())
+    assert data is not None
+    return Constellation.from_bytes(data)
+
+
+async def _stream(runtime: Runtime, job_id: uuid.UUID) -> list[dict[str, Any]]:
+    entries = cast(
+        "list[tuple[str, dict[str, str]]]", await runtime.redis.xrange(job_stream(job_id))
+    )
+    return [orjson.loads(fields["data"]) for _, fields in entries]
+
+
+def test_discover_streams_and_stores_the_constellation(
+    runtime: Runtime, repo: tuple[uuid.UUID, uuid.UUID], github: respx.MockRouter, bare_repo: Any
+) -> None:
+    org_id, repo_id = repo
+    system = runtime.system_database
+    job_id = _cloned(runtime, org_id, repo_id)
+    _discover(org_id, repo_id, job_id)
+
+    job = runtime.run(_job(system, job_id))
+    noted = job.stages["discover"]["details"]["constellation"]
+    stored = _stored_constellation(runtime, org_id, repo_id, bare_repo.second)
+    assert noted["generation"] == stored.generation
+    assert (noted["points"], noted["directories"]) == (5, len(stored.dirs))
+    # The points name the saved rows, in discovery's (path) order.
+    files = runtime.run(_files(system, repo_id))
+    assert [p.path for p in stored.points] == SECOND_COMMIT_FILES
+    assert {p.path: p.file_id for p in stored.points} == {f.path: f.id for f in files.values()}
+    app = next(p for p in stored.points if p.path == "src/app.py")
+    assert (app.layer, stored.dirs[app.directory].path) == ("svc", "src")
+
+    # While it ran, viewers were told how far they could read; the live copy agrees.
+    told = [e for e in runtime.run(_stream(runtime, job_id)) if e["type"] == "constellation"]
+    assert [(e["cursor"], e["total"], e["generation"]) for e in told] == [(5, 5, stored.generation)]
+    live = runtime.run(read_live(runtime.redis, job_id, 0, 100))
+    assert live is not None
+    assert live.points == stored.points
+    assert 0 < runtime.run(_live_ttl(runtime, job_id)) <= constellation.LIVE_KEEP_SECONDS
+
+
+async def _live_ttl(runtime: Runtime, job_id: uuid.UUID) -> int:
+    """How long the live copy stays (then drops it)."""
+    head, points = live_keys(job_id)
+    ttl = cast("int", await runtime.redis.ttl(head))
+    await runtime.redis.delete(head, points)
+    return ttl
 
 
 def test_discover_unpacks_the_archive_without_the_working_copy(

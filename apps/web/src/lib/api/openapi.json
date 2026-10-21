@@ -331,6 +331,247 @@
         "title": "ConnectRepo",
         "type": "object"
       },
+      "ConstellationDir": {
+        "properties": {
+          "depth": {
+            "title": "Depth",
+            "type": "integer"
+          },
+          "files": {
+            "description": "Files directly inside.",
+            "title": "Files",
+            "type": "integer"
+          },
+          "id": {
+            "description": "What points' ``dir_cluster`` refers to.",
+            "title": "Id",
+            "type": "integer"
+          },
+          "parent": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent"
+          },
+          "path": {
+            "description": "\"\" for the root.",
+            "title": "Path",
+            "type": "string"
+          },
+          "x": {
+            "title": "X",
+            "type": "number"
+          },
+          "y": {
+            "title": "Y",
+            "type": "number"
+          },
+          "z": {
+            "title": "Z",
+            "type": "number"
+          }
+        },
+        "required": [
+          "id",
+          "path",
+          "parent",
+          "depth",
+          "x",
+          "y",
+          "z",
+          "files"
+        ],
+        "title": "ConstellationDir",
+        "type": "object"
+      },
+      "ConstellationOut": {
+        "properties": {
+          "available": {
+            "description": "Points there are now.",
+            "title": "Available",
+            "type": "integer"
+          },
+          "commit_sha": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Commit Sha"
+          },
+          "dirs": {
+            "description": "Every directory, on the first page only.",
+            "items": {
+              "$ref": "#/components/schemas/ConstellationDir"
+            },
+            "title": "Dirs",
+            "type": "array"
+          },
+          "generation": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Generation"
+          },
+          "layout": {
+            "const": "directory",
+            "default": "directory",
+            "title": "Layout",
+            "type": "string"
+          },
+          "next": {
+            "description": "The cursor for the next page.",
+            "title": "Next",
+            "type": "integer"
+          },
+          "points": {
+            "items": {
+              "$ref": "#/components/schemas/ConstellationPoint"
+            },
+            "title": "Points",
+            "type": "array"
+          },
+          "since": {
+            "title": "Since",
+            "type": "integer"
+          },
+          "status": {
+            "description": "pending: nothing yet; streaming: discovery is finding files; stopped: the run ended before discovery finished; complete: every point.",
+            "enum": [
+              "pending",
+              "streaming",
+              "stopped",
+              "complete"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "total": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Points there will be (known once the walk is done).",
+            "title": "Total"
+          }
+        },
+        "required": [
+          "status",
+          "commit_sha",
+          "generation",
+          "total",
+          "available",
+          "since",
+          "next",
+          "dirs",
+          "points"
+        ],
+        "title": "ConstellationOut",
+        "type": "object"
+      },
+      "ConstellationPoint": {
+        "properties": {
+          "dir_cluster": {
+            "title": "Dir Cluster",
+            "type": "integer"
+          },
+          "file_id": {
+            "format": "uuid",
+            "title": "File Id",
+            "type": "string"
+          },
+          "language": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Language"
+          },
+          "layer": {
+            "enum": [
+              "ui",
+              "api",
+              "svc",
+              "db",
+              "other"
+            ],
+            "title": "Layer",
+            "type": "string"
+          },
+          "loc": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Loc"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "role": {
+            "title": "Role",
+            "type": "string"
+          },
+          "size": {
+            "description": "Bytes.",
+            "title": "Size",
+            "type": "integer"
+          },
+          "x": {
+            "title": "X",
+            "type": "number"
+          },
+          "y": {
+            "title": "Y",
+            "type": "number"
+          },
+          "z": {
+            "title": "Z",
+            "type": "number"
+          }
+        },
+        "required": [
+          "file_id",
+          "path",
+          "x",
+          "y",
+          "z",
+          "layer",
+          "role",
+          "language",
+          "dir_cluster",
+          "size",
+          "loc"
+        ],
+        "title": "ConstellationPoint",
+        "type": "object"
+      },
       "EstimateOut": {
         "properties": {
           "cost_usd": {
@@ -3683,6 +3924,126 @@
         ]
       }
     },
+    "/api/v1/orgs/{org}/repos/{repo}/constellation": {
+      "get": {
+        "description": "A page of the constellation's points (file, position, layer, directory cluster, size).",
+        "operationId": "constellation_api_v1_orgs__org__repos__repo__constellation_get",
+        "parameters": [
+          {
+            "description": "Repository slug",
+            "in": "path",
+            "name": "repo",
+            "required": true,
+            "schema": {
+              "description": "Repository slug",
+              "maxLength": 201,
+              "title": "Repo",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Organization slug",
+            "in": "path",
+            "name": "org",
+            "required": true,
+            "schema": {
+              "description": "Organization slug",
+              "title": "Org",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Points the caller has already.",
+            "in": "query",
+            "name": "since",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "description": "Points the caller has already.",
+              "minimum": 0,
+              "title": "Since",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 10000,
+              "maximum": 50000,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "An index run: its constellation, while it forms.",
+            "in": "query",
+            "name": "job",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "An index run: its constellation, while it forms.",
+              "title": "Job"
+            }
+          },
+          {
+            "description": "Branch or commit (or its first 7+ characters).",
+            "in": "query",
+            "name": "ref",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 255,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Branch or commit (or its first 7+ characters).",
+              "title": "Ref"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConstellationOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Constellation",
+        "tags": [
+          "constellation"
+        ]
+      }
+    },
     "/api/v1/orgs/{org}/repos/{repo}/file": {
       "get": {
         "description": "A text file's content. ETag: the content's hash; ``X-Commit-Sha``: the commit.",
@@ -4095,7 +4456,7 @@
     },
     "/api/v1/orgs/{org}/repos/{repo}/index-jobs/{job}/events": {
       "get": {
-        "description": "The run's progress as server-sent events (types: queued, stage_started, progress,\nstage_done, unlock, log, done, failed, cancelled). Replays from ``Last-Event-ID``; closes\nafter the final event.",
+        "description": "The run's progress as server-sent events (types: queued, stage_started, progress,\nstage_done, unlock, log, constellation, done, failed, cancelled). Replays from\n``Last-Event-ID``; closes after the final event.",
         "operationId": "index_job_events_api_v1_orgs__org__repos__repo__index_jobs__job__events_get",
         "parameters": [
           {

@@ -5,11 +5,13 @@ a heuristic change that moves them should be a deliberate one."""
 from __future__ import annotations
 
 import tarfile
+from collections.abc import Sequence
 from pathlib import Path
 
 import pytest
 
-from sensei_engine.ingest.discover import Discovery, discover
+from sensei_engine.ingest import discover as discover_module
+from sensei_engine.ingest.discover import DiscoveredFile, Discovery, discover
 from sensei_engine.ingest.roles import Role
 
 FIXTURE = Path(__file__).parent / "fixtures" / "fastapi-template.tar.gz"
@@ -183,3 +185,36 @@ def test_discovery_is_deterministic(found: Discovery, tmp_path: Path) -> None:
     again = discover(tmp_path / "fastapi-template", max_files=10_000)
     assert again.files == found.files
     assert again.summary() == found.summary()
+
+
+def test_the_walk_and_each_batch_are_reported(
+    found: Discovery, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(discover_module, "PROGRESS_EVERY", 100)
+    with tarfile.open(FIXTURE) as tar:
+        tar.extractall(tmp_path, filter="data")
+    order: list[str] = []
+    listed: list[str] = []
+    reports: list[tuple[int, int]] = []
+    batches: list[DiscoveredFile] = []
+
+    def walked(paths: Sequence[str]) -> None:
+        order.append("walked")
+        listed.extend(paths)
+
+    def progress(done: int, total: int, batch: Sequence[DiscoveredFile]) -> None:
+        order.append("progress")
+        reports.append((done, total))
+        batches.extend(batch)
+
+    again = discover(
+        tmp_path / "fastapi-template", max_files=10_000, walked=walked, progress=progress
+    )
+    # The whole list first (before any file is read), then batches that add up to every file.
+    assert order == ["walked", "progress", "progress", "progress"]
+    assert listed == [file.path for file in found.files]
+    assert reports == [(100, 245), (200, 245), (245, 245)]
+    assert batches == again.files
+    # Every file has its own row id, and the batches carry the same ones.
+    assert len({file.id for file in again.files}) == 245
+    assert [file.id for file in batches] == [file.id for file in again.files]

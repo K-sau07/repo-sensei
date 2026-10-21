@@ -31,6 +31,10 @@ export const queryKeys = {
     $api.queryOptions("get", "/api/v1/orgs/{org}/repos/{repo}/index-jobs/{job}", {
       params: { path: { org: slug, repo, job } },
     }).queryKey,
+  /** A run's constellation (`job`), or the last index's (`job` null); pages gathered into one
+   * picture, so it isn't an `$api` query. */
+  constellation: (slug: string, repo: string, job: string | null) =>
+    ["constellation", slug, repo, job] as const,
   installations: (slug: string) =>
     $api.queryOptions("get", "/api/v1/orgs/{org}/github/installations", org(slug)).queryKey,
 };

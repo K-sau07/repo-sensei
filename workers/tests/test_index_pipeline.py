@@ -139,6 +139,7 @@ def test_a_full_run_streams_its_stages_in_order(
         ("stage_started", "clone"),
         ("stage_done", "clone"),
         ("stage_started", "discover"),
+        ("constellation", "discover"),  # the points found so far (all 5: one batch)
         ("stage_done", "discover"),
         ("unlock", "discover"),
         ("stage_started", "merkle"),

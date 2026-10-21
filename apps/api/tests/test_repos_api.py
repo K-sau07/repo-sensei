@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import math
 import uuid
 from collections.abc import AsyncGenerator, Awaitable, Iterator
 from contextlib import asynccontextmanager
@@ -44,6 +45,7 @@ from sensei_core.models import (
     Membership,
     Org,
     Repo,
+    RepoFile,
     RepoSource,
     RepoStatus,
     Role,
@@ -56,6 +58,14 @@ from sensei_core.models import (
 from sensei_core.orgs.service import OrgService
 from sensei_core.repos.access import RepoAccess
 from sensei_core.storage import Bucket, ObjectStorage, artifact_key, repo_prefix, snapshot_key
+from sensei_engine.ingest.constellation import ARTIFACT_NAME as CONSTELLATION_ARTIFACT
+from sensei_engine.ingest.constellation import (
+    LIVE_BATCH,
+    Constellation,
+    DirectoryLayout,
+    LiveConstellation,
+    layer_for,
+)
 from sensei_engine.ingest.discover import discover
 from sensei_engine.ingest.merkle import ARTIFACT_NAME, Leaf, build_tree
 from sensei_engine.ingest.store import save_discovery
@@ -1400,3 +1410,156 @@ async def test_repo_rows_carry_index_summaries(
     assert row["file_count"] == len(FILES)
     assert row["loc"] > 0
     assert row["last_indexed_at"] is not None
+
+
+# ------------------------------------------------------------------ the constellation
+
+
+async def test_the_last_index_constellation_in_pages(
+    app: FastAPI,
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    fake: FakeGitHub,
+    storage: ObjectStorage,
+    tmp_path: Path,
+) -> None:
+    await _connected(app, client, db_session, fake)
+    url = f"{API}/orgs/acme/repos/api/constellation"
+    not_yet = await client.get(url)
+    assert (not_yet.status_code, not_yet.json()["error"]["code"]) == (404, "repo_not_indexed")
+    await _index(app, db_session, storage, tmp_path, FILES, SHA_ONE)
+
+    # Indexed before constellations were stored: laid out from the file rows, the same way.
+    whole = await client.get(url)
+    assert whole.status_code == 200, whole.text
+    body = whole.json()
+    assert (body["status"], body["layout"], body["commit_sha"]) == (
+        "complete",
+        "directory",
+        SHA_ONE,
+    )
+    assert (body["total"], body["available"], body["since"], body["next"]) == (8, 8, 0, 8)
+    assert [p["path"] for p in body["points"]] == sorted(FILES)
+    rows = {row.path: row for row in await db_session.scalars(select(RepoFile))}
+    assert {p["path"]: p["file_id"] for p in body["points"]} == {
+        path: str(rows[path].id) for path in FILES
+    }
+    dirs = {d["id"]: d for d in body["dirs"]}
+    assert dirs[0]["path"] == ""
+    by_path = {p["path"]: p for p in body["points"]}
+    # Each point carries its row's role, drawn in that role's layer.
+    assert {path: (p["role"], p["layer"]) for path, p in by_path.items()} == {
+        path: (rows[path].role, layer_for(rows[path].role)) for path in FILES
+    }
+    assert (by_path["src/app.py"]["layer"], by_path["README.md"]["layer"]) == ("svc", "other")
+    assert dirs[by_path["src/lib/util.py"]["dir_cluster"]]["path"] == "src/lib"
+    assert all(math.dist((0, 0, 0), (p["x"], p["y"], p["z"])) < 1 for p in body["points"])
+
+    first = (await client.get(url, params={"limit": 3})).json()
+    rest = (await client.get(url, params={"since": first["next"]})).json()
+    assert (first["next"], len(first["dirs"]), rest["dirs"]) == (3, len(body["dirs"]), [])
+    assert first["points"] + rest["points"] == body["points"]
+
+    # Once stored (by discovery), the stored one answers.
+    repo = await db_session.scalar(select(Repo).where(Repo.slug == "api"))
+    assert repo is not None
+    layout = DirectoryLayout(["only/one.py"])
+    stored = Constellation.build(
+        "gen-stored",
+        layout,
+        [
+            layout.point(
+                file_id=uuid.uuid4(),
+                path="only/one.py",
+                role="db",
+                language="python",
+                size=3,
+                loc=1,
+            )
+        ],
+    )
+    key = artifact_key(repo.org_id, repo.id, SHA_ONE, CONSTELLATION_ARTIFACT)
+    await storage.put_bytes(Bucket.ARTIFACTS, key, stored.to_bytes())
+    again = (await client.get(url)).json()
+    assert (again["generation"], [p["path"] for p in again["points"]]) == (
+        "gen-stored",
+        ["only/one.py"],
+    )
+    assert again["points"][0]["layer"] == "db"
+    both = await client.get(url, params={"ref": SHA_ONE, "job": str(uuid.uuid4())})
+    assert (both.status_code, both.json()["error"]["code"]) == (422, "job_and_ref")
+
+
+async def test_a_runs_constellation_forms_while_discovery_runs(
+    app: FastAPI,
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    fake: FakeGitHub,
+    fake_redis: FakeAsyncRedis,
+    storage: ObjectStorage,
+    tmp_path: Path,
+) -> None:
+    _, _, job_id = await _connected(app, client, db_session, fake)
+    url = f"{API}/orgs/acme/repos/api/constellation"
+    pending = (await client.get(url, params={"job": job_id})).json()
+    assert (pending["status"], pending["points"], pending["total"]) == ("pending", [], None)
+
+    # Discovery has walked the tree and read the first files.
+    paths = [f"pkg/m{i:04}.py" for i in range(LIVE_BATCH + 20)]
+    layout = DirectoryLayout(paths)
+    points = [
+        layout.point(file_id=uuid.uuid4(), path=p, role="service", language="python", size=1, loc=1)
+        for p in paths
+    ]
+    live = LiveConstellation(fake_redis, uuid.UUID(job_id), layout, "gen-live")
+    await live.begin()
+    await live.add(points[:LIVE_BATCH])
+    forming = (await client.get(url, params={"job": job_id})).json()
+    assert (forming["status"], forming["generation"]) == ("streaming", "gen-live")
+    assert (forming["total"], forming["available"], forming["next"]) == (
+        len(paths),
+        LIVE_BATCH,
+        LIVE_BATCH,
+    )
+    assert [p["path"] for p in forming["points"]] == paths[:LIVE_BATCH]
+    assert len(forming["dirs"]) == len(layout.dirs)
+    await live.add(points[LIVE_BATCH:])
+    await live.finish()
+    more = (await client.get(url, params={"job": job_id, "since": forming["next"]})).json()
+    assert [p["path"] for p in more["points"]] == paths[LIVE_BATCH:]
+    assert more["dirs"] == []
+
+    # Discovery done: the snapshot's stored constellation answers.
+    await _index(app, db_session, storage, tmp_path, FILES, SHA_ONE)
+    snapshot = await db_session.scalar(select(Snapshot).where(Snapshot.commit_sha == SHA_ONE))
+    job = await db_session.get(IndexJob, uuid.UUID(job_id))
+    assert snapshot is not None
+    assert job is not None
+    machine = IndexJobStateMachine(job)
+    machine.start()
+    machine.advance(Stage.DISCOVER)
+    job.snapshot_id = snapshot.id
+    machine.complete(Stage.DISCOVER)
+    await db_session.flush()
+    done = (await client.get(url, params={"job": job_id})).json()
+    assert (done["status"], done["commit_sha"], done["total"]) == ("complete", SHA_ONE, 8)
+
+    missing = await client.get(url, params={"job": str(uuid.uuid4())})
+    assert (missing.status_code, missing.json()["error"]["code"]) == (404, "index_job_not_found")
+
+
+async def test_a_run_that_ended_before_discovery_finished_stops(
+    app: FastAPI,
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    fake: FakeGitHub,
+    fake_redis: FakeAsyncRedis,
+) -> None:
+    _, headers, job_id = await _connected(app, client, db_session, fake)
+    url = f"{API}/orgs/acme/repos/api/constellation"
+    cancelled = await client.post(
+        f"{API}/orgs/acme/repos/api/index-jobs/{job_id}/cancel", headers=headers
+    )
+    assert cancelled.status_code == 200
+    stopped = (await client.get(url, params={"job": job_id})).json()
+    assert (stopped["status"], stopped["points"]) == ("stopped", [])

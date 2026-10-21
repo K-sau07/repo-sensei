@@ -10,8 +10,10 @@ sidebar dots and the inbox. Payloads::
      "done": 500, "total": 2000, "eta_s": 12, "ts": "2026-10-20T12:00:00+00:00"}
 
 Types: ``queued``, ``stage_started``, ``progress``, ``stage_done``, ``unlock`` (with
-``unlocks``: the features now available), ``log`` (``level``, ``message``), and the final
-``done``, ``failed`` (``code``, ``message``) or ``cancelled``.
+``unlocks``: the features now available), ``log`` (``level``, ``message``), ``constellation``
+(``cursor``: how many of the run's constellation points can be read now, of ``total``, and the
+``generation`` they belong to; the points themselves come from the constellation endpoint), and
+the final ``done``, ``failed`` (``code``, ``message``) or ``cancelled``.
 
 Events are collected while the job row is locked and published after the transaction commits
 (:class:`JobOutbox`), so a listener never hears about a change that was rolled back.
@@ -44,6 +46,7 @@ class EventType(enum.StrEnum):
     STAGE_DONE = "stage_done"
     UNLOCK = "unlock"
     LOG = "log"
+    CONSTELLATION = "constellation"
     DONE = "done"
     FAILED = "failed"
     CANCELLED = "cancelled"
@@ -131,6 +134,12 @@ class JobOutbox:
 
     def queued(self, job: IndexJob) -> None:
         self.items.append((str(job.id), str(job.org_id), _payload(job, EventType.QUEUED, None)))
+
+    def constellation(self, job: IndexJob, *, cursor: int, total: int, generation: str) -> None:
+        """More of the run's constellation points can be read (up to ``cursor``)."""
+        payload = _payload(job, EventType.CONSTELLATION, None)
+        payload.update(cursor=cursor, total=total, generation=generation)
+        self.items.append((str(job.id), str(job.org_id), payload))
 
     async def publish(self, redis: Redis) -> None:
         if not self.items:

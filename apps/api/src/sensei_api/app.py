@@ -23,6 +23,7 @@ from sensei_api.middleware import RequestIdMiddleware
 from sensei_api.routers import (
     auth,
     browse,
+    constellation,
     github,
     health,
     index_jobs,
@@ -143,6 +144,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(indexing.router, prefix=API_PREFIX)
     app.include_router(index_jobs.router, prefix=API_PREFIX)
     app.include_router(browse.router, prefix=API_PREFIX)
+    app.include_router(constellation.router, prefix=API_PREFIX)
     # Wraps the whole middleware stack; RequestIdMiddleware tags the server span it creates.
     FastAPIInstrumentor.instrument_app(app, server_request_hook=scrub_server_span)
     return app

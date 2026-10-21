@@ -19,6 +19,7 @@ export interface JobEvent {
     | "stage_done"
     | "unlock"
     | "log"
+    | "constellation"
     | "done"
     | "failed"
     | "cancelled";
@@ -32,6 +33,9 @@ export interface JobEvent {
   level?: "info" | "warn" | "error";
   message?: string;
   code?: string;
+  /** constellation: how many points can be read now, of `total`, in this generation. */
+  cursor?: number;
+  generation?: string;
 }
 
 export interface LogLine {
@@ -49,6 +53,7 @@ const TYPES: JobEvent["type"][] = [
   "stage_done",
   "unlock",
   "log",
+  "constellation",
   "done",
   "failed",
   "cancelled",
@@ -182,6 +187,7 @@ export function useJobEvents(org: string, repo: string, jobId: string | null) {
     if (state.ended) return; // it ended while this was open before: nothing more will come
     const key = queryKeys.indexJob(org, repo, jobId);
     const listKey = queryKeys.indexJobs(org, repo);
+    const skyKey = queryKeys.constellation(org, repo, jobId);
 
     let lines: LogLine[] = [];
     let unlocks: Feature[] = [];
@@ -241,6 +247,14 @@ export function useJobEvents(org: string, repo: string, jobId: string | null) {
       if (!settled && (event.type === "stage_done" || event.type === "unlock")) {
         void queryClient.invalidateQueries({ queryKey: listKey });
       }
+      // More points to read, or discovery done (the stored constellation answers from then on).
+      if (
+        !settled &&
+        (event.type === "constellation" ||
+          (event.type === "stage_done" && event.stage === "discover"))
+      ) {
+        void queryClient.invalidateQueries({ queryKey: skyKey });
+      }
       if (event.type === "log" && event.message) {
         lines.push({
           id: event.id,
@@ -273,6 +287,9 @@ export function useJobEvents(org: string, repo: string, jobId: string | null) {
         void queryClient.invalidateQueries({ queryKey: listKey });
         void queryClient.invalidateQueries({ queryKey: queryKeys.repo(org, repo) });
         void queryClient.invalidateQueries({ queryKey: queryKeys.repos(org) });
+        void queryClient.invalidateQueries({ queryKey: skyKey });
+        // The last index may be another commit now: its picture is read again from the start.
+        void queryClient.resetQueries({ queryKey: queryKeys.constellation(org, repo, null) });
       }
     };
 

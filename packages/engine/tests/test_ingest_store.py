@@ -80,6 +80,8 @@ async def test_files_summary_and_languages_are_saved(
         "tests/test_main.py",
     ]
     main = rows["app/main.py"]
+    # Row ids are the ones discovery gave the files.
+    assert {f.path: f.id for f in found.files} == {path: row.id for path, row in rows.items()}
     content = (tmp_path / "app/main.py").read_bytes()
     assert (main.language, main.role, main.loc, main.size) == ("python", "api", 2, len(content))
     assert main.content_hash == hashlib.sha256(content).digest()

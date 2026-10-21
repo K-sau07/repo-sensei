@@ -3,7 +3,8 @@
 Rows go in with ``COPY`` (asyncpg's binary copy), tens of thousands of rows a second. Postgres
 doesn't allow ``COPY FROM`` into a table with row-level security, so they are copied into a
 temporary table first and moved over with ``INSERT … SELECT``, which the ``files`` policy still
-checks: the rows can only land in the session's org.
+checks: the rows can only land in the session's org. Row ids come from discovery (see
+:class:`~sensei_engine.ingest.discover.DiscoveredFile`).
 """
 
 from __future__ import annotations
@@ -17,6 +18,7 @@ from sensei_core.models import Repo, RepoFile, Snapshot
 from sensei_engine.ingest.discover import Discovery
 
 COLUMNS = (
+    "id",
     "org_id",
     "repo_id",
     "snapshot_id",
@@ -40,6 +42,7 @@ async def save_discovery(db: AsyncSession, snapshot: Snapshot, discovery: Discov
     await db.execute(delete(RepoFile).where(RepoFile.snapshot_id == snapshot.id))
     records = [
         (
+            file.id,
             snapshot.org_id,
             snapshot.repo_id,
             snapshot.id,
@@ -67,7 +70,7 @@ async def save_discovery(db: AsyncSession, snapshot: Snapshot, discovery: Discov
     )
     await driver.copy_records_to_table(STAGING_TABLE, records=records, columns=list(COLUMNS))
     await driver.execute(
-        f"INSERT INTO files (id, {columns}) SELECT id, {columns} FROM {STAGING_TABLE}"  # noqa: S608 - constant names
+        f"INSERT INTO files ({columns}) SELECT {columns} FROM {STAGING_TABLE}"  # noqa: S608 - constant names
     )
     await driver.execute(f"DROP TABLE {STAGING_TABLE}")
 

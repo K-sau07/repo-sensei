@@ -4,9 +4,14 @@
  * moment is worked out from the time since it started, so it carries on across reloads, and the
  * job, the repository and the event stream always agree. A run can also be set to fail at a
  * stage, for the failure states.
+ *
+ * The recording predates the constellation: its one `constellation` event (all 245 points of
+ * fixtures/constellation.json, the same commit's layout) goes where discovery sends it, just
+ * before the progress report for the batch.
  */
-import type { IndexJob, Stage } from "@/lib/api/types";
+import type { ConstellationPage, IndexJob, Stage } from "@/lib/api/types";
 
+import sky from "./fixtures/constellation.json";
 import recording from "./fixtures/index-run.json";
 
 export const SPEED = 3;
@@ -34,6 +39,8 @@ interface Recorded {
 
 const RECORDED = recording.events as unknown as Recorded[];
 export const RUN_DETAILS = recording.stages as unknown as Record<string, Record<string, unknown>>;
+/** The run's constellation, complete (`GET …/constellation` from the start). */
+export const SKY = sky as unknown as ConstellationPage;
 
 /** Every event of a run, in order, failing at ``failure.stage`` if given. */
 export function runEvents(failure?: RunFailure): RunEvent[] {
@@ -53,6 +60,17 @@ export function runEvents(failure?: RunFailure): RunEvent[] {
         },
       );
       return events;
+    }
+    const batch = event.stage === "discover" && event.type === "progress";
+    if (batch && event.done === event.total && !events.some((e) => e.type === "constellation")) {
+      events.push({
+        type: "constellation",
+        stage: "discover",
+        cursor: SKY.total,
+        total: SKY.total,
+        generation: SKY.generation,
+        at,
+      });
     }
     events.push({ ...event, at });
   }

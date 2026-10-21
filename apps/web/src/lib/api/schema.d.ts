@@ -563,6 +563,26 @@ export interface paths {
         patch: operations["update_repo_api_v1_orgs__org__repos__repo__patch"];
         trace?: never;
     };
+    "/api/v1/orgs/{org}/repos/{repo}/constellation": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Constellation
+         * @description A page of the constellation's points (file, position, layer, directory cluster, size).
+         */
+        get: operations["constellation_api_v1_orgs__org__repos__repo__constellation_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/orgs/{org}/repos/{repo}/file": {
         parameters: {
             query?: never;
@@ -671,8 +691,8 @@ export interface paths {
         /**
          * Index Job Events
          * @description The run's progress as server-sent events (types: queued, stage_started, progress,
-         *     stage_done, unlock, log, done, failed, cancelled). Replays from ``Last-Event-ID``; closes
-         *     after the final event.
+         *     stage_done, unlock, log, constellation, done, failed, cancelled). Replays from
+         *     ``Last-Event-ID``; closes after the final event.
          */
         get: operations["index_job_events_api_v1_orgs__org__repos__repo__index_jobs__job__events_get"];
         put?: never;
@@ -875,6 +895,111 @@ export interface components {
         ConnectRepo: {
             /** Github Repo Id */
             github_repo_id: number;
+        };
+        /** ConstellationDir */
+        ConstellationDir: {
+            /** Depth */
+            depth: number;
+            /**
+             * Files
+             * @description Files directly inside.
+             */
+            files: number;
+            /**
+             * Id
+             * @description What points' ``dir_cluster`` refers to.
+             */
+            id: number;
+            /** Parent */
+            parent: number | null;
+            /**
+             * Path
+             * @description "" for the root.
+             */
+            path: string;
+            /** X */
+            x: number;
+            /** Y */
+            y: number;
+            /** Z */
+            z: number;
+        };
+        /** ConstellationOut */
+        ConstellationOut: {
+            /**
+             * Available
+             * @description Points there are now.
+             */
+            available: number;
+            /** Commit Sha */
+            commit_sha: string | null;
+            /**
+             * Dirs
+             * @description Every directory, on the first page only.
+             */
+            dirs: components["schemas"]["ConstellationDir"][];
+            /** Generation */
+            generation: string | null;
+            /**
+             * Layout
+             * @default directory
+             * @constant
+             */
+            layout: "directory";
+            /**
+             * Next
+             * @description The cursor for the next page.
+             */
+            next: number;
+            /** Points */
+            points: components["schemas"]["ConstellationPoint"][];
+            /** Since */
+            since: number;
+            /**
+             * Status
+             * @description pending: nothing yet; streaming: discovery is finding files; stopped: the run ended before discovery finished; complete: every point.
+             * @enum {string}
+             */
+            status: "pending" | "streaming" | "stopped" | "complete";
+            /**
+             * Total
+             * @description Points there will be (known once the walk is done).
+             */
+            total: number | null;
+        };
+        /** ConstellationPoint */
+        ConstellationPoint: {
+            /** Dir Cluster */
+            dir_cluster: number;
+            /**
+             * File Id
+             * Format: uuid
+             */
+            file_id: string;
+            /** Language */
+            language: string | null;
+            /**
+             * Layer
+             * @enum {string}
+             */
+            layer: "ui" | "api" | "svc" | "db" | "other";
+            /** Loc */
+            loc: number | null;
+            /** Path */
+            path: string;
+            /** Role */
+            role: string;
+            /**
+             * Size
+             * @description Bytes.
+             */
+            size: number;
+            /** X */
+            x: number;
+            /** Y */
+            y: number;
+            /** Z */
+            z: number;
         };
         /** EstimateOut */
         EstimateOut: {
@@ -2657,6 +2782,48 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RepoOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    constellation_api_v1_orgs__org__repos__repo__constellation_get: {
+        parameters: {
+            query?: {
+                /** @description Points the caller has already. */
+                since?: number;
+                limit?: number;
+                /** @description An index run: its constellation, while it forms. */
+                job?: string | null;
+                /** @description Branch or commit (or its first 7+ characters). */
+                ref?: string | null;
+            };
+            header?: never;
+            path: {
+                /** @description Repository slug */
+                repo: string;
+                /** @description Organization slug */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConstellationOut"];
                 };
             };
             /** @description Validation Error */

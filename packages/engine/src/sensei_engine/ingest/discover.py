@@ -2,16 +2,21 @@
 
 Two passes over the walked files: the manifests first (frameworks decide which directories are
 frontend packages), then every file is read once, classified and given a role. File contents
-aren't kept, so memory stays flat however large the repository is.
+aren't kept, so memory stays flat however large the repository is. Each file gets its row id
+here, so what is reported while discovery runs (the constellation's points) names the rows that
+are saved at the end.
 """
 
 from __future__ import annotations
 
+import uuid
 from collections import Counter, defaultdict
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+from uuid_utils.compat import uuid7
 
 from sensei_engine.ingest.classify import FileFacts, Flag, classify
 from sensei_engine.ingest.frameworks import (
@@ -42,6 +47,8 @@ class DiscoveredFile:
     role: Role
     flags: tuple[str, ...]  # sorted
     framework_root: str | None
+    # The ``files`` row's id (time-ordered); not part of what was found, so not compared.
+    id: uuid.UUID = field(default_factory=uuid7, compare=False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -100,13 +107,18 @@ def discover(
     *,
     ignore_globs: Sequence[str] = (),
     max_files: int,
-    progress: Callable[[int, int], None] | None = None,
+    walked: Callable[[Sequence[str]], None] | None = None,
+    progress: Callable[[int, int, Sequence[DiscoveredFile]], None] | None = None,
 ) -> Discovery:
-    """Discover the files under ``root``. ``progress(done, total)`` is called as files are read.
-    Raises :class:`~sensei_engine.ingest.walk.TooManyFilesError` past ``max_files``."""
-    walked, stats = walk(root, IgnoreRules(ignore_globs), max_files=max_files)
+    """Discover the files under ``root``. ``walked(paths)`` is called once the walk has listed
+    every file (in order), before any is read; ``progress(done, total, batch)`` as files are
+    read, with the files read since the last call. Raises
+    :class:`~sensei_engine.ingest.walk.TooManyFilesError` past ``max_files``."""
+    listed, stats = walk(root, IgnoreRules(ignore_globs), max_files=max_files)
+    if walked is not None:
+        walked([entry.path for entry in listed])
     manifests: dict[str, FileFacts] = {
-        entry.path: classify(entry) for entry in walked if is_manifest(entry.path)
+        entry.path: classify(entry) for entry in listed if is_manifest(entry.path)
     }
     frameworks = detect_frameworks(
         {path: facts.text for path, facts in manifests.items() if facts.text is not None}
@@ -115,8 +127,9 @@ def discover(
     ui_roots = {f.root for f in frameworks if f.name in UI_FRAMEWORKS}
 
     files: list[DiscoveredFile] = []
-    total = len(walked)
-    for done, entry in enumerate(walked, start=1):
+    total = len(listed)
+    reported = 0
+    for done, entry in enumerate(listed, start=1):
         facts = manifests.get(entry.path) or classify(entry)
         package = framework_root(entry.path, roots)
         role = assign_role(facts.path, facts.language, facts.text, ui_package=package in ui_roots)
@@ -135,5 +148,6 @@ def discover(
             )
         )
         if progress is not None and (done % PROGRESS_EVERY == 0 or done == total):
-            progress(done, total)
+            progress(done, total, files[reported:done])
+            reported = done
     return Discovery(files=files, frameworks=frameworks, stats=stats)

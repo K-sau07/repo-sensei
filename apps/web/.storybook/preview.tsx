@@ -4,6 +4,7 @@ import { QueryClientProvider } from "@tanstack/react-query";
 import { mswLoader } from "msw-storybook-addon/csf3";
 import { NuqsTestingAdapter } from "nuqs/adapters/testing";
 
+import { ConstellationRenderer, type Renderer } from "../src/components/indexing/constellation";
 import { DEFAULT_THEME, MotionProvider, THEMES } from "../src/components/providers";
 import { TooltipProvider } from "../src/components/ui/tooltip";
 import { fontVariables } from "../src/fonts";
@@ -34,18 +35,23 @@ const preview: Preview = {
         {/* URL state (filters, tabs) without a router: kept in memory per story. */}
         <NuqsTestingAdapter>
           <MotionProvider>
-            <TooltipProvider>
-              {/* `bare` stories (like the app shell) bring their own <main> and layout. */}
-              {context.parameters.bare === true ? (
-                <div className="min-h-dvh bg-bg font-sans text-fg">
-                  <Story />
-                </div>
-              ) : (
-                <main className="min-h-dvh bg-bg p-8 font-sans text-fg">
-                  <Story />
-                </main>
-              )}
-            </TooltipProvider>
+            {/* The SVG constellation unless a story asks for WebGL (`constellationRenderer`). */}
+            <ConstellationRenderer
+              value={(context.parameters.constellationRenderer as Renderer | undefined) ?? "svg"}
+            >
+              <TooltipProvider>
+                {/* `bare` stories (like the app shell) bring their own <main> and layout. */}
+                {context.parameters.bare === true ? (
+                  <div className="min-h-dvh bg-bg font-sans text-fg">
+                    <Story />
+                  </div>
+                ) : (
+                  <main className="min-h-dvh bg-bg p-8 font-sans text-fg">
+                    <Story />
+                  </main>
+                )}
+              </TooltipProvider>
+            </ConstellationRenderer>
           </MotionProvider>
         </NuqsTestingAdapter>
       </QueryClientProvider>

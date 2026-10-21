@@ -33,6 +33,7 @@ import { FEATURE_LABELS, STAGE_LABELS, type Feature } from "@/lib/indexing";
 import { queryKeys } from "@/lib/query/keys";
 import { repoPath } from "@/lib/routes";
 
+import { Constellation } from "./constellation";
 import { LogViewer } from "./log-viewer";
 import { useJobEvents } from "./use-job-events";
 
@@ -386,8 +387,9 @@ function counters(job: IndexJob) {
 }
 
 /**
- * The live view of one index run: stages with progress and ETA, counters, what it unlocked,
- * what discovery found, the log, and the failure (with Retry) or Cancel.
+ * The live view of one index run: stages with progress and ETA, the constellation forming,
+ * counters, what it unlocked, what discovery found, the log, and the failure (with Retry) or
+ * Cancel.
  */
 export function IndexView({ org, repo, jobId }: { org: string; repo: string; jobId: string }) {
   const job = $api.useQuery("get", "/api/v1/orgs/{org}/repos/{repo}/index-jobs/{job}", {
@@ -449,6 +451,7 @@ export function IndexView({ org, repo, jobId }: { org: string; repo: string; job
             />
           )}
           <UnlockPills features={data.features} />
+          <Constellation org={org} repo={repo} job={jobId} live={running && live} />
           <dl className="grid grid-cols-2 gap-4 sm:grid-cols-4">
             <LiveCounter label="Files" value={files} />
             <LiveCounter label="Lines" value={loc} />

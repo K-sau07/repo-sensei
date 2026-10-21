@@ -25,6 +25,7 @@ import type { IndexJob } from "@/lib/api/types";
 import { STAGE_LABELS } from "@/lib/indexing";
 import { repoPath } from "@/lib/routes";
 
+import { Constellation } from "./constellation";
 import { IndexView } from "./index-view";
 
 const STATUS_BADGE: Record<IndexJob["status"], { label: string; className: string }> = {
@@ -138,6 +139,7 @@ export function RepoOverview() {
           </div>
         </dl>
         <LanguageBar languages={data.languages} legend />
+        <Constellation org={org} repo={repo} job={null} />
         <Link
           href={repoPath(org, repo, "index")}
           className="w-fit text-sm underline underline-offset-4"

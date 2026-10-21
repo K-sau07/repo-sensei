@@ -4,6 +4,12 @@
 A worker that doesn't have it (another machine took the clone) unpacks the snapshot archive from
 object storage instead. The file list, the snapshot summary and the repository's languages are
 written in one transaction (see :mod:`sensei_engine.ingest.store`), which completes the stage.
+
+The constellation forms as files are found: once the walk has listed them, their layout is
+known (:class:`~sensei_engine.ingest.constellation.DirectoryLayout`); each batch of files read
+goes to Redis as points, and a ``constellation`` event tells viewers how far they can read. The
+whole constellation is stored with the snapshot's artifacts in the same step that saves the
+files, so its points name the saved rows.
 """
 
 from __future__ import annotations
@@ -11,6 +17,7 @@ from __future__ import annotations
 import shutil
 import tempfile
 import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -24,9 +31,16 @@ from sensei_core.models import (
     Stage,
 )
 from sensei_core.repos.service import RepoSettings
-from sensei_core.storage import Bucket, snapshot_key
+from sensei_core.storage import Bucket, artifact_key, snapshot_key
+from sensei_engine.ingest import constellation
 from sensei_engine.ingest.classify import FileChangedError
-from sensei_engine.ingest.discover import Discovery, discover
+from sensei_engine.ingest.constellation import (
+    Constellation,
+    DirectoryLayout,
+    LiveConstellation,
+    Point,
+)
+from sensei_engine.ingest.discover import DiscoveredFile, Discovery, discover
 from sensei_engine.ingest.store import save_discovery
 from sensei_engine.ingest.walk import TooManyFilesError
 from sensei_engine.snapshots import ArchiveTooLargeError, extract_archive
@@ -134,24 +148,96 @@ def _worktree(target: Target) -> Path:
     return worktree
 
 
+class Sky:
+    """The run's constellation while discovery reads the files: its layout once the walk has
+    listed them, and the points sent so far."""
+
+    def __init__(self, job_id: uuid.UUID) -> None:
+        self.job_id = job_id
+        self._live: LiveConstellation | None = None
+
+    @property
+    def live(self) -> LiveConstellation:
+        if self._live is None:
+            raise RuntimeError("the walk hasn't listed the files yet")
+        return self._live
+
+    @property
+    def started(self) -> bool:
+        return self._live is not None
+
+    async def begin(self, paths: Sequence[str]) -> None:
+        live = LiveConstellation(
+            get_runtime().redis, self.job_id, DirectoryLayout(paths), uuid.uuid4().hex
+        )
+        await live.begin()  # an earlier attempt's points go
+        self._live = live
+
+    def points(self, files: Sequence[DiscoveredFile]) -> list[Point]:
+        layout = self.live.layout
+        return [
+            layout.point(
+                file_id=file.id,
+                path=file.path,
+                role=file.role.value,
+                language=file.language,
+                size=file.size,
+                loc=file.loc,
+            )
+            for file in files
+        ]
+
+    async def add(self, files: Sequence[DiscoveredFile], *, last: bool) -> None:
+        await self.live.add(self.points(files))
+        if last:
+            await self.live.finish()
+
+
 async def _progress(
-    task: SenseiTask, org_id: str, job_id: uuid.UUID, done: int, total: int
+    task: SenseiTask,
+    org_id: str,
+    job_id: uuid.UUID,
+    done: int,
+    total: int,
+    *,
+    sky: LiveConstellation | None = None,
 ) -> None:
-    """Discover progress; stops the walk if the job was cancelled meanwhile."""
+    """Discover progress, and how far the constellation can be read; stops the walk if the job
+    was cancelled meanwhile."""
     async with job_scope(task, org_id, job_id) as scope:
         job = scope.require(Stage.DISCOVER)
         previous = int((job.stages or {}).get("discover", {}).get("done") or 0)
         scope.machine.update_progress(Stage.DISCOVER, max(done, previous), total)
+        if sky is not None and sky.cursor > 0:
+            scope.outbox.constellation(
+                job, cursor=sky.cursor, total=sky.total, generation=sky.generation
+            )
 
 
-async def _save(task: SenseiTask, target: Target, job_id: uuid.UUID, found: Discovery) -> bool:
-    """Write the discovery and complete the stage (stops quietly if the job moved on)."""
+async def _store_constellation(target: Target, sky: Sky, found: Discovery) -> int:
+    storage = await get_runtime().storage()
+    live = sky.live
+    data = Constellation.build(live.generation, live.layout, sky.points(found.files)).to_bytes()
+    name = constellation.ARTIFACT_NAME
+    key = artifact_key(target.org_id, target.repo_id, target.commit_sha, name)
+    await storage.put_bytes(Bucket.ARTIFACTS, key, data, content_type="application/zstd")
+    return len(data)
+
+
+async def _save(
+    task: SenseiTask, target: Target, job_id: uuid.UUID, found: Discovery, sky: Sky
+) -> bool:
+    """Write the discovery and its constellation and complete the stage (stops quietly if the
+    job moved on)."""
     async with job_scope(task, target.org_id, job_id) as scope:
         scope.require(Stage.DISCOVER)
         snapshot = await scope.db.get(Snapshot, target.snapshot_id)
         if snapshot is None:
             raise JobGoneError("the snapshot is gone")
         rows = await save_discovery(scope.db, snapshot, found)
+        # Stored while the job row is locked (a cancel can't come in between) and before the
+        # commit (the stage is never done without it); its points carry the rows' ids.
+        stored = await _store_constellation(target, sky, found)
         summary = snapshot.summary or {}
         machine = scope.machine
         total = max(rows, 1)
@@ -166,6 +252,12 @@ async def _save(task: SenseiTask, target: Target, job_id: uuid.UUID, found: Disc
             services=sorted({s for f in found.frameworks for s in f.details.get("services", [])}),
             skipped=summary.get("skipped", {}),
             invalid_ignore_globs=summary.get("invalid_ignore_globs", []),
+            constellation={
+                "generation": sky.live.generation,
+                "points": rows,
+                "directories": len(sky.live.layout.dirs),
+                "bytes": stored,
+            },
         )
         machine.log(
             f"Found {rows:,} files to index ({found.loc:,} lines)"
@@ -196,9 +288,14 @@ def discover_files(self: IngestTask, *, job_id: str, org_id: str, repo_id: str) 
     if target is None:
         return None
     settings = runtime.settings.ingest
+    sky = Sky(job)
 
-    def progress(done: int, total: int) -> None:
-        runtime.run(_progress(self, org_id, job, done, total))
+    def walked(paths: Sequence[str]) -> None:
+        runtime.run(sky.begin(paths))
+
+    def progress(done: int, total: int, batch: Sequence[DiscoveredFile]) -> None:
+        runtime.run(sky.add(batch, last=done == total))
+        runtime.run(_progress(self, org_id, job, done, total, sky=sky.live))
 
     try:
         with repo_lock(settings.cache_dir, str(target.repo_id)):  # no clone or eviction meanwhile
@@ -206,6 +303,7 @@ def discover_files(self: IngestTask, *, job_id: str, org_id: str, repo_id: str) 
                 _worktree(target),
                 ignore_globs=target.ignore_globs,
                 max_files=settings.max_files,
+                walked=walked,
                 progress=progress,
             )
     except TooManyFilesError as exc:
@@ -227,7 +325,8 @@ def discover_files(self: IngestTask, *, job_id: str, org_id: str, repo_id: str) 
         return None
     except FileChangedError as exc:
         raise RetryableError("the working copy changed while it was read") from exc
-    if not runtime.run(_save(self, target, job, found)):
+    if not runtime.run(_save(self, target, job, found, sky)):
         return None
+    runtime.run(sky.live.done())
     log.info("files discovered", files=len(found.files), frameworks=len(found.frameworks))
     return len(found.files)
