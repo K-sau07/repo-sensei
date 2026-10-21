@@ -22,6 +22,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from sensei_api.browse import ConstellationCache
 from sensei_api.deps import DbSession, RedisClient
 from sensei_api.repos import RepoDep
 from sensei_core.errors import InvalidError, NotFoundError
@@ -31,7 +32,6 @@ from sensei_core.logging import get_logger
 from sensei_core.models import ACTIVE_JOB_STATUSES, RepoFile, Snapshot
 from sensei_core.storage import Bucket, ObjectStorage, artifact_key
 from sensei_engine.ingest.constellation import (
-    ARTIFACT_NAME,
     LAYOUT,
     MAX_STORED_BYTES,
     Constellation,
@@ -39,6 +39,7 @@ from sensei_engine.ingest.constellation import (
     Directory,
     DirectoryLayout,
     Point,
+    artifact_parts,
     read_live,
 )
 
@@ -180,15 +181,40 @@ async def _from_rows(db: AsyncSession, snapshot: Snapshot) -> Constellation:
     return Constellation.build(f"files-{snapshot.id.hex}", layout, points)
 
 
+def stored_generation(snapshot: Snapshot) -> str | None:
+    """The generation of the constellation stored with the snapshot's file rows (named in the
+    transaction that wrote them), if there is one."""
+    entry: object = (snapshot.summary or {}).get("constellation")
+    if not isinstance(entry, dict):
+        return None
+    generation = cast("dict[str, object]", entry).get("generation")
+    return generation if isinstance(generation, str) else None
+
+
 async def _stored(request: Request, db: AsyncSession, snapshot: Snapshot) -> Constellation:
-    key = artifact_key(snapshot.org_id, snapshot.repo_id, snapshot.commit_sha, ARTIFACT_NAME)
-    data = await _storage(request).get_bytes(Bucket.ARTIFACTS, key, max_bytes=MAX_STORED_BYTES)
-    if data is not None:
-        try:
-            return Constellation.from_bytes(data)
-        except CorruptConstellationError:
-            log.warning("stored constellation unreadable", commit_sha=snapshot.commit_sha)
-    return await _from_rows(db, snapshot)
+    """The snapshot's constellation: the stored one its file rows name, else (missing,
+    unreadable, or a snapshot from before constellations were stored) laid out from the rows."""
+    generation = stored_generation(snapshot)
+
+    async def load() -> Constellation:
+        if generation is not None:
+            parts = artifact_parts(generation)
+            key = artifact_key(snapshot.org_id, snapshot.repo_id, snapshot.commit_sha, *parts)
+            data = await _storage(request).get_bytes(
+                Bucket.ARTIFACTS, key, max_bytes=MAX_STORED_BYTES
+            )
+            if data is not None:
+                try:
+                    found = Constellation.from_bytes(data)
+                except CorruptConstellationError:
+                    log.warning("stored constellation unreadable", commit_sha=snapshot.commit_sha)
+                else:
+                    if found.generation == generation:
+                        return found
+        return await _from_rows(db, snapshot)
+
+    cache: ConstellationCache = request.app.state.constellation_cache
+    return await cache.get(snapshot.id, generation or "rows", load)
 
 
 @router.get("/constellation", response_model=ConstellationOut)

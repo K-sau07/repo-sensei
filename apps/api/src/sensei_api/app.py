@@ -17,7 +17,7 @@ from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from starlette.middleware.gzip import GZipMiddleware
 
 from sensei_api import __version__
-from sensei_api.browse import TreeCache
+from sensei_api.browse import ConstellationCache, TreeCache
 from sensei_api.errors import install_error_handlers
 from sensei_api.middleware import RequestIdMiddleware
 from sensei_api.routers import (
@@ -72,6 +72,7 @@ def _install_services(app: FastAPI, settings: Settings) -> None:
         max_snapshot_bytes=settings.ingest.max_checkout_bytes,
     )
     app.state.tree_cache = TreeCache()
+    app.state.constellation_cache = ConstellationCache()
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:

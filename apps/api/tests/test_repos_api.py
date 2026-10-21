@@ -58,12 +58,12 @@ from sensei_core.models import (
 from sensei_core.orgs.service import OrgService
 from sensei_core.repos.access import RepoAccess
 from sensei_core.storage import Bucket, ObjectStorage, artifact_key, repo_prefix, snapshot_key
-from sensei_engine.ingest.constellation import ARTIFACT_NAME as CONSTELLATION_ARTIFACT
 from sensei_engine.ingest.constellation import (
     LIVE_BATCH,
     Constellation,
     DirectoryLayout,
     LiveConstellation,
+    artifact_parts,
     layer_for,
 )
 from sensei_engine.ingest.discover import discover
@@ -1478,14 +1478,29 @@ async def test_the_last_index_constellation_in_pages(
             )
         ],
     )
-    key = artifact_key(repo.org_id, repo.id, SHA_ONE, CONSTELLATION_ARTIFACT)
+    key = artifact_key(repo.org_id, repo.id, SHA_ONE, *artifact_parts("gen-stored"))
     await storage.put_bytes(Bucket.ARTIFACTS, key, stored.to_bytes())
+    # Stored, but the snapshot's rows don't name it (that discovery never committed): unused.
+    orphan = (await client.get(url)).json()
+    assert orphan["generation"] == body["generation"]
+    snapshot = await db_session.scalar(select(Snapshot).where(Snapshot.commit_sha == SHA_ONE))
+    assert snapshot is not None
+    snapshot.summary = {**(snapshot.summary or {}), "constellation": {"generation": "gen-stored"}}
+    await db_session.flush()
     again = (await client.get(url)).json()
     assert (again["generation"], [p["path"] for p in again["points"]]) == (
         "gen-stored",
         ["only/one.py"],
     )
     assert again["points"][0]["layer"] == "db"
+    # A damaged stored one: laid out from the rows instead, not an error.
+    bad = artifact_key(repo.org_id, repo.id, SHA_ONE, *artifact_parts("gen-bad"))
+    await storage.put_bytes(Bucket.ARTIFACTS, bad, b"not a constellation")
+    snapshot.summary = {**(snapshot.summary or {}), "constellation": {"generation": "gen-bad"}}
+    await db_session.flush()
+    damaged = await client.get(url)
+    assert damaged.status_code == 200
+    assert damaged.json()["generation"] == body["generation"]
     both = await client.get(url, params={"ref": SHA_ONE, "job": str(uuid.uuid4())})
     assert (both.status_code, both.json()["error"]["code"]) == (422, "job_and_ref")
 

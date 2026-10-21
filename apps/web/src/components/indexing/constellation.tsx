@@ -103,7 +103,10 @@ let webgl2: boolean | null = null;
 export function hasWebGL2(): boolean {
   if (webgl2 === null) {
     try {
-      webgl2 = document.createElement("canvas").getContext("webgl2") !== null;
+      const probe = document.createElement("canvas").getContext("webgl2");
+      webgl2 = probe !== null;
+      // Give the probe's context back now: browsers allow only a few at a time.
+      probe?.getExtension("WEBGL_lose_context")?.loseContext();
     } catch {
       webgl2 = false;
     }
@@ -199,7 +202,8 @@ export function ConstellationView({
   const [listOpen, setListOpen] = useState(false);
   const titleId = useId();
   const groups = useMemo(() => clusters(sky), [sky]);
-  const label = summary(sky, groups.size);
+  // O(points): once per sky, not on every hover.
+  const label = useMemo(() => summary(sky, groups.size), [sky, groups.size]);
   const drift = live && motion === "live" && !paused;
 
   const hovered = hover ? sky.points[hover.index] : undefined;
@@ -232,7 +236,10 @@ export function ConstellationView({
     active,
     highlight: hovered?.dir_cluster ?? null,
     label,
-    onHover: setHover,
+    // A new hover only when it's another star: pointer moves over the same one change nothing.
+    onHover: (hit: Hit | null) => {
+      setHover((current) => (current?.index === hit?.index ? current : hit));
+    },
     onSelect: (hit: Hit | null) => {
       const element = box.current;
       setSelected(

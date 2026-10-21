@@ -351,7 +351,10 @@ def _stored_constellation(
 ) -> Constellation:
     async def load() -> bytes | None:
         storage = await runtime.storage()
-        key = artifact_key(org_id, repo_id, sha, constellation.ARTIFACT_NAME)
+        snapshot = await _snapshot(runtime.system_database, repo_id)
+        assert snapshot is not None
+        generation = (snapshot.summary or {})["constellation"]["generation"]
+        key = artifact_key(org_id, repo_id, sha, *constellation.artifact_parts(generation))
         return await storage.get_bytes(
             Bucket.ARTIFACTS, key, max_bytes=constellation.MAX_STORED_BYTES
         )
@@ -395,6 +398,31 @@ def test_discover_streams_and_stores_the_constellation(
     assert live is not None
     assert live.points == stored.points
     assert 0 < runtime.run(_live_ttl(runtime, job_id)) <= constellation.LIVE_KEEP_SECONDS
+
+
+def test_the_live_constellation_spans_several_batches(
+    runtime: Runtime,
+    repo: tuple[uuid.UUID, uuid.UUID],
+    github: respx.MockRouter,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Two points per Redis entry: the five files make two full batches and a short last one.
+    monkeypatch.setattr(constellation, "LIVE_BATCH", 2)
+    org_id, repo_id = repo
+    job_id = _cloned(runtime, org_id, repo_id)
+    _discover(org_id, repo_id, job_id)
+    whole = runtime.run(read_live(runtime.redis, job_id, 0, 100))
+    assert whole is not None
+    assert (whole.total, whole.available, len(whole.points)) == (5, 5, 5)
+    # A page that starts inside one batch and ends inside the last.
+    middle = runtime.run(read_live(runtime.redis, job_id, 1, 3))
+    assert middle is not None
+    assert middle.points == whole.points[1:4]
+    told = [e for e in runtime.run(_stream(runtime, job_id)) if e["type"] == "constellation"]
+    cursors = [e["cursor"] for e in told]
+    assert cursors == sorted(cursors)
+    assert cursors[-1] == 5
+    runtime.run(_live_ttl(runtime, job_id))
 
 
 async def _live_ttl(runtime: Runtime, job_id: uuid.UUID) -> int:

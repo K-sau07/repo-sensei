@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import itertools
 import math
 import tarfile
 import uuid
@@ -23,6 +24,7 @@ from sensei_engine.ingest.constellation import (
     live_keys,
     read_live,
     shell,
+    shell_jitter,
     squarify,
 )
 from sensei_engine.ingest.discover import discover
@@ -101,6 +103,28 @@ def test_files_sit_on_their_directory_shell_inside_the_unit_sphere() -> None:
         assert distance < 1
     # Deeper directories are further out.
     assert shell(0) < shell(1) < shell(2) < 1
+
+
+def test_deep_directories_stay_in_order_and_inside_the_sphere() -> None:
+    # A Java-style package path: shells crowd together near the surface as depth grows.
+    deep = [
+        "/".join(["src", "main", "java", "com", "acme", *[f"p{d}" for d in range(level)]])
+        + f"/File{i}.java"
+        for level in range(16)
+        for i in range(8)
+    ]
+    layout = DirectoryLayout(deep)
+    radii: dict[int, list[float]] = {}
+    for point in _points(layout, deep):
+        depth = layout.dirs[point.directory].depth
+        distance = math.dist((0, 0, 0), point.position)
+        assert abs(distance - shell(depth)) <= shell_jitter(depth) + 1e-4
+        radii.setdefault(depth, []).append(distance)
+    assert max(max(r) for r in radii.values()) < 1
+    depths = sorted(radii)
+    assert depths[-1] >= 20
+    for shallower, deeper in itertools.pairwise(depths):
+        assert max(radii[shallower]) < min(radii[deeper]), (shallower, deeper)
 
 
 def test_a_cluster_is_tighter_than_the_distance_between_clusters() -> None:
