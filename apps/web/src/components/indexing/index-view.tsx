@@ -243,10 +243,12 @@ function JobActions({ job }: { job: IndexJob }) {
   const queryClient = useQueryClient();
   const { role } = useOrgRole();
   const [busy, setBusy] = useState(false);
+  const [confirming, setConfirming] = useState(false);
   if (!context || !roleAtLeast(role, "admin")) return null;
   const { org, repo } = context;
   const refresh = () =>
     Promise.all([
+      queryClient.invalidateQueries({ queryKey: queryKeys.indexJob(org, repo, job.id) }),
       queryClient.invalidateQueries({ queryKey: queryKeys.indexJobs(org, repo) }),
       queryClient.invalidateQueries({ queryKey: queryKeys.repo(org, repo) }),
       queryClient.invalidateQueries({ queryKey: queryKeys.repos(org) }),
@@ -266,7 +268,7 @@ function JobActions({ job }: { job: IndexJob }) {
   const active = job.status === "queued" || job.status === "running";
   if (active) {
     return (
-      <AlertDialog>
+      <AlertDialog open={confirming} onOpenChange={setConfirming}>
         <AlertDialogTrigger render={<Button variant="outline" size="sm" disabled={busy} />}>
           Cancel indexing
         </AlertDialogTrigger>
@@ -281,15 +283,16 @@ function JobActions({ job }: { job: IndexJob }) {
             <AlertDialogCancel>Keep indexing</AlertDialogCancel>
             <AlertDialogAction
               variant="destructive"
-              onClick={() =>
+              onClick={() => {
+                setConfirming(false);
                 void run(
                   () =>
                     api.POST("/api/v1/orgs/{org}/repos/{repo}/index-jobs/{job}/cancel", {
                       params: { path: { org, repo, job: job.id } },
                     }),
                   "Indexing cancelled",
-                )
-              }
+                );
+              }}
             >
               Cancel indexing
             </AlertDialogAction>

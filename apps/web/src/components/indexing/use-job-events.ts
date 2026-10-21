@@ -56,13 +56,25 @@ const FRESH_MS = 15_000; // unlocks this recent get a toast; replayed history do
 
 type Stages = Record<string, Record<string, unknown>>;
 
-/** The job after ``event`` (a new object; the event stream's view of the state machine). */
+export const isSettled = (job: IndexJob | undefined) =>
+  job !== undefined && job.status !== "queued" && job.status !== "running";
+
+/** The job after ``event`` (a new object; the event stream's view of the state machine).
+ *
+ * The stream starts with the run's history, which can be older than the job it is applied to:
+ * a finished run stays as it is, a stage the job already has done isn't restarted, and progress
+ * never goes back. */
 export function applyEvent(job: IndexJob, event: JobEvent): IndexJob {
-  const stages: Stages = { ...(job.stages as Stages) };
+  if (isSettled(job)) return job;
   const stage = event.stage;
+  const known = stage ? (job.stages as Stages)[stage] : undefined;
+  if (known?.status === "done" && (event.type === "stage_started" || event.type === "progress")) {
+    return job;
+  }
+  const stages: Stages = { ...(job.stages as Stages) };
   const entry = stage ? { ...(stages[stage] ?? {}) } : {};
   const next: IndexJob = { ...job, stages };
-  if (typeof event.progress === "number") next.progress = event.progress;
+  if (typeof event.progress === "number") next.progress = Math.max(job.progress, event.progress);
   switch (event.type) {
     case "stage_started":
       Object.assign(entry, { status: "running", done: 0, total: null, started_at: event.ts });
@@ -147,9 +159,14 @@ export function useJobEvents(org: string, repo: string, jobId: string | null) {
         return;
       }
       event.id ||= message.lastEventId;
+      // A run that had already finished when the stream opened only replays its history: it
+      // feeds the log, while the job and the repository stay as the API returned them.
+      const settled = isSettled(queryClient.getQueryData<IndexJob>(key));
       queryClient.setQueryData<IndexJob>(key, (job) => (job ? applyEvent(job, event) : job));
       // A finished stage has details (counts, frameworks) that events don't carry.
-      if (event.type === "stage_done") void queryClient.invalidateQueries({ queryKey: key });
+      if (event.type === "stage_done" && !settled) {
+        void queryClient.invalidateQueries({ queryKey: key });
+      }
       if (event.type === "log" && event.message) {
         const line: LogLine = {
           id: event.id,
@@ -173,6 +190,7 @@ export function useJobEvents(org: string, repo: string, jobId: string | null) {
       if (TERMINAL.has(event.type)) {
         source?.close();
         setLive(false);
+        if (settled) return;
         // The final word comes from the API (stage details, the repository's new status).
         void queryClient.invalidateQueries({ queryKey: key });
         void queryClient.invalidateQueries({ queryKey: queryKeys.indexJobs(org, repo) });

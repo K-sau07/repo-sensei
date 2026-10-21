@@ -63,6 +63,30 @@ describe("applying the event stream", () => {
     ]);
   });
 
+  it("leaves a finished run as it is while its history replays", () => {
+    const finished = jobAt(BASE, Number.MAX_SAFE_INTEGER);
+    for (const recorded of runEvents()) {
+      const after = applyEvent(
+        finished,
+        event({ ...(recorded as Partial<JobEvent>), type: recorded.type as JobEvent["type"] }),
+      );
+      expect(after).toBe(finished);
+    }
+  });
+
+  it("doesn't restart a stage the job has already done, or move progress back", () => {
+    let job = applyEvent(queued(), event({ type: "stage_started", stage: "clone", progress: 0 }));
+    job = applyEvent(job, event({ type: "stage_done", stage: "clone", progress: 0.1 }));
+    job = applyEvent(job, event({ type: "stage_started", stage: "discover", progress: 0.1 }));
+    // The history from the start, replayed over the job fetched mid-run:
+    const replayed = [
+      event({ type: "stage_started", stage: "clone", progress: 0 }),
+      event({ type: "progress", stage: "clone", done: 1, total: 5, progress: 0.02 }),
+    ].reduce(applyEvent, job);
+    expect(replayed.stages.clone).toMatchObject({ status: "done" });
+    expect([replayed.stage, replayed.progress]).toEqual(["discover", 0.1]);
+  });
+
   it("matches what the recorded stream ends with", () => {
     // Folding every recorded event gives the same job the mock API reports at the end.
     let job = queued();

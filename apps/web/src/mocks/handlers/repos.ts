@@ -8,6 +8,7 @@ import {
   isActive,
   jobsOf,
   jobView,
+  onCancel,
   startJob,
   syncRepo,
   upcomingEvents,
@@ -165,11 +166,16 @@ const jobEvents =
             };
             for (const event of past.slice(start)) send(event);
             if (past.some((e) => TERMINAL.has(e.type))) return;
-            for (const { delay, event } of upcomingEvents(job)) {
+            const timers = upcomingEvents(job).map(({ delay, event }) =>
               setTimeout(() => {
                 if (job.cancelled_after_ms === undefined) send(event);
-              }, delay);
-            }
+              }, delay),
+            );
+            onCancel(job, () => {
+              for (const timer of timers) clearTimeout(timer);
+              const cancelled = eventsOf(job).at(-1);
+              if (cancelled?.type === "cancelled") send(cancelled);
+            });
           },
         ),
       ];

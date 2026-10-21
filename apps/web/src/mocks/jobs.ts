@@ -55,9 +55,22 @@ export function jobView(job: MockJob): IndexJob {
 
 export const isActive = (job: IndexJob) => job.status === "queued" || job.status === "running";
 
+const cancelListeners = new Map<string, Set<() => void>>();
+
+/** Call ``listener`` when the job is cancelled (an open event stream sends `cancelled` then, as
+ * the real API's does); returns the unsubscribe. */
+export function onCancel(job: MockJob, listener: () => void): () => void {
+  const listeners = cancelListeners.get(job.id) ?? new Set();
+  cancelListeners.set(job.id, listeners);
+  listeners.add(listener);
+  return () => listeners.delete(listener);
+}
+
 export function cancelJob(job: MockJob): void {
   job.cancelled_after_ms = Date.now() - job.queued_ms;
   saveDb();
+  for (const listener of cancelListeners.get(job.id) ?? []) listener();
+  cancelListeners.delete(job.id);
 }
 
 /** The events the job's stream has had so far (the cancellation included). */
