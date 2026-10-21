@@ -1,0 +1,4 @@
+api: uv run uvicorn sensei_api.app:create_app --factory --reload --port 8000
+worker: make --no-print-directory worker
+beat: make --no-print-directory beat
+web: pnpm --filter web dev

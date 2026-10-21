@@ -124,6 +124,12 @@ def test_very_deep_structures_are_still_redacted() -> None:
             "https://app.example.com/invite/***",
         ),
         ("/s/AbCdEfGhIjKlMnOpQr", "/s/***"),
+        # URL-encoded inside another URL, as in a sign-in redirect.
+        (
+            "GET /api/v1/auth/github/login?next=%2Finvite%2FZx9_kq2L-7vYp0TzAbCdEfGh",
+            "GET /api/v1/auth/github/login?next=%2Finvite%2F***",
+        ),
+        ("/login?next=%2finvite%2fZx9_kq2L-7vYp0TzAbCdEfGh", "/login?next=%2finvite%2f***"),
         # Record ids are not secrets.
         ("/orgs/acme/invitations/0199f000", "/orgs/acme/invitations/0199f000"),
         (

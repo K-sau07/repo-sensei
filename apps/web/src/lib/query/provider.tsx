@@ -2,6 +2,7 @@
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { lazy, Suspense, useEffect, useState, type ReactNode } from "react";
+import { toast } from "sonner";
 
 import { onAuthExpired } from "@/lib/api/auth-events";
 import { ApiError } from "@/lib/api/errors";
@@ -16,6 +17,7 @@ const Devtools =
     : () => null;
 
 const MAX_RETRIES = 2;
+const SESSION_EXPIRED_REDIRECT_MS = 1500;
 
 /** Retry server and network failures, never client errors (4xx): those won't fix themselves. */
 export function shouldRetry(failureCount: number, error: unknown): boolean {
@@ -46,7 +48,12 @@ export function QueryProvider({ children }: { children: ReactNode }) {
     () =>
       onAuthExpired(() => {
         const target = loginUrlFor(window.location);
-        if (target) window.location.assign(target);
+        if (!target) return;
+        // Say why before moving, then keep where they were in ?next.
+        toast.error("Your session ended. Sign in again to continue.", { id: "session-expired" });
+        window.setTimeout(() => {
+          window.location.assign(target);
+        }, SESSION_EXPIRED_REDIRECT_MS);
       }),
     [],
   );

@@ -1,0 +1,8 @@
+# Generated (regenerate with `make openapi` / `msw init`); also listed in the root .prettierignore,
+# which Prettier doesn't read when run from this directory.
+src/lib/api/schema.d.ts
+src/lib/api/openapi.json
+public/mockServiceWorker.js
+next-env.d.ts
+.next/
+storybook-static/

@@ -1,0 +1,20 @@
+# Build context is the repo root; send only what images need. Private and local files never go in.
+*
+!pyproject.toml
+!uv.lock
+!.python-version
+!apps/api/
+!packages/
+!workers/
+!scripts/healthcheck.py
+!scripts/worker_healthcheck.py
+
+# Even inside included folders
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+**/tests/
+**/.env
+**/.env.*
+**/*.pem
+**/node_modules

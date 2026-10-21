@@ -1,0 +1,19 @@
+# Staging Postgres: our image (pgvector + pg_textsearch), one machine with a volume, reachable
+# only on Fly's private network (no public service). Deploy from the repo root:
+#   fly volumes create pgdata --app repo-sensei-db-staging --region iad --size 10
+#   fly deploy infra/postgres --config infra/fly/postgres.toml
+
+app = "repo-sensei-db-staging"
+primary_region = "iad"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[mounts]
+  # Postgres 18 images keep data under /var/lib/postgresql/18/docker.
+  source = "pgdata"
+  destination = "/var/lib/postgresql"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "1gb"

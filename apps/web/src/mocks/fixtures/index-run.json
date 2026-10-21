@@ -1,0 +1,278 @@
+{
+  "source": "fastapi/full-stack-fastapi-template@b1125d8",
+  "events": [
+    {
+      "type": "stage_started",
+      "stage": "clone",
+      "progress": 0.0,
+      "at_ms": 0
+    },
+    {
+      "type": "progress",
+      "stage": "clone",
+      "done": 1,
+      "total": 5,
+      "eta_s": 2,
+      "progress": 0.01,
+      "at_ms": 299
+    },
+    {
+      "type": "progress",
+      "stage": "clone",
+      "done": 2,
+      "total": 5,
+      "eta_s": 2,
+      "progress": 0.02,
+      "at_ms": 962
+    },
+    {
+      "type": "progress",
+      "stage": "clone",
+      "done": 3,
+      "total": 5,
+      "eta_s": 1,
+      "progress": 0.03,
+      "at_ms": 1124
+    },
+    {
+      "type": "progress",
+      "stage": "clone",
+      "done": 4,
+      "total": 5,
+      "eta_s": 1,
+      "progress": 0.04,
+      "at_ms": 1155
+    },
+    {
+      "type": "progress",
+      "stage": "clone",
+      "done": 5,
+      "total": 5,
+      "eta_s": 0,
+      "progress": 0.05,
+      "at_ms": 1160
+    },
+    {
+      "type": "log",
+      "stage": "clone",
+      "level": "info",
+      "message": "Checked out b1125d883948: 252 files.",
+      "at_ms": 1160
+    },
+    {
+      "type": "stage_done",
+      "stage": "clone",
+      "progress": 0.05,
+      "at_ms": 1160
+    },
+    {
+      "type": "stage_started",
+      "stage": "discover",
+      "progress": 0.05,
+      "at_ms": 1281
+    },
+    {
+      "type": "progress",
+      "stage": "discover",
+      "done": 245,
+      "total": 245,
+      "eta_s": 0,
+      "progress": 0.08,
+      "at_ms": 1349
+    },
+    {
+      "type": "progress",
+      "stage": "discover",
+      "done": 245,
+      "total": 245,
+      "eta_s": 0,
+      "progress": 0.08,
+      "at_ms": 1385
+    },
+    {
+      "type": "log",
+      "stage": "discover",
+      "level": "info",
+      "message": "Found 245 files to index (18,567 lines); frameworks: @tanstack/react-query, @tanstack/react-router, alembic, axios, docker-compose, fastapi, httpx, playwright, pydantic, pytest, react, sqlmodel, vite.",
+      "at_ms": 1385
+    },
+    {
+      "type": "stage_done",
+      "stage": "discover",
+      "progress": 0.08,
+      "at_ms": 1385
+    },
+    {
+      "type": "unlock",
+      "stage": "discover",
+      "unlocks": ["code_browser"],
+      "at_ms": 1385
+    },
+    {
+      "type": "stage_started",
+      "stage": "merkle",
+      "progress": 0.08,
+      "at_ms": 1409
+    },
+    {
+      "type": "progress",
+      "stage": "merkle",
+      "done": 1,
+      "total": 3,
+      "eta_s": 1,
+      "progress": 0.0867,
+      "at_ms": 1424
+    },
+    {
+      "type": "progress",
+      "stage": "merkle",
+      "done": 2,
+      "total": 3,
+      "eta_s": 1,
+      "progress": 0.0933,
+      "at_ms": 1492
+    },
+    {
+      "type": "progress",
+      "stage": "merkle",
+      "done": 3,
+      "total": 3,
+      "eta_s": 0,
+      "progress": 0.1,
+      "at_ms": 1502
+    },
+    {
+      "type": "stage_done",
+      "stage": "merkle",
+      "progress": 0.1,
+      "at_ms": 1502
+    },
+    {
+      "type": "stage_started",
+      "stage": "finalize",
+      "progress": 1.0,
+      "at_ms": 1516
+    },
+    {
+      "type": "log",
+      "stage": "finalize",
+      "level": "info",
+      "message": "Indexed b1125d883948: 245 files. The code browser is ready.",
+      "at_ms": 1516
+    },
+    {
+      "type": "stage_done",
+      "stage": "finalize",
+      "progress": 1.0,
+      "at_ms": 1516
+    },
+    {
+      "type": "done",
+      "stage": "finalize",
+      "at_ms": 1516
+    }
+  ],
+  "stages": {
+    "clone": {
+      "done": 5,
+      "rate": 65.8116807842866,
+      "error": null,
+      "total": 5,
+      "status": "done",
+      "details": {
+        "lfs": "pointers_only",
+        "bytes": 1886624,
+        "files": 252,
+        "commit_sha": "b1125d8839482cb7bbae603ddc6d0081bf87532e",
+        "archive_bytes": 949864,
+        "submodules_skipped": 0
+      }
+    },
+    "graph": {
+      "status": "skipped"
+    },
+    "links": {
+      "status": "skipped"
+    },
+    "parse": {
+      "status": "skipped"
+    },
+    "chunks": {
+      "status": "skipped"
+    },
+    "merkle": {
+      "done": 3,
+      "rate": 68.50621717526754,
+      "error": null,
+      "total": 3,
+      "status": "done",
+      "details": {
+        "root": "c787a34e22985f6f0ae9660e043d2be2cf3a7aed46fca3348b4da177bae97957",
+        "bytes": 17251,
+        "files": 245,
+        "directories": 54
+      }
+    },
+    "symbols": {
+      "status": "skipped"
+    },
+    "discover": {
+      "done": 245,
+      "rate": 3559.132443308105,
+      "error": null,
+      "total": 245,
+      "status": "done",
+      "details": {
+        "loc": 18567,
+        "files": 245,
+        "skipped": {
+          "special": 0,
+          "symlinks": 4,
+          "bad_names": 0,
+          "ignored_dirs": 0,
+          "ignored_files": 3
+        },
+        "services": ["adminer", "backend", "db", "mailpit", "playwright", "proxy"],
+        "languages": {
+          "CSS": 4187,
+          "HTML": 21286,
+          "Mako": 523,
+          "Shell": 1609,
+          "Python": 90980,
+          "Dockerfile": 2144,
+          "TypeScript": 230208
+        },
+        "frameworks": [
+          "@tanstack/react-query",
+          "@tanstack/react-router",
+          "alembic",
+          "axios",
+          "docker-compose",
+          "fastapi",
+          "httpx",
+          "playwright",
+          "pydantic",
+          "pytest",
+          "react",
+          "sqlmodel",
+          "vite"
+        ],
+        "invalid_ignore_globs": []
+      }
+    },
+    "finalize": {
+      "done": 0,
+      "rate": null,
+      "error": null,
+      "total": null,
+      "status": "done"
+    },
+    "summaries": {
+      "status": "skipped"
+    },
+    "embeddings": {
+      "status": "skipped"
+    }
+  },
+  "note": "A real index run of fastapi/full-stack-fastapi-template at b1125d8, recorded from the job's event stream (worker + local infra). at_ms: milliseconds since the first event."
+}

@@ -371,3 +371,21 @@ async def test_accepting_twice_is_idempotent(db_session: AsyncSession, service: 
     with pytest.raises(ConflictError) as exc:
         await service.accept_invitation(db_session, friend, token)
     assert exc.value.code == "invitation_accepted"
+
+
+def test_web_slug_rules_match_the_api() -> None:
+    """apps/web checks slugs before asking the API; both must agree exactly."""
+    import re  # noqa: PLC0415
+    from pathlib import Path  # noqa: PLC0415
+
+    from sensei_core.orgs.service import RESERVED_SLUGS, SLUG_RE  # noqa: PLC0415
+
+    source = (
+        Path(__file__).resolve().parents[3] / "apps" / "web" / "src" / "lib" / "orgs" / "slug.ts"
+    ).read_text()
+    web_pattern = re.search(r"export const SLUG_RE = /(.+)/;", source)
+    reserved_block = re.search(r"RESERVED_SLUGS = new Set\(\[(.*?)\]\)", source, re.S)
+    assert web_pattern is not None
+    assert reserved_block is not None
+    assert web_pattern.group(1) == SLUG_RE.pattern
+    assert set(re.findall(r'"([a-z]+)"', reserved_block.group(1))) == set(RESERVED_SLUGS)

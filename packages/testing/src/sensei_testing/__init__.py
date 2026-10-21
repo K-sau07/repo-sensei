@@ -7,6 +7,7 @@ afterwards, so tests never see each other's data.
 * ``db_session`` connects as the application role: row-level security is enforced, exactly as in
   production.
 * ``owner_session`` connects as the schema owner, for tests that need DDL or cross-org setup.
+* ``system_session`` connects as the system role (bypasses row-level security), like workers.
 """
 
 from __future__ import annotations
@@ -99,6 +100,14 @@ async def db_session(migrated_test_db: Settings) -> AsyncGenerator[AsyncSession]
 async def owner_session(migrated_test_db: Settings) -> AsyncGenerator[AsyncSession]:
     """Schema-owner session for DDL and cross-org fixtures; rolled back like ``db_session``."""
     url = migrated_test_db.database.migrate_url.get_secret_value()
+    async with rolled_back_session(url) as session:
+        yield session
+
+
+@pytest.fixture
+async def system_session(migrated_test_db: Settings) -> AsyncGenerator[AsyncSession]:
+    """System-role session (BYPASSRLS), as workers use for cross-org work; rolled back."""
+    url = migrated_test_db.database.system_url.get_secret_value()
     async with rolled_back_session(url) as session:
         yield session
 

@@ -78,6 +78,48 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/github/install": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Github Install
+         * @description Send an org admin to GitHub to install the app. Non-admins get 403.
+         */
+        get: operations["github_install_api_v1_github_install_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/github/setup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Github Setup
+         * @description GitHub's Setup URL: link the new installation to the org that started the install.
+         *
+         *     Always answers with a redirect to the web app, carrying ``github_error`` on failure.
+         */
+        get: operations["github_setup_api_v1_github_setup_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/healthz": {
         parameters: {
             query?: never;
@@ -90,6 +132,26 @@ export interface paths {
          * @description Liveness: the process is up and serving requests.
          */
         get: operations["healthz_api_v1_healthz_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/indexing/stages": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Indexing Stages
+         * @description Indexing stages in order, and the features each one unlocks.
+         */
+        get: operations["indexing_stages_api_v1_indexing_stages_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -258,6 +320,70 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/orgs/{org}/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Org Events
+         * @description The org's index runs starting and ending, as server-sent events (for status dots and the
+         *     inbox), limited to repositories the signed-in user can read. Closes only when the session
+         *     ends or the user leaves the org (checked every minute); the browser's reconnect then gets
+         *     the error.
+         */
+        get: operations["org_events_api_v1_orgs__org__events_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/github/installations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Installations
+         * @description GitHub accounts connected to the org.
+         */
+        get: operations["list_installations_api_v1_orgs__org__github_installations_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/github/repos": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Available Repos
+         * @description Repositories the org's GitHub installations cover that the admin can read on GitHub
+         *     themselves (admins), marking connected ones.
+         */
+        get: operations["available_repos_api_v1_orgs__org__github_repos_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/orgs/{org}/invitations": {
         parameters: {
             query?: never;
@@ -345,6 +471,280 @@ export interface paths {
         patch: operations["change_member_role_api_v1_orgs__org__members__user_id__patch"];
         trace?: never;
     };
+    "/api/v1/orgs/{org}/repos": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Repos
+         * @description Connected repositories the signed-in user can read on GitHub.
+         */
+        get: operations["list_repos_api_v1_orgs__org__repos_get"];
+        put?: never;
+        /**
+         * Connect Repo
+         * @description Connect a repository one of the org's installations covers and the admin can read on
+         *     GitHub (admins). Indexing starts right away unless the repository's settings say not to.
+         */
+        post: operations["connect_repo_api_v1_orgs__org__repos_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/repos/estimate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Estimate Repo
+         * @description Size, index time and cost before connecting, by public URL or GitHub repository id.
+         */
+        post: operations["estimate_repo_api_v1_orgs__org__repos_estimate_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/repos/import": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Import Repo
+         * @description Import a public GitHub repository by URL (admins). Private ones answer 422
+         *     ``repo_not_public``: they connect through the GitHub App. Indexing starts right away unless
+         *     the repository's settings say not to.
+         */
+        post: operations["import_repo_api_v1_orgs__org__repos_import_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/repos/{repo}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Repo */
+        get: operations["get_repo_api_v1_orgs__org__repos__repo__get"];
+        put?: never;
+        post?: never;
+        /**
+         * Disconnect Repo
+         * @description Disconnect (admins): hidden at once, its data purged in the background.
+         */
+        delete: operations["disconnect_repo_api_v1_orgs__org__repos__repo__delete"];
+        options?: never;
+        head?: never;
+        /**
+         * Update Repo
+         * @description Tracked branches, ignore patterns and automatic indexing (admins).
+         */
+        patch: operations["update_repo_api_v1_orgs__org__repos__repo__patch"];
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/repos/{repo}/constellation": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Constellation
+         * @description A page of the constellation's points (file, position, layer, directory cluster, size).
+         */
+        get: operations["constellation_api_v1_orgs__org__repos__repo__constellation_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/repos/{repo}/file": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * File
+         * @description A text file's content. ETag: the content's hash; ``X-Commit-Sha``: the commit.
+         */
+        get: operations["file_api_v1_orgs__org__repos__repo__file_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/repos/{repo}/files/search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Search Files
+         * @description Fuzzy path search (for ⌘K): a path matches if it contains the query's characters in
+         *     order, or looks like it by trigrams; file names that match rank first.
+         */
+        get: operations["search_files_api_v1_orgs__org__repos__repo__files_search_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/repos/{repo}/index-jobs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Index Jobs
+         * @description The repository's index runs, newest first (at most 50).
+         */
+        get: operations["list_index_jobs_api_v1_orgs__org__repos__repo__index_jobs_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/repos/{repo}/index-jobs/{job}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Index Job */
+        get: operations["get_index_job_api_v1_orgs__org__repos__repo__index_jobs__job__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/repos/{repo}/index-jobs/{job}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Cancel Index Job
+         * @description Cancel a queued or running run (admins): its stages stop at their next step.
+         */
+        post: operations["cancel_index_job_api_v1_orgs__org__repos__repo__index_jobs__job__cancel_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/repos/{repo}/index-jobs/{job}/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Index Job Events
+         * @description The run's progress as server-sent events (types: queued, stage_started, progress,
+         *     stage_done, unlock, log, constellation, done, failed, cancelled). Replays from
+         *     ``Last-Event-ID``; closes after the final event.
+         */
+        get: operations["index_job_events_api_v1_orgs__org__repos__repo__index_jobs__job__events_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/repos/{repo}/reindex": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Reindex
+         * @description Index the repository again at its branch's current commit (admins). 409
+         *     ``index_job_running`` while a run is queued or running.
+         */
+        post: operations["reindex_api_v1_orgs__org__repos__repo__reindex_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/repos/{repo}/tree": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Tree
+         * @description The direct children of a directory, directories first. ETag: the directory's hash (its
+         *     ``t1`` version changes whenever what a listing shows does); ``X-Commit-Sha``: the commit.
+         */
+        get: operations["tree_api_v1_orgs__org__repos__repo__tree_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/readyz": {
         parameters: {
             query?: never;
@@ -365,10 +765,47 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/webhooks/github": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Github Webhook
+         * @description Receive a GitHub delivery: verify its signature, store it once, queue it for a worker.
+         */
+        post: operations["github_webhook_api_v1_webhooks_github_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /**
+         * ActiveJobOut
+         * @description The repository's queued or running index run, for status dots and progress.
+         */
+        ActiveJobOut: {
+            /** Eta S */
+            eta_s: number | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Progress */
+            progress: number;
+            stage: components["schemas"]["Stage"] | null;
+            status: components["schemas"]["JobStatus"];
+        };
         /**
          * ActorType
          * @enum {string}
@@ -378,7 +815,7 @@ export interface components {
          * AuditAction
          * @enum {string}
          */
-        AuditAction: "auth.login" | "auth.logout" | "auth.logout_all" | "org.create" | "org.update" | "org.delete" | "invitation.create" | "invitation.revoke" | "invitation.accept" | "member.role_change" | "member.remove" | "member.leave";
+        AuditAction: "auth.login" | "auth.logout" | "auth.logout_all" | "org.create" | "org.update" | "org.delete" | "invitation.create" | "invitation.revoke" | "invitation.accept" | "member.role_change" | "member.remove" | "member.leave" | "github.install.linked" | "github.install.deleted" | "github.install.suspended" | "github.install.unsuspended" | "github.install.permissions_accepted" | "repo.connected" | "repo.settings_update" | "repo.disconnected" | "repo.index_started" | "repo.index_cancelled";
         /** AuditEventOut */
         AuditEventOut: {
             /** Action */
@@ -419,6 +856,232 @@ export interface components {
              */
             next_cursor: string | null;
         };
+        /** AvailablePage */
+        AvailablePage: {
+            /** Items */
+            items: components["schemas"]["AvailableRepoOut"][];
+            /** Page */
+            page: number;
+            /** Per Page */
+            per_page: number;
+            /** Total */
+            total: number;
+        };
+        /** AvailableRepoOut */
+        AvailableRepoOut: {
+            /**
+             * Account Login
+             * @description The GitHub account whose installation covers it.
+             */
+            account_login: string;
+            /** Connected */
+            connected: boolean;
+            /** Default Branch */
+            default_branch: string;
+            /** Description */
+            description: string | null;
+            /** Full Name */
+            full_name: string;
+            /** Github Repo Id */
+            github_repo_id: number;
+            /** Language */
+            language: string | null;
+            /** Private */
+            private: boolean;
+            /** Pushed At */
+            pushed_at: string | null;
+        };
+        /** ConnectRepo */
+        ConnectRepo: {
+            /** Github Repo Id */
+            github_repo_id: number;
+        };
+        /** ConstellationDir */
+        ConstellationDir: {
+            /** Depth */
+            depth: number;
+            /**
+             * Files
+             * @description Files directly inside.
+             */
+            files: number;
+            /**
+             * Id
+             * @description What points' ``dir_cluster`` refers to.
+             */
+            id: number;
+            /** Parent */
+            parent: number | null;
+            /**
+             * Path
+             * @description "" for the root.
+             */
+            path: string;
+            /** X */
+            x: number;
+            /** Y */
+            y: number;
+            /** Z */
+            z: number;
+        };
+        /** ConstellationOut */
+        ConstellationOut: {
+            /**
+             * Available
+             * @description Points there are now.
+             */
+            available: number;
+            /** Commit Sha */
+            commit_sha: string | null;
+            /**
+             * Dirs
+             * @description Every directory, on the first page only.
+             */
+            dirs: components["schemas"]["ConstellationDir"][];
+            /** Generation */
+            generation: string | null;
+            /**
+             * Layout
+             * @default directory
+             * @constant
+             */
+            layout: "directory";
+            /**
+             * Next
+             * @description The cursor for the next page.
+             */
+            next: number;
+            /** Points */
+            points: components["schemas"]["ConstellationPoint"][];
+            /** Since */
+            since: number;
+            /**
+             * Status
+             * @description pending: nothing yet; streaming: discovery is finding files; stopped: the run ended before discovery finished; complete: every point.
+             * @enum {string}
+             */
+            status: "pending" | "streaming" | "stopped" | "complete";
+            /**
+             * Total
+             * @description Points there will be (known once the walk is done).
+             */
+            total: number | null;
+        };
+        /** ConstellationPoint */
+        ConstellationPoint: {
+            /** Dir Cluster */
+            dir_cluster: number;
+            /**
+             * File Id
+             * Format: uuid
+             */
+            file_id: string;
+            /** Language */
+            language: string | null;
+            /**
+             * Layer
+             * @enum {string}
+             */
+            layer: "ui" | "api" | "svc" | "db" | "other";
+            /** Loc */
+            loc: number | null;
+            /** Path */
+            path: string;
+            /** Role */
+            role: string;
+            /**
+             * Size
+             * @description Bytes.
+             */
+            size: number;
+            /** X */
+            x: number;
+            /** Y */
+            y: number;
+            /** Z */
+            z: number;
+        };
+        /** EstimateOut */
+        EstimateOut: {
+            /**
+             * Cost Usd
+             * @description Estimated one-time cost of the first full index.
+             */
+            cost_usd: string;
+            /**
+             * Files
+             * @description Estimated number of source files.
+             */
+            files: number;
+            /** Full Name */
+            full_name: string;
+            /**
+             * Heuristic
+             * @description Estimates, not measurements.
+             * @default true
+             */
+            heuristic: boolean;
+            /** Index Minutes */
+            index_minutes: number;
+            /** Languages */
+            languages: {
+                [key: string]: number;
+            };
+            /** Private */
+            private: boolean;
+            /** Size Kb */
+            size_kb: number;
+            /**
+             * Stars
+             * @description GitHub stars, when GitHub says.
+             */
+            stars?: number | null;
+            /**
+             * Tokens
+             * @description Estimated tokens to embed.
+             */
+            tokens: number;
+        };
+        /** EstimateRequest */
+        EstimateRequest: {
+            /** Github Repo Id */
+            github_repo_id?: number | null;
+            /** Url */
+            url?: string | null;
+        };
+        /**
+         * Feature
+         * @enum {string}
+         */
+        Feature: "code_browser" | "goto_definition" | "keyword_search" | "semantic_search" | "ask" | "wiki" | "graph_view" | "callers" | "trace" | "diagrams" | "fixes" | "changes";
+        /**
+         * FileOut
+         * @description A file. Like a listing, it depends only on the content; the commit is in
+         *     ``X-Commit-Sha``.
+         */
+        FileOut: {
+            /** Content */
+            content: string;
+            /** Encoding */
+            encoding: string;
+            /** Flags */
+            flags: string[];
+            /** Language */
+            language: string | null;
+            /** Loc */
+            loc: number | null;
+            /** Path */
+            path: string;
+            /** Role */
+            role: string;
+            /**
+             * Sha
+             * @description Git's object id for the content.
+             */
+            sha: string;
+            /** Size */
+            size: number;
+        };
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
@@ -433,6 +1096,109 @@ export interface components {
             status: "ok";
             /** Version */
             version: string;
+        };
+        /** ImportRepo */
+        ImportRepo: {
+            /** Url */
+            url: string;
+        };
+        /** IndexJobOut */
+        IndexJobOut: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Error */
+            error: {
+                [key: string]: unknown;
+            } | null;
+            /**
+             * Eta S
+             * @description Seconds left, when there is a rate to go by.
+             */
+            eta_s: number | null;
+            /**
+             * Features
+             * @description What the repository can do after this run.
+             */
+            features: components["schemas"]["Feature"][];
+            /** Finished At */
+            finished_at: string | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            kind: components["schemas"]["JobKind"];
+            /**
+             * Progress
+             * @description 0 to 1, weighted by how long stages usually take.
+             */
+            progress: number;
+            /**
+             * Repo Id
+             * Format: uuid
+             */
+            repo_id: string;
+            /** Snapshot Id */
+            snapshot_id: string | null;
+            stage: components["schemas"]["Stage"] | null;
+            /**
+             * Stages
+             * @description Per-stage progress: status, done/total, rate, timestamps, details, error.
+             */
+            stages: {
+                [key: string]: unknown;
+            };
+            /** Started At */
+            started_at: string | null;
+            status: components["schemas"]["JobStatus"];
+        };
+        /**
+         * InstallReturn
+         * @description Where the browser goes after installing.
+         * @enum {string}
+         */
+        InstallReturn: "onboarding" | "repos";
+        /** InstallationOut */
+        InstallationOut: {
+            /** Account Login */
+            account_login: string;
+            /**
+             * Account Type
+             * @description "User" or "Organization"
+             */
+            account_type: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Installation Id */
+            installation_id: number;
+            /**
+             * Manage Url
+             * @description Change repository access or uninstall on GitHub.
+             */
+            manage_url: string;
+            /**
+             * Repository Selection
+             * @description "all" or "selected"
+             */
+            repository_selection: string;
+            /** Suspended */
+            suspended: boolean;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
         };
         /** InvitationCreate */
         InvitationCreate: {
@@ -506,6 +1272,16 @@ export interface components {
             /** Status */
             status: string;
         };
+        /**
+         * JobKind
+         * @enum {string}
+         */
+        JobKind: "full" | "incremental";
+        /**
+         * JobStatus
+         * @enum {string}
+         */
+        JobStatus: "queued" | "running" | "succeeded" | "failed" | "cancelled";
         /** MeResponse */
         MeResponse: {
             /** Avatar Url */
@@ -604,6 +1380,105 @@ export interface components {
              */
             status: "ok" | "unavailable";
         };
+        /** RepoOut */
+        RepoOut: {
+            active_job?: components["schemas"]["ActiveJobOut"] | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Default Branch */
+            default_branch: string;
+            /**
+             * File Count
+             * @description Files indexed at the last index.
+             */
+            file_count?: number | null;
+            /** Full Name */
+            full_name: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Index Job Id
+             * @description The index run this request started, if it started one.
+             */
+            index_job_id?: string | null;
+            /**
+             * Languages
+             * @description Bytes of code per language, under GitHub's language names: GitHub's counts until the first index, then repo-sensei's (generated, vendored and documentation files left out).
+             */
+            languages: {
+                [key: string]: number;
+            };
+            /** Last Indexed At */
+            last_indexed_at?: string | null;
+            /** Last Indexed Sha */
+            last_indexed_sha: string | null;
+            /**
+             * Loc
+             * @description Lines in those files.
+             */
+            loc?: number | null;
+            /** Name */
+            name: string;
+            /** Owner */
+            owner: string;
+            settings: components["schemas"]["RepoSettings"];
+            /** Size Kb */
+            size_kb: number;
+            /**
+             * Slug
+             * @description The repository's name in URLs: /<org>/<slug>.
+             */
+            slug: string;
+            source: components["schemas"]["RepoSource"];
+            status: components["schemas"]["RepoStatus"];
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+            /** Visibility */
+            visibility: string;
+        };
+        /**
+         * RepoSettings
+         * @description What admins can change about a connected repository.
+         */
+        RepoSettings: {
+            /**
+             * Auto Index
+             * @default true
+             */
+            auto_index: boolean;
+            /** Ignore Globs */
+            ignore_globs?: string[];
+            /** Tracked Branches */
+            tracked_branches?: string[];
+        };
+        /**
+         * RepoSource
+         * @enum {string}
+         */
+        RepoSource: "github_app" | "public_url";
+        /**
+         * RepoStatus
+         * @enum {string}
+         */
+        RepoStatus: "pending" | "indexing" | "ready" | "error" | "access_lost" | "archived";
+        /** RepoUpdate */
+        RepoUpdate: {
+            /** Auto Index */
+            auto_index?: boolean | null;
+            /** Ignore Globs */
+            ignore_globs?: string[] | null;
+            /** Tracked Branches */
+            tracked_branches?: string[] | null;
+        };
         /**
          * Role
          * @description Ordered from least to most privileged.
@@ -613,6 +1488,30 @@ export interface components {
         /** RoleUpdate */
         RoleUpdate: {
             role: components["schemas"]["Role"];
+        };
+        /** SearchHit */
+        SearchHit: {
+            /** Language */
+            language: string | null;
+            /** Name */
+            name: string;
+            /** Path */
+            path: string;
+            /** Role */
+            role: string;
+            /** Score */
+            score: number;
+            /** Size */
+            size: number;
+        };
+        /** SearchOut */
+        SearchOut: {
+            /** Commit Sha */
+            commit_sha: string;
+            /** Query */
+            query: string;
+            /** Results */
+            results: components["schemas"]["SearchHit"][];
         };
         /** SessionInfo */
         SessionInfo: {
@@ -647,6 +1546,72 @@ export interface components {
             /** Slug */
             slug: string;
         };
+        /**
+         * Stage
+         * @description Indexing stages, in the order they run.
+         * @enum {string}
+         */
+        Stage: "clone" | "discover" | "merkle" | "parse" | "symbols" | "chunks" | "embeddings" | "summaries" | "graph" | "links" | "finalize";
+        /** StageInfo */
+        StageInfo: {
+            stage: components["schemas"]["Stage"];
+            /**
+             * Unlocks
+             * @description Features available once this stage is done.
+             */
+            unlocks: components["schemas"]["Feature"][];
+            /**
+             * Weight
+             * @description Typical share of an index run, out of 100.
+             */
+            weight: number;
+        };
+        /** StagesOut */
+        StagesOut: {
+            /**
+             * Stages
+             * @description In the order they run.
+             */
+            stages: components["schemas"]["StageInfo"][];
+        };
+        /** TreeEntry */
+        TreeEntry: {
+            /**
+             * Child Count
+             * @description Entries in a directory.
+             */
+            child_count?: number | null;
+            /** Flags */
+            flags?: string[] | null;
+            /** Language */
+            language?: string | null;
+            /** Loc */
+            loc?: number | null;
+            /** Name */
+            name: string;
+            /** Path */
+            path: string;
+            /** Role */
+            role?: string | null;
+            /** Size */
+            size?: number | null;
+            /**
+             * Type
+             * @enum {string}
+             */
+            type: "dir" | "file";
+        };
+        /**
+         * TreeOut
+         * @description A directory listing. It depends only on what's in the directory (so its ETag holds across
+         *     commits that didn't touch it); the commit it was read from is in ``X-Commit-Sha``.
+         */
+        TreeOut: {
+            /** Entries */
+            entries: components["schemas"]["TreeEntry"][];
+            /** Path */
+            path: string;
+        };
         /** ValidationError */
         ValidationError: {
             /** Context */
@@ -659,6 +1624,14 @@ export interface components {
             msg: string;
             /** Error Type */
             type: string;
+        };
+        /** WebhookAccepted */
+        WebhookAccepted: {
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "queued" | "duplicate";
         };
     };
     responses: never;
@@ -765,6 +1738,68 @@ export interface operations {
             };
         };
     };
+    github_install_api_v1_github_install_get: {
+        parameters: {
+            query: {
+                /** @description Organization slug */
+                org: string;
+                from?: components["schemas"]["InstallReturn"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            302: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    github_setup_api_v1_github_setup_get: {
+        parameters: {
+            query?: {
+                installation_id?: number | null;
+                setup_action?: string | null;
+                state?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            302: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     healthz_api_v1_healthz_get: {
         parameters: {
             query?: never;
@@ -781,6 +1816,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HealthResponse"];
+                };
+            };
+        };
+    };
+    indexing_stages_api_v1_indexing_stages_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StagesOut"];
                 };
             };
         };
@@ -1167,6 +2222,106 @@ export interface operations {
             };
         };
     };
+    org_events_api_v1_orgs__org__events_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization slug */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/event-stream": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_installations_api_v1_orgs__org__github_installations_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization slug */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InstallationOut"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    available_repos_api_v1_orgs__org__github_repos_get: {
+        parameters: {
+            query?: {
+                q?: string;
+                page?: number;
+                per_page?: number;
+            };
+            header?: never;
+            path: {
+                /** @description Organization slug */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AvailablePage"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_invitations_api_v1_orgs__org__invitations_get: {
         parameters: {
             query?: never;
@@ -1396,6 +2551,621 @@ export interface operations {
             };
         };
     };
+    list_repos_api_v1_orgs__org__repos_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization slug */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RepoOut"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    connect_repo_api_v1_orgs__org__repos_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization slug */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConnectRepo"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RepoOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    estimate_repo_api_v1_orgs__org__repos_estimate_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization slug */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EstimateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EstimateOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    import_repo_api_v1_orgs__org__repos_import_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization slug */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ImportRepo"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RepoOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_repo_api_v1_orgs__org__repos__repo__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Repository slug */
+                repo: string;
+                /** @description Organization slug */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RepoOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    disconnect_repo_api_v1_orgs__org__repos__repo__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Repository slug */
+                repo: string;
+                /** @description Organization slug */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_repo_api_v1_orgs__org__repos__repo__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Repository slug */
+                repo: string;
+                /** @description Organization slug */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RepoUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RepoOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    constellation_api_v1_orgs__org__repos__repo__constellation_get: {
+        parameters: {
+            query?: {
+                /** @description Points the caller has already. */
+                since?: number;
+                limit?: number;
+                /** @description An index run: its constellation, while it forms. */
+                job?: string | null;
+                /** @description Branch or commit (or its first 7+ characters). */
+                ref?: string | null;
+            };
+            header?: never;
+            path: {
+                /** @description Repository slug */
+                repo: string;
+                /** @description Organization slug */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConstellationOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    file_api_v1_orgs__org__repos__repo__file_get: {
+        parameters: {
+            query: {
+                /** @description Relative path; empty for the root. */
+                path: string;
+                /** @description Branch or commit (or its first 7+ characters). */
+                ref?: string | null;
+            };
+            header?: never;
+            path: {
+                /** @description Repository slug */
+                repo: string;
+                /** @description Organization slug */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    /** @description The commit the response was read from. */
+                    "X-Commit-Sha"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FileOut"];
+                };
+            };
+            /** @description Not modified */
+            304: {
+                headers: {
+                    /** @description The commit the response was read from. */
+                    "X-Commit-Sha"?: string;
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Over 2 MB: metadata and a download URL instead */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Binary: metadata only */
+            415: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    search_files_api_v1_orgs__org__repos__repo__files_search_get: {
+        parameters: {
+            query: {
+                q: string;
+                /** @description Branch or commit (or its first 7+ characters). */
+                ref?: string | null;
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                /** @description Repository slug */
+                repo: string;
+                /** @description Organization slug */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SearchOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_index_jobs_api_v1_orgs__org__repos__repo__index_jobs_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Repository slug */
+                repo: string;
+                /** @description Organization slug */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IndexJobOut"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_index_job_api_v1_orgs__org__repos__repo__index_jobs__job__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Index job id */
+                job: string;
+                /** @description Repository slug */
+                repo: string;
+                /** @description Organization slug */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IndexJobOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    cancel_index_job_api_v1_orgs__org__repos__repo__index_jobs__job__cancel_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Index job id */
+                job: string;
+                /** @description Repository slug */
+                repo: string;
+                /** @description Organization slug */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IndexJobOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    index_job_events_api_v1_orgs__org__repos__repo__index_jobs__job__events_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Index job id */
+                job: string;
+                /** @description Repository slug */
+                repo: string;
+                /** @description Organization slug */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/event-stream": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    reindex_api_v1_orgs__org__repos__repo__reindex_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Repository slug */
+                repo: string;
+                /** @description Organization slug */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IndexJobOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    tree_api_v1_orgs__org__repos__repo__tree_get: {
+        parameters: {
+            query?: {
+                /** @description Relative path; empty for the root. */
+                path?: string;
+                /** @description Branch or commit (or its first 7+ characters). */
+                ref?: string | null;
+            };
+            header?: never;
+            path: {
+                /** @description Repository slug */
+                repo: string;
+                /** @description Organization slug */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    /** @description The commit the response was read from. */
+                    "X-Commit-Sha"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TreeOut"];
+                };
+            };
+            /** @description Not modified */
+            304: {
+                headers: {
+                    /** @description The commit the response was read from. */
+                    "X-Commit-Sha"?: string;
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     readyz_api_v1_readyz_get: {
         parameters: {
             query?: never;
@@ -1421,6 +3191,48 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ReadinessResponse"];
+                };
+            };
+        };
+    };
+    github_webhook_api_v1_webhooks_github_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-github-event"?: string | null;
+                "x-github-delivery"?: string | null;
+                "x-hub-signature-256"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Already received */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WebhookAccepted"];
+                };
+            };
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WebhookAccepted"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

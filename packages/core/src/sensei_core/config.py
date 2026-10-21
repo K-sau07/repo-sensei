@@ -12,6 +12,7 @@ from __future__ import annotations
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
+from urllib.parse import urlsplit, urlunsplit
 
 from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -76,6 +77,77 @@ class RedisSettings(BaseSettings):
     timeout_seconds: float = Field(default=5.0, gt=0)
 
 
+def with_redis_db(url: str, db: int) -> str:
+    """The same Redis URL pointing at logical database ``db``."""
+    parts = urlsplit(url)
+    return urlunsplit(parts._replace(path=f"/{db}"))
+
+
+class WorkerSettings(BaseSettings):
+    """Celery. Broker and results default to databases 1 and 2 of the main Redis."""
+
+    model_config = _config("SENSEI_WORKER_")
+
+    broker_url: SecretStr | None = None
+    result_backend: SecretStr | None = None
+    soft_time_limit_seconds: int = Field(default=1800, gt=0)
+    time_limit_seconds: int = Field(default=2100, gt=0)
+    # Redis hands an unacknowledged message to another worker this long after it was received,
+    # however long it then waits (a retry countdown) or runs. So a countdown plus the longest run
+    # must fit inside it: see max_countdown_seconds.
+    visibility_timeout_seconds: int = Field(default=3600, gt=0)
+    result_expires_seconds: int = Field(default=86_400, gt=0)
+    max_retries: int = Field(default=5, ge=0)
+    retry_backoff_seconds: float = Field(default=2.0, gt=0)
+    retry_backoff_max_seconds: float = Field(default=600.0, gt=0)
+    # A running idempotent task refreshes its lock this often; a copy of the same message that
+    # finds a fresh heartbeat waits instead of running alongside it.
+    lock_heartbeat_seconds: float = Field(default=30.0, gt=0)
+    # The same attempt delivered this many times (its process died each time) is dead-lettered
+    # instead of crashing workers forever.
+    max_deliveries: int = Field(default=3, ge=1)
+    # Tasks run in the caller, synchronously (tests).
+    always_eager: bool = False
+
+    @property
+    def max_countdown_seconds(self) -> float:
+        """The longest retry delay that can't make Redis redeliver a task that is still running."""
+        return self.visibility_timeout_seconds - self.time_limit_seconds - 60
+
+    @model_validator(mode="after")
+    def _limits_are_ordered(self) -> WorkerSettings:
+        limits = (self.soft_time_limit_seconds, self.time_limit_seconds)
+        if not limits[0] < limits[1] < self.visibility_timeout_seconds:
+            msg = "worker limits must satisfy soft time limit < time limit < visibility timeout"
+            raise ValueError(msg)
+        if self.max_countdown_seconds < 60:
+            msg = "the visibility timeout must exceed the time limit by at least two minutes"
+            raise ValueError(msg)
+        return self
+
+
+class IngestSettings(BaseSettings):
+    """Cloning repositories into the workers' cache."""
+
+    model_config = _config("SENSEI_INGEST_")
+
+    # One working copy per repository, reused between index runs (the image sets /data/repos).
+    cache_dir: Path = Path.home() / ".cache" / "repo-sensei" / "repos"
+    cache_max_bytes: int = Field(default=50 * 1024**3, gt=0)
+    # Checked-out size limit; bigger repositories are refused before checkout.
+    max_checkout_bytes: int = Field(default=2 * 1024**3, gt=0)
+    clone_timeout_seconds: float = Field(default=900.0, gt=0)
+    # Files kept after the ignore rules; a bigger tree fails discovery.
+    max_files: int = Field(default=250_000, gt=0)
+    # Where the API unpacks snapshots to serve files from (it has no working copies), and the
+    # disk budget for them.
+    snapshot_cache_dir: Path = Path.home() / ".cache" / "repo-sensei" / "snapshots"
+    snapshot_cache_max_bytes: int = Field(default=20 * 1024**3, gt=0)
+    git_binary: str = "git"
+    # file:// remotes (local test fixtures only; never in a deployment).
+    allow_file_protocol: bool = False
+
+
 class S3Settings(BaseSettings):
     model_config = _config("SENSEI_S3_")
 
@@ -85,6 +157,15 @@ class S3Settings(BaseSettings):
     region: str = "us-east-1"
     bucket_snapshots: str = "sensei-snapshots"
     bucket_artifacts: str = "sensei-artifacts"
+
+
+class ApiSettings(BaseSettings):
+    model_config = _config("SENSEI_API_")
+
+    # The header the platform's proxy sets to the client's address, overwriting whatever the
+    # client sent (Fly.io: "fly-client-ip"). None: the connecting peer's address. Never trust a
+    # header a client can forge, such as X-Forwarded-For's first entry.
+    client_ip_header: str | None = None
 
 
 class WebSettings(BaseSettings):
@@ -119,14 +200,38 @@ class GitHubSettings(BaseSettings):
     client_id: str | None = None
     client_secret: SecretStr | None = None
     private_key_path: str | None = None
+    # The PEM itself, for platforms where secrets are env vars rather than files.
+    private_key: SecretStr | None = None
     webhook_secret: SecretStr | None = None
     api_url: str = "https://api.github.com"
     web_url: str = "https://github.com"
     timeout_seconds: float = Field(default=10.0, gt=0)
+    # Wait this long at most for a rate limit to reset before giving up with an error.
+    rate_limit_max_wait_seconds: float = Field(default=30.0, ge=0)
+    max_retries: int = Field(default=3, ge=0)
+    # GitHub caps webhook payloads at 25 MB; anything bigger is not from GitHub.
+    webhook_max_bytes: int = Field(default=25 * 1024 * 1024, gt=0)
 
     @property
     def oauth_configured(self) -> bool:
         return bool(self.client_id and self.client_secret)
+
+    @property
+    def app_configured(self) -> bool:
+        """Installing the app and acting as it need its slug, an issuer id and the private key."""
+        return bool(
+            self.app_slug
+            and (self.client_id or self.app_id)
+            and (self.private_key or self.private_key_path)
+        )
+
+    def private_key_pem(self) -> str:
+        if self.private_key is not None:
+            return self.private_key.get_secret_value()
+        if self.private_key_path:
+            return Path(self.private_key_path).expanduser().read_text()
+        msg = "no GitHub App private key configured"
+        raise RuntimeError(msg)
 
 
 class TelemetrySettings(BaseSettings):
@@ -161,10 +266,13 @@ class Settings(BaseSettings):
     redis: RedisSettings = Field(default_factory=RedisSettings)
     s3: S3Settings = Field(default_factory=S3Settings)
     web: WebSettings = Field(default_factory=WebSettings)
+    api: ApiSettings = Field(default_factory=ApiSettings)
     auth: AuthSettings = Field(default_factory=AuthSettings)
     github: GitHubSettings = Field(default_factory=GitHubSettings)
     telemetry: TelemetrySettings = Field(default_factory=TelemetrySettings)
     pricing: PricingSettings = Field(default_factory=PricingSettings)
+    worker: WorkerSettings = Field(default_factory=WorkerSettings)
+    ingest: IngestSettings = Field(default_factory=IngestSettings)
 
     @model_validator(mode="after")
     def _refuse_dev_secrets_outside_dev(self) -> Settings:

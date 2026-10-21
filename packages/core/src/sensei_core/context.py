@@ -13,7 +13,16 @@ from typing import Any
 
 import structlog
 
-CONTEXT_KEYS = ("request_id", "org_id", "user_id", "repo_id", "job_id", "run_id")
+CONTEXT_KEYS = (
+    "request_id",
+    "org_id",
+    "user_id",
+    "repo_id",
+    "job_id",
+    "run_id",
+    "task",
+    "task_id",
+)
 
 # Kept out of the log context on purpose (IP addresses are personal data); read by the audit log.
 _client_ip: ContextVar[str | None] = ContextVar("client_ip", default=None)

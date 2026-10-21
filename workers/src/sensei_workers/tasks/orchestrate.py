@@ -1,0 +1,249 @@
+"""Running an index job: its stages as a Celery chain, and the stage that finishes it.
+
+``run_index_job`` turns a queued job into the chain clone → discover → merkle → finalize (later
+phases add parse, symbols, chunks, embeddings, summaries, graph and links in between). Each stage
+is its own task, so a failure retries only that stage. Every stage checks the job first: a
+cancelled or failed job makes the rest of the chain do nothing. The stage task ids are kept in
+Redis so cancelling can revoke the ones still queued.
+
+``finalize_index`` ends the run: stages this phase doesn't have yet are recorded as skipped, the
+repository becomes ``ready`` at the indexed commit, and the job succeeds.
+"""
+
+from __future__ import annotations
+
+import uuid
+from datetime import UTC, datetime, timedelta
+from typing import Any
+
+from celery import chain
+from sqlalchemy import select
+
+from sensei_core.indexing.events import JobOutbox
+from sensei_core.indexing.jobs import settle_repo
+from sensei_core.indexing.state import IndexJobStateMachine
+from sensei_core.jobs import TaskName, chain_key
+from sensei_core.logging import get_logger
+from sensei_core.models import ACTIVE_JOB_STATUSES, IndexJob, JobStatus, Repo, Snapshot, Stage
+from sensei_workers.app import celery_app
+from sensei_workers.base import NotYetError, SenseiTask
+from sensei_workers.jobstate import job_scope
+from sensei_workers.runtime import get_runtime
+from sensei_workers.tasks.discover import discover_files
+from sensei_workers.tasks.ingest import IngestTask, clone_snapshot
+from sensei_workers.tasks.merkle import build_merkle
+
+log = get_logger(__name__)
+
+CHAIN_TTL_SECONDS = 2 * 86_400
+# A running stage with no progress for the task time limit plus this is dead.
+STALL_MARGIN_SECONDS = 600
+# A job waiting this long for its next task (queued, or between two stages) may have lost its
+# message: the chain is sent again, unless it was sent within RESEND_AFTER_SECONDS (a long
+# queue is not a lost message, and resending into it only makes it longer).
+REQUEUE_AFTER_SECONDS = 600
+RESEND_AFTER_SECONDS = 6 * 3600
+# A job still waiting between stages after this, resends included, has failed.
+GIVE_UP_AFTER_SECONDS = 24 * 3600
+
+
+@celery_app.task(
+    bind=True,
+    base=IngestTask,
+    name=TaskName.FINALIZE_INDEX.value,
+    requires=("job_id", "org_id", "repo_id"),
+    idempotent_on=("job_id",),
+)
+def finalize_index(self: IngestTask, *, job_id: str, org_id: str, repo_id: str) -> str | None:
+    """Finish the job: the repository is ready at the snapshot's commit. Returns the commit."""
+
+    async def _finalize() -> str | None:
+        async with job_scope(self, org_id, uuid.UUID(job_id)) as scope:
+            job = scope.job
+            if job is None or job.status not in ACTIVE_JOB_STATUSES:
+                return None  # finished, failed or cancelled meanwhile
+            stages = job.stages or {}
+            merkle_done = (
+                job.stage is Stage.MERKLE and stages.get("merkle", {}).get("status") == "done"
+            )
+            resuming = job.stage is Stage.FINALIZE
+            if not merkle_done and not resuming:
+                if job.stage in (None, Stage.CLONE, Stage.DISCOVER, Stage.MERKLE):
+                    raise NotYetError("the merkle stage hasn't finished")
+                return None
+            repo = await scope.db.get(Repo, job.repo_id)
+            snapshot = await scope.db.get(Snapshot, job.snapshot_id) if job.snapshot_id else None
+            machine = scope.machine
+            if repo is None or repo.deleted_at is not None:
+                machine.cancel()
+                return None
+            if snapshot is None:
+                raise NotYetError("the job has no snapshot")
+            if merkle_done:
+                machine.advance(Stage.FINALIZE)  # later phases' stages: skipped for now
+            repo.last_indexed_sha = snapshot.commit_sha
+            settle_repo(repo, JobStatus.SUCCEEDED)
+            machine.log(
+                f"Indexed {snapshot.commit_sha[:12]}: {snapshot.file_count or 0:,} files. "
+                "The code browser is ready."
+            )
+            machine.finish()
+            return snapshot.commit_sha
+
+    sha = get_runtime().run(_finalize())
+    if sha is not None:
+        log.info("index job succeeded", commit_sha=sha)
+    return sha
+
+
+STAGES = (clone_snapshot, discover_files, build_merkle, finalize_index)
+
+
+@celery_app.task(
+    bind=True,
+    base=SenseiTask,
+    name=TaskName.RUN_INDEX_JOB.value,
+    requires=("job_id", "org_id", "repo_id"),
+    idempotent_on=("job_id",),
+)
+def run_index_job(self: SenseiTask, *, job_id: str, org_id: str, repo_id: str) -> list[str]:
+    """Send the job's stages as a chain; returns their task ids."""
+    task_ids = send_stages(job_id, org_id, repo_id, eager=bool(self.request.is_eager))
+    log.info("index job sent", stages=len(task_ids))
+    return task_ids
+
+
+def _sent_key(job_id: str) -> str:
+    return f"{chain_key(job_id)}:sent-at"
+
+
+def send_stages(job_id: str, org_id: str, repo_id: str, *, eager: bool = False) -> list[str]:
+    """Send the stage chain (run it in place when ``eager``: tests, eager dev setups).
+
+    Sending it again is safe: every stage checks the job first, so stages already done do
+    nothing and the run carries on where it stopped. The task ids of every send are kept, so
+    cancelling revokes all of them."""
+    kwargs: dict[str, Any] = {"job_id": job_id, "org_id": org_id, "repo_id": repo_id}
+    task_ids = [str(uuid.uuid4()) for _ in STAGES]
+    signatures = [
+        stage.si(**kwargs).set(task_id=task_id)
+        for stage, task_id in zip(STAGES, task_ids, strict=True)
+    ]
+    redis = get_runtime().sync_redis
+    key = chain_key(job_id)
+    redis.rpush(key, *task_ids)
+    redis.expire(key, CHAIN_TTL_SECONDS)
+    redis.set(_sent_key(job_id), _now().isoformat(), ex=CHAIN_TTL_SECONDS)
+    workflow = chain(*signatures)
+    if eager:
+        workflow.apply()
+    else:
+        workflow.apply_async()
+    return task_ids
+
+
+STALLED_MESSAGE = (
+    "Indexing stopped making progress (the worker running it went away). Try again; if it keeps "
+    "happening, contact support with the job id."
+)
+WAITING_MESSAGE = (
+    "Indexing stopped between two steps and didn't pick up again. Try again; if it keeps "
+    "happening, contact support with the job id."
+)
+
+
+def _sent_recently(job_id: str, now: datetime) -> bool:
+    raw = get_runtime().sync_redis.get(_sent_key(job_id))
+    if raw is None:
+        return False
+    text = raw.decode() if isinstance(raw, bytes) else str(raw)
+    try:
+        sent = datetime.fromisoformat(text)
+    except ValueError:
+        return False
+    return now - sent < timedelta(seconds=RESEND_AFTER_SECONDS)
+
+
+def _time(value: object) -> datetime | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        return datetime.fromisoformat(value)
+    except ValueError:
+        return None
+
+
+@celery_app.task(bind=True, base=SenseiTask, name=TaskName.SWEEP_STALLED_JOBS.value, system=True)
+def sweep_stalled_jobs(self: SenseiTask) -> int:
+    """Look after index jobs nothing is moving any more. Returns how many it failed.
+
+    * A running stage with no sign of life (progress, or a retry it said it's waiting for) for
+      longer than any task may run (the time limit, plus margin) lost its worker: it fails.
+    * A job waiting for its next task (queued, or between two stages) for a while may have lost
+      that message: its chain is sent again, at most every ``RESEND_AFTER_SECONDS``.
+    * A job still waiting between stages after ``GIVE_UP_AFTER_SECONDS`` fails.
+    """
+    runtime = get_runtime()
+    limit = runtime.settings.worker.time_limit_seconds + STALL_MARGIN_SECONDS
+    now = _now()
+
+    async def _sweep() -> tuple[int, list[tuple[str, str, str]]]:
+        failed = 0
+        waiting: list[tuple[str, str, str]] = []
+        outbox = JobOutbox()
+        async with self.system_session() as db:
+            jobs = await db.scalars(
+                select(IndexJob).where(IndexJob.status.in_(ACTIVE_JOB_STATUSES)).with_for_update()
+            )
+            for job in jobs:
+                ids = (str(job.id), str(job.org_id), str(job.repo_id))
+                if job.status is JobStatus.QUEUED:
+                    queued_for = (now - job.created_at).total_seconds()
+                    if queued_for >= REQUEUE_AFTER_SECONDS:
+                        waiting.append(ids)
+                    continue
+                stage = job.stage
+                if stage is None:
+                    continue
+                entry: dict[str, Any] = (job.stages or {}).get(stage.value, {})
+                machine = IndexJobStateMachine(job)
+                if entry.get("status") == "running":
+                    signs = (
+                        _time(entry.get("updated_at") or entry.get("started_at")),
+                        _time(entry.get("alive_until")),
+                    )
+                    last = max((sign for sign in signs if sign is not None), default=None)
+                    if last is None or (now - last).total_seconds() <= limit:
+                        continue
+                    machine.fail(stage, {"code": "stage_stalled", "message": STALLED_MESSAGE})
+                else:
+                    # Between stages: this one is done and the next hasn't started.
+                    finished = _time(entry.get("finished_at"))
+                    idle = (now - finished).total_seconds() if finished else None
+                    if idle is None or idle < REQUEUE_AFTER_SECONDS:
+                        continue
+                    if idle < GIVE_UP_AFTER_SECONDS:
+                        waiting.append(ids)
+                        continue
+                    machine.fail_waiting({"code": "stage_stalled", "message": WAITING_MESSAGE})
+                outbox.collect(machine)
+                repo = await db.get(Repo, job.repo_id)
+                if repo is not None:
+                    settle_repo(repo, JobStatus.FAILED)
+                failed += 1
+        await outbox.publish(runtime.redis)
+        return failed, waiting
+
+    failed, waiting = runtime.run(_sweep())
+    if failed:
+        log.warning("stalled index jobs failed", jobs=failed)
+    for job_id, org_id, repo_id in waiting:
+        if _sent_recently(job_id, now):
+            continue
+        log.warning("waiting index job sent again", job_id=job_id)
+        send_stages(job_id, org_id, repo_id, eager=bool(self.request.is_eager))
+    return failed
+
+
+def _now() -> datetime:
+    return datetime.now(UTC)

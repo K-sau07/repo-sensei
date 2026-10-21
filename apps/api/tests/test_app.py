@@ -191,3 +191,13 @@ async def test_dev_500s_carry_cors_headers() -> None:
     assert response.status_code == 500
     assert response.headers["access-control-allow-origin"] == "http://localhost:3000"
     assert "x-request-id" in response.headers
+
+
+async def test_indexing_stages_are_published(client: httpx.AsyncClient) -> None:
+    body = (await client.get("/api/v1/indexing/stages")).json()
+    stages = [entry["stage"] for entry in body["stages"]]
+    assert stages[0] == "clone"
+    assert stages[-1] == "finalize"
+    assert sum(entry["weight"] for entry in body["stages"]) == 100
+    unlocks = {entry["stage"]: entry["unlocks"] for entry in body["stages"]}
+    assert unlocks["embeddings"] == ["semantic_search", "ask"]

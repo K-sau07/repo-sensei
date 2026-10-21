@@ -4,6 +4,9 @@
 @import "../styles/tokens.css";
 
 @custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+/* The collapsed rail. The flag sits on <html> (set before paint); a nearer data-sidebar="expanded"
+   (the mobile navigation sheet) always shows the full sidebar. */
+@custom-variant sidebar-collapsed (&:where([data-sidebar="collapsed"] *):not(:where([data-sidebar="expanded"] *)));
 
 @theme inline {
   /* Graphite Signal colors: bg-surface-2, text-fg-muted, border-line, text-layer-api, ... */

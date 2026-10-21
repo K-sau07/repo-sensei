@@ -7,23 +7,8 @@ const isDev = process.env.NODE_ENV === "development";
 const apiProxyOrigin =
   process.env.SENSEI_API_PROXY_ORIGIN ?? (isDev ? "http://localhost:8000" : "");
 
-// Baseline policy. A nonce-based script policy replaces 'unsafe-inline' once the proxy sets nonces.
-const contentSecurityPolicy = [
-  "default-src 'self'",
-  `script-src 'self' 'unsafe-inline'${isDev ? " 'unsafe-eval'" : ""}`,
-  "style-src 'self' 'unsafe-inline'",
-  "img-src 'self' data: blob: https://avatars.githubusercontent.com",
-  "font-src 'self'",
-  `connect-src 'self'${isDev ? " ws:" : ""}`,
-  "frame-ancestors 'none'",
-  "base-uri 'self'",
-  "form-action 'self'",
-  "object-src 'none'",
-  ...(isDev ? [] : ["upgrade-insecure-requests"]),
-].join("; ");
-
+// The Content-Security-Policy is set per request (with a nonce) in src/proxy.ts.
 const securityHeaders = [
-  { key: "Content-Security-Policy", value: contentSecurityPolicy },
   { key: "X-Content-Type-Options", value: "nosniff" },
   { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
   { key: "X-Frame-Options", value: "DENY" },
@@ -42,6 +27,8 @@ const nextConfig: NextConfig = {
   // Always defined, so Next inlines it and dead-code elimination drops mock mode from real builds.
   env: { NEXT_PUBLIC_MOCKS: process.env.NEXT_PUBLIC_MOCKS === "1" ? "1" : "0" },
   poweredByHeader: false,
+  // Keep the dev badge clear of the sidebar's account menu (bottom-left).
+  devIndicators: { position: "bottom-right" },
   agentRules: false,
   reactStrictMode: true,
   reactCompiler: true,
@@ -61,7 +48,19 @@ const nextConfig: NextConfig = {
       },
     },
   },
-  headers: () => Promise.resolve([{ source: "/:path*", headers: securityHeaders }]),
+  headers: () =>
+    Promise.resolve([
+      { source: "/:path*", headers: securityHeaders },
+      // An invite URL is a credential: never send it on as a Referer (not even to our own API),
+      // and keep it out of search engines. Later entries override the same key above.
+      {
+        source: "/invite/:path*",
+        headers: [
+          { key: "Referrer-Policy", value: "no-referrer" },
+          { key: "X-Robots-Tag", value: "noindex, nofollow" },
+        ],
+      },
+    ]),
   rewrites: () =>
     Promise.resolve(
       apiProxyOrigin

@@ -5,9 +5,9 @@ import { ThemeProvider } from "next-themes";
 import { NuqsAdapter } from "nuqs/adapters/next/app";
 import { type ReactNode } from "react";
 
+import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryProvider } from "@/lib/query/provider";
-import { MockGate } from "@/mocks/mock-gate";
 
 export const THEMES = ["dark", "light"] as const;
 export const DEFAULT_THEME = "dark";
@@ -23,9 +23,16 @@ export function MotionProvider({ children }: { children: ReactNode }) {
 }
 
 /** App-wide client providers: theme (data-theme on <html>), URL state, server state and motion. */
-export function Providers({ children }: { children: ReactNode }) {
+export function Providers({
+  children,
+  nonce,
+}: {
+  children: ReactNode;
+  nonce?: string | undefined;
+}) {
   return (
     <ThemeProvider
+      {...(nonce ? { nonce } : {})}
       attribute="data-theme"
       themes={[...THEMES]}
       defaultTheme={DEFAULT_THEME}
@@ -33,13 +40,14 @@ export function Providers({ children }: { children: ReactNode }) {
       disableTransitionOnChange
     >
       <NuqsAdapter>
-        <MockGate>
-          <QueryProvider>
-            <MotionProvider>
-              <TooltipProvider>{children}</TooltipProvider>
-            </MotionProvider>
-          </QueryProvider>
-        </MockGate>
+        <QueryProvider>
+          <MotionProvider>
+            <TooltipProvider>
+              {children}
+              <Toaster position="bottom-right" />
+            </TooltipProvider>
+          </MotionProvider>
+        </QueryProvider>
       </NuqsAdapter>
     </ThemeProvider>
   );

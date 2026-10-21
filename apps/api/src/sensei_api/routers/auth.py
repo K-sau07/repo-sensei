@@ -23,6 +23,7 @@ from sensei_api.errors import AppError
 from sensei_core.audit import AuditAction, audit
 from sensei_core.auth.github_login import complete_login
 from sensei_core.config import Settings
+from sensei_core.context import current_client_ip
 from sensei_core.github.oauth import STATE_TTL_SECONDS, GitHubOAuth, OAuthError
 from sensei_core.logging import get_logger
 from sensei_core.security.crypto import TokenCipher
@@ -46,12 +47,12 @@ def _settings(request: Request) -> Settings:
     return settings
 
 
-def get_github_oauth(request: Request) -> GitHubOAuth:
+def get_github_oauth(request: Request) -> GitHubOAuth | None:
+    """None when this deployment has no GitHub App yet. These endpoints are browser navigations,
+    so callers send the user back to the login page with an explanation instead of an error."""
     settings = _settings(request)
     if not settings.github.oauth_configured:
-        raise AppError(
-            "GitHub sign-in is not configured.", code="github_not_configured", status_code=503
-        )
+        return None
     redis: Redis = request.app.state.redis
     http: httpx.AsyncClient = request.app.state.http
     try:
@@ -62,7 +63,8 @@ def get_github_oauth(request: Request) -> GitHubOAuth:
         raise AppError(str(exc), code=exc.code, status_code=503) from exc
 
 
-GitHubOAuthDep = Annotated[GitHubOAuth, Depends(get_github_oauth)]
+GitHubOAuthDep = Annotated[GitHubOAuth | None, Depends(get_github_oauth)]
+NOT_CONFIGURED = "/login?error=github_not_configured"
 
 
 def _web_redirect(request: Request, path: str) -> RedirectResponse:
@@ -82,6 +84,8 @@ async def github_login(
     next_path: Annotated[str | None, Query(alias="next")] = None,
 ) -> RedirectResponse:
     """Send the browser to GitHub to authorize repo-sensei."""
+    if oauth is None:
+        return _web_redirect(request, NOT_CONFIGURED)
     url, state = await oauth.start(safe_next(next_path))
     response = RedirectResponse(url, status_code=302)
     settings = _settings(request)
@@ -110,6 +114,8 @@ async def github_callback(
     error: str | None = None,
 ) -> RedirectResponse:
     """GitHub redirects here; on success the browser gets a session and goes to the web app."""
+    if oauth is None:
+        return _web_redirect(request, NOT_CONFIGURED)
     if error or not code or not state:
         reason = "access_denied" if error == "access_denied" else "oauth_failed"
         return _web_redirect(request, f"/login?error={reason}")
@@ -125,7 +131,7 @@ async def github_callback(
     issued = await sessions.create(
         db,
         user,
-        ip=request.client.host if request.client else None,
+        ip=current_client_ip(),
         user_agent=request.headers.get("user-agent"),
     )
     await audit(

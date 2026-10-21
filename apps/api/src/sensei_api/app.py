@@ -8,7 +8,7 @@ environment except direct local calls during development.
 from __future__ import annotations
 
 from collections.abc import AsyncGenerator
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 
 import httpx
 from fastapi import FastAPI
@@ -17,24 +17,61 @@ from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from starlette.middleware.gzip import GZipMiddleware
 
 from sensei_api import __version__
+from sensei_api.browse import TreeCache
 from sensei_api.errors import install_error_handlers
 from sensei_api.middleware import RequestIdMiddleware
-from sensei_api.routers import auth, health, invitations, me, orgs
+from sensei_api.routers import (
+    auth,
+    browse,
+    constellation,
+    github,
+    health,
+    index_jobs,
+    indexing,
+    invitations,
+    me,
+    orgs,
+    repos,
+    webhooks,
+)
 from sensei_api.routers.health import ReadinessCheck
 from sensei_core.auth.sessions import SessionService
 from sensei_core.config import Settings, get_settings
 from sensei_core.db import make_database
+from sensei_core.jobs import CeleryDispatcher, CeleryRepoJobs, make_celery
 from sensei_core.logging import configure_logging, get_logger
 from sensei_core.mail import ConsoleMailer
 from sensei_core.orgs.service import OrgService
 from sensei_core.redis import make_redis, ping_redis
 from sensei_core.security.crypto import TokenCipher
+from sensei_core.storage import ObjectStorage
 from sensei_core.telemetry import init_telemetry, instrument_engine, scrub_server_span
+from sensei_engine.snapshots import SnapshotCache
 
 API_PREFIX = "/api/v1"
 SERVICE_NAME = "sensei-api"
 
 log = get_logger(__name__)
+
+
+def _install_services(app: FastAPI, settings: Settings) -> None:
+    """Process-wide services, on ``app.state`` (tests replace them there)."""
+    app.state.settings = settings
+    app.state.session_service = SessionService(settings.auth)
+    app.state.token_cipher = TokenCipher.from_settings(settings.auth)
+    app.state.org_service = OrgService(ConsoleMailer(), settings.web.origin)
+    # Sends tasks by name; the workers package defines them.
+    producer = make_celery(settings, main="sensei-api")
+    app.state.webhook_dispatcher = CeleryDispatcher(producer)
+    app.state.repo_jobs = CeleryRepoJobs(producer)
+    # Files are served from unpacked snapshots on local disk, and directory listings from
+    # Merkle trees held in memory.
+    app.state.snapshot_cache = SnapshotCache(
+        settings.ingest.snapshot_cache_dir,
+        max_bytes=settings.ingest.snapshot_cache_max_bytes,
+        max_snapshot_bytes=settings.ingest.max_checkout_bytes,
+    )
+    app.state.tree_cache = TreeCache()
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -44,29 +81,28 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
-        database = make_database(settings.database)
-        instrument_engine(database.engine)
-        redis = make_redis(settings.redis)
-        http = httpx.AsyncClient(timeout=settings.github.timeout_seconds)
-        app.state.database = database
-        app.state.redis = redis
-        app.state.http = http
-        app.state.readiness_checks.update(
-            {"database": database.ping, "redis": lambda: ping_redis(redis)}
-        )
-        log.info("api starting", env=settings.env, version=__version__)
-        try:
+        # Resources close in reverse order, each one even if closing another failed.
+        async with AsyncExitStack() as resources:
+            database = make_database(settings.database)
+            resources.push_async_callback(database.dispose)
+            instrument_engine(database.engine)
+            redis = make_redis(settings.redis)
+            resources.push_async_callback(redis.aclose)
+            storage = ObjectStorage(settings.s3)
+            await storage.start()
+            resources.push_async_callback(storage.close)
+            http = httpx.AsyncClient(timeout=settings.github.timeout_seconds)
+            resources.push_async_callback(http.aclose)
+            app.state.database = database
+            app.state.redis = redis
+            app.state.http = http
+            app.state.storage = storage
+            app.state.readiness_checks.update(
+                {"database": database.ping, "redis": lambda: ping_redis(redis)}
+            )
+            log.info("api starting", env=settings.env, version=__version__)
             yield
-        finally:
-            # Close each resource independently so one failure cannot leak the other.
-            try:
-                await http.aclose()
-            finally:
-                try:
-                    await redis.aclose()
-                finally:
-                    await database.dispose()
-            log.info("api stopped")
+        log.info("api stopped")
 
     app = FastAPI(
         title="repo-sensei API",
@@ -76,10 +112,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         redoc_url=None,
         lifespan=lifespan,
     )
-    app.state.settings = settings
-    app.state.session_service = SessionService(settings.auth)
-    app.state.token_cipher = TokenCipher.from_settings(settings.auth)
-    app.state.org_service = OrgService(ConsoleMailer(), settings.web.origin)
+    _install_services(app, settings)
     readiness_checks: dict[str, ReadinessCheck] = {}
     app.state.readiness_checks = readiness_checks
 
@@ -87,7 +120,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     # Order matters: the last added middleware runs first (outermost).
     app.add_middleware(GZipMiddleware, minimum_size=1024)
-    app.add_middleware(RequestIdMiddleware)
+    app.add_middleware(RequestIdMiddleware, client_ip_header=settings.api.client_ip_header)
     if settings.is_dev:
         # Outermost in dev so every response, including 500s built by RequestIdMiddleware,
         # carries CORS headers when the API is called directly from the dev web origin.
@@ -105,6 +138,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(me.router, prefix=API_PREFIX)
     app.include_router(orgs.router, prefix=API_PREFIX)
     app.include_router(invitations.router, prefix=API_PREFIX)
+    app.include_router(github.router, prefix=API_PREFIX)
+    app.include_router(webhooks.router, prefix=API_PREFIX)
+    app.include_router(repos.router, prefix=API_PREFIX)
+    app.include_router(indexing.router, prefix=API_PREFIX)
+    app.include_router(index_jobs.router, prefix=API_PREFIX)
+    app.include_router(browse.router, prefix=API_PREFIX)
+    app.include_router(constellation.router, prefix=API_PREFIX)
     # Wraps the whole middleware stack; RequestIdMiddleware tags the server span it creates.
     FastAPIInstrumentor.instrument_app(app, server_request_hook=scrub_server_span)
     return app
