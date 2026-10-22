@@ -317,6 +317,15 @@
         "title": "AvailableRepoOut",
         "type": "object"
       },
+      "Case": {
+        "enum": [
+          "sensitive",
+          "insensitive",
+          "smart"
+        ],
+        "title": "Case",
+        "type": "string"
+      },
       "ConnectRepo": {
         "properties": {
           "github_repo_id": {
@@ -931,6 +940,183 @@
           "content"
         ],
         "title": "FileOut",
+        "type": "object"
+      },
+      "GrepHitOut": {
+        "properties": {
+          "after": {
+            "description": "The lines just below.",
+            "items": {
+              "type": "string"
+            },
+            "title": "After",
+            "type": "array"
+          },
+          "before": {
+            "description": "The lines just above, in order.",
+            "items": {
+              "type": "string"
+            },
+            "title": "Before",
+            "type": "array"
+          },
+          "col": {
+            "description": "Where the first match starts: 1-based, in characters.",
+            "title": "Col",
+            "type": "integer"
+          },
+          "line": {
+            "title": "Line",
+            "type": "integer"
+          },
+          "offset": {
+            "description": "Characters of the line before ``text``.",
+            "title": "Offset",
+            "type": "integer"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "ranges": {
+            "description": "Each match on the line: start column (1-based) and end column (exclusive).",
+            "items": {
+              "maxItems": 2,
+              "minItems": 2,
+              "prefixItems": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "integer"
+                }
+              ],
+              "type": "array"
+            },
+            "title": "Ranges",
+            "type": "array"
+          },
+          "text": {
+            "description": "The line, or part of a long one (starting after ``offset``).",
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "line",
+          "col",
+          "text",
+          "offset",
+          "ranges",
+          "before",
+          "after"
+        ],
+        "title": "GrepHitOut",
+        "type": "object"
+      },
+      "GrepOut": {
+        "properties": {
+          "commit_sha": {
+            "title": "Commit Sha",
+            "type": "string"
+          },
+          "hits": {
+            "items": {
+              "$ref": "#/components/schemas/GrepHitOut"
+            },
+            "title": "Hits",
+            "type": "array"
+          },
+          "long_lines": {
+            "description": "Lines too long to read; a match on one isn't listed.",
+            "title": "Long Lines",
+            "type": "integer"
+          },
+          "timed_out": {
+            "description": "The time limit stopped the search: there may be more.",
+            "title": "Timed Out",
+            "type": "boolean"
+          },
+          "truncated": {
+            "description": "There are more matches than ``limit``.",
+            "title": "Truncated",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "commit_sha",
+          "hits",
+          "truncated",
+          "timed_out",
+          "long_lines"
+        ],
+        "title": "GrepOut",
+        "type": "object"
+      },
+      "GrepRequest": {
+        "properties": {
+          "case": {
+            "$ref": "#/components/schemas/Case",
+            "default": "sensitive",
+            "description": "``smart``: insensitive unless the pattern has an upper-case letter."
+          },
+          "context": {
+            "default": 0,
+            "description": "Lines around each hit.",
+            "maximum": 10.0,
+            "minimum": 0.0,
+            "title": "Context",
+            "type": "integer"
+          },
+          "limit": {
+            "default": 50,
+            "maximum": 500.0,
+            "minimum": 1.0,
+            "title": "Limit",
+            "type": "integer"
+          },
+          "path_globs": {
+            "description": "Only paths matching these globs (\"src/**\", \"*.py\"); \"!\" in front excludes.",
+            "items": {
+              "maxLength": 256,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 20,
+            "title": "Path Globs",
+            "type": "array"
+          },
+          "pattern": {
+            "maxLength": 1000,
+            "minLength": 1,
+            "title": "Pattern",
+            "type": "string"
+          },
+          "ref": {
+            "anyOf": [
+              {
+                "maxLength": 255,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Branch or commit (or its first 7+ characters).",
+            "title": "Ref"
+          },
+          "regex": {
+            "default": false,
+            "description": "A regular expression (Rust syntax); else a literal string.",
+            "title": "Regex",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "pattern"
+        ],
+        "title": "GrepRequest",
         "type": "object"
       },
       "HTTPValidationError": {
@@ -4559,6 +4745,69 @@
           }
         },
         "summary": "Search Files",
+        "tags": [
+          "browse"
+        ]
+      }
+    },
+    "/api/v1/orgs/{org}/repos/{repo}/grep": {
+      "post": {
+        "description": "Exact search (ripgrep) in the files discovery recorded: hits in path order, at most\n``limit`` of them, each with ``context`` lines around it. A search stops after 3 seconds\nwith what it found (``timed_out``).",
+        "operationId": "grep_api_v1_orgs__org__repos__repo__grep_post",
+        "parameters": [
+          {
+            "description": "Repository slug",
+            "in": "path",
+            "name": "repo",
+            "required": true,
+            "schema": {
+              "description": "Repository slug",
+              "maxLength": 201,
+              "title": "Repo",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Organization slug",
+            "in": "path",
+            "name": "org",
+            "required": true,
+            "schema": {
+              "description": "Organization slug",
+              "title": "Org",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GrepRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GrepOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "A pattern or glob that can't be used (``invalid_pattern``)"
+          },
+          "503": {
+            "description": "Search is busy or unavailable; try again"
+          }
+        },
+        "summary": "Grep",
         "tags": [
           "browse"
         ]

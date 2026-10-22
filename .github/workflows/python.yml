@@ -38,7 +38,10 @@ jobs:
           enable-cache: true
 
       - name: Install
-        run: uv sync --frozen
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends ripgrep
+          uv sync --frozen
 
       - name: Lint
         run: |
@@ -103,6 +106,7 @@ jobs:
         run: |
           test "$(docker run --rm --entrypoint id repo-sensei/api:ci -u)" = "10001"
           docker run --rm --entrypoint python repo-sensei/api:ci -c "import sensei_api.app"
+          docker run --rm --entrypoint rg repo-sensei/api:ci --version
       - name: Build the worker image
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:

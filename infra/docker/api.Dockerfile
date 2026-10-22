@@ -34,6 +34,10 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev --no-editable --package sensei-api
 
 FROM ${PYTHON_IMAGE} AS runtime
+# ripgrep for exact search over unpacked snapshots; nothing else from the distribution.
+RUN apt-get update \
+    && apt-get install --yes --no-install-recommends ripgrep \
+    && rm -rf /var/lib/apt/lists/*
 RUN groupadd --system --gid 10001 sensei \
     && useradd --system --uid 10001 --gid sensei --home-dir /app --shell /usr/sbin/nologin sensei \
     && mkdir -p /data/snapshots && chown -R sensei:sensei /data

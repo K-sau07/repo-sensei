@@ -47,6 +47,7 @@ from sensei_core.redis import make_redis, ping_redis
 from sensei_core.security.crypto import TokenCipher
 from sensei_core.storage import ObjectStorage
 from sensei_core.telemetry import init_telemetry, instrument_engine, scrub_server_span
+from sensei_engine.search.grep import ExactSearch
 from sensei_engine.snapshots import SnapshotCache
 
 API_PREFIX = "/api/v1"
@@ -74,6 +75,7 @@ def _install_services(app: FastAPI, settings: Settings) -> None:
     )
     app.state.tree_cache = TreeCache(max_mb=settings.api.tree_cache_mb)
     app.state.constellation_cache = ConstellationCache(max_mb=settings.api.constellation_cache_mb)
+    app.state.exact_search = ExactSearch()  # ripgrep over those unpacked snapshots
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:

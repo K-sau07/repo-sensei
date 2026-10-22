@@ -1,15 +1,17 @@
-"""Browsing an indexed snapshot: directory listings, file contents and fuzzy path search.
+"""Browsing an indexed snapshot: directory listings, file contents, fuzzy path search and exact
+(literal or regex) search in the files.
 
 ``ref`` picks the snapshot (see :func:`sensei_core.indexing.snapshots.resolve_snapshot`);
 without one it is the last index. Listings come from the snapshot's Merkle tree, so a
 directory's ETag is its hash: unchanged directories answer ``304`` to ``If-None-Match``, across
 commits too. A file's ETag is its content hash. Paths are checked before anything is looked up
-(relative, normal, no ``..``), and only paths discovery recorded can be read.
+(relative, normal, no ``..``), and only paths discovery recorded can be read or searched.
 """
 
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Container
 from pathlib import Path as FilePath
 from typing import Annotated, Any, BinaryIO, Literal
 
@@ -23,13 +25,36 @@ from sensei_api.deps import DbSession
 from sensei_api.repos import RepoDep
 from sensei_core.errors import DomainError, InvalidError, NotFoundError
 from sensei_core.indexing.snapshots import resolve_snapshot
+from sensei_core.logging import get_logger
 from sensei_core.models import RepoFile, Snapshot
 from sensei_core.storage import Bucket, ObjectStorage, artifact_key, snapshot_key
 from sensei_engine.ingest.classify import decode_text
 from sensei_engine.ingest.merkle import DIR, FILE
-from sensei_engine.snapshots import SnapshotCache, UnsafePathError, check_path, open_file
+from sensei_engine.search.grep import (
+    DEFAULT_LIMIT,
+    MAX_CONTEXT,
+    MAX_GLOB_CHARS,
+    MAX_GLOBS,
+    MAX_LIMIT,
+    MAX_PATTERN_CHARS,
+    Case,
+    ExactSearch,
+    GrepBusyError,
+    GrepQuery,
+    GrepResult,
+    GrepUnavailableError,
+    InvalidQueryError,
+)
+from sensei_engine.snapshots import (
+    READY_MARKER,
+    SnapshotCache,
+    UnsafePathError,
+    check_path,
+    open_file,
+)
 
 router = APIRouter(prefix="/orgs/{org}/repos/{repo}", tags=["browse"])
+log = get_logger(__name__)
 
 MAX_SERVED_BYTES = 2 * 1024 * 1024  # larger files: metadata and a download link
 DOWNLOAD_URL_SECONDS = 900
@@ -55,6 +80,11 @@ class BinaryFileError(DomainError):
 class BadPathError(DomainError):
     status_code = 400
     code = "invalid_path"
+
+
+class SearchUnavailableError(DomainError):
+    status_code = 503
+    code = "search_unavailable"
 
 
 class TreeEntry(BaseModel):
@@ -105,6 +135,48 @@ class SearchOut(BaseModel):
     commit_sha: str
     query: str
     results: list[SearchHit]
+
+
+class GrepRequest(BaseModel):
+    pattern: str = Field(min_length=1, max_length=MAX_PATTERN_CHARS)
+    regex: bool = Field(
+        default=False, description="A regular expression (Rust syntax); else a literal string."
+    )
+    case: Case = Field(
+        default=Case.SENSITIVE,
+        description="``smart``: insensitive unless the pattern has an upper-case letter.",
+    )
+    path_globs: list[Annotated[str, Field(min_length=1, max_length=MAX_GLOB_CHARS)]] = Field(
+        default_factory=list,
+        max_length=MAX_GLOBS,
+        description='Only paths matching these globs ("src/**", "*.py"); "!" in front excludes.',
+    )
+    limit: int = Field(default=DEFAULT_LIMIT, ge=1, le=MAX_LIMIT)
+    context: int = Field(default=0, ge=0, le=MAX_CONTEXT, description="Lines around each hit.")
+    ref: str | None = Field(
+        default=None, max_length=255, description="Branch or commit (or its first 7+ characters)."
+    )
+
+
+class GrepHitOut(BaseModel):
+    path: str
+    line: int
+    col: int = Field(description="Where the first match starts: 1-based, in characters.")
+    text: str = Field(description="The line, or part of a long one (starting after ``offset``).")
+    offset: int = Field(description="Characters of the line before ``text``.")
+    ranges: list[tuple[int, int]] = Field(
+        description="Each match on the line: start column (1-based) and end column (exclusive)."
+    )
+    before: list[str] = Field(description="The lines just above, in order.")
+    after: list[str] = Field(description="The lines just below.")
+
+
+class GrepOut(BaseModel):
+    commit_sha: str
+    hits: list[GrepHitOut]
+    truncated: bool = Field(description="There are more matches than ``limit``.")
+    timed_out: bool = Field(description="The time limit stopped the search: there may be more.")
+    long_lines: int = Field(description="Lines too long to read; a match on one isn't listed.")
 
 
 def _path(raw: str) -> str:
@@ -458,3 +530,78 @@ async def search_files(
         for p, n, lang, role, size, s in rows
     ]
     return SearchOut(commit_sha=snapshot.commit_sha, query=query, results=results)
+
+
+async def _grep(
+    request: Request, snapshot: Snapshot, query: GrepQuery, files: Container[str]
+) -> GrepResult:
+    """The search over the unpacked snapshot; again (once) if the snapshot was evicted from
+    disk before or while it ran, so a result never comes from part of the files."""
+    search: ExactSearch = request.app.state.exact_search
+    for _ in range(2):
+        root = await _unpacked(request, snapshot)
+        try:
+            result = await search.search(root, query, files=files)
+        except FileNotFoundError:
+            continue
+        if await asyncio.to_thread((root / READY_MARKER).is_file):
+            return result
+    raise SearchUnavailableError("The snapshot's files kept moving; try again.")
+
+
+@router.post(
+    "/grep",
+    response_model=GrepOut,
+    responses={
+        422: {"description": "A pattern or glob that can't be used (``invalid_pattern``)"},
+        503: {"description": "Search is busy or unavailable; try again"},
+    },
+)
+async def grep(*, request: Request, repo: RepoDep, db: DbSession, body: GrepRequest) -> GrepOut:
+    """Exact search (ripgrep) in the files discovery recorded: hits in path order, at most
+    ``limit`` of them, each with ``context`` lines around it. A search stops after 3 seconds
+    with what it found (``timed_out``)."""
+    try:
+        query = GrepQuery(
+            pattern=body.pattern,
+            regex=body.regex,
+            case=body.case,
+            globs=tuple(body.path_globs),
+            limit=body.limit,
+            context=body.context,
+        )
+    except InvalidQueryError as exc:
+        raise InvalidError(str(exc), code="invalid_pattern") from None
+    snapshot = await resolve_snapshot(db, repo, body.ref)
+    cache: TreeCache = request.app.state.tree_cache
+    merkle = await cache.get(_storage(request), snapshot)
+    try:
+        result = await _grep(request, snapshot, query, merkle.files)
+    except InvalidQueryError as exc:
+        raise InvalidError(str(exc), code="invalid_pattern") from None
+    except GrepBusyError:
+        raise SearchUnavailableError(
+            "Too many searches are running; try again in a moment.", code="search_busy"
+        ) from None
+    except GrepUnavailableError:
+        log.exception("exact search failed")
+        raise SearchUnavailableError("Search isn't available right now.") from None
+    return GrepOut(
+        commit_sha=snapshot.commit_sha,
+        hits=[
+            GrepHitOut(
+                path=hit.path,
+                line=hit.line,
+                col=hit.col,
+                text=hit.text,
+                offset=hit.offset,
+                ranges=hit.ranges,
+                before=hit.before,
+                after=hit.after,
+            )
+            for hit in result.hits
+        ],
+        truncated=result.truncated,
+        timed_out=result.timed_out,
+        long_lines=result.long_lines,
+    )

@@ -69,6 +69,7 @@ from sensei_engine.ingest.constellation import (
 from sensei_engine.ingest.discover import discover
 from sensei_engine.ingest.merkle import ARTIFACT_NAME, Leaf, build_tree
 from sensei_engine.ingest.store import save_discovery
+from sensei_engine.search.grep import ExactSearch
 from sensei_engine.snapshots import SnapshotCache
 from sensei_testing import make_user, sign_in
 from sensei_workers.ingest.archive import write_archive
@@ -1315,7 +1316,7 @@ async def test_symlinks_never_lead_outside_the_snapshot(
     outside = tmp_path / "outside"
     outside.mkdir()
     (outside / "secret.txt").write_text("not yours\n")
-    await _connected(app, client, db_session, fake)
+    _, headers, _ = await _connected(app, client, db_session, fake)
     await _index(
         app,
         db_session,
@@ -1332,6 +1333,10 @@ async def test_symlinks_never_lead_outside_the_snapshot(
         assert "not yours" not in response.text
     listing = (await client.get(f"{API}/orgs/acme/repos/api/tree", params={"path": "src"})).json()
     assert "src/secret.txt" not in [e["path"] for e in listing["entries"]]
+    found = await client.post(
+        f"{API}/orgs/acme/repos/api/grep", json={"pattern": "not yours"}, headers=headers
+    )
+    assert (found.status_code, found.json()["hits"]) == (200, [])
 
 
 async def test_files_text_binary_and_large(
@@ -1428,6 +1433,111 @@ async def test_fuzzy_path_search(
     assert "docs/guide.md" in await paths("guide")
     assert await paths("zzzzqqq") == []
     assert (await paths("util"))[0] == "src/lib/util.py"
+
+
+GREP_FILES = {
+    "src/app.py": (
+        b"def main():\n    return handle_request(1)\n\n\ndef handle_request(n):\n    return n\n"
+    ),
+    "src/routes.ts": b"fetch('/api/v1/items')\nfetch('/api/v1/users')\n",
+    "README.md": b"Call handle_request( to start.\n",
+    "node_modules/dep/index.js": b"handle_request()\n",  # discovery skips dependencies
+}
+
+
+async def test_exact_search(
+    app: FastAPI,
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    fake: FakeGitHub,
+    storage: ObjectStorage,
+    tmp_path: Path,
+) -> None:
+    _, headers, _ = await _connected(app, client, db_session, fake)
+    await _index(app, db_session, storage, tmp_path, GREP_FILES, SHA_ONE)
+    await _index(
+        app, db_session, storage, tmp_path, {"src/app.py": b"def renamed(): ...\n"}, SHA_TWO
+    )
+    url = f"{API}/orgs/acme/repos/api/grep"
+
+    async def grep(**body: Any) -> dict[str, Any]:
+        response = await client.post(url, json=body, headers=headers)
+        assert response.status_code == 200, response.text
+        return response.json()
+
+    def places(body: dict[str, Any]) -> list[tuple[str, int]]:
+        return [(hit["path"], hit["line"]) for hit in body["hits"]]
+
+    old = await grep(pattern="handle_request(", ref=SHA_ONE[:8])
+    assert old["commit_sha"] == SHA_ONE
+    assert places(old) == [("README.md", 1), ("src/app.py", 2), ("src/app.py", 5)]
+    assert (old["truncated"], old["timed_out"], old["long_lines"]) == (False, False, 0)
+    assert old["hits"][1] == {
+        "path": "src/app.py",
+        "line": 2,
+        "col": 12,
+        "text": "    return handle_request(1)",
+        "offset": 0,
+        "ranges": [[12, 27]],
+        "before": [],
+        "after": [],
+    }
+    regex = await grep(pattern=r"^def \w+\(", regex=True, ref=SHA_ONE, context=1)
+    assert places(regex) == [("src/app.py", 1), ("src/app.py", 5)]
+    assert (regex["hits"][1]["before"], regex["hits"][1]["after"]) == ([""], ["    return n"])
+    globbed = await grep(pattern="/api/v1/", path_globs=["src/**", "!*.py"], ref=SHA_ONE, limit=1)
+    assert (places(globbed), globbed["truncated"]) == ([("src/routes.ts", 1)], True)
+    ignoring_case = await grep(pattern="HANDLE_request", case="insensitive", ref=SHA_ONE)
+    assert len(ignoring_case["hits"]) == 3
+
+    latest = await grep(pattern="handle_request")  # the last index by default
+    assert (latest["commit_sha"], latest["hits"]) == (SHA_TWO, [])
+
+    for body, code in (
+        ({"pattern": "handle_request(", "regex": True}, "invalid_pattern"),
+        ({"pattern": "x", "path_globs": ["["]}, "invalid_pattern"),
+        ({"pattern": "a\nb"}, "invalid_pattern"),
+        ({"pattern": ""}, "validation_failed"),
+        ({"pattern": "x", "limit": 501}, "validation_failed"),
+        ({"pattern": "x", "path_globs": ["*"] * 21}, "validation_failed"),
+    ):
+        refused = await client.post(url, json=body, headers=headers)
+        assert (refused.status_code, refused.json()["error"]["code"]) == (422, code), body
+    unknown = await client.post(url, json={"pattern": "x", "ref": "nope"}, headers=headers)
+    assert unknown.json()["error"]["code"] == "ref_not_indexed"
+
+
+async def test_exact_search_access_and_failures(
+    app: FastAPI,
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    fake: FakeGitHub,
+    storage: ObjectStorage,
+    tmp_path: Path,
+) -> None:
+    await _connected(app, client, db_session, fake)
+    await _index(app, db_session, storage, tmp_path, GREP_FILES, SHA_ONE)
+    url = f"{API}/orgs/acme/repos/api/grep"
+    outsider, headers = await _member(app, client, db_session)
+    fake.user_can_read[f"ghu_{outsider.login}"] = set()  # can't read acme-gh/api on GitHub
+    hidden = await client.post(url, json={"pattern": "items"}, headers=headers)
+    assert hidden.json()["error"]["code"] == "repo_not_found_or_no_access"
+
+    member, headers = await _member(app, client, db_session)
+    fake.user_can_read[f"ghu_{member.login}"] = {101}
+    read = await client.post(url, json={"pattern": "items"}, headers=headers)
+    assert (read.status_code, len(read.json()["hits"])) == (200, 1)  # members search too
+    no_csrf = await client.post(url, json={"pattern": "items"})
+    assert no_csrf.json()["error"]["code"] == "csrf_failed"
+
+    app.state.exact_search = ExactSearch(binary="no-such-rg")
+    broken = await client.post(url, json={"pattern": "items"}, headers=headers)
+    assert (broken.status_code, broken.json()["error"]["code"]) == (503, "search_unavailable")
+    busy_search = ExactSearch(timeout=0.2, max_concurrent=1)
+    await busy_search._slots.acquire()  # pyright: ignore[reportPrivateUsage] - one still running
+    app.state.exact_search = busy_search
+    busy = await client.post(url, json={"pattern": "items"}, headers=headers)
+    assert (busy.status_code, busy.json()["error"]["code"]) == (503, "search_busy")
 
 
 async def test_browsing_needs_an_index_and_access(
