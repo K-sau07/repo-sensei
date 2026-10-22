@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from sensei_core.db.base import Base
 from sensei_core.models.audit import ActorType, AuditEvent, UsageEvent, UsageKind
+from sensei_core.models.evals import EvalRun
 from sensei_core.models.files import RepoFile
 from sensei_core.models.github import GitHubInstallation
 from sensei_core.models.indexing import (
@@ -27,6 +28,7 @@ __all__ = [
     "AuditEvent",
     "Base",
     "DeliveryStatus",
+    "EvalRun",
     "GitHubInstallation",
     "IndexJob",
     "Invitation",

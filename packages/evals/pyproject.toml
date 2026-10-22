@@ -3,7 +3,10 @@ name = "sensei-evals"
 version = "0.1.0"
 description = "Evaluation harness and metrics for the repo-sensei engine."
 requires-python = ">=3.13"
-dependencies = ["sensei-engine"]
+dependencies = ["pydantic>=2.11", "pyyaml>=6.0", "sensei-core", "sensei-engine", "typer>=0.20"]
+
+[project.scripts]
+sensei-eval = "sensei_evals.cli:app"
 
 [build-system]
 requires = ["hatchling>=1.27"]

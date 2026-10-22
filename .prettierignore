@@ -20,4 +20,5 @@ test-results/
 
 # private / tooling
 docs/
+evals/private/
 .context/

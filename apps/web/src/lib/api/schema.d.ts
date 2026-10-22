@@ -160,6 +160,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/internal/evals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Eval Runs
+         * @description Stored eval runs, newest first (staff).
+         */
+        get: operations["list_eval_runs_api_v1_internal_evals_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/internal/evals/{run}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Eval Run
+         * @description One eval run with its per-item results (staff).
+         */
+        get: operations["get_eval_run_api_v1_internal_evals__run__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/invitations/{token}": {
         parameters: {
             query?: never;
@@ -1049,6 +1089,88 @@ export interface components {
             /** Url */
             url?: string | null;
         };
+        /** EvalRunOut */
+        EvalRunOut: {
+            /** Config */
+            config: {
+                [key: string]: unknown;
+            };
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Git Sha */
+            git_sha: string | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Metrics
+             * @description Averages: overall, by_class, counts and latency_ms.
+             */
+            metrics: {
+                [key: string]: unknown;
+            };
+            /**
+             * Per Item
+             * @description Each item's metrics, top hits and the gold it missed.
+             */
+            per_item: {
+                [key: string]: unknown;
+            }[];
+            /** Repo Sha */
+            repo_sha: string;
+            /** Retriever */
+            retriever: string;
+            /** Suite */
+            suite: string;
+            /** Suite Version */
+            suite_version: number;
+        };
+        /** EvalRunPage */
+        EvalRunPage: {
+            /** Items */
+            items: components["schemas"]["EvalRunSummary"][];
+            /** Next Cursor */
+            next_cursor: string | null;
+        };
+        /** EvalRunSummary */
+        EvalRunSummary: {
+            /** Config */
+            config: {
+                [key: string]: unknown;
+            };
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Git Sha */
+            git_sha: string | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Metrics
+             * @description Averages: overall, by_class, counts and latency_ms.
+             */
+            metrics: {
+                [key: string]: unknown;
+            };
+            /** Repo Sha */
+            repo_sha: string;
+            /** Retriever */
+            retriever: string;
+            /** Suite */
+            suite: string;
+            /** Suite Version */
+            suite_version: number;
+        };
         /**
          * Feature
          * @enum {string}
@@ -1836,6 +1958,71 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["StagesOut"];
+                };
+            };
+        };
+    };
+    list_eval_runs_api_v1_internal_evals_get: {
+        parameters: {
+            query?: {
+                suite?: string | null;
+                retriever?: string | null;
+                before?: string | null;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EvalRunPage"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_eval_run_api_v1_internal_evals__run__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EvalRunOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

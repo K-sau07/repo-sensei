@@ -674,6 +674,175 @@
         "title": "EstimateRequest",
         "type": "object"
       },
+      "EvalRunOut": {
+        "properties": {
+          "config": {
+            "additionalProperties": true,
+            "title": "Config",
+            "type": "object"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "git_sha": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Git Sha"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "metrics": {
+            "additionalProperties": true,
+            "description": "Averages: overall, by_class, counts and latency_ms.",
+            "title": "Metrics",
+            "type": "object"
+          },
+          "per_item": {
+            "description": "Each item's metrics, top hits and the gold it missed.",
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Per Item",
+            "type": "array"
+          },
+          "repo_sha": {
+            "title": "Repo Sha",
+            "type": "string"
+          },
+          "retriever": {
+            "title": "Retriever",
+            "type": "string"
+          },
+          "suite": {
+            "title": "Suite",
+            "type": "string"
+          },
+          "suite_version": {
+            "title": "Suite Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "suite",
+          "suite_version",
+          "retriever",
+          "config",
+          "repo_sha",
+          "git_sha",
+          "metrics",
+          "created_at",
+          "per_item"
+        ],
+        "title": "EvalRunOut",
+        "type": "object"
+      },
+      "EvalRunPage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/EvalRunSummary"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "title": "EvalRunPage",
+        "type": "object"
+      },
+      "EvalRunSummary": {
+        "properties": {
+          "config": {
+            "additionalProperties": true,
+            "title": "Config",
+            "type": "object"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "git_sha": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Git Sha"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "metrics": {
+            "additionalProperties": true,
+            "description": "Averages: overall, by_class, counts and latency_ms.",
+            "title": "Metrics",
+            "type": "object"
+          },
+          "repo_sha": {
+            "title": "Repo Sha",
+            "type": "string"
+          },
+          "retriever": {
+            "title": "Retriever",
+            "type": "string"
+          },
+          "suite": {
+            "title": "Suite",
+            "type": "string"
+          },
+          "suite_version": {
+            "title": "Suite Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "suite",
+          "suite_version",
+          "retriever",
+          "config",
+          "repo_sha",
+          "git_sha",
+          "metrics",
+          "created_at"
+        ],
+        "title": "EvalRunSummary",
+        "type": "object"
+      },
       "Feature": {
         "enum": [
           "code_browser",
@@ -2497,6 +2666,145 @@
         "summary": "Indexing Stages",
         "tags": [
           "indexing"
+        ]
+      }
+    },
+    "/api/v1/internal/evals": {
+      "get": {
+        "description": "Stored eval runs, newest first (staff).",
+        "operationId": "list_eval_runs_api_v1_internal_evals_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "suite",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Suite"
+            }
+          },
+          {
+            "in": "query",
+            "name": "retriever",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Retriever"
+            }
+          },
+          {
+            "in": "query",
+            "name": "before",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Before"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvalRunPage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Eval Runs",
+        "tags": [
+          "internal"
+        ]
+      }
+    },
+    "/api/v1/internal/evals/{run}": {
+      "get": {
+        "description": "One eval run with its per-item results (staff).",
+        "operationId": "get_eval_run_api_v1_internal_evals__run__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Run",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvalRunOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Eval Run",
+        "tags": [
+          "internal"
         ]
       }
     },
