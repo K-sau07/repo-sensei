@@ -8,7 +8,14 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from sensei_core.errors import InvalidError, NotFoundError
-from sensei_core.models import IndexJob, JobStatus, Repo, Snapshot, SnapshotStatus
+from sensei_core.models import (
+    ACTIVE_JOB_STATUSES,
+    IndexJob,
+    JobStatus,
+    Repo,
+    Snapshot,
+    SnapshotStatus,
+)
 
 _SHA_PREFIX = re.compile(r"[0-9a-f]{7,64}")
 MAX_REF_LENGTH = 255
@@ -42,7 +49,12 @@ async def resolve_snapshot(db: AsyncSession, repo: Repo, ref: str | None) -> Sna
     )
     if ref is None:
         if repo.last_indexed_sha is None:
-            raise _not_indexed(None)
+            # Never indexed yet: the first run's snapshot, as soon as its discovery is done (the
+            # code browser unlocks then; the run hasn't finished, so nothing else is indexed).
+            first = await _first_run_snapshot(db, repo)
+            if first is None:
+                raise _not_indexed(None)
+            return first
         found = await db.scalar(browsable.where(Snapshot.commit_sha == repo.last_indexed_sha))
         if found is None:
             raise _not_indexed(None)
@@ -66,3 +78,19 @@ async def resolve_snapshot(db: AsyncSession, repo: Repo, ref: str | None) -> Sna
     if found is None:
         raise _not_indexed(ref)
     return found
+
+
+async def _first_run_snapshot(db: AsyncSession, repo: Repo) -> Snapshot | None:
+    """The snapshot of the repository's run in progress, once its files are discovered."""
+    return await db.scalar(
+        select(Snapshot)
+        .join(IndexJob, IndexJob.snapshot_id == Snapshot.id)
+        .where(
+            IndexJob.repo_id == repo.id,
+            IndexJob.status.in_(ACTIVE_JOB_STATUSES),
+            IndexJob.stages["discover"]["status"].astext == "done",
+            Snapshot.repo_id == repo.id,
+            Snapshot.status == SnapshotStatus.READY,
+        )
+        .limit(1)
+    )

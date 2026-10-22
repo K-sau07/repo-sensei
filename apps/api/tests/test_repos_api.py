@@ -1233,6 +1233,58 @@ async def test_tree_lists_directories_first_with_etags(
     assert unknown.json()["error"]["code"] == "ref_not_indexed"
 
 
+async def test_a_first_run_is_browsable_once_discovery_is_done(
+    app: FastAPI,
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    fake: FakeGitHub,
+    storage: ObjectStorage,
+    tmp_path: Path,
+) -> None:
+    _, _, job_id = await _connected(app, client, db_session, fake)
+    tree = f"{API}/orgs/acme/repos/api/tree"
+    early = await client.get(tree)
+    assert (early.status_code, early.json()["error"]["code"]) == (404, "repo_not_indexed")
+    # Discovery has written the rows; the Merkle stage hasn't run (the code browser unlocks
+    # at discovery). A failed earlier run left the snapshot's archive, which reads the same.
+    await _index(app, db_session, storage, tmp_path, FILES, SHA_ONE, outcome=JobStatus.FAILED)
+    snapshot = await db_session.scalar(select(Snapshot).where(Snapshot.commit_sha == SHA_ONE))
+    job = await db_session.get(IndexJob, uuid.UUID(job_id))
+    assert snapshot is not None
+    assert job is not None
+    snapshot.merkle_root = None
+    job.status, job.snapshot_id = JobStatus.RUNNING, snapshot.id
+    job.stages = {"discover": {"status": "done"}}
+    await db_session.flush()
+
+    root = await client.get(tree)
+    assert root.status_code == 200, root.text
+    assert (root.headers["x-commit-sha"], root.headers["cache-control"]) == (SHA_ONE, "no-store")
+    assert "etag" not in root.headers
+    assert [(e["name"], e["type"]) for e in root.json()["entries"]] == [
+        ("docs", "dir"),
+        ("src", "dir"),
+        ("big.txt", "file"),
+        ("logo.png", "file"),
+        ("README.md", "file"),
+        ("Zeta.txt", "file"),
+    ]
+    src = next(e for e in root.json()["entries"] if e["name"] == "src")
+    assert src["child_count"] == 3
+    nested = (await client.get(tree, params={"path": "src"})).json()
+    assert [e["path"] for e in nested["entries"]] == [
+        "src/lib",
+        "src/app.py",
+        "src/user_controller.py",
+    ]
+    not_dir = await client.get(tree, params={"path": "README.md"})
+    assert not_dir.json()["error"]["code"] == "not_a_directory"
+    missing = await client.get(tree, params={"path": "nope"})
+    assert missing.json()["error"]["code"] == "path_not_found"
+    shown = await client.get(f"{API}/orgs/acme/repos/api/file", params={"path": "src/app.py"})
+    assert shown.json()["content"] == FILES["src/app.py"].decode()
+
+
 async def test_a_snapshot_whose_run_failed_is_not_browsable(
     app: FastAPI,
     client: httpx.AsyncClient,
@@ -1317,11 +1369,14 @@ async def test_files_text_binary_and_large(
     binary = await client.get(url, params={"path": "logo.png"})
     assert (binary.status_code, binary.json()["error"]["code"]) == (415, "binary_file")
     assert binary.json()["error"]["details"]["size"] == len(FILES["logo.png"])
+    github.route(host="localhost", port=9000).pass_through()  # the local object storage
+    async with httpx.AsyncClient() as http:
+        saved = await http.get(binary.json()["error"]["details"]["download_url"])
+    assert saved.content == FILES["logo.png"]  # binaries get a download link too
 
     large = await client.get(url, params={"path": "big.txt"})
     assert (large.status_code, large.json()["error"]["code"]) == (413, "file_too_large")
     link = large.json()["error"]["details"]["download_url"]
-    github.route(host="localhost", port=9000).pass_through()  # the local object storage
     async with httpx.AsyncClient() as http:
         downloaded = await http.get(link)
     assert downloaded.content == FILES["big.txt"]

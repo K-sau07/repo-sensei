@@ -4138,7 +4138,7 @@
             "description": "Over 2 MB: metadata and a download URL instead"
           },
           "415": {
-            "description": "Binary: metadata only"
+            "description": "Binary: metadata and a download URL"
           },
           "422": {
             "content": {

@@ -16,6 +16,7 @@ from typing import Annotated, Any, BinaryIO, Literal
 from fastapi import APIRouter, Query, Request, Response, status
 from pydantic import BaseModel, Field
 from sqlalchemy import ColumnElement, Float, case, func, literal, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from sensei_api.browse import TreeCache
 from sensei_api.deps import DbSession
@@ -181,6 +182,13 @@ async def tree(
     ``t1`` version changes whenever what a listing shows does); ``X-Commit-Sha``: the commit."""
     directory = _path(path)
     snapshot = await resolve_snapshot(db, repo, ref)
+    if snapshot.merkle_root is None:
+        # A first run between discovery and the Merkle stage: listed from the file rows, and
+        # not cached (the tree, with its ETags, is moments away).
+        listing = await _tree_from_rows(db, snapshot, directory)
+        response.headers["Cache-Control"] = "no-store"
+        response.headers[COMMIT_HEADER] = snapshot.commit_sha
+        return listing
     cache: TreeCache = request.app.state.tree_cache
     merkle = await cache.get(_storage(request), snapshot)
     dir_hash = merkle.dir_hash(directory)
@@ -223,6 +231,62 @@ async def tree(
             )
         )
     _cache_headers(response, etag, snapshot)
+    return TreeOut(path=directory, entries=entries)
+
+
+async def _tree_from_rows(db: AsyncSession, snapshot: Snapshot, directory: str) -> TreeOut:
+    """A directory's direct children from the snapshot's file rows, ordered like the tree's."""
+    prefix = f"{directory}/" if directory else ""
+    paths = list(
+        await db.scalars(
+            select(RepoFile.path).where(
+                RepoFile.snapshot_id == snapshot.id,
+                RepoFile.path.like(f"{_like_escape(prefix)}%", escape="\\"),
+            )
+        )
+    )
+    if not paths:
+        if directory and await db.scalar(
+            select(RepoFile.id).where(
+                RepoFile.snapshot_id == snapshot.id, RepoFile.path == directory
+            )
+        ):
+            raise InvalidError("That's a file, not a directory.", code="not_a_directory")
+        if directory:
+            raise NotFoundError("No such directory in this snapshot.", code="path_not_found")
+    files: list[str] = []
+    below: dict[str, set[str]] = {}  # subdirectory -> its direct children's names
+    for full in paths:
+        rest = full[len(prefix) :]
+        head, sep, tail = rest.partition("/")
+        if not sep:
+            files.append(full)
+            continue
+        below.setdefault(head, set()).add(tail.partition("/")[0])
+    rows = {
+        row.path: row
+        for row in await db.scalars(
+            select(RepoFile).where(RepoFile.snapshot_id == snapshot.id, RepoFile.path.in_(files))
+        )
+    }
+    entries = [
+        TreeEntry(name=name, path=_join(directory, name), type="dir", child_count=len(below[name]))
+        for name in sorted(below, key=lambda n: (n.casefold(), n))
+    ]
+    for full in sorted(files, key=lambda f: (f.rpartition("/")[2].casefold(), f)):
+        row = rows[full]
+        entries.append(
+            TreeEntry(
+                name=full.rpartition("/")[2],
+                path=full,
+                type="file",
+                language=row.language,
+                role=row.role,
+                size=row.size,
+                loc=row.loc,
+                flags=list(row.flags),
+            )
+        )
     return TreeOut(path=directory, entries=entries)
 
 
@@ -300,7 +364,7 @@ async def _download_url(request: Request, snapshot: Snapshot, row: RepoFile) -> 
         200: {"headers": _COMMIT_HEADER_DOC},
         304: {"description": "Not modified", "headers": _COMMIT_HEADER_DOC},
         413: {"description": "Over 2 MB: metadata and a download URL instead"},
-        415: {"description": "Binary: metadata only"},
+        415: {"description": "Binary: metadata and a download URL"},
     },
 )
 async def file(
@@ -327,7 +391,8 @@ async def file(
         return _not_modified_response(etag, snapshot)
     metadata = _metadata(snapshot, row)
     if "binary" in row.flags:
-        raise BinaryFileError("This file isn't text.", details=metadata)
+        metadata["download_url"] = await _download_url(request, snapshot, row)
+        raise BinaryFileError("This file isn't text; download it instead.", details=metadata)
     if row.size > MAX_SERVED_BYTES:
         metadata["download_url"] = await _download_url(request, snapshot, row)
         raise FileTooLargeError(

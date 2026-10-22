@@ -2883,7 +2883,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description Binary: metadata only */
+            /** @description Binary: metadata and a download URL */
             415: {
                 headers: {
                     [name: string]: unknown;
