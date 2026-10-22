@@ -204,6 +204,16 @@ class ObjectStorage:
             ExpiresIn=expires_in,
         )
 
+    async def prefix_usage(self, bucket: Bucket, prefix: str) -> tuple[int, int]:
+        """How many objects are under ``prefix``, and their bytes."""
+        objects = total = 0
+        paginator = self._client.get_paginator("list_objects_v2")
+        async for page in paginator.paginate(Bucket=self.bucket_name(bucket), Prefix=prefix):
+            for item in page.get("Contents", []):
+                objects += 1
+                total += int(item.get("Size", 0))
+        return objects, total
+
     async def delete_prefix(self, bucket: Bucket, prefix: str) -> int:
         """Delete every object under ``prefix``; returns how many. Only repository-level (or
         deeper) prefixes are accepted, so a bug can't empty a bucket."""

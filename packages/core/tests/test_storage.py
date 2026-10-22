@@ -131,6 +131,11 @@ async def test_delete_prefix_removes_one_repository_only(storage: ObjectStorage)
     for key in keys[3:]:
         await storage.put_bytes(Bucket.ARTIFACTS, key, b"x")
     try:
+        # 1,203 objects of one byte: more than one listing page, and only this repository's.
+        usage = await storage.prefix_usage(
+            Bucket.ARTIFACTS, repo_prefix(Bucket.ARTIFACTS, org, repo)
+        )
+        assert usage == (len(keys), len(keys))
         deleted = await storage.delete_prefix(
             Bucket.ARTIFACTS, repo_prefix(Bucket.ARTIFACTS, org, repo)
         )
