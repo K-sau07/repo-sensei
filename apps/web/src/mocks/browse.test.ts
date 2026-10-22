@@ -4,8 +4,9 @@ import { createApiClient } from "@/lib/api/client";
 import { ApiError } from "@/lib/api/errors";
 
 import { BROWSE_COMMIT, BROWSE_EXTRAS_KEY, wordSimilarity } from "./browse";
-import { resetMockDb } from "./db";
+import { db, resetMockDb } from "./db";
 import tree from "./fixtures/browse-tree.json";
+import { runEvents } from "./index-run";
 import { server } from "./node";
 
 const api = createApiClient({ baseUrl: "http://api.test", getCsrfToken: () => null });
@@ -121,6 +122,7 @@ describe("GET /file", () => {
       path: "img/login.png",
       flags: ["binary"],
       size: 51_928,
+      download_url: expect.stringContaining("X-Amz-Expires") as unknown,
     });
 
     vi.stubGlobal("localStorage", {
@@ -172,5 +174,47 @@ describe("GET /files/search", () => {
     expect(wordSimilarity("word", "two words")).toBeCloseTo(0.8, 5);
     expect(wordSimilarity("main", "main")).toBe(1);
     expect(wordSimilarity("xyz", "main")).toBe(0);
+  });
+});
+
+describe("a first run", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  /** When the recorded run (as the mocks replay it) finishes `stage`, in ms after it's queued. */
+  const stageEnd = (stage: string) =>
+    runEvents().find((e) => e.type === "stage_done" && e.stage === stage)?.at ?? 0;
+
+  /** acme/api as if never indexed, its first run queued `ago` ms before now. */
+  function firstRun(ago: number) {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const found = db.repos.acme?.find((r) => r.slug === "api");
+    if (!found) throw new Error("no seeded repository");
+    found.last_indexed_sha = null;
+    const queued = Date.now() - ago;
+    db.jobs[found.id] = [
+      {
+        id: "first",
+        repo_id: found.id,
+        created_at: new Date(queued).toISOString(),
+        queued_ms: queued,
+      },
+    ];
+  }
+
+  it("is browsable from its discovery on; its listings are cached once the tree is built", async () => {
+    firstRun(0);
+    expect(await failure(listing(""))).toMatchObject({ status: 404, code: "repo_not_indexed" });
+
+    firstRun(stageEnd("discover") + 10);
+    const early = await listing("");
+    expect(early.response.status).toBe(200);
+    expect(early.response.headers.get("cache-control")).toBe("no-store");
+    expect(early.response.headers.get("etag")).toBeNull();
+    expect(early.response.headers.get("x-commit-sha")).toBe(BROWSE_COMMIT);
+
+    firstRun(stageEnd("merkle") + 10);
+    expect((await listing("")).response.headers.get("etag")).toMatch(/^"t1-/);
   });
 });

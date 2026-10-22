@@ -182,14 +182,17 @@ export function FileTree({ current, onOpenFile, defaultExpanded = [], className 
     },
     [activeIndex],
   );
+  // Stable between renders: the virtualizer remeasures every row when these change, which on
+  // every scroll frame would loop over all of a 100k-row tree.
+  const getItemKey = useCallback((index: number) => rows[index]?.entry.path ?? index, [rows]);
   // TanStack Virtual returns fresh functions each render, which the React Compiler can't
   // memoize; this component simply isn't compiled.
   // eslint-disable-next-line react-hooks/incompatible-library
   const virtualizer = useVirtualizer({
     count: rows.length,
     getScrollElement: () => scroller.current,
-    estimateSize: () => ROW_HEIGHT,
-    getItemKey: (index) => rows[index]?.entry.path ?? index,
+    estimateSize,
+    getItemKey,
     overscan: 16,
     rangeExtractor,
     // Start with a screenful of rows rather than none until the panel is measured.
@@ -244,6 +247,7 @@ export function FileTree({ current, onOpenFile, defaultExpanded = [], className 
   const typed = useRef({ text: "", at: 0 });
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if (event.metaKey || event.ctrlKey || event.altKey) return;
+    setPendingReveal(null); // the reader is moving on their own: a reveal still loading yields
     if (event.key.length === 1 && event.key !== " ") {
       // Type-ahead: letters typed in quick succession make one prefix.
       const now = event.timeStamp;
@@ -321,6 +325,9 @@ export function FileTree({ current, onOpenFile, defaultExpanded = [], className 
           aria-activedescendant={activeIndex >= 0 ? rowId(activeIndex) : undefined}
           tabIndex={0}
           onKeyDown={onKeyDown}
+          onPointerDown={() => {
+            setPendingReveal(null);
+          }}
           className="group/tree min-h-0 flex-1 overflow-auto py-1 outline-none"
         >
           {rows.length === 0 ? (
@@ -392,3 +399,5 @@ export function FileTree({ current, onOpenFile, defaultExpanded = [], className 
     </section>
   );
 }
+
+const estimateSize = () => ROW_HEIGHT;

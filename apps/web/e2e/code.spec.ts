@@ -140,9 +140,10 @@ test.describe("code browser", () => {
     await page.goto("/acme/api/code/img/login.png");
     await expect(page.getByRole("heading", { name: "This file isn't text" })).toBeVisible();
     await expect(page.getByText("50.7 KB")).toHaveCount(2); // the header and the message
-    await expect(page.getByRole("link", { name: "Download from GitHub" })).toHaveAttribute(
+    // The API's download link (GitHub's raw file would need access to a private repository).
+    await expect(page.getByRole("link", { name: "Download", exact: true })).toHaveAttribute(
       "href",
-      `https://github.com/acme-gh/api/raw/${COMMIT}/img/login.png`,
+      /^https:\/\/storage\.mock\.invalid\/artifacts\//,
     );
 
     await page.goto("/acme/api/code/mock-extras/server.log");

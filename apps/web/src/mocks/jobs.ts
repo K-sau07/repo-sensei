@@ -107,6 +107,21 @@ export function upcomingEvents(
 
 const discovered = (RUN_DETAILS.discover?.details ?? {}) as { files?: number; loc?: number };
 
+/** The commit every mock run indexes (the recorded run's). */
+export const RUN_COMMIT = "b1125d8839482cb7bbae603ddc6d0081bf87532e";
+
+/** A repository's first run once its discovery is done: what no `ref` reads before there is an
+ * index (`treeReady` once the Merkle stage has run too). */
+export function firstRunSnapshot(repo: MockRepo): { commit: string; treeReady: boolean } | null {
+  if (repo.last_indexed_sha) return null;
+  const latest = jobsOf(repo.id).at(-1);
+  if (!latest) return null;
+  const job = jobView(latest);
+  const stages = job.stages as Record<string, { status?: string } | undefined>;
+  if (!isActive(job) || stages.discover?.status !== "done") return null;
+  return { commit: RUN_COMMIT, treeReady: stages.merkle?.status === "done" };
+}
+
 /** Bring the repository in line with its latest job. */
 export function syncRepo(repo: MockRepo): MockRepo {
   const latest = jobsOf(repo.id).at(-1);
@@ -128,7 +143,7 @@ export function syncRepo(repo: MockRepo): MockRepo {
   if (job.status === "succeeded") {
     repo.status = "ready";
     if (changed || !repo.last_indexed_at) {
-      repo.last_indexed_sha = "b1125d8839482cb7bbae603ddc6d0081bf87532e";
+      repo.last_indexed_sha = RUN_COMMIT;
       repo.last_indexed_at = job.finished_at;
       repo.file_count = discovered.files ?? 245;
       repo.loc = discovered.loc ?? 18_567;

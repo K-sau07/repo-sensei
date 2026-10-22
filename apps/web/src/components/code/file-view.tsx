@@ -56,6 +56,14 @@ function ViewerSkeleton() {
   );
 }
 
+/** `lines` cut to the file's length: none if they start past its end. */
+export function withinFile(lines: LineRange | null, content: string): LineRange | null {
+  if (!lines) return null;
+  const count = content.split("\n").length;
+  if (lines.start > count) return null;
+  return lines.end > count ? { start: lines.start, end: count } : lines;
+}
+
 /** The metadata a 413 or 415 carries (`details`), when it has the expected shape. */
 export interface FileDetails {
   path: string;
@@ -89,17 +97,24 @@ export function githubBlobUrl(
   lines: LineRange | null = null,
 ): string {
   const encoded = path.split("/").map(encodeURIComponent).join("/");
+  const at = encodeRef(commit);
   const anchor = lines
     ? lines.start === lines.end
       ? `#L${String(lines.start)}`
       : `#L${String(lines.start)}-L${String(lines.end)}`
     : "";
-  return `https://github.com/${fullName}/blob/${commit}/${encoded}${anchor}`;
+  return `https://github.com/${fullName}/blob/${at}/${encoded}${anchor}`;
+}
+
+/** A commit or ref as a URL path: each segment encoded ("feat#2" must not end the URL), the
+ * slashes of a branch name kept. */
+function encodeRef(ref: string): string {
+  return ref.split("/").map(encodeURIComponent).join("/");
 }
 
 function githubRawUrl(fullName: string, commit: string, path: string): string {
   const encoded = path.split("/").map(encodeURIComponent).join("/");
-  return `https://github.com/${fullName}/raw/${commit}/${encoded}`;
+  return `https://github.com/${fullName}/raw/${encodeRef(commit)}/${encoded}`;
 }
 
 function GitHubLink({ href, label = "Open on GitHub" }: { href: string; label?: string }) {
@@ -117,7 +132,8 @@ function GitHubLink({ href, label = "Open on GitHub" }: { href: string; label?: 
   );
 }
 
-/** A file that can't be shown: binary (415) or over 2 MB (413), with a way to get it. */
+/** A file that can't be shown: binary (415) or over 2 MB (413), with a way to get it: the API's
+ * download link (GitHub's raw file only if there is none). */
 function UnviewableFile({
   kind,
   details,
@@ -126,10 +142,11 @@ function UnviewableFile({
 }: {
   kind: "binary" | "large";
   details: FileDetails | null;
-  githubUrl: string;
-  rawUrl: string;
+  githubUrl: string | null;
+  rawUrl: string | null;
 }) {
-  const download = kind === "large" ? details?.download_url : rawUrl;
+  const ours = details?.download_url ?? null;
+  const download = ours ?? (kind === "binary" ? rawUrl : null);
   return (
     <div className="mx-auto w-full max-w-xl p-8">
       <EmptyState
@@ -140,7 +157,7 @@ function UnviewableFile({
             {details ? formatBytes(details.size) : null}
             {details?.language ? ` · ${languageName(details.language) ?? ""}` : null}
             {kind === "binary"
-              ? ". Binary files (images, archives, fonts) open on GitHub."
+              ? ". Binary files (images, archives, fonts) aren't shown here; download it instead."
               : ". Files over 2 MB aren't shown here; download it instead."}
           </>
         }
@@ -149,16 +166,14 @@ function UnviewableFile({
             {download && (
               <a
                 href={download}
-                {...(kind === "binary"
-                  ? { target: "_blank", rel: "noreferrer" }
-                  : { download: "" })}
+                {...(ours ? { download: "" } : { target: "_blank", rel: "noreferrer" })}
                 className={buttonVariants({ variant: "outline", size: "sm" })}
               >
                 <Download aria-hidden data-icon="inline-start" />
-                {kind === "binary" ? "Download from GitHub" : "Download"}
+                {ours ? "Download" : "Download from GitHub"}
               </a>
             )}
-            <GitHubLink href={githubUrl} />
+            {githubUrl && <GitHubLink href={githubUrl} />}
           </div>
         }
       />
@@ -180,14 +195,17 @@ export function FileView({ path }: { path: string }) {
   const commit = file.data?.commit ?? details?.commit_sha ?? ref ?? null;
   const fullName = repoInfo.data?.full_name ?? null;
   const branch = repoInfo.data?.default_branch ?? "HEAD";
-  const githubUrl = fullName ? githubBlobUrl(fullName, commit ?? branch, path, lines) : null;
+  // The lines in the URL, if the file has them (a `?L=` past its end picks nothing).
+  const shown = file.data ? withinFile(lines, file.data.content) : lines;
+  const githubUrl = fullName ? githubBlobUrl(fullName, commit ?? branch, path, shown) : null;
 
   useShortcut(
     "code-search",
     () => {
       viewer.current?.openSearch();
     },
-    { enabled: file.data !== undefined, inInputs: true },
+    // From the page (also while focus is in the tree's filter), not inside a dialog.
+    { enabled: file.data !== undefined, inInputs: true, inOverlays: false },
   );
 
   const permalink =
@@ -195,7 +213,7 @@ export function FileView({ path }: { path: string }) {
       ? ""
       : `${window.location.origin}${codePath(org, repo, path, {
           ref: commit,
-          lines: lines ? formatLines(lines) : null,
+          lines: shown ? formatLines(shown) : null,
         })}`;
 
   let body;
@@ -213,14 +231,14 @@ export function FileView({ path }: { path: string }) {
       />
     );
   } else if (error?.code === "binary_file" || error?.code === "file_too_large") {
-    body = fullName ? (
+    body = (
       <UnviewableFile
         kind={error.code === "binary_file" ? "binary" : "large"}
         details={details}
-        githubUrl={githubBlobUrl(fullName, commit ?? branch, path)}
-        rawUrl={githubRawUrl(fullName, commit ?? branch, path)}
+        githubUrl={fullName ? githubBlobUrl(fullName, commit ?? branch, path) : null}
+        rawUrl={fullName ? githubRawUrl(fullName, commit ?? branch, path) : null}
       />
-    ) : null;
+    );
   } else if (error?.status === 404) {
     body = (
       <div className="mx-auto w-full max-w-xl p-8">
@@ -288,9 +306,9 @@ export function FileView({ path }: { path: string }) {
         }
         actions={
           <>
-            {lines && data && (
+            {shown && data && (
               <span className="inline-flex items-center gap-0.5 rounded-sm bg-warn/12 py-0.5 pr-0.5 pl-2 text-xs text-fg">
-                {describeLines(lines)}
+                {describeLines(shown)}
                 <Button
                   variant="ghost"
                   size="icon-xs"
@@ -301,7 +319,7 @@ export function FileView({ path }: { path: string }) {
                 </Button>
               </span>
             )}
-            {selection && data && !sameLines(selection, lines) && (
+            {selection && data && !sameLines(selection, shown) && (
               <Button variant="ghost" size="sm" onClick={() => void setLines(selection)}>
                 <TextSelect aria-hidden data-icon="inline-start" />
                 Link {describeLines(selection).toLowerCase()}
@@ -347,8 +365,8 @@ export function FileView({ path }: { path: string }) {
                   value={permalink}
                   icon={<LinkIcon />}
                   label={
-                    lines
-                      ? `Copy a permalink to ${describeLines(lines).toLowerCase()}`
+                    shown
+                      ? `Copy a permalink to ${describeLines(shown).toLowerCase()}`
                       : "Copy a permalink"
                   }
                 />

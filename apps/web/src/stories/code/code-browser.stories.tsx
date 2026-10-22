@@ -92,7 +92,11 @@ export const BinaryFile: Story = {
     await expect(
       await canvas.findByRole("heading", { name: "This file isn't text" }),
     ).toBeVisible();
-    await expect(canvas.getByRole("link", { name: "Download from GitHub" })).toBeVisible();
+    // The API's own download link, not GitHub's (which a private repository would refuse).
+    await expect(canvas.getByRole("link", { name: "Download" })).toHaveAttribute(
+      "href",
+      expect.stringContaining("X-Amz-Expires") as string,
+    );
   },
 };
 

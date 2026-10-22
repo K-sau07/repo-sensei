@@ -13,6 +13,7 @@ import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/componen
 import { Skeleton } from "@/components/ui/skeleton";
 import { ApiError } from "@/lib/api/errors";
 import { parentOf } from "@/lib/code/tree";
+import { STAGE_LABELS } from "@/lib/indexing";
 import { codePath, repoPath } from "@/lib/routes";
 
 import { DirectoryView } from "./directory-view";
@@ -20,18 +21,19 @@ import { FileTree } from "./file-tree";
 import { FileView } from "./file-view";
 import { useCodeLocation, useListing } from "./use-code";
 
-/** Nothing to browse yet: the first index is still running, or never ran. */
+/** Nothing to browse yet: the first index hasn't got to its files, or never ran. */
 function NotIndexed() {
   const { org, repo } = useCodeLocation();
-  const { active } = useRepoFeatures();
+  const { active, state } = useRepoFeatures();
+  // Files can be read once discovery is done (the first run's snapshot answers from then on).
+  const code = state("code_browser");
   return (
     <div className="mx-auto w-full max-w-3xl p-8">
       {active ? (
-        // Files can be read once the run has finished (the first index has no earlier one).
         <LockedState
           feature="Code"
-          stage="the index run"
-          {...(active.eta_s !== null ? { etaSeconds: active.eta_s } : {})}
+          stage={code.stage ? STAGE_LABELS[code.stage] : "indexing"}
+          {...(code.etaSeconds !== null ? { etaSeconds: code.etaSeconds } : {})}
           href={repoPath(org, repo)}
         />
       ) : (

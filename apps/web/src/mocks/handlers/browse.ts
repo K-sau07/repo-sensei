@@ -13,6 +13,7 @@ import {
   type MockFile,
 } from "@/mocks/browse";
 import type { MockRepo } from "@/mocks/db";
+import { firstRunSnapshot } from "@/mocks/jobs";
 
 import { apiError } from "./errors";
 import { repoOf } from "./repos";
@@ -32,12 +33,18 @@ function validationFailed(field: string, message: string) {
   ]);
 }
 
-/** The commit `ref` means: the last index, a prefix of its commit, or the branch it indexed.
- * (The mock repository has one indexed commit, so nothing else resolves.) */
+/** The commit `ref` means: the last index (or the first run's, from its discovery on), a prefix
+ * of its commit, or the branch it indexed. (Mock repositories index one commit, so nothing else
+ * resolves.) */
 function resolveCommit(repo: MockRepo, ref: string | null): string | Response {
   const indexed = repo.last_indexed_sha;
   if (ref === null) {
-    return indexed ?? apiError(404, "repo_not_indexed", "This repository hasn't been indexed yet.");
+    // Before the first index: the first run's snapshot, once its discovery is done.
+    return (
+      indexed ??
+      firstRunSnapshot(repo)?.commit ??
+      apiError(404, "repo_not_indexed", "This repository hasn't been indexed yet.")
+    );
   }
   if (ref.length > MAX_REF)
     return validationFailed("ref", "String should have at most 255 characters");
@@ -109,9 +116,16 @@ export const browseHandlers = [
       }
       return apiError(404, "path_not_found", "No such directory in this snapshot.");
     }
+    // A first run before its Merkle stage: listed from the file rows, not cached.
+    const early = found.url.searchParams.get("ref") === null && firstRunSnapshot(found.repo);
     return HttpResponse.json<TreeListing>(
       { path, entries: listing(path) },
-      { headers: headers(dir.hash ? `"t1-${dir.hash}"` : null, found.commit) },
+      {
+        headers:
+          early && !early.treeReady
+            ? { "Cache-Control": "no-store", "X-Commit-Sha": found.commit }
+            : headers(dir.hash ? `"t1-${dir.hash}"` : null, found.commit),
+      },
     );
   }),
 
@@ -126,7 +140,10 @@ export const browseHandlers = [
     const file = fileAt(path);
     if (!file) return apiError(404, "path_not_found", "No such file in this snapshot.");
     if (file.flags.includes("binary")) {
-      return apiError(415, "binary_file", "This file isn't text.", metadata(file, found.commit));
+      return apiError(415, "binary_file", "This file isn't text; download it instead.", {
+        ...metadata(file, found.commit),
+        download_url: `https://storage.mock.invalid/artifacts/${file.sha}?X-Amz-Expires=900`,
+      });
     }
     if (file.size > MAX_SERVED_BYTES) {
       return apiError(

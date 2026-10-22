@@ -29,13 +29,19 @@ interface Snapshot {
   org: string;
   repo: string;
   ref: string | null;
-  /** The last index's commit (null until there is one). */
-  indexed: string | null;
+  /** What no `ref` means right now (see `useCodeLocation`): it keys the reads, so they are made
+   * again when it changes. */
+  version: string | null;
 }
 
-export function treeOptions({ org, repo, ref, indexed }: Snapshot, path: string) {
+/** While a read is made again for a new version, the same path keeps showing what it had: the
+ * page doesn't blank (or lose its scroll and search) for a commit that is usually the same. A
+ * different path never shows another's content. */
+const samePath = (path: string, key: readonly unknown[] | undefined) => key?.at(-1) === path;
+
+export function treeOptions({ org, repo, ref, version }: Snapshot, path: string) {
   return {
-    queryKey: queryKeys.codeTree(org, repo, ref, indexed, path),
+    queryKey: queryKeys.codeTree(org, repo, ref, version, path),
     queryFn: async ({ signal }: { signal: AbortSignal }): Promise<Listing> => {
       const { data, response } = await api.GET("/api/v1/orgs/{org}/repos/{repo}/tree", {
         params: { path: { org, repo }, query: { path, ...(ref ? { ref } : {}) } },
@@ -45,6 +51,8 @@ export function treeOptions({ org, repo, ref, indexed }: Snapshot, path: string)
       return { ...data, commit: commitOf(response) };
     },
     staleTime: STALE_MS,
+    placeholderData: (previous: Listing | undefined, query?: { queryKey: readonly unknown[] }) =>
+      samePath(path, query?.queryKey) ? previous : undefined,
   };
 }
 
@@ -69,16 +77,21 @@ export function useCodeLocation() {
   );
   // Next hands over each segment still percent-encoded.
   const path = (segments ?? []).map(decodeSegment).join("/");
-  // Reads wait for the repository, whose last indexed commit keys them: when a run finishes,
-  // what was "not indexed yet" (or an older index) is read again.
+  // Reads wait for the repository, which says what no `ref` means: its last index, or, before
+  // the first one, the first run (from its discovery on, at each stage, so what was "not
+  // indexed yet" is read again once discovery is done). A new index reads afresh.
   const repository = useRepo();
+  const data = repository.data;
+  const running = data?.active_job;
+  const version =
+    data?.last_indexed_sha ?? (running ? `run:${running.id}:${running.stage ?? "queued"}` : null);
   return {
     org,
     repo,
     path,
     ref,
     lines,
-    indexed: repository.data?.last_indexed_sha ?? null,
+    version,
     ready: repository.isSuccess,
     setLines: (next: typeof lines) => setQuery({ L: next }),
   };
@@ -111,6 +124,8 @@ export function useListings(paths: readonly string[]): Listings {
         if (!result) return;
         refetchers.set(path, result.refetch);
         if (result.data) states.set(path, { status: "loaded", entries: result.data.entries });
+        // Being tried again after an error: loading, not the error still.
+        else if (result.isFetching) states.set(path, { status: "loading" });
         else if (result.error) {
           states.set(path, { status: "error" });
           errors.set(path, result.error);
@@ -133,9 +148,9 @@ export function useListings(paths: readonly string[]): Listings {
 }
 
 export function useFile(path: string, enabled = true) {
-  const { org, repo, ref, indexed, ready } = useCodeLocation();
+  const { org, repo, ref, version, ready } = useCodeLocation();
   return useQuery({
-    queryKey: queryKeys.codeFile(org, repo, ref, indexed, path),
+    queryKey: queryKeys.codeFile(org, repo, ref, version, path),
     queryFn: async ({ signal }): Promise<OpenedFile> => {
       const { data, response } = await api.GET("/api/v1/orgs/{org}/repos/{repo}/file", {
         params: { path: { org, repo }, query: { path, ...(ref ? { ref } : {}) } },
@@ -146,6 +161,7 @@ export function useFile(path: string, enabled = true) {
       return { ...data, commit: commitOf(response) };
     },
     staleTime: STALE_MS,
+    placeholderData: (previous, query) => (samePath(path, query?.queryKey) ? previous : undefined),
     enabled: enabled && ready,
   });
 }
