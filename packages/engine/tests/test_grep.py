@@ -289,9 +289,13 @@ def test_queries_are_checked(kwargs: dict[str, object]):
 # ------------------------------------------------------------------ the time limit
 
 
-def _fake_rg(tmp_path: Path, body: str) -> Path:
+def _fake_rg(tmp_path: Path, body: str, version: str = "ripgrep 14.1.1") -> Path:
+    """A stand-in rg: answers --version like the real one, runs ``body`` for a search."""
     script = tmp_path / "fake-rg"
-    script.write_text(f"#!/bin/sh\necho $$ > {tmp_path / 'pid'}\n{body}\n")
+    script.write_text(
+        f'#!/bin/sh\nif [ "$1" = "--version" ]; then echo "{version}"; exit 0; fi\n'
+        f"echo $$ > {tmp_path / 'pid'}\n{body}\n"
+    )
     script.chmod(0o755)
     return script
 
@@ -349,3 +353,14 @@ async def test_without_ripgrep_or_when_it_fails(tmp_path: Path):
     crashing = ExactSearch(binary=str(_fake_rg(tmp_path, "echo 'rg: boom' >&2; exit 2")))
     with pytest.raises(GrepUnavailableError, match="boom"):
         await crashing.search(root, GrepQuery("needle"))
+    # An rg too old for the --json output read here is refused before it runs.
+    old = ExactSearch(binary=str(_fake_rg(tmp_path, "exit 0", version="ripgrep 13.0.0")))
+    with pytest.raises(GrepUnavailableError, match=r"ripgrep 14\.0 or later"):
+        await old.search(root, GrepQuery("needle"))
+
+
+async def test_files_over_the_size_limit_are_not_searched(tmp_path: Path):
+    big = b"needle\n" + b"x" * (2 * 1024 * 1024) + b"\n"
+    root = _tree(tmp_path / "r", {"small.txt": b"needle\n", "huge.min.js": big})
+    result = await _search(root, GrepQuery("needle"))
+    assert _places(result) == [("small.txt", 1)]

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Container
+from dataclasses import dataclass
 from pathlib import Path as FilePath
 from typing import Annotated, Any, BinaryIO, Literal
 
@@ -540,13 +541,57 @@ async def _grep(
     search: ExactSearch = request.app.state.exact_search
     for _ in range(2):
         root = await _unpacked(request, snapshot)
+        # The marker holds when this unpack was made: the same before and after means the
+        # search ran over one whole unpack (not one being evicted, or replaced, meanwhile).
+        before = await asyncio.to_thread(_unpack_stamp, root)
+        if before is None:
+            continue
         try:
             result = await search.search(root, query, files=files)
         except FileNotFoundError:
             continue
-        if await asyncio.to_thread((root / READY_MARKER).is_file):
+        if await asyncio.to_thread(_unpack_stamp, root) == before:
             return result
     raise SearchUnavailableError("The snapshot's files kept moving; try again.")
+
+
+def _unpack_stamp(root: FilePath) -> str | None:
+    try:
+        return (root / READY_MARKER).read_text()
+    except OSError:
+        return None
+
+
+@dataclass(frozen=True, slots=True)
+class _Without:
+    """``files`` except ``left_out``, without copying a tree's worth of paths per search."""
+
+    files: Container[str]
+    left_out: frozenset[str]
+
+    def __contains__(self, path: object) -> bool:
+        return isinstance(path, str) and path in self.files and path not in self.left_out
+
+
+async def _searchable(request: Request, db: AsyncSession, snapshot: Snapshot) -> _Without:
+    """The files a search may report: what discovery recorded, binaries left out (rg would stop
+    at their first NUL, but could still report a "match" before it)."""
+    binaries = frozenset(
+        await db.scalars(
+            select(RepoFile.path).where(
+                RepoFile.snapshot_id == snapshot.id, RepoFile.flags.contains(["binary"])
+            )
+        )
+    )
+    if snapshot.merkle_root is None:
+        # A first run before its Merkle stage: the file rows are the list.
+        recorded: Container[str] = frozenset(
+            await db.scalars(select(RepoFile.path).where(RepoFile.snapshot_id == snapshot.id))
+        )
+    else:
+        cache: TreeCache = request.app.state.tree_cache
+        recorded = (await cache.get(_storage(request), snapshot)).files
+    return _Without(recorded, binaries)
 
 
 @router.post(
@@ -573,10 +618,9 @@ async def grep(*, request: Request, repo: RepoDep, db: DbSession, body: GrepRequ
     except InvalidQueryError as exc:
         raise InvalidError(str(exc), code="invalid_pattern") from None
     snapshot = await resolve_snapshot(db, repo, body.ref)
-    cache: TreeCache = request.app.state.tree_cache
-    merkle = await cache.get(_storage(request), snapshot)
+    files = await _searchable(request, db, snapshot)
     try:
-        result = await _grep(request, snapshot, query, merkle.files)
+        result = await _grep(request, snapshot, query, files)
     except InvalidQueryError as exc:
         raise InvalidError(str(exc), code="invalid_pattern") from None
     except GrepBusyError:

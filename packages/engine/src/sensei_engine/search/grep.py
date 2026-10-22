@@ -30,8 +30,10 @@ import base64
 import contextlib
 import enum
 import os
+import re
 import shutil
 import signal
+import subprocess
 from collections import deque
 from collections.abc import Container
 from dataclasses import dataclass, field
@@ -55,6 +57,10 @@ MAX_LINE_CHARS = 500  # of each line in a hit; a longer line is cut around its f
 MAX_RANGES = 50  # matches located on one line
 MAX_RECORD_BYTES = 1024 * 1024  # one line of rg's output
 REGEX_SIZE_LIMIT = "10M"  # the compiled pattern, and the lazy DFA's cache
+# Larger files aren't searched (rg would grow its line buffer to a huge one-line minified file;
+# the code browser doesn't show files this large either).
+MAX_FILESIZE = "2M"
+MIN_RG_VERSION = (14, 0)  # its --json output, as parsed here; the image and CI install 14.x
 STDERR_BYTES = 8192
 
 # How rg starts a complaint about the pattern or a glob (anything else is a failure on our side).
@@ -151,6 +157,7 @@ def _argv(binary: str, query: GrepQuery) -> list[str]:
         f"--max-count={query.limit + 1}",  # per file; one more says whether there are more
         f"--regex-size-limit={REGEX_SIZE_LIMIT}",
         f"--dfa-size-limit={REGEX_SIZE_LIMIT}",
+        f"--max-filesize={MAX_FILESIZE}",
         _CASE_FLAGS[query.case],
     ]
     if not query.regex:
@@ -318,6 +325,20 @@ def _kill(process: asyncio.subprocess.Process) -> None:
         os.killpg(process.pid, signal.SIGKILL)
 
 
+def _check_version(binary: str) -> None:
+    """rg is at least ``MIN_RG_VERSION`` (older ones print other --json)."""
+    try:
+        out = subprocess.run(  # noqa: S603 - a fixed argv, no shell
+            [binary, "--version"], capture_output=True, text=True, timeout=5, check=True, env={}
+        ).stdout
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise GrepUnavailableError(f"can't run {binary} --version") from exc
+    found = re.match(r"ripgrep (\d+)\.(\d+)", out)
+    if not found or (int(found[1]), int(found[2])) < MIN_RG_VERSION:
+        want = ".".join(map(str, MIN_RG_VERSION))
+        raise GrepUnavailableError(f"ripgrep {want} or later is needed, found: {out.strip()!r}")
+
+
 class ExactSearch:
     """Runs searches, at most ``max_concurrent`` at a time (others wait their turn, for up to
     the time limit)."""
@@ -332,6 +353,7 @@ class ExactSearch:
         self._binary = binary
         self._timeout = timeout
         self._slots = asyncio.Semaphore(max_concurrent)
+        self._checked: str | None = None  # the binary whose version was found good
 
     async def search(
         self, root: Path, query: GrepQuery, *, files: Container[str] | None = None
@@ -356,6 +378,9 @@ class ExactSearch:
         binary = shutil.which(self._binary)
         if binary is None:
             raise GrepUnavailableError(f"{self._binary} is not installed")
+        if self._checked != binary:
+            _check_version(binary)
+            self._checked = binary
         return binary
 
     async def _run(

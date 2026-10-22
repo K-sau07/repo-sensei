@@ -1507,6 +1507,38 @@ async def test_exact_search(
     assert unknown.json()["error"]["code"] == "ref_not_indexed"
 
 
+async def test_exact_search_in_a_first_run_leaves_binaries_out(
+    app: FastAPI,
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    fake: FakeGitHub,
+    storage: ObjectStorage,
+    tmp_path: Path,
+) -> None:
+    _, headers, job_id = await _connected(app, client, db_session, fake)
+    # A binary file whose text matches before its first NUL: rg could report it; we don't.
+    files = {**GREP_FILES, "assets/blob.bin": b"handle_request(\0\1\2"}
+    await _index(app, db_session, storage, tmp_path, files, SHA_ONE, outcome=JobStatus.FAILED)
+    # The first run is between discovery and its Merkle stage: searchable from the rows.
+    snapshot = await db_session.scalar(select(Snapshot).where(Snapshot.commit_sha == SHA_ONE))
+    job = await db_session.get(IndexJob, uuid.UUID(job_id))
+    assert snapshot is not None
+    assert job is not None
+    blob = await db_session.scalar(select(RepoFile).where(RepoFile.path == "assets/blob.bin"))
+    assert blob is not None
+    assert "binary" in blob.flags  # discovery saw what it is
+    snapshot.merkle_root = None
+    job.status, job.snapshot_id = JobStatus.RUNNING, snapshot.id
+    job.stages = {"discover": {"status": "done"}}
+    await db_session.flush()
+    response = await client.post(
+        f"{API}/orgs/acme/repos/api/grep", json={"pattern": "handle_request("}, headers=headers
+    )
+    assert response.status_code == 200, response.text
+    paths = {hit["path"] for hit in response.json()["hits"]}
+    assert paths == {"README.md", "src/app.py"}
+
+
 async def test_exact_search_access_and_failures(
     app: FastAPI,
     client: httpx.AsyncClient,
