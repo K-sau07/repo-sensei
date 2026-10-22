@@ -14,17 +14,19 @@ from sensei_core.storage import Bucket, ObjectStorage, artifact_key
 from sensei_engine.ingest.constellation import Constellation
 from sensei_engine.ingest.merkle import ARTIFACT_NAME, MAX_STORED_BYTES, MerkleTree
 
-# Trees are kept until they hold this many files between them (about 200 bytes each).
-MAX_CACHED_FILES = 1_000_000
-# Constellations: points between them (a point is about 300 bytes decoded).
-MAX_CACHED_POINTS = 500_000
+# Decoded sizes, measured on getsentry/sentry (22k files): a Merkle tree takes about 690 bytes
+# a file in memory, a constellation about 650 bytes a point. The caches turn their memory
+# budgets (settings.api) into counts with these.
+TREE_BYTES_PER_FILE = 700
+CONSTELLATION_BYTES_PER_POINT = 650
+MB = 1024 * 1024
 
 
 class TreeCache:
     """Merkle trees by snapshot, least recently used out first."""
 
-    def __init__(self, *, max_files: int = MAX_CACHED_FILES) -> None:
-        self._max_files = max_files
+    def __init__(self, *, max_mb: int = 96) -> None:
+        self._max_files = max_mb * MB // TREE_BYTES_PER_FILE
         self._trees: OrderedDict[uuid.UUID, MerkleTree] = OrderedDict()
         # One lock per snapshot being loaded: concurrent misses for it load it once, and
         # different snapshots load side by side.
@@ -74,8 +76,8 @@ class ConstellationCache:
     """Decoded constellations by (snapshot, generation), least recently used out first: a viewer
     reads one in pages, and each page shouldn't fetch and decode the whole thing again."""
 
-    def __init__(self, *, max_points: int = MAX_CACHED_POINTS) -> None:
-        self._max_points = max_points
+    def __init__(self, *, max_mb: int = 64) -> None:
+        self._max_points = max_mb * MB // CONSTELLATION_BYTES_PER_POINT
         self._skies: OrderedDict[tuple[uuid.UUID, str], Constellation] = OrderedDict()
         self._loading: dict[tuple[uuid.UUID, str], asyncio.Lock] = {}
 

@@ -71,8 +71,8 @@ def _install_services(app: FastAPI, settings: Settings) -> None:
         max_bytes=settings.ingest.snapshot_cache_max_bytes,
         max_snapshot_bytes=settings.ingest.max_checkout_bytes,
     )
-    app.state.tree_cache = TreeCache()
-    app.state.constellation_cache = ConstellationCache()
+    app.state.tree_cache = TreeCache(max_mb=settings.api.tree_cache_mb)
+    app.state.constellation_cache = ConstellationCache(max_mb=settings.api.constellation_cache_mb)
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:

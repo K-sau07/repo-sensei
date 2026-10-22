@@ -166,6 +166,11 @@ class ApiSettings(BaseSettings):
     # client sent (Fly.io: "fly-client-ip"). None: the connecting peer's address. Never trust a
     # header a client can forge, such as X-Forwarded-For's first entry.
     client_ip_header: str | None = None
+    # Memory for what browsing keeps decoded (per API process), sized for a 512 MB machine:
+    # Merkle trees (about 700 bytes a file) and constellations (about 650 bytes a point),
+    # least recently used out first. One snapshot larger than its budget is still served.
+    tree_cache_mb: int = Field(default=96, gt=0)
+    constellation_cache_mb: int = Field(default=64, gt=0)
 
 
 class WebSettings(BaseSettings):
