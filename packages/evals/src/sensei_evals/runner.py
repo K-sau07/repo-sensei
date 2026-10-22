@@ -82,8 +82,9 @@ def score_item(item: GoldenItem, hits: Sequence[Hit], ks: Sequence[int]) -> dict
         scores[f"all_layers@{k}"] = all_layers_hit_at_k(hits, gold, k, Level.SYMBOL)
     scores[f"ndcg_file@{RANK_K}"] = ndcg_at_k(hits, gold, RANK_K, Level.FILE)
     scores[f"ndcg_symbol@{RANK_K}"] = ndcg_at_k(hits, gold, RANK_K, Level.SYMBOL)
-    scores["mrr_file"] = mrr(hits, gold, Level.FILE)
-    scores["mrr_symbol"] = mrr(hits, gold, Level.SYMBOL)
+    # At a fixed depth, so runs asked for different ks still compare.
+    scores[f"mrr_file@{RANK_K}"] = mrr(hits, gold, Level.FILE, RANK_K)
+    scores[f"mrr_symbol@{RANK_K}"] = mrr(hits, gold, Level.SYMBOL, RANK_K)
     scores[f"f0.5_file@{RANK_K}"] = f_beta(hits[:RANK_K], gold, 0.5, "file")
     scores[f"f0.5_line@{RANK_K}"] = f_beta(hits[:RANK_K], gold, 0.5, "line")
     return scores
@@ -140,6 +141,9 @@ async def run_suite(
 ) -> RunRecord:
     """Search for every item (in order, one at a time, so latencies are comparable)."""
     ks = sorted(set(ks))
+    if not ks:
+        msg = "give at least one k"
+        raise ValueError(msg)
     depth = max([*ks, RANK_K])
     results: list[ItemResult] = []
     for item in items:

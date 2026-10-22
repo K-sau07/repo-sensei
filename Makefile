@@ -116,9 +116,9 @@ test-int: ## Integration tests (needs `make up`)
 
 check: lint typecheck test ## Lint, typecheck and unit tests (run before every commit)
 
-eval: ## Run a golden suite: make eval suite=<name> retriever=<name> [repo=<id>] [k=10,20,50,100]
+eval: ## Run a golden suite: make eval suite=<name> retriever=<name> [repo=<id>] [k=10,20,50,100] [args="--no-store …"]
 	@test -n "$(suite)" -a -n "$(retriever)" || { echo "usage: make eval suite=<name> retriever=<name>"; exit 1; }
-	uv run sensei-eval run --suite "$(suite)" --retriever "$(retriever)" $(if $(repo),--repo "$(repo)") $(if $(k),--k "$(k)")
+	uv run sensei-eval run --suite "$(suite)" --retriever "$(retriever)" $(if $(repo),--repo "$(repo)") $(if $(k),--k "$(k)") $(args)
 
 fmt: ## Auto-format everything
 	uv run ruff check --fix .

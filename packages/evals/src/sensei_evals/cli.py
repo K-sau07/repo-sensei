@@ -12,6 +12,7 @@ then the database) or by the path of its JSON report.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import uuid
 from pathlib import Path
 from typing import Annotated
@@ -181,6 +182,8 @@ def run(
         "options": options,
         "items": len(items),
         "dirty": paths.has_uncommitted_changes(root),
+        # Which exact suite file ran: an edit without a version bump still tells.
+        "suite_sha256": hashlib.sha256(paths.suite_path(root, suite).read_bytes()).hexdigest(),
     }
     record = asyncio.run(
         run_suite(loaded, items, built, ref, ks=ks, config=config, git_sha=paths.head_sha(root))

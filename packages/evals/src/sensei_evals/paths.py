@@ -72,4 +72,5 @@ def head_sha(directory: Path) -> str | None:
 
 
 def has_uncommitted_changes(directory: Path) -> bool:
-    return bool(_git("status", "--porcelain", "--untracked-files=no", cwd=directory))
+    # Untracked files count: a new, not yet added retriever module changes what ran.
+    return bool(_git("status", "--porcelain", cwd=directory))

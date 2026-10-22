@@ -1,4 +1,5 @@
-"""Staff-only routes. Everyone else gets a 404, as if they didn't exist."""
+"""Staff-only routes. Signed-in non-staff get a 404, as if they didn't exist; anonymous callers
+get the usual 401."""
 
 from __future__ import annotations
 

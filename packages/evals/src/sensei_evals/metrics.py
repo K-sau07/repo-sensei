@@ -3,6 +3,8 @@
 Two levels of matching:
 
 * **file**: the gold units are the distinct gold paths; a hit covers one if it's in that file.
+  The hits are taken as a ranking of files: each file at its first hit (several chunks of one
+  file are one result here).
 * **symbol**: the gold units are the distinct gold targets; a hit covers a target with lines if
   it's in the same file and its lines overlap the target's span (a whole-file hit doesn't count),
   and covers a target without lines (a whole file) if it's in that file.
@@ -82,14 +84,27 @@ def covered(hits: Sequence[Hit], gold: Sequence[GoldTarget], level: Level) -> li
     ]
 
 
+def _ranked(hits: Sequence[Hit], level: Level) -> Sequence[Hit]:
+    """The hits as the level ranks them: at file level, each file once, at its first hit."""
+    if level is not Level.FILE:
+        return hits
+    seen: set[str] = set()
+    files: list[Hit] = []
+    for hit in hits:
+        if hit.path not in seen:
+            seen.add(hit.path)
+            files.append(hit)
+    return files
+
+
 def recall_at_k(
     hits: Sequence[Hit], gold: Sequence[GoldTarget], k: int, level: Level = Level.FILE
 ) -> float | None:
-    """The share of gold units covered by the top ``k`` hits."""
+    """The share of gold units covered by the top ``k`` hits (files, at file level)."""
     units = _units(gold, level)
     if not units:
         return None
-    top = hits[:k]
+    top = _ranked(hits, level)[:k]
     found = sum(1 for unit in units if any(_covers(hit, unit) for hit in top))
     return found / len(units)
 
@@ -97,21 +112,24 @@ def recall_at_k(
 def ndcg_at_k(
     hits: Sequence[Hit], gold: Sequence[GoldTarget], k: int, level: Level = Level.FILE
 ) -> float | None:
-    """Binary-relevance nDCG: a hit gains 1 (discounted by ``log2(rank + 1)``) when it covers a
-    gold unit no earlier hit covered, so repeats of a found file or span earn nothing. The ideal
-    ranking puts one new unit at each of the first ``min(units, k)`` ranks."""
+    """nDCG over gold units: a hit gains the number of gold units it covers that no earlier hit
+    did (discounted by ``log2(rank + 1)``), so repeats of a found file or span earn nothing, and
+    one hit covering nested spans (a class and its method) earns both. The ideal ranking puts one
+    new unit at each of the first ``min(units, k)`` ranks; a hit covering several at once can
+    beat it, so the score is capped at 1. A ranking that finds every unit as early as it could
+    scores 1."""
     units = _units(gold, level)
     if not units:
         return None
     seen: set[_Unit] = set()
     dcg = 0.0
-    for rank, hit in enumerate(hits[:k], start=1):
+    for rank, hit in enumerate(_ranked(hits, level)[:k], start=1):
         new = [unit for unit in units if unit not in seen and _covers(hit, unit)]
         if new:
-            dcg += 1.0 / math.log2(rank + 1)
+            dcg += len(new) / math.log2(rank + 1)
             seen.update(new)
     ideal = sum(1.0 / math.log2(rank + 1) for rank in range(1, min(len(units), k) + 1))
-    return dcg / ideal
+    return min(1.0, dcg / ideal)
 
 
 def mrr(
@@ -120,11 +138,12 @@ def mrr(
     level: Level = Level.FILE,
     k: int | None = None,
 ) -> float | None:
-    """Reciprocal rank of the first hit covering any gold unit (0 if none in the top ``k``)."""
+    """Reciprocal rank of the first hit (file, at file level) covering any gold unit (0 if none
+    in the top ``k``)."""
     units = _units(gold, level)
     if not units:
         return None
-    for rank, hit in enumerate(hits[:k], start=1):
+    for rank, hit in enumerate(_ranked(hits, level)[:k], start=1):
         if any(_covers(hit, unit) for unit in units):
             return 1.0 / rank
     return 0.0

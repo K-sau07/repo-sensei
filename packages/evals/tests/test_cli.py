@@ -205,6 +205,20 @@ async def test_compare_lists_regressions_first(checkout: Path) -> None:
     assert swapped.regressions == []
     assert swapped.improvements[0].delta == 1.0
 
+    # Runs that aren't alike say so: other depths, or the suite file edited in place.
+    deeper = await run_suite(
+        suite,
+        suite.items,
+        OracleRetriever(suite.items),
+        repo,
+        ks=[10, 50],
+        config={"suite_sha256": "b" * 64},
+    )
+    edited = oracle.model_copy(update={"config": {**oracle.config, "suite_sha256": "a" * 64}})
+    warnings = compare(edited, deeper).warnings
+    assert "the suite file changed between the runs (same name and version)" in warnings
+    assert "different ks: [10] vs [10, 50]" in warnings
+
 
 def test_compare_and_report_commands(suite_file: Path, tmp_path: Path) -> None:
     reports = tmp_path / "reports"

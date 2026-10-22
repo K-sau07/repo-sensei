@@ -15,7 +15,7 @@ SUMMARY_METRICS = (
     "recall_symbol@{k}",
     "all_layers@{k}",
     f"ndcg_symbol@{RANK_K}",
-    "mrr_symbol",
+    f"mrr_symbol@{RANK_K}",
 )
 
 
@@ -185,6 +185,11 @@ def compare(a: RunRecord, b: RunRecord) -> Comparison:
         )
     if a.repo_sha != b.repo_sha:
         warnings.append(f"different repository commits: {a.repo_sha} vs {b.repo_sha}")
+    file_a, file_b = a.config.get("suite_sha256"), b.config.get("suite_sha256")
+    if file_a and file_b and file_a != file_b:
+        warnings.append("the suite file changed between the runs (same name and version)")
+    if a.config.get("ks") != b.config.get("ks"):
+        warnings.append(f"different ks: {a.config.get('ks')} vs {b.config.get('ks')}")
     if only := sorted(set(items_a) ^ {item.id for item in b.per_item}):
         warnings.append(f"{len(only)} items are in only one run: {', '.join(only[:10])}")
     return Comparison(a, b, metric, regressions, improvements, unchanged, worse, better, warnings)

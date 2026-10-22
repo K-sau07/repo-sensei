@@ -11,6 +11,9 @@ The worked example: three gold targets in three layers, five hits.
           3 web/Login.tsx L18-30  overlaps T1
           4 other.py      L1-10   nothing
           5 api/models.py L100-120  in T3's file
+
+At file level the hits rank files, each at its first hit: web/Login.tsx, api/login.py,
+other.py, api/models.py.
 """
 
 from __future__ import annotations
@@ -44,13 +47,15 @@ HITS = [
     Hit("api/models.py", (100, 120)),
 ]
 LOG2_3 = math.log2(3)
+LOG2_5 = math.log2(5)
 LOG2_6 = math.log2(6)
 IDEAL_3 = 1 + 1 / LOG2_3 + 1 / 2  # three new units at ranks 1, 2 and 3
 
 
 @pytest.mark.parametrize(
     ("k", "file", "symbol"),
-    [(1, 1 / 3, 0.0), (2, 2 / 3, 1 / 3), (3, 2 / 3, 2 / 3), (4, 2 / 3, 2 / 3), (5, 1.0, 1.0)],
+    # File level: api/models.py is the 4th file (hit 3 repeats web/Login.tsx).
+    [(1, 1 / 3, 0.0), (2, 2 / 3, 1 / 3), (3, 2 / 3, 2 / 3), (4, 1.0, 2 / 3), (5, 1.0, 1.0)],
 )
 def test_recall_at_k(k: int, file: float, symbol: float) -> None:
     assert recall_at_k(HITS, GOLD, k, Level.FILE) == pytest.approx(file)
@@ -79,10 +84,10 @@ def test_span_edges_overlap_inclusively() -> None:
 
 
 def test_ndcg_at_k() -> None:
-    # File level: new files at ranks 1, 2 and 5; rank 3 repeats web/Login.tsx and earns nothing.
-    file_dcg = 1 + 1 / LOG2_3 + 1 / LOG2_6
+    # File level: gold files at file ranks 1, 2 and 4 (other.py is 3rd).
+    file_dcg = 1 + 1 / LOG2_3 + 1 / LOG2_5
     assert ndcg_at_k(HITS, GOLD, 5, Level.FILE) == pytest.approx(file_dcg / IDEAL_3)
-    assert ndcg_at_k(HITS, GOLD, 5, Level.FILE) == pytest.approx(0.946_90, abs=1e-5)
+    assert ndcg_at_k(HITS, GOLD, 5, Level.FILE) == pytest.approx(0.967_47, abs=1e-5)
     # Symbol level: T2 at rank 2, T1 at rank 3, T3 at rank 5.
     symbol_dcg = 1 / LOG2_3 + 1 / 2 + 1 / LOG2_6
     assert ndcg_at_k(HITS, GOLD, 5, Level.SYMBOL) == pytest.approx(symbol_dcg / IDEAL_3)
@@ -93,6 +98,32 @@ def test_ndcg_ideal_is_capped_at_k() -> None:
     # Three units but k = 1: one perfect first hit is a perfect ranking.
     assert ndcg_at_k(HITS, GOLD, 1, Level.FILE) == 1.0
     assert ndcg_at_k(HITS, GOLD, 1, Level.SYMBOL) == 0.0
+
+
+def test_a_perfect_ranking_is_one_with_two_targets_in_one_file() -> None:
+    # Two symbols in a.py and one in b.py, found in that order: the files rank a.py, b.py.
+    gold = [
+        GoldTarget(layer=Layer.HANDLER, path="a.py", lines=(1, 5)),
+        GoldTarget(layer=Layer.HANDLER, path="a.py", lines=(20, 30)),
+        GoldTarget(layer=Layer.SERVICE, path="b.py", lines=(1, 9)),
+    ]
+    hits = [Hit(t.path, t.lines) for t in gold]
+    for level in Level:
+        assert ndcg_at_k(hits, gold, 10, level) == pytest.approx(1.0), level
+        assert recall_at_k(hits, gold, 10, level) == 1.0
+    assert mrr([Hit("x.py"), Hit("x.py"), Hit("a.py")], gold, Level.FILE) == 1 / 2
+
+
+def test_one_hit_covering_nested_spans_earns_both() -> None:
+    # A class and its method: the hit on the class covers both at rank 1, as well as possible.
+    gold = [
+        GoldTarget(layer=Layer.SERVICE, path="svc.py", symbol="Service", lines=(1, 100)),
+        GoldTarget(layer=Layer.SERVICE, path="svc.py", symbol="Service.run", lines=(20, 30)),
+    ]
+    assert ndcg_at_k([Hit("svc.py", (1, 100))], gold, 10, Level.SYMBOL) == 1.0
+    # Found later, it scores less: both units at rank 2 (2 / log2(3)) of the ideal 1 + 1/log2(3).
+    late = ndcg_at_k([Hit("other.py", (1, 5)), Hit("svc.py", (1, 100))], gold, 10, Level.SYMBOL)
+    assert late == pytest.approx((2 / LOG2_3) / (1 + 1 / LOG2_3))
 
 
 def test_ndcg_perfect_ranking_is_one() -> None:
