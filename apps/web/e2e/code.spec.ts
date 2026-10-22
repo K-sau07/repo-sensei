@@ -179,7 +179,7 @@ test.describe("code browser", () => {
     await expect(page.getByText("Nothing at this path")).toBeVisible();
   });
 
-  test("a 10,000-line file paints within 300 ms", async ({ page, context }) => {
+  test("a 10,000-line file paints within 300 ms", { tag: "@perf" }, async ({ page, context }) => {
     await useBrowseExtras(context);
     // Warm up: the viewer's chunk and the Python grammar load with the first file.
     await page.goto("/acme/api/code/backend/app/main.py");
@@ -198,7 +198,7 @@ test.describe("code browser", () => {
     expect(paint ?? Infinity).toBeLessThan(300);
   });
 
-  test("the tree scrolls 100,000 files at 60 fps", async ({ page, context }) => {
+  test("the tree scrolls 100,000 files at 60 fps", { tag: "@perf" }, async ({ page, context }) => {
     await useBrowseExtras(context);
     await page.goto("/acme/api/code/mock-extras/many-files");
     await expect(item(page, "module_000001.ts")).toBeVisible();
