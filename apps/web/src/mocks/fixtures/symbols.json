@@ -1,0 +1,1456 @@
+{
+  "source": "fastapi/full-stack-fastapi-template@b1125d8",
+  "note": "Symbols of the mock snapshot's files whose content is in browse-content.json, as the symbols endpoint (2.4) will return them. Lines are 1-based and inclusive.",
+  "symbols": [
+    {
+      "symbol_key": "python backend/tests/api/routes/test_items.py/test_create_item().",
+      "name": "test_create_item",
+      "qualified_name": "test_create_item",
+      "kind": "function",
+      "path": "backend/tests/api/routes/test_items.py",
+      "start_line": 10,
+      "end_line": 24,
+      "signature": "def test_create_item(client: TestClient, superuser_token_headers: dict[str, str]) -> None"
+    },
+    {
+      "symbol_key": "python backend/tests/api/routes/test_items.py/test_read_item().",
+      "name": "test_read_item",
+      "qualified_name": "test_read_item",
+      "kind": "function",
+      "path": "backend/tests/api/routes/test_items.py",
+      "start_line": 27,
+      "end_line": 40,
+      "signature": "def test_read_item(client: TestClient, superuser_token_headers: dict[str, str], db: Session) -> None"
+    },
+    {
+      "symbol_key": "python backend/tests/api/routes/test_items.py/test_read_item_not_found().",
+      "name": "test_read_item_not_found",
+      "qualified_name": "test_read_item_not_found",
+      "kind": "function",
+      "path": "backend/tests/api/routes/test_items.py",
+      "start_line": 43,
+      "end_line": 52,
+      "signature": "def test_read_item_not_found(client: TestClient, superuser_token_headers: dict[str, str]) -> None"
+    },
+    {
+      "symbol_key": "python backend/tests/api/routes/test_items.py/test_read_item_not_enough_permissions().",
+      "name": "test_read_item_not_enough_permissions",
+      "qualified_name": "test_read_item_not_enough_permissions",
+      "kind": "function",
+      "path": "backend/tests/api/routes/test_items.py",
+      "start_line": 55,
+      "end_line": 65,
+      "signature": "def test_read_item_not_enough_permissions(client: TestClient, normal_user_token_headers: dict[str, str], db: Session) -> None"
+    },
+    {
+      "symbol_key": "python backend/tests/api/routes/test_items.py/test_read_items().",
+      "name": "test_read_items",
+      "qualified_name": "test_read_items",
+      "kind": "function",
+      "path": "backend/tests/api/routes/test_items.py",
+      "start_line": 68,
+      "end_line": 79,
+      "signature": "def test_read_items(client: TestClient, superuser_token_headers: dict[str, str], db: Session) -> None"
+    },
+    {
+      "symbol_key": "python backend/tests/api/routes/test_items.py/test_update_item().",
+      "name": "test_update_item",
+      "qualified_name": "test_update_item",
+      "kind": "function",
+      "path": "backend/tests/api/routes/test_items.py",
+      "start_line": 82,
+      "end_line": 97,
+      "signature": "def test_update_item(client: TestClient, superuser_token_headers: dict[str, str], db: Session) -> None"
+    },
+    {
+      "symbol_key": "python backend/tests/api/routes/test_items.py/test_update_item_not_found().",
+      "name": "test_update_item_not_found",
+      "qualified_name": "test_update_item_not_found",
+      "kind": "function",
+      "path": "backend/tests/api/routes/test_items.py",
+      "start_line": 100,
+      "end_line": 111,
+      "signature": "def test_update_item_not_found(client: TestClient, superuser_token_headers: dict[str, str]) -> None"
+    },
+    {
+      "symbol_key": "python backend/tests/api/routes/test_items.py/test_update_item_not_enough_permissions().",
+      "name": "test_update_item_not_enough_permissions",
+      "qualified_name": "test_update_item_not_enough_permissions",
+      "kind": "function",
+      "path": "backend/tests/api/routes/test_items.py",
+      "start_line": 114,
+      "end_line": 126,
+      "signature": "def test_update_item_not_enough_permissions(client: TestClient, normal_user_token_headers: dict[str, str], db: Session) -> None"
+    },
+    {
+      "symbol_key": "python backend/tests/api/routes/test_items.py/test_delete_item().",
+      "name": "test_delete_item",
+      "qualified_name": "test_delete_item",
+      "kind": "function",
+      "path": "backend/tests/api/routes/test_items.py",
+      "start_line": 129,
+      "end_line": 139,
+      "signature": "def test_delete_item(client: TestClient, superuser_token_headers: dict[str, str], db: Session) -> None"
+    },
+    {
+      "symbol_key": "python backend/tests/api/routes/test_items.py/test_delete_item_not_found().",
+      "name": "test_delete_item_not_found",
+      "qualified_name": "test_delete_item_not_found",
+      "kind": "function",
+      "path": "backend/tests/api/routes/test_items.py",
+      "start_line": 142,
+      "end_line": 151,
+      "signature": "def test_delete_item_not_found(client: TestClient, superuser_token_headers: dict[str, str]) -> None"
+    },
+    {
+      "symbol_key": "python backend/tests/api/routes/test_items.py/test_delete_item_not_enough_permissions().",
+      "name": "test_delete_item_not_enough_permissions",
+      "qualified_name": "test_delete_item_not_enough_permissions",
+      "kind": "function",
+      "path": "backend/tests/api/routes/test_items.py",
+      "start_line": 154,
+      "end_line": 164,
+      "signature": "def test_delete_item_not_enough_permissions(client: TestClient, normal_user_token_headers: dict[str, str], db: Session) -> None"
+    },
+    {
+      "symbol_key": "python backend/app/api/deps.py/reusable_oauth2.",
+      "name": "reusable_oauth2",
+      "qualified_name": "reusable_oauth2",
+      "kind": "variable",
+      "path": "backend/app/api/deps.py",
+      "start_line": 16,
+      "end_line": 18,
+      "signature": "reusable_oauth2 = OAuth2PasswordBearer("
+    },
+    {
+      "symbol_key": "python backend/app/api/deps.py/get_db().",
+      "name": "get_db",
+      "qualified_name": "get_db",
+      "kind": "function",
+      "path": "backend/app/api/deps.py",
+      "start_line": 21,
+      "end_line": 23,
+      "signature": "def get_db() -> Generator[Session]"
+    },
+    {
+      "symbol_key": "python backend/app/api/deps.py/SessionDep.",
+      "name": "SessionDep",
+      "qualified_name": "SessionDep",
+      "kind": "variable",
+      "path": "backend/app/api/deps.py",
+      "start_line": 26,
+      "end_line": 26,
+      "signature": "SessionDep = Annotated[Session, Depends(get_db)]"
+    },
+    {
+      "symbol_key": "python backend/app/api/deps.py/TokenDep.",
+      "name": "TokenDep",
+      "qualified_name": "TokenDep",
+      "kind": "variable",
+      "path": "backend/app/api/deps.py",
+      "start_line": 27,
+      "end_line": 27,
+      "signature": "TokenDep = Annotated[str, Depends(reusable_oauth2)]"
+    },
+    {
+      "symbol_key": "python backend/app/api/deps.py/get_current_user().",
+      "name": "get_current_user",
+      "qualified_name": "get_current_user",
+      "kind": "function",
+      "path": "backend/app/api/deps.py",
+      "start_line": 30,
+      "end_line": 46,
+      "signature": "def get_current_user(session: SessionDep, token: TokenDep) -> User"
+    },
+    {
+      "symbol_key": "python backend/app/api/deps.py/CurrentUser.",
+      "name": "CurrentUser",
+      "qualified_name": "CurrentUser",
+      "kind": "variable",
+      "path": "backend/app/api/deps.py",
+      "start_line": 49,
+      "end_line": 49,
+      "signature": "CurrentUser = Annotated[User, Depends(get_current_user)]"
+    },
+    {
+      "symbol_key": "python backend/app/api/deps.py/get_current_active_superuser().",
+      "name": "get_current_active_superuser",
+      "qualified_name": "get_current_active_superuser",
+      "kind": "function",
+      "path": "backend/app/api/deps.py",
+      "start_line": 52,
+      "end_line": 57,
+      "signature": "def get_current_active_superuser(current_user: CurrentUser) -> User"
+    },
+    {
+      "symbol_key": "python backend/app/api/main.py/api_router.",
+      "name": "api_router",
+      "qualified_name": "api_router",
+      "kind": "variable",
+      "path": "backend/app/api/main.py",
+      "start_line": 6,
+      "end_line": 6,
+      "signature": "api_router = APIRouter()"
+    },
+    {
+      "symbol_key": "python backend/app/api/routes/items.py/router.",
+      "name": "router",
+      "qualified_name": "router",
+      "kind": "variable",
+      "path": "backend/app/api/routes/items.py",
+      "start_line": 10,
+      "end_line": 10,
+      "signature": "router = APIRouter(prefix=\"/items\", tags=[\"items\"])"
+    },
+    {
+      "symbol_key": "python backend/app/api/routes/items.py/read_items().",
+      "name": "read_items",
+      "qualified_name": "read_items",
+      "kind": "function",
+      "path": "backend/app/api/routes/items.py",
+      "start_line": 13,
+      "end_line": 45,
+      "signature": "def read_items(session: SessionDep, current_user: CurrentUser, skip: int = 0, limit: int = 100) -> Any"
+    },
+    {
+      "symbol_key": "python backend/app/api/routes/items.py/read_item().",
+      "name": "read_item",
+      "qualified_name": "read_item",
+      "kind": "function",
+      "path": "backend/app/api/routes/items.py",
+      "start_line": 48,
+      "end_line": 58,
+      "signature": "def read_item(session: SessionDep, current_user: CurrentUser, id: uuid.UUID) -> Any"
+    },
+    {
+      "symbol_key": "python backend/app/api/routes/items.py/create_item().",
+      "name": "create_item",
+      "qualified_name": "create_item",
+      "kind": "function",
+      "path": "backend/app/api/routes/items.py",
+      "start_line": 61,
+      "end_line": 72,
+      "signature": "def create_item(*, session: SessionDep, current_user: CurrentUser, item_in: ItemCreate) -> Any"
+    },
+    {
+      "symbol_key": "python backend/app/api/routes/items.py/update_item().",
+      "name": "update_item",
+      "qualified_name": "update_item",
+      "kind": "function",
+      "path": "backend/app/api/routes/items.py",
+      "start_line": 75,
+      "end_line": 96,
+      "signature": "def update_item(*, session: SessionDep, current_user: CurrentUser, id: uuid.UUID, item_in: ItemUpdate,) -> Any"
+    },
+    {
+      "symbol_key": "python backend/app/api/routes/items.py/delete_item().",
+      "name": "delete_item",
+      "qualified_name": "delete_item",
+      "kind": "function",
+      "path": "backend/app/api/routes/items.py",
+      "start_line": 99,
+      "end_line": 113,
+      "signature": "def delete_item(session: SessionDep, current_user: CurrentUser, id: uuid.UUID) -> Message"
+    },
+    {
+      "symbol_key": "python backend/app/api/routes/login.py/router.",
+      "name": "router",
+      "qualified_name": "router",
+      "kind": "variable",
+      "path": "backend/app/api/routes/login.py",
+      "start_line": 20,
+      "end_line": 20,
+      "signature": "router = APIRouter(tags=[\"login\"])"
+    },
+    {
+      "symbol_key": "python backend/app/api/routes/login.py/login_access_token().",
+      "name": "login_access_token",
+      "qualified_name": "login_access_token",
+      "kind": "function",
+      "path": "backend/app/api/routes/login.py",
+      "start_line": 23,
+      "end_line": 42,
+      "signature": "def login_access_token(session: SessionDep, form_data: Annotated[OAuth2PasswordRequestForm, Depends()]) -> Token"
+    },
+    {
+      "symbol_key": "python backend/app/api/routes/login.py/test_token().",
+      "name": "test_token",
+      "qualified_name": "test_token",
+      "kind": "function",
+      "path": "backend/app/api/routes/login.py",
+      "start_line": 45,
+      "end_line": 50,
+      "signature": "def test_token(current_user: CurrentUser) -> Any"
+    },
+    {
+      "symbol_key": "python backend/app/api/routes/login.py/recover_password().",
+      "name": "recover_password",
+      "qualified_name": "recover_password",
+      "kind": "function",
+      "path": "backend/app/api/routes/login.py",
+      "start_line": 53,
+      "end_line": 74,
+      "signature": "def recover_password(email: str, session: SessionDep) -> Message"
+    },
+    {
+      "symbol_key": "python backend/app/api/routes/login.py/reset_password().",
+      "name": "reset_password",
+      "qualified_name": "reset_password",
+      "kind": "function",
+      "path": "backend/app/api/routes/login.py",
+      "start_line": 77,
+      "end_line": 97,
+      "signature": "def reset_password(session: SessionDep, body: NewPassword) -> Message"
+    },
+    {
+      "symbol_key": "python backend/app/api/routes/login.py/recover_password_html_content().",
+      "name": "recover_password_html_content",
+      "qualified_name": "recover_password_html_content",
+      "kind": "function",
+      "path": "backend/app/api/routes/login.py",
+      "start_line": 100,
+      "end_line": 123,
+      "signature": "def recover_password_html_content(email: str, session: SessionDep) -> Any"
+    },
+    {
+      "symbol_key": "python backend/app/api/routes/private.py/router.",
+      "name": "router",
+      "qualified_name": "router",
+      "kind": "variable",
+      "path": "backend/app/api/routes/private.py",
+      "start_line": 13,
+      "end_line": 13,
+      "signature": "router = APIRouter(tags=[\"private\"], prefix=\"/private\")"
+    },
+    {
+      "symbol_key": "python backend/app/api/routes/private.py/PrivateUserCreate#",
+      "name": "PrivateUserCreate",
+      "qualified_name": "PrivateUserCreate",
+      "kind": "class",
+      "path": "backend/app/api/routes/private.py",
+      "start_line": 16,
+      "end_line": 20,
+      "signature": "class PrivateUserCreate(BaseModel)"
+    },
+    {
+      "symbol_key": "python backend/app/api/routes/private.py/create_user().",
+      "name": "create_user",
+      "qualified_name": "create_user",
+      "kind": "function",
+      "path": "backend/app/api/routes/private.py",
+      "start_line": 23,
+      "end_line": 38,
+      "signature": "def create_user(user_in: PrivateUserCreate, session: SessionDep) -> Any"
+    },
+    {
+      "symbol_key": "python backend/app/api/routes/users.py/router.",
+      "name": "router",
+      "qualified_name": "router",
+      "kind": "variable",
+      "path": "backend/app/api/routes/users.py",
+      "start_line": 29,
+      "end_line": 29,
+      "signature": "router = APIRouter(prefix=\"/users\", tags=[\"users\"])"
+    },
+    {
+      "symbol_key": "python backend/app/api/routes/users.py/read_users().",
+      "name": "read_users",
+      "qualified_name": "read_users",
+      "kind": "function",
+      "path": "backend/app/api/routes/users.py",
+      "start_line": 32,
+      "end_line": 51,
+      "signature": "def read_users(session: SessionDep, skip: int = 0, limit: int = 100) -> Any"
+    },
+    {
+      "symbol_key": "python backend/app/api/routes/users.py/create_user().",
+      "name": "create_user",
+      "qualified_name": "create_user",
+      "kind": "function",
+      "path": "backend/app/api/routes/users.py",
+      "start_line": 54,
+      "end_line": 78,
+      "signature": "def create_user(*, session: SessionDep, user_in: UserCreate) -> Any"
+    },
+    {
+      "symbol_key": "python backend/app/api/routes/users.py/update_user_me().",
+      "name": "update_user_me",
+      "qualified_name": "update_user_me",
+      "kind": "function",
+      "path": "backend/app/api/routes/users.py",
+      "start_line": 81,
+      "end_line": 100,
+      "signature": "def update_user_me(*, session: SessionDep, user_in: UserUpdateMe, current_user: CurrentUser) -> Any"
+    },
+    {
+      "symbol_key": "python backend/app/api/routes/users.py/update_password_me().",
+      "name": "update_password_me",
+      "qualified_name": "update_password_me",
+      "kind": "function",
+      "path": "backend/app/api/routes/users.py",
+      "start_line": 103,
+      "end_line": 121,
+      "signature": "def update_password_me(*, session: SessionDep, body: UpdatePassword, current_user: CurrentUser) -> Any"
+    },
+    {
+      "symbol_key": "python backend/app/api/routes/users.py/read_user_me().",
+      "name": "read_user_me",
+      "qualified_name": "read_user_me",
+      "kind": "function",
+      "path": "backend/app/api/routes/users.py",
+      "start_line": 124,
+      "end_line": 129,
+      "signature": "def read_user_me(current_user: CurrentUser) -> Any"
+    },
+    {
+      "symbol_key": "python backend/app/api/routes/users.py/delete_user_me().",
+      "name": "delete_user_me",
+      "qualified_name": "delete_user_me",
+      "kind": "function",
+      "path": "backend/app/api/routes/users.py",
+      "start_line": 132,
+      "end_line": 143,
+      "signature": "def delete_user_me(session: SessionDep, current_user: CurrentUser) -> Any"
+    },
+    {
+      "symbol_key": "python backend/app/api/routes/users.py/register_user().",
+      "name": "register_user",
+      "qualified_name": "register_user",
+      "kind": "function",
+      "path": "backend/app/api/routes/users.py",
+      "start_line": 146,
+      "end_line": 159,
+      "signature": "def register_user(session: SessionDep, user_in: UserRegister) -> Any"
+    },
+    {
+      "symbol_key": "python backend/app/api/routes/users.py/read_user_by_id().",
+      "name": "read_user_by_id",
+      "qualified_name": "read_user_by_id",
+      "kind": "function",
+      "path": "backend/app/api/routes/users.py",
+      "start_line": 162,
+      "end_line": 179,
+      "signature": "def read_user_by_id(user_id: uuid.UUID, session: SessionDep, current_user: CurrentUser) -> Any"
+    },
+    {
+      "symbol_key": "python backend/app/api/routes/users.py/update_user().",
+      "name": "update_user",
+      "qualified_name": "update_user",
+      "kind": "function",
+      "path": "backend/app/api/routes/users.py",
+      "start_line": 182,
+      "end_line": 211,
+      "signature": "def update_user(*, session: SessionDep, user_id: uuid.UUID, user_in: UserUpdate,) -> Any"
+    },
+    {
+      "symbol_key": "python backend/app/api/routes/users.py/delete_user().",
+      "name": "delete_user",
+      "qualified_name": "delete_user",
+      "kind": "function",
+      "path": "backend/app/api/routes/users.py",
+      "start_line": 214,
+      "end_line": 232,
+      "signature": "def delete_user(session: SessionDep, current_user: CurrentUser, user_id: uuid.UUID) -> Message"
+    },
+    {
+      "symbol_key": "python backend/app/api/routes/utils.py/router.",
+      "name": "router",
+      "qualified_name": "router",
+      "kind": "variable",
+      "path": "backend/app/api/routes/utils.py",
+      "start_line": 8,
+      "end_line": 8,
+      "signature": "router = APIRouter(prefix=\"/utils\", tags=[\"utils\"])"
+    },
+    {
+      "symbol_key": "python backend/app/api/routes/utils.py/test_email().",
+      "name": "test_email",
+      "qualified_name": "test_email",
+      "kind": "function",
+      "path": "backend/app/api/routes/utils.py",
+      "start_line": 11,
+      "end_line": 26,
+      "signature": "def test_email(email_to: EmailStr) -> Message"
+    },
+    {
+      "symbol_key": "python backend/app/api/routes/utils.py/health_check().",
+      "name": "health_check",
+      "qualified_name": "health_check",
+      "kind": "function",
+      "path": "backend/app/api/routes/utils.py",
+      "start_line": 29,
+      "end_line": 31,
+      "signature": "async def health_check() -> bool"
+    },
+    {
+      "symbol_key": "python backend/app/core/config.py/Settings#",
+      "name": "Settings",
+      "qualified_name": "Settings",
+      "kind": "class",
+      "path": "backend/app/core/config.py",
+      "start_line": 15,
+      "end_line": 88,
+      "signature": "class Settings(BaseSettings)"
+    },
+    {
+      "symbol_key": "python backend/app/core/config.py/Settings#_use_psycopg_driver().",
+      "name": "_use_psycopg_driver",
+      "qualified_name": "Settings._use_psycopg_driver",
+      "kind": "method",
+      "path": "backend/app/core/config.py",
+      "start_line": 33,
+      "end_line": 40,
+      "signature": "def _use_psycopg_driver(cls, value: str | PostgresDsn) -> str"
+    },
+    {
+      "symbol_key": "python backend/app/core/config.py/Settings#_set_default_emails_from().",
+      "name": "_set_default_emails_from",
+      "qualified_name": "Settings._set_default_emails_from",
+      "kind": "method",
+      "path": "backend/app/core/config.py",
+      "start_line": 51,
+      "end_line": 55,
+      "signature": "def _set_default_emails_from(self) -> Self"
+    },
+    {
+      "symbol_key": "python backend/app/core/config.py/Settings#emails_enabled().",
+      "name": "emails_enabled",
+      "qualified_name": "Settings.emails_enabled",
+      "kind": "method",
+      "path": "backend/app/core/config.py",
+      "start_line": 59,
+      "end_line": 62,
+      "signature": "def emails_enabled(self) -> bool"
+    },
+    {
+      "symbol_key": "python backend/app/core/config.py/Settings#_check_default_secret().",
+      "name": "_check_default_secret",
+      "qualified_name": "Settings._check_default_secret",
+      "kind": "method",
+      "path": "backend/app/core/config.py",
+      "start_line": 68,
+      "end_line": 77,
+      "signature": "def _check_default_secret(self, var_name: str, value: str | None) -> None"
+    },
+    {
+      "symbol_key": "python backend/app/core/config.py/Settings#_enforce_non_default_secrets().",
+      "name": "_enforce_non_default_secrets",
+      "qualified_name": "Settings._enforce_non_default_secrets",
+      "kind": "method",
+      "path": "backend/app/core/config.py",
+      "start_line": 79,
+      "end_line": 88,
+      "signature": "def _enforce_non_default_secrets(self) -> Self"
+    },
+    {
+      "symbol_key": "python backend/app/core/config.py/settings.",
+      "name": "settings",
+      "qualified_name": "settings",
+      "kind": "variable",
+      "path": "backend/app/core/config.py",
+      "start_line": 91,
+      "end_line": 91,
+      "signature": "settings = Settings() # type: ignore # ty: ignore[unused-ignore-comment]"
+    },
+    {
+      "symbol_key": "python backend/app/core/db.py/engine.",
+      "name": "engine",
+      "qualified_name": "engine",
+      "kind": "variable",
+      "path": "backend/app/core/db.py",
+      "start_line": 7,
+      "end_line": 7,
+      "signature": "engine = create_engine(str(settings.DATABASE_URL), pool_pre_ping=True)"
+    },
+    {
+      "symbol_key": "python backend/app/core/db.py/init_db().",
+      "name": "init_db",
+      "qualified_name": "init_db",
+      "kind": "function",
+      "path": "backend/app/core/db.py",
+      "start_line": 15,
+      "end_line": 33,
+      "signature": "def init_db(session: Session) -> None"
+    },
+    {
+      "symbol_key": "python backend/app/core/security.py/password_hash.",
+      "name": "password_hash",
+      "qualified_name": "password_hash",
+      "kind": "variable",
+      "path": "backend/app/core/security.py",
+      "start_line": 11,
+      "end_line": 16,
+      "signature": "password_hash = PasswordHash("
+    },
+    {
+      "symbol_key": "python backend/app/core/security.py/ALGORITHM.",
+      "name": "ALGORITHM",
+      "qualified_name": "ALGORITHM",
+      "kind": "variable",
+      "path": "backend/app/core/security.py",
+      "start_line": 19,
+      "end_line": 19,
+      "signature": "ALGORITHM = \"HS256\""
+    },
+    {
+      "symbol_key": "python backend/app/core/security.py/create_access_token().",
+      "name": "create_access_token",
+      "qualified_name": "create_access_token",
+      "kind": "function",
+      "path": "backend/app/core/security.py",
+      "start_line": 22,
+      "end_line": 26,
+      "signature": "def create_access_token(subject: str | Any, expires_delta: timedelta) -> str"
+    },
+    {
+      "symbol_key": "python backend/app/core/security.py/verify_password().",
+      "name": "verify_password",
+      "qualified_name": "verify_password",
+      "kind": "function",
+      "path": "backend/app/core/security.py",
+      "start_line": 29,
+      "end_line": 32,
+      "signature": "def verify_password(plain_password: str, hashed_password: str) -> tuple[bool, str | None]"
+    },
+    {
+      "symbol_key": "python backend/app/core/security.py/get_password_hash().",
+      "name": "get_password_hash",
+      "qualified_name": "get_password_hash",
+      "kind": "function",
+      "path": "backend/app/core/security.py",
+      "start_line": 35,
+      "end_line": 36,
+      "signature": "def get_password_hash(password: str) -> str"
+    },
+    {
+      "symbol_key": "python backend/app/crud.py/create_user().",
+      "name": "create_user",
+      "qualified_name": "create_user",
+      "kind": "function",
+      "path": "backend/app/crud.py",
+      "start_line": 10,
+      "end_line": 17,
+      "signature": "def create_user(*, session: Session, user_create: UserCreate) -> User"
+    },
+    {
+      "symbol_key": "python backend/app/crud.py/update_user().",
+      "name": "update_user",
+      "qualified_name": "update_user",
+      "kind": "function",
+      "path": "backend/app/crud.py",
+      "start_line": 20,
+      "end_line": 31,
+      "signature": "def update_user(*, session: Session, db_user: User, user_in: UserUpdate) -> Any"
+    },
+    {
+      "symbol_key": "python backend/app/crud.py/get_user_by_email().",
+      "name": "get_user_by_email",
+      "qualified_name": "get_user_by_email",
+      "kind": "function",
+      "path": "backend/app/crud.py",
+      "start_line": 34,
+      "end_line": 37,
+      "signature": "def get_user_by_email(*, session: Session, email: str) -> User | None"
+    },
+    {
+      "symbol_key": "python backend/app/crud.py/DUMMY_HASH.",
+      "name": "DUMMY_HASH",
+      "qualified_name": "DUMMY_HASH",
+      "kind": "variable",
+      "path": "backend/app/crud.py",
+      "start_line": 42,
+      "end_line": 42,
+      "signature": "DUMMY_HASH = \"$argon2id$v=19$m=65536,t=3,p=4$MjQyZWE1MzBjYjJlZTI0Yw$YTU4NGM5ZTZmYjE2NzZlZjY0ZWY3ZGRkY2U2OWFjNjk\""
+    },
+    {
+      "symbol_key": "python backend/app/crud.py/authenticate().",
+      "name": "authenticate",
+      "qualified_name": "authenticate",
+      "kind": "function",
+      "path": "backend/app/crud.py",
+      "start_line": 45,
+      "end_line": 60,
+      "signature": "def authenticate(*, session: Session, email: str, password: str) -> User | None"
+    },
+    {
+      "symbol_key": "python backend/app/crud.py/create_item().",
+      "name": "create_item",
+      "qualified_name": "create_item",
+      "kind": "function",
+      "path": "backend/app/crud.py",
+      "start_line": 63,
+      "end_line": 68,
+      "signature": "def create_item(*, session: Session, item_in: ItemCreate, owner_id: uuid.UUID) -> Item"
+    },
+    {
+      "symbol_key": "python backend/app/initial_data.py/logger.",
+      "name": "logger",
+      "qualified_name": "logger",
+      "kind": "variable",
+      "path": "backend/app/initial_data.py",
+      "start_line": 8,
+      "end_line": 8,
+      "signature": "logger = logging.getLogger(__name__)"
+    },
+    {
+      "symbol_key": "python backend/app/initial_data.py/init().",
+      "name": "init",
+      "qualified_name": "init",
+      "kind": "function",
+      "path": "backend/app/initial_data.py",
+      "start_line": 11,
+      "end_line": 13,
+      "signature": "def init() -> None"
+    },
+    {
+      "symbol_key": "python backend/app/initial_data.py/main().",
+      "name": "main",
+      "qualified_name": "main",
+      "kind": "function",
+      "path": "backend/app/initial_data.py",
+      "start_line": 16,
+      "end_line": 19,
+      "signature": "def main() -> None"
+    },
+    {
+      "symbol_key": "python backend/app/main.py/FRONTEND_DIR.",
+      "name": "FRONTEND_DIR",
+      "qualified_name": "FRONTEND_DIR",
+      "kind": "variable",
+      "path": "backend/app/main.py",
+      "start_line": 11,
+      "end_line": 11,
+      "signature": "FRONTEND_DIR = Path(__file__).parent / \"frontend\""
+    },
+    {
+      "symbol_key": "python backend/app/main.py/custom_generate_unique_id().",
+      "name": "custom_generate_unique_id",
+      "qualified_name": "custom_generate_unique_id",
+      "kind": "function",
+      "path": "backend/app/main.py",
+      "start_line": 14,
+      "end_line": 15,
+      "signature": "def custom_generate_unique_id(route: APIRoute) -> str"
+    },
+    {
+      "symbol_key": "python backend/app/main.py/app.",
+      "name": "app",
+      "qualified_name": "app",
+      "kind": "variable",
+      "path": "backend/app/main.py",
+      "start_line": 21,
+      "end_line": 25,
+      "signature": "app = FastAPI("
+    },
+    {
+      "symbol_key": "python backend/app/models.py/get_datetime_utc().",
+      "name": "get_datetime_utc",
+      "qualified_name": "get_datetime_utc",
+      "kind": "function",
+      "path": "backend/app/models.py",
+      "start_line": 8,
+      "end_line": 9,
+      "signature": "def get_datetime_utc() -> datetime"
+    },
+    {
+      "symbol_key": "python backend/app/models.py/UserBase#",
+      "name": "UserBase",
+      "qualified_name": "UserBase",
+      "kind": "class",
+      "path": "backend/app/models.py",
+      "start_line": 13,
+      "end_line": 17,
+      "signature": "class UserBase(SQLModel)"
+    },
+    {
+      "symbol_key": "python backend/app/models.py/UserCreate#",
+      "name": "UserCreate",
+      "qualified_name": "UserCreate",
+      "kind": "class",
+      "path": "backend/app/models.py",
+      "start_line": 21,
+      "end_line": 22,
+      "signature": "class UserCreate(UserBase)"
+    },
+    {
+      "symbol_key": "python backend/app/models.py/UserRegister#",
+      "name": "UserRegister",
+      "qualified_name": "UserRegister",
+      "kind": "class",
+      "path": "backend/app/models.py",
+      "start_line": 25,
+      "end_line": 28,
+      "signature": "class UserRegister(SQLModel)"
+    },
+    {
+      "symbol_key": "python backend/app/models.py/UserUpdate#",
+      "name": "UserUpdate",
+      "qualified_name": "UserUpdate",
+      "kind": "class",
+      "path": "backend/app/models.py",
+      "start_line": 32,
+      "end_line": 37,
+      "signature": "class UserUpdate(SQLModel)"
+    },
+    {
+      "symbol_key": "python backend/app/models.py/UserUpdateMe#",
+      "name": "UserUpdateMe",
+      "qualified_name": "UserUpdateMe",
+      "kind": "class",
+      "path": "backend/app/models.py",
+      "start_line": 40,
+      "end_line": 42,
+      "signature": "class UserUpdateMe(SQLModel)"
+    },
+    {
+      "symbol_key": "python backend/app/models.py/UpdatePassword#",
+      "name": "UpdatePassword",
+      "qualified_name": "UpdatePassword",
+      "kind": "class",
+      "path": "backend/app/models.py",
+      "start_line": 45,
+      "end_line": 47,
+      "signature": "class UpdatePassword(SQLModel)"
+    },
+    {
+      "symbol_key": "python backend/app/models.py/User#",
+      "name": "User",
+      "qualified_name": "User",
+      "kind": "class",
+      "path": "backend/app/models.py",
+      "start_line": 51,
+      "end_line": 55,
+      "signature": "class User(UserBase, table=True)"
+    },
+    {
+      "symbol_key": "python backend/app/models.py/UserPublic#",
+      "name": "UserPublic",
+      "qualified_name": "UserPublic",
+      "kind": "class",
+      "path": "backend/app/models.py",
+      "start_line": 59,
+      "end_line": 61,
+      "signature": "class UserPublic(UserBase)"
+    },
+    {
+      "symbol_key": "python backend/app/models.py/UsersPublic#",
+      "name": "UsersPublic",
+      "qualified_name": "UsersPublic",
+      "kind": "class",
+      "path": "backend/app/models.py",
+      "start_line": 64,
+      "end_line": 66,
+      "signature": "class UsersPublic(SQLModel)"
+    },
+    {
+      "symbol_key": "python backend/app/models.py/ItemBase#",
+      "name": "ItemBase",
+      "qualified_name": "ItemBase",
+      "kind": "class",
+      "path": "backend/app/models.py",
+      "start_line": 70,
+      "end_line": 72,
+      "signature": "class ItemBase(SQLModel)"
+    },
+    {
+      "symbol_key": "python backend/app/models.py/ItemCreate#",
+      "name": "ItemCreate",
+      "qualified_name": "ItemCreate",
+      "kind": "class",
+      "path": "backend/app/models.py",
+      "start_line": 76,
+      "end_line": 77,
+      "signature": "class ItemCreate(ItemBase)"
+    },
+    {
+      "symbol_key": "python backend/app/models.py/ItemUpdate#",
+      "name": "ItemUpdate",
+      "qualified_name": "ItemUpdate",
+      "kind": "class",
+      "path": "backend/app/models.py",
+      "start_line": 81,
+      "end_line": 83,
+      "signature": "class ItemUpdate(SQLModel)"
+    },
+    {
+      "symbol_key": "python backend/app/models.py/Item#",
+      "name": "Item",
+      "qualified_name": "Item",
+      "kind": "class",
+      "path": "backend/app/models.py",
+      "start_line": 87,
+      "end_line": 93,
+      "signature": "class Item(ItemBase, table=True)"
+    },
+    {
+      "symbol_key": "python backend/app/models.py/ItemPublic#",
+      "name": "ItemPublic",
+      "qualified_name": "ItemPublic",
+      "kind": "class",
+      "path": "backend/app/models.py",
+      "start_line": 97,
+      "end_line": 100,
+      "signature": "class ItemPublic(ItemBase)"
+    },
+    {
+      "symbol_key": "python backend/app/models.py/ItemsPublic#",
+      "name": "ItemsPublic",
+      "qualified_name": "ItemsPublic",
+      "kind": "class",
+      "path": "backend/app/models.py",
+      "start_line": 103,
+      "end_line": 105,
+      "signature": "class ItemsPublic(SQLModel)"
+    },
+    {
+      "symbol_key": "python backend/app/models.py/Message#",
+      "name": "Message",
+      "qualified_name": "Message",
+      "kind": "class",
+      "path": "backend/app/models.py",
+      "start_line": 109,
+      "end_line": 110,
+      "signature": "class Message(SQLModel)"
+    },
+    {
+      "symbol_key": "python backend/app/models.py/Token#",
+      "name": "Token",
+      "qualified_name": "Token",
+      "kind": "class",
+      "path": "backend/app/models.py",
+      "start_line": 114,
+      "end_line": 116,
+      "signature": "class Token(SQLModel)"
+    },
+    {
+      "symbol_key": "python backend/app/models.py/TokenPayload#",
+      "name": "TokenPayload",
+      "qualified_name": "TokenPayload",
+      "kind": "class",
+      "path": "backend/app/models.py",
+      "start_line": 120,
+      "end_line": 121,
+      "signature": "class TokenPayload(SQLModel)"
+    },
+    {
+      "symbol_key": "python backend/app/models.py/NewPassword#",
+      "name": "NewPassword",
+      "qualified_name": "NewPassword",
+      "kind": "class",
+      "path": "backend/app/models.py",
+      "start_line": 124,
+      "end_line": 126,
+      "signature": "class NewPassword(SQLModel)"
+    },
+    {
+      "symbol_key": "python backend/app/utils.py/logger.",
+      "name": "logger",
+      "qualified_name": "logger",
+      "kind": "variable",
+      "path": "backend/app/utils.py",
+      "start_line": 16,
+      "end_line": 16,
+      "signature": "logger = logging.getLogger(__name__)"
+    },
+    {
+      "symbol_key": "python backend/app/utils.py/EmailData#",
+      "name": "EmailData",
+      "qualified_name": "EmailData",
+      "kind": "class",
+      "path": "backend/app/utils.py",
+      "start_line": 19,
+      "end_line": 22,
+      "signature": "class EmailData"
+    },
+    {
+      "symbol_key": "python backend/app/utils.py/render_email_template().",
+      "name": "render_email_template",
+      "qualified_name": "render_email_template",
+      "kind": "function",
+      "path": "backend/app/utils.py",
+      "start_line": 25,
+      "end_line": 31,
+      "signature": "def render_email_template(*, template_name: str, context: dict[str, Any]) -> str"
+    },
+    {
+      "symbol_key": "python backend/app/utils.py/send_email().",
+      "name": "send_email",
+      "qualified_name": "send_email",
+      "kind": "function",
+      "path": "backend/app/utils.py",
+      "start_line": 34,
+      "end_line": 57,
+      "signature": "def send_email(*, email_to: str, subject: str = \"\", html_content: str = \"\",) -> None"
+    },
+    {
+      "symbol_key": "python backend/app/utils.py/generate_test_email().",
+      "name": "generate_test_email",
+      "qualified_name": "generate_test_email",
+      "kind": "function",
+      "path": "backend/app/utils.py",
+      "start_line": 60,
+      "end_line": 67,
+      "signature": "def generate_test_email(email_to: str) -> EmailData"
+    },
+    {
+      "symbol_key": "python backend/app/utils.py/generate_reset_password_email().",
+      "name": "generate_reset_password_email",
+      "qualified_name": "generate_reset_password_email",
+      "kind": "function",
+      "path": "backend/app/utils.py",
+      "start_line": 70,
+      "end_line": 84,
+      "signature": "def generate_reset_password_email(email_to: str, email: str, token: str) -> EmailData"
+    },
+    {
+      "symbol_key": "python backend/app/utils.py/generate_new_account_email().",
+      "name": "generate_new_account_email",
+      "qualified_name": "generate_new_account_email",
+      "kind": "function",
+      "path": "backend/app/utils.py",
+      "start_line": 87,
+      "end_line": 102,
+      "signature": "def generate_new_account_email(email_to: str, username: str, password: str) -> EmailData"
+    },
+    {
+      "symbol_key": "python backend/app/utils.py/generate_password_reset_token().",
+      "name": "generate_password_reset_token",
+      "qualified_name": "generate_password_reset_token",
+      "kind": "function",
+      "path": "backend/app/utils.py",
+      "start_line": 105,
+      "end_line": 115,
+      "signature": "def generate_password_reset_token(email: str) -> str"
+    },
+    {
+      "symbol_key": "python backend/app/utils.py/verify_password_reset_token().",
+      "name": "verify_password_reset_token",
+      "qualified_name": "verify_password_reset_token",
+      "kind": "function",
+      "path": "backend/app/utils.py",
+      "start_line": 118,
+      "end_line": 125,
+      "signature": "def verify_password_reset_token(token: str) -> str | None"
+    },
+    {
+      "symbol_key": "typescript frontend/src/hooks/useAuth.ts/isLoggedIn().",
+      "name": "isLoggedIn",
+      "qualified_name": "isLoggedIn",
+      "kind": "function",
+      "path": "frontend/src/hooks/useAuth.ts",
+      "start_line": 14,
+      "end_line": 16,
+      "signature": "const isLoggedIn = () =>"
+    },
+    {
+      "symbol_key": "typescript frontend/src/hooks/useAuth.ts/useAuth().",
+      "name": "useAuth",
+      "qualified_name": "useAuth",
+      "kind": "hook",
+      "path": "frontend/src/hooks/useAuth.ts",
+      "start_line": 18,
+      "end_line": 67,
+      "signature": "const useAuth = () =>"
+    },
+    {
+      "symbol_key": "typescript frontend/src/routes/login.tsx/formSchema.",
+      "name": "formSchema",
+      "qualified_name": "formSchema",
+      "kind": "variable",
+      "path": "frontend/src/routes/login.tsx",
+      "start_line": 25,
+      "end_line": 31,
+      "signature": "const formSchema = z.object({"
+    },
+    {
+      "symbol_key": "typescript frontend/src/routes/login.tsx/Route.",
+      "name": "Route",
+      "qualified_name": "Route",
+      "kind": "variable",
+      "path": "frontend/src/routes/login.tsx",
+      "start_line": 35,
+      "end_line": 51,
+      "signature": "export const Route = createFileRoute(\"/login\")({"
+    },
+    {
+      "symbol_key": "typescript frontend/src/routes/login.tsx/Login().",
+      "name": "Login",
+      "qualified_name": "Login",
+      "kind": "component",
+      "path": "frontend/src/routes/login.tsx",
+      "start_line": 53,
+      "end_line": 142,
+      "signature": "function Login()"
+    },
+    {
+      "symbol_key": "typescript frontend/src/components/Common/DataTable.tsx/dataTableFeatures.",
+      "name": "dataTableFeatures",
+      "qualified_name": "dataTableFeatures",
+      "kind": "variable",
+      "path": "frontend/src/components/Common/DataTable.tsx",
+      "start_line": 34,
+      "end_line": 37,
+      "signature": "const dataTableFeatures = tableFeatures({"
+    },
+    {
+      "symbol_key": "typescript frontend/src/components/Common/DataTable.tsx/DataTable().",
+      "name": "DataTable",
+      "qualified_name": "DataTable",
+      "kind": "component",
+      "path": "frontend/src/components/Common/DataTable.tsx",
+      "start_line": 46,
+      "end_line": 200,
+      "signature": "export function DataTable<TData extends RowData>({ columns, data, }: DataTableProps<TData>)"
+    },
+    {
+      "symbol_key": "typescript frontend/src/main.tsx/handleApiError().",
+      "name": "handleApiError",
+      "qualified_name": "handleApiError",
+      "kind": "function",
+      "path": "frontend/src/main.tsx",
+      "start_line": 22,
+      "end_line": 30,
+      "signature": "const handleApiError = (error: Error) =>"
+    },
+    {
+      "symbol_key": "typescript frontend/src/main.tsx/queryClient.",
+      "name": "queryClient",
+      "qualified_name": "queryClient",
+      "kind": "variable",
+      "path": "frontend/src/main.tsx",
+      "start_line": 31,
+      "end_line": 38,
+      "signature": "const queryClient = new QueryClient({"
+    },
+    {
+      "symbol_key": "typescript frontend/src/main.tsx/router.",
+      "name": "router",
+      "qualified_name": "router",
+      "kind": "variable",
+      "path": "frontend/src/main.tsx",
+      "start_line": 40,
+      "end_line": 40,
+      "signature": "const router = createRouter({ routeTree })"
+    },
+    {
+      "symbol_key": "typescript frontend/src/components/ui/sidebar.tsx/SIDEBAR_COOKIE_NAME.",
+      "name": "SIDEBAR_COOKIE_NAME",
+      "qualified_name": "SIDEBAR_COOKIE_NAME",
+      "kind": "variable",
+      "path": "frontend/src/components/ui/sidebar.tsx",
+      "start_line": 26,
+      "end_line": 26,
+      "signature": "const SIDEBAR_COOKIE_NAME = \"sidebar_state\""
+    },
+    {
+      "symbol_key": "typescript frontend/src/components/ui/sidebar.tsx/SIDEBAR_COOKIE_MAX_AGE.",
+      "name": "SIDEBAR_COOKIE_MAX_AGE",
+      "qualified_name": "SIDEBAR_COOKIE_MAX_AGE",
+      "kind": "variable",
+      "path": "frontend/src/components/ui/sidebar.tsx",
+      "start_line": 27,
+      "end_line": 27,
+      "signature": "const SIDEBAR_COOKIE_MAX_AGE = 60 * 60 * 24 * 7"
+    },
+    {
+      "symbol_key": "typescript frontend/src/components/ui/sidebar.tsx/SIDEBAR_WIDTH.",
+      "name": "SIDEBAR_WIDTH",
+      "qualified_name": "SIDEBAR_WIDTH",
+      "kind": "variable",
+      "path": "frontend/src/components/ui/sidebar.tsx",
+      "start_line": 28,
+      "end_line": 28,
+      "signature": "const SIDEBAR_WIDTH = \"16rem\""
+    },
+    {
+      "symbol_key": "typescript frontend/src/components/ui/sidebar.tsx/SIDEBAR_WIDTH_MOBILE.",
+      "name": "SIDEBAR_WIDTH_MOBILE",
+      "qualified_name": "SIDEBAR_WIDTH_MOBILE",
+      "kind": "variable",
+      "path": "frontend/src/components/ui/sidebar.tsx",
+      "start_line": 29,
+      "end_line": 29,
+      "signature": "const SIDEBAR_WIDTH_MOBILE = \"18rem\""
+    },
+    {
+      "symbol_key": "typescript frontend/src/components/ui/sidebar.tsx/SIDEBAR_WIDTH_ICON.",
+      "name": "SIDEBAR_WIDTH_ICON",
+      "qualified_name": "SIDEBAR_WIDTH_ICON",
+      "kind": "variable",
+      "path": "frontend/src/components/ui/sidebar.tsx",
+      "start_line": 30,
+      "end_line": 30,
+      "signature": "const SIDEBAR_WIDTH_ICON = \"3rem\""
+    },
+    {
+      "symbol_key": "typescript frontend/src/components/ui/sidebar.tsx/SIDEBAR_KEYBOARD_SHORTCUT.",
+      "name": "SIDEBAR_KEYBOARD_SHORTCUT",
+      "qualified_name": "SIDEBAR_KEYBOARD_SHORTCUT",
+      "kind": "variable",
+      "path": "frontend/src/components/ui/sidebar.tsx",
+      "start_line": 31,
+      "end_line": 31,
+      "signature": "const SIDEBAR_KEYBOARD_SHORTCUT = \"b\""
+    },
+    {
+      "symbol_key": "typescript frontend/src/components/ui/sidebar.tsx/SidebarContext.",
+      "name": "SidebarContext",
+      "qualified_name": "SidebarContext",
+      "kind": "variable",
+      "path": "frontend/src/components/ui/sidebar.tsx",
+      "start_line": 43,
+      "end_line": 43,
+      "signature": "const SidebarContext = React.createContext<SidebarContextProps | null>(null)"
+    },
+    {
+      "symbol_key": "typescript frontend/src/components/ui/sidebar.tsx/useSidebar().",
+      "name": "useSidebar",
+      "qualified_name": "useSidebar",
+      "kind": "hook",
+      "path": "frontend/src/components/ui/sidebar.tsx",
+      "start_line": 45,
+      "end_line": 52,
+      "signature": "function useSidebar()"
+    },
+    {
+      "symbol_key": "typescript frontend/src/components/ui/sidebar.tsx/SidebarProvider().",
+      "name": "SidebarProvider",
+      "qualified_name": "SidebarProvider",
+      "kind": "component",
+      "path": "frontend/src/components/ui/sidebar.tsx",
+      "start_line": 54,
+      "end_line": 162,
+      "signature": "function SidebarProvider({ defaultOpen = true, open: openProp, onOpenChange: setOpenProp, className, style, children, ...props }: React.ComponentProps<\"div\"> & { defaultOpen?: boolean open?: boolean onOpenChange?: (open: boolean) => void })"
+    },
+    {
+      "symbol_key": "typescript frontend/src/components/ui/sidebar.tsx/Sidebar().",
+      "name": "Sidebar",
+      "qualified_name": "Sidebar",
+      "kind": "component",
+      "path": "frontend/src/components/ui/sidebar.tsx",
+      "start_line": 164,
+      "end_line": 264,
+      "signature": "function Sidebar({ side = \"left\", variant = \"sidebar\", collapsible = \"offcanvas\", className, children, ...props }: React.ComponentProps<\"div\"> & { side?: \"left\" | \"right\" variant?: \"sidebar\" | \"floating\" | \"inset\" collapsible?: \"offcanvas\" | \"icon\" | \"none\" })"
+    },
+    {
+      "symbol_key": "typescript frontend/src/components/ui/sidebar.tsx/SidebarTrigger().",
+      "name": "SidebarTrigger",
+      "qualified_name": "SidebarTrigger",
+      "kind": "component",
+      "path": "frontend/src/components/ui/sidebar.tsx",
+      "start_line": 266,
+      "end_line": 291,
+      "signature": "function SidebarTrigger({ className, onClick, ...props }: React.ComponentProps<typeof Button>)"
+    },
+    {
+      "symbol_key": "typescript frontend/src/components/ui/sidebar.tsx/SidebarRail().",
+      "name": "SidebarRail",
+      "qualified_name": "SidebarRail",
+      "kind": "component",
+      "path": "frontend/src/components/ui/sidebar.tsx",
+      "start_line": 293,
+      "end_line": 316,
+      "signature": "function SidebarRail({ className, ...props }: React.ComponentProps<\"button\">)"
+    },
+    {
+      "symbol_key": "typescript frontend/src/components/ui/sidebar.tsx/SidebarInset().",
+      "name": "SidebarInset",
+      "qualified_name": "SidebarInset",
+      "kind": "component",
+      "path": "frontend/src/components/ui/sidebar.tsx",
+      "start_line": 318,
+      "end_line": 330,
+      "signature": "function SidebarInset({ className, ...props }: React.ComponentProps<\"main\">)"
+    },
+    {
+      "symbol_key": "typescript frontend/src/components/ui/sidebar.tsx/SidebarInput().",
+      "name": "SidebarInput",
+      "qualified_name": "SidebarInput",
+      "kind": "component",
+      "path": "frontend/src/components/ui/sidebar.tsx",
+      "start_line": 332,
+      "end_line": 344,
+      "signature": "function SidebarInput({ className, ...props }: React.ComponentProps<typeof Input>)"
+    },
+    {
+      "symbol_key": "typescript frontend/src/components/ui/sidebar.tsx/SidebarHeader().",
+      "name": "SidebarHeader",
+      "qualified_name": "SidebarHeader",
+      "kind": "component",
+      "path": "frontend/src/components/ui/sidebar.tsx",
+      "start_line": 346,
+      "end_line": 355,
+      "signature": "function SidebarHeader({ className, ...props }: React.ComponentProps<\"div\">)"
+    },
+    {
+      "symbol_key": "typescript frontend/src/components/ui/sidebar.tsx/SidebarFooter().",
+      "name": "SidebarFooter",
+      "qualified_name": "SidebarFooter",
+      "kind": "component",
+      "path": "frontend/src/components/ui/sidebar.tsx",
+      "start_line": 357,
+      "end_line": 366,
+      "signature": "function SidebarFooter({ className, ...props }: React.ComponentProps<\"div\">)"
+    },
+    {
+      "symbol_key": "typescript frontend/src/components/ui/sidebar.tsx/SidebarSeparator().",
+      "name": "SidebarSeparator",
+      "qualified_name": "SidebarSeparator",
+      "kind": "component",
+      "path": "frontend/src/components/ui/sidebar.tsx",
+      "start_line": 368,
+      "end_line": 380,
+      "signature": "function SidebarSeparator({ className, ...props }: React.ComponentProps<typeof Separator>)"
+    },
+    {
+      "symbol_key": "typescript frontend/src/components/ui/sidebar.tsx/SidebarContent().",
+      "name": "SidebarContent",
+      "qualified_name": "SidebarContent",
+      "kind": "component",
+      "path": "frontend/src/components/ui/sidebar.tsx",
+      "start_line": 382,
+      "end_line": 394,
+      "signature": "function SidebarContent({ className, ...props }: React.ComponentProps<\"div\">)"
+    },
+    {
+      "symbol_key": "typescript frontend/src/components/ui/sidebar.tsx/SidebarGroup().",
+      "name": "SidebarGroup",
+      "qualified_name": "SidebarGroup",
+      "kind": "component",
+      "path": "frontend/src/components/ui/sidebar.tsx",
+      "start_line": 396,
+      "end_line": 405,
+      "signature": "function SidebarGroup({ className, ...props }: React.ComponentProps<\"div\">)"
+    },
+    {
+      "symbol_key": "typescript frontend/src/components/ui/sidebar.tsx/SidebarGroupLabel().",
+      "name": "SidebarGroupLabel",
+      "qualified_name": "SidebarGroupLabel",
+      "kind": "component",
+      "path": "frontend/src/components/ui/sidebar.tsx",
+      "start_line": 407,
+      "end_line": 426,
+      "signature": "function SidebarGroupLabel({ className, asChild = false, ...props }: React.ComponentProps<\"div\"> & { asChild?: boolean })"
+    },
+    {
+      "symbol_key": "typescript frontend/src/components/ui/sidebar.tsx/SidebarGroupAction().",
+      "name": "SidebarGroupAction",
+      "qualified_name": "SidebarGroupAction",
+      "kind": "component",
+      "path": "frontend/src/components/ui/sidebar.tsx",
+      "start_line": 428,
+      "end_line": 449,
+      "signature": "function SidebarGroupAction({ className, asChild = false, ...props }: React.ComponentProps<\"button\"> & { asChild?: boolean })"
+    },
+    {
+      "symbol_key": "typescript frontend/src/components/ui/sidebar.tsx/SidebarGroupContent().",
+      "name": "SidebarGroupContent",
+      "qualified_name": "SidebarGroupContent",
+      "kind": "component",
+      "path": "frontend/src/components/ui/sidebar.tsx",
+      "start_line": 451,
+      "end_line": 463,
+      "signature": "function SidebarGroupContent({ className, ...props }: React.ComponentProps<\"div\">)"
+    },
+    {
+      "symbol_key": "typescript frontend/src/components/ui/sidebar.tsx/SidebarMenu().",
+      "name": "SidebarMenu",
+      "qualified_name": "SidebarMenu",
+      "kind": "component",
+      "path": "frontend/src/components/ui/sidebar.tsx",
+      "start_line": 465,
+      "end_line": 474,
+      "signature": "function SidebarMenu({ className, ...props }: React.ComponentProps<\"ul\">)"
+    },
+    {
+      "symbol_key": "typescript frontend/src/components/ui/sidebar.tsx/SidebarMenuItem().",
+      "name": "SidebarMenuItem",
+      "qualified_name": "SidebarMenuItem",
+      "kind": "component",
+      "path": "frontend/src/components/ui/sidebar.tsx",
+      "start_line": 476,
+      "end_line": 485,
+      "signature": "function SidebarMenuItem({ className, ...props }: React.ComponentProps<\"li\">)"
+    },
+    {
+      "symbol_key": "typescript frontend/src/components/ui/sidebar.tsx/sidebarMenuButtonVariants.",
+      "name": "sidebarMenuButtonVariants",
+      "qualified_name": "sidebarMenuButtonVariants",
+      "kind": "variable",
+      "path": "frontend/src/components/ui/sidebar.tsx",
+      "start_line": 487,
+      "end_line": 507,
+      "signature": "const sidebarMenuButtonVariants = cva("
+    },
+    {
+      "symbol_key": "typescript frontend/src/components/ui/sidebar.tsx/SidebarMenuButton().",
+      "name": "SidebarMenuButton",
+      "qualified_name": "SidebarMenuButton",
+      "kind": "component",
+      "path": "frontend/src/components/ui/sidebar.tsx",
+      "start_line": 509,
+      "end_line": 557,
+      "signature": "function SidebarMenuButton({ asChild = false, isActive = false, variant = \"default\", size = \"default\", tooltip, className, ...props }: React.ComponentProps<\"button\"> & { asChild?: boolean isActive?: boolean tooltip?: string | React.ComponentProps<typeof TooltipContent> } & VariantProps<typeof sidebarMenuButtonVariants>)"
+    },
+    {
+      "symbol_key": "typescript frontend/src/components/ui/sidebar.tsx/SidebarMenuAction().",
+      "name": "SidebarMenuAction",
+      "qualified_name": "SidebarMenuAction",
+      "kind": "component",
+      "path": "frontend/src/components/ui/sidebar.tsx",
+      "start_line": 559,
+      "end_line": 589,
+      "signature": "function SidebarMenuAction({ className, asChild = false, showOnHover = false, ...props }: React.ComponentProps<\"button\"> & { asChild?: boolean showOnHover?: boolean })"
+    },
+    {
+      "symbol_key": "typescript frontend/src/components/ui/sidebar.tsx/SidebarMenuBadge().",
+      "name": "SidebarMenuBadge",
+      "qualified_name": "SidebarMenuBadge",
+      "kind": "component",
+      "path": "frontend/src/components/ui/sidebar.tsx",
+      "start_line": 591,
+      "end_line": 611,
+      "signature": "function SidebarMenuBadge({ className, ...props }: React.ComponentProps<\"div\">)"
+    },
+    {
+      "symbol_key": "typescript frontend/src/components/ui/sidebar.tsx/SidebarMenuSkeleton().",
+      "name": "SidebarMenuSkeleton",
+      "qualified_name": "SidebarMenuSkeleton",
+      "kind": "component",
+      "path": "frontend/src/components/ui/sidebar.tsx",
+      "start_line": 613,
+      "end_line": 649,
+      "signature": "function SidebarMenuSkeleton({ className, showIcon = false, ...props }: React.ComponentProps<\"div\"> & { showIcon?: boolean })"
+    },
+    {
+      "symbol_key": "typescript frontend/src/components/ui/sidebar.tsx/SidebarMenuSub().",
+      "name": "SidebarMenuSub",
+      "qualified_name": "SidebarMenuSub",
+      "kind": "component",
+      "path": "frontend/src/components/ui/sidebar.tsx",
+      "start_line": 651,
+      "end_line": 664,
+      "signature": "function SidebarMenuSub({ className, ...props }: React.ComponentProps<\"ul\">)"
+    },
+    {
+      "symbol_key": "typescript frontend/src/components/ui/sidebar.tsx/SidebarMenuSubItem().",
+      "name": "SidebarMenuSubItem",
+      "qualified_name": "SidebarMenuSubItem",
+      "kind": "component",
+      "path": "frontend/src/components/ui/sidebar.tsx",
+      "start_line": 666,
+      "end_line": 678,
+      "signature": "function SidebarMenuSubItem({ className, ...props }: React.ComponentProps<\"li\">)"
+    },
+    {
+      "symbol_key": "typescript frontend/src/components/ui/sidebar.tsx/SidebarMenuSubButton().",
+      "name": "SidebarMenuSubButton",
+      "qualified_name": "SidebarMenuSubButton",
+      "kind": "component",
+      "path": "frontend/src/components/ui/sidebar.tsx",
+      "start_line": 680,
+      "end_line": 710,
+      "signature": "function SidebarMenuSubButton({ asChild = false, size = \"md\", isActive = false, className, ...props }: React.ComponentProps<\"a\"> & { asChild?: boolean size?: \"sm\" | \"md\" isActive?: boolean })"
+    }
+  ]
+}

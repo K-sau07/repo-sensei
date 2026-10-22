@@ -1,10 +1,11 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { $api } from "@/lib/api/client";
 import { ApiError, networkError } from "@/lib/api/errors";
+import { historyKey } from "@/lib/palette/history";
 
 import { queryKeys } from "./keys";
-import { loginUrlFor, makeQueryClient, shouldRetry } from "./provider";
+import { loginUrlFor, makeQueryClient, sessionExpired, shouldRetry } from "./provider";
 
 const apiError = (status: number) => new ApiError({ status, code: "x", message: "x" });
 
@@ -48,5 +49,48 @@ describe("queryKeys", () => {
         params: { path: { org: "acme" } },
       }).queryKey,
     );
+  });
+});
+
+describe("sessionExpired", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  function browser(pathname: string) {
+    const values = new Map([
+      [historyKey("user-1"), "[]"],
+      ["sensei.shell.v1", "{}"],
+    ]);
+    const assign = vi.fn();
+    vi.stubGlobal("window", {
+      location: { pathname, search: "", assign },
+      setTimeout: globalThis.setTimeout,
+      localStorage: {
+        get length() {
+          return values.size;
+        },
+        key: (index: number) => [...values.keys()][index] ?? null,
+        removeItem: (key: string) => values.delete(key),
+      },
+    });
+    return { values, assign };
+  }
+
+  it("forgets the palette's history, then goes to sign-in keeping where they were", async () => {
+    vi.useFakeTimers();
+    const { values, assign } = browser("/acme/api/code");
+    sessionExpired();
+    expect([...values.keys()]).toEqual(["sensei.shell.v1"]);
+    await vi.runAllTimersAsync();
+    expect(assign).toHaveBeenCalledWith("/login?next=%2Facme%2Fapi%2Fcode");
+  });
+
+  it("forgets it on the sign-in page too (where it doesn't redirect)", () => {
+    const { values, assign } = browser("/login");
+    sessionExpired();
+    expect(values.has(historyKey("user-1"))).toBe(false);
+    expect(assign).not.toHaveBeenCalled();
   });
 });

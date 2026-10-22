@@ -6,6 +6,7 @@ import { toast } from "sonner";
 
 import { onAuthExpired } from "@/lib/api/auth-events";
 import { ApiError } from "@/lib/api/errors";
+import { clearHistory } from "@/lib/palette/history";
 
 const Devtools =
   process.env.NODE_ENV === "development"
@@ -41,22 +42,25 @@ export function loginUrlFor(location: Pick<Location, "pathname" | "search">): st
   return `/login?next=${encodeURIComponent(next)}`;
 }
 
+/**
+ * A session ended (an API call answered 401 `session_expired`). What this browser remembers of
+ * it goes (the palette's recent places), then we say why and go to sign-in, keeping where they
+ * were in ?next.
+ */
+export function sessionExpired(): void {
+  clearHistory();
+  const target = loginUrlFor(window.location);
+  if (!target) return;
+  toast.error("Your session ended. Sign in again to continue.", { id: "session-expired" });
+  window.setTimeout(() => {
+    window.location.assign(target);
+  }, SESSION_EXPIRED_REDIRECT_MS);
+}
+
 export function QueryProvider({ children }: { children: ReactNode }) {
   const [queryClient] = useState(makeQueryClient);
 
-  useEffect(
-    () =>
-      onAuthExpired(() => {
-        const target = loginUrlFor(window.location);
-        if (!target) return;
-        // Say why before moving, then keep where they were in ?next.
-        toast.error("Your session ended. Sign in again to continue.", { id: "session-expired" });
-        window.setTimeout(() => {
-          window.location.assign(target);
-        }, SESSION_EXPIRED_REDIRECT_MS);
-      }),
-    [],
-  );
+  useEffect(() => onAuthExpired(sessionExpired), []);
 
   return (
     <QueryClientProvider client={queryClient}>

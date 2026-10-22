@@ -2,6 +2,8 @@
 
 import { Suspense, useEffect, type ReactNode } from "react";
 
+import { PaletteHistoryRecorder } from "@/components/palette/history-recorder";
+
 import { CommandBar } from "./command-bar";
 import { MobileBottomBar, MobileTopBar } from "./mobile-nav";
 import { OrgEventsStream } from "./org-events-stream";
@@ -52,6 +54,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       <ShortcutsSheet />
       <Suspense fallback={null}>
         <CommandBar />
+        <PaletteHistoryRecorder />
         <ShellHotkeys />
         <RememberLastOrg />
         <OrgEventsStream />

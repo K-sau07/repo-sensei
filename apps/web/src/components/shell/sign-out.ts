@@ -2,6 +2,7 @@ import { toast } from "sonner";
 
 import { api } from "@/lib/api/client";
 import { ApiError } from "@/lib/api/errors";
+import { clearHistory } from "@/lib/palette/history";
 
 /**
  * End this session, then go to ``to`` (home) with a full page load so no signed-in data stays in
@@ -19,6 +20,8 @@ export async function signOut(to: `/${string}` = "/"): Promise<boolean> {
       return false;
     }
   }
+  // What this browser remembers of the session's places goes with it (a shared computer).
+  clearHistory();
   // A full load on purpose (not router.push): it drops every cached query and store.
   window.location.assign(to);
   return true;

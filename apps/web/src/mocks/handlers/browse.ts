@@ -27,7 +27,7 @@ interface Params {
   repo: string;
 }
 
-function validationFailed(field: string, message: string) {
+export function validationFailed(field: string, message: string) {
   return apiError(422, "validation_failed", "Request validation failed.", [
     { loc: ["query", field], msg: message, type: "value_error" },
   ]);
@@ -94,7 +94,7 @@ function metadata(file: MockFile, commit: string) {
 }
 
 /** The repository and the commit to read, or the error response. */
-function target(params: Params, request: Request) {
+export function target(params: Params, request: Request) {
   const repo = repoOf(params.org, params.repo);
   if (repo instanceof Response) return repo;
   const url = new URL(request.url);

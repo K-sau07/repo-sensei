@@ -18,7 +18,7 @@ const RESET_AFTER_MS = 2000;
 
 type CopyState = { status: "idle" } | { status: "copied" | "failed"; at: number };
 
-async function writeClipboard(value: string): Promise<void> {
+export async function writeClipboard(value: string): Promise<void> {
   // navigator.clipboard is missing outside secure contexts (plain http on a LAN address).
   if (typeof navigator === "undefined" || !("clipboard" in navigator)) {
     throw new Error("Clipboard unavailable");
