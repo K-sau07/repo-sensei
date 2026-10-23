@@ -94,7 +94,9 @@ def load_renamed(checkouts: Path) -> dict[str, PinnedRepo]:
     folder, or wherever ``--out`` put them): each ``<id>.mapping.json`` beside a copy ``<id>``
     pins that copy to the commit it was given. The id is the one stored in the mapping (older
     mappings without one go by their file name); a mapping whose id disagrees with its file
-    name, or whose copy is missing, pins nothing."""
+    name, or whose copy is missing, pins nothing. ``checkouts`` may be relative (``--checkouts
+    DIR``): the copies' URLs are absolute."""
+    checkouts = checkouts.resolve()
     found: dict[str, PinnedRepo] = {}
     for path in sorted(checkouts.glob(f"*{MAPPING_SUFFIX}")):
         mapping = read_mapping(path)

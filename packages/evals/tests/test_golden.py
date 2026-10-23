@@ -543,3 +543,13 @@ def test_load_renamed(tmp_path: Path) -> None:
     assert sorted(found) == ["copy", "old"]
     assert found["copy"].sha == SHA
     assert found["copy"].url == (tmp_path / "copy").as_uri()
+
+
+def test_load_renamed_relative_folder(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    (tmp_path / "copies" / "copy").mkdir(parents=True)
+    mapping_path(tmp_path / "copies", "copy").write_text(
+        f'{{"repo": "copy", "sha": "{SHA}"}}', encoding="utf-8"
+    )
+    monkeypatch.chdir(tmp_path)
+    found = load_renamed(Path("copies"))
+    assert found["copy"].url == (tmp_path / "copies" / "copy").resolve().as_uri()
