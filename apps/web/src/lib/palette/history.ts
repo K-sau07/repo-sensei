@@ -15,6 +15,9 @@ export const HISTORY_CAP = 50;
 /** A visit right after a pick (or a reload) is the same use, not another one. */
 export const REPEAT_WINDOW_MS = 5_000;
 const MAX_TEXT = 300;
+/** Ids and hrefs carry a path (up to 4,096 characters, longer once encoded) and a commit. */
+const MAX_LOCATION = 16_384;
+const MAX_PATH = 4096;
 const KINDS = new Set<PaletteKind>(["page", "repo", "file", "dir", "symbol", "action"]);
 
 export interface HistoryEntry {
@@ -45,8 +48,9 @@ function defaultStorage(): StorageLike | null {
   }
 }
 
-const text = (value: unknown): value is string =>
-  typeof value === "string" && value.length > 0 && value.length <= MAX_TEXT;
+const text = (value: unknown, max = MAX_TEXT): value is string =>
+  typeof value === "string" && value.length > 0 && value.length <= max;
+const location = (value: unknown): value is string => text(value, MAX_LOCATION);
 
 // Any origin works: a path that stays on it stays on ours.
 const ORIGIN = "https://palette.invalid";
@@ -64,7 +68,7 @@ function hasUnsafeCharacter(value: string): boolean {
 /** Only paths on this site: "/acme/api", never "//evil.example", "/\t/evil.example" or
  * "javascript:…". */
 export function isSafeHref(value: unknown): value is string {
-  if (!text(value) || !value.startsWith("/") || value.startsWith("//")) return false;
+  if (!location(value) || !value.startsWith("/") || value.startsWith("//")) return false;
   if (hasUnsafeCharacter(value)) return false;
   try {
     return new URL(value, ORIGIN).origin === ORIGIN;
@@ -77,7 +81,7 @@ export function isSafeHref(value: unknown): value is string {
 export function parseEntry(value: unknown): HistoryEntry | null {
   if (typeof value !== "object" || value === null) return null;
   const raw = value as Record<string, unknown>;
-  if (!text(raw.id) || !text(raw.title) || !text(raw.org)) return null;
+  if (!location(raw.id) || !text(raw.title) || !text(raw.org)) return null;
   if (typeof raw.kind !== "string" || !KINDS.has(raw.kind as PaletteKind)) return null;
   if (typeof raw.at !== "number" || !Number.isFinite(raw.at) || raw.at <= 0) return null;
   const count =
@@ -93,7 +97,7 @@ export function parseEntry(value: unknown): HistoryEntry | null {
     ...(isSafeHref(raw.href) ? { href: raw.href } : {}),
     org: raw.org,
     ...(text(raw.repo) ? { repo: raw.repo } : {}),
-    ...(typeof raw.path === "string" && raw.path.length <= 4096 ? { path: raw.path } : {}),
+    ...(typeof raw.path === "string" && raw.path.length <= MAX_PATH ? { path: raw.path } : {}),
     at: raw.at,
     count,
   };

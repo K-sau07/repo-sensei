@@ -177,7 +177,7 @@ describe("merging server results", () => {
     expect(ids(ranked)).toEqual([first.id, local.id, second.id]);
   });
 
-  it("makes one row of an item found twice: the live one, marked recent, with the best match", () => {
+  it("makes one row of an item found twice: the live one, marked recent, matched on its text", () => {
     const item = file("api", "backend/app/main.py");
     const stale = { ...item, title: "main.py (old title)" };
     const ranked = rank(
@@ -193,6 +193,18 @@ describe("merging server results", () => {
     expect(ranked[0]?.item.title).toBe("main.py");
     expect(ranked[0]?.recent).toBe(true);
     expect(ranked[0]?.match).toBe(0.9);
+    // History's entry matched its own (older) text better: the row still shows the live text,
+    // so its score and highlight are the live ones.
+    const better = rank(
+      [
+        candidate(stale, 0.95, { recent: true, title: [[0, 1]] }),
+        candidate(item, 0.6, { source: "server", title: [[0, 4]] }),
+      ],
+      context,
+      [entry(item.id, 1000)],
+      "main",
+    );
+    expect([better[0]?.match, better[0]?.title]).toEqual([0.6, [[0, 4]]]);
   });
 });
 

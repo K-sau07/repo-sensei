@@ -76,20 +76,24 @@ function scoreOf(query: string, symbol: MockSymbol): number {
 
 function ranked(query: string, kind: SymbolKind | null, limit: number, fuzzy: boolean) {
   const lowered = query.toLowerCase();
-  const hits: SymbolHit[] = [];
+  const scored: { symbol: MockSymbol; score: number }[] = [];
   for (const symbol of SYMBOLS) {
     if (kind && symbol.kind !== kind) continue;
-    if (!found(lowered, symbol, fuzzy)) continue;
-    hits.push({ ...symbol, score: Math.round(scoreOf(query, symbol) * 10_000) / 10_000 });
+    if (found(lowered, symbol, fuzzy)) scored.push({ symbol, score: scoreOf(query, symbol) });
   }
-  hits.sort(
+  // Sorted on the exact score, rounded after, as the API does; paths compare as text does in
+  // the database (by locale, not code unit).
+  scored.sort(
     (a, b) =>
       b.score - a.score ||
-      a.name.length - b.name.length ||
-      (a.path < b.path ? -1 : a.path > b.path ? 1 : 0) ||
-      a.start_line - b.start_line,
+      a.symbol.name.length - b.symbol.name.length ||
+      a.symbol.path.localeCompare(b.symbol.path, "en-US") ||
+      a.symbol.start_line - b.symbol.start_line,
   );
-  return hits.slice(0, limit);
+  return scored.slice(0, limit).map(({ symbol, score }): SymbolHit => ({
+    ...symbol,
+    score: Math.round(score * 10_000) / 10_000,
+  }));
 }
 
 /** The API's answer: typos are looked for only when the other matches don't fill the page. */

@@ -68,7 +68,7 @@ export function describeLocation(pathname: string): HistoryInput | null {
       id: repoId(org, repo),
       kind: "repo",
       title: repo,
-      subtitle: "Repository",
+      subtitle: `${org}/${repo}`,
       href,
       org,
       repo,

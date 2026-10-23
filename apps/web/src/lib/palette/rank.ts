@@ -141,8 +141,9 @@ function compare(a: Ranked, b: Ranked): number {
 
 /**
  * Score, merge and sort. The same id from several providers (a file from history and from
- * search) becomes one row: the live one (it's current), with the best match of the two, and
- * marked recent if history had it.
+ * search) becomes one row: the live one (it's current), scored and highlighted on its own text
+ * (the row shows that text, not history's), and marked recent if history had it. Found twice
+ * live (the same text), it keeps the better match.
  *
  * With an empty query nothing is matched: recent items come first (by their recency boost), then
  * everything else in its provider's order.
@@ -160,16 +161,18 @@ export function rank(
       byId.set(candidate.item.id, candidate);
       continue;
     }
-    const live = seen.recent && !candidate.recent ? candidate : seen;
+    const recent = seen.recent === true || candidate.recent === true;
+    if (recent && seen.recent !== candidate.recent) {
+      // History's entry and the live item: the row is the live one, on its own text.
+      byId.set(candidate.item.id, { ...(seen.recent ? candidate : seen), recent: true });
+      continue;
+    }
+    // The same text twice: the better match, and a literal match from either wins.
     const better = candidate.match > seen.match ? candidate : seen;
-    const { synonym: _synonym, ...rest } = live;
+    const { synonym: _synonym, ...rest } = better;
     byId.set(candidate.item.id, {
       ...rest,
-      match: better.match,
-      title: better.title,
-      subtitle: better.subtitle,
-      ...(seen.recent || candidate.recent ? { recent: true } : {}),
-      // A literal match from either source wins.
+      ...(recent ? { recent: true } : {}),
       ...(seen.synonym && candidate.synonym ? { synonym: true } : {}),
     });
   }

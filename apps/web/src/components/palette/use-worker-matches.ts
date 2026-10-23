@@ -55,6 +55,10 @@ export function useWorkerMatches(
     };
   }, [matcher, set, items, query, empty]);
 
-  if (empty) return matchItems("", items);
-  return answer?.items === items ? interimMatches(answer, query) : [];
+  const opening = matchItems("", items);
+  if (empty) return opening;
+  // Before the worker's first answer for these items (the first keystroke after opening), the
+  // rows shown on opening stand in, matched again here: the rows don't empty while it starts.
+  const latest = answer?.items === items ? answer : { query: "", items, matches: opening };
+  return interimMatches(latest, query);
 }

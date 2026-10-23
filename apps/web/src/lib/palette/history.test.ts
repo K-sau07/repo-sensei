@@ -132,6 +132,16 @@ describe("palette history", () => {
     expect(recordHistory(USER, place(1), 1_000_000, null)).toEqual([]);
   });
 
+  it("records deep files pinned to a commit and lines", () => {
+    const path = `${"deep/".repeat(80)}handler.py`; // 410 characters
+    const href = `/acme/api/code/${path}?ref=${"a".repeat(64)}&L=10-12`;
+    record(
+      { id: `code:acme/api:${path}`, kind: "file", title: "handler.py", href, org: "acme", path },
+      1_000_000,
+    );
+    expect(read().map((entry) => entry.href)).toEqual([href]);
+  });
+
   it("refuses to record an entry that isn't one", () => {
     record({ ...place(1), href: "javascript:void 0" }, 1_000_000);
     record({ ...place(2), href: "/\t/evil.example" }, 1_000_000);
