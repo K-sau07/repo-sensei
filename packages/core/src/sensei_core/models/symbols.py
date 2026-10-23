@@ -33,16 +33,23 @@ class CodeNode(IdMixin, OrgScopedMixin, Base):
     __table_args__ = (
         UniqueConstraint("snapshot_id", "symbol_key"),
         Index("ix_nodes_repo_id", "repo_id"),  # deleting a repository cascades here
-        # Lookup by name: exact and prefix on the lowered name (text_pattern_ops serves LIKE
-        # 'abc%' whatever the collation), fuzzy by trigrams.
+        # Lookup by name, each within a snapshot: exact and prefix on the lowered name
+        # (text_pattern_ops serves LIKE 'abc%' whatever the collation); a qualified name's
+        # ending as a prefix of it reversed; contains and fuzzy by trigrams (btree_gin puts the
+        # snapshot in the same index).
         Index(
-            "ix_nodes_repo_snapshot_lower_name",
-            "repo_id",
+            "ix_nodes_snapshot_lower_name",
             "snapshot_id",
             text("lower(name) text_pattern_ops"),
         ),
         Index(
-            "ix_nodes_name_trgm",
+            "ix_nodes_snapshot_reverse_qualified",
+            "snapshot_id",
+            text("reverse(lower(qualified_name)) text_pattern_ops"),
+        ),
+        Index(
+            "ix_nodes_snapshot_name_trgm",
+            "snapshot_id",
             "name",
             postgresql_using="gin",
             postgresql_ops={"name": "gin_trgm_ops"},

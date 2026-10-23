@@ -20,6 +20,7 @@ count characters, from 0.
 
 from __future__ import annotations
 
+import bisect
 import enum
 import hashlib
 import inspect
@@ -120,6 +121,7 @@ class _Source:
     def __init__(self, result: ParseResult) -> None:
         self.data = result.source
         self.lines = result.source.split(b"\n")
+        self._char_starts: dict[int, list[int]] = {}
 
     def text(self, start: int, end: int) -> str:
         return self.data[start:end].decode("utf-8", "replace")
@@ -148,8 +150,17 @@ class _Source:
         return " ".join(parts)
 
     def column(self, row: int, byte_column: int) -> int:
+        """A byte column as a character column. Each line's character offsets are found once:
+        a minified file has thousands of symbols on one line."""
         line = self.lines[row] if row < len(self.lines) else b""
-        return len(line[:byte_column].decode("utf-8", "replace"))
+        if line.isascii():
+            return min(byte_column, len(line))
+        starts = self._char_starts.get(row)
+        if starts is None:
+            # A character starts at every byte that isn't a UTF-8 continuation byte.
+            starts = [i for i, byte in enumerate(line) if not 0x80 <= byte < 0xC0]
+            self._char_starts[row] = starts
+        return bisect.bisect_left(starts, byte_column)
 
 
 def extract_symbols(result: ParseResult, language: str) -> list[Symbol]:
@@ -248,10 +259,27 @@ class _Extractor:
             span = span.parent
         first = span
         previous = span.prev_named_sibling
-        while previous is not None and previous.type == "decorator":
-            first = previous  # a method's decorators precede it in the class body
+        # A method's decorators precede it in the class body, comments maybe among them.
+        while previous is not None and previous.type in ("decorator", "comment"):
+            if previous.type == "decorator":
+                first = previous
             previous = previous.prev_named_sibling
         return span, first
+
+    @staticmethod
+    def _statement(span: Node) -> Node:
+        """The statement a span is part of: itself, or for one of several declarators
+        (export const a = 1, b = 2) the statement around their declaration."""
+        parent = span.parent
+        if (
+            span.type == "variable_declarator"
+            and parent is not None
+            and parent.type in ("lexical_declaration", "variable_declaration")
+            and parent.parent is not None
+            and parent.parent.type in _WRAPPERS
+        ):
+            return parent.parent
+        return span
 
     def _container(self, d: _Def, by_node: dict[int, _Def]) -> _Def | None:
         parent = d.node.parent
@@ -326,9 +354,10 @@ class _Extractor:
         bases = self._bases(d.node)
         if bases:
             attrs["bases"] = bases[:MAX_BASES]
-        if not self.python and d.span.type == "export_statement":
+        statement = self._statement(d.span)
+        if not self.python and statement.type == "export_statement":
             attrs["exported"] = True
-            if any(c.type == "default" for c in d.span.children):
+            if any(c.type == "default" for c in statement.children):
                 attrs["default_export"] = True
         if d.container is None and d.name in exports:
             attrs.update(exports[d.name])
@@ -391,8 +420,9 @@ class _Extractor:
                 nodes = [c for c in d.span.named_children if c.type == "decorator"]
         else:
             sibling: Node | None = d.first
-            while sibling is not None and sibling.type == "decorator":
-                nodes.append(sibling)
+            while sibling is not None and sibling.type in ("decorator", "comment"):
+                if sibling.type == "decorator":
+                    nodes.append(sibling)
                 sibling = sibling.next_named_sibling
             for holder in (d.span, d.node):
                 nodes.extend(c for c in holder.named_children if c.type == "decorator")

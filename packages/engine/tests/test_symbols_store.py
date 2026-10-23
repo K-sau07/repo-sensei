@@ -263,11 +263,19 @@ async def test_the_kind_filter_and_like_wildcards(db_session: AsyncSession, tmp_
     assert await _found(db_session, snapshot, "item", SymbolKind.HOOK) == [
         ("useItem", "web/src/ItemCard.tsx")
     ]
-    # % and _ are themselves, not wildcards.
+    # % and _ are themselves, not wildcards ("m_" as a pattern would find make_item).
     assert await _found(db_session, snapshot, "%") == []
-    hits = await find_symbols(db_session, snapshot.id, "_")
+    assert await _found(db_session, snapshot, "m_") == []
+    hits = await find_symbols(db_session, snapshot.id, "make_")
     assert hits
-    assert all("_" in h.name for h in hits)
+    assert all(h.name.startswith("make_") for h in hits)
+
+
+async def test_short_queries_match_prefixes_only(db_session: AsyncSession, tmp_path: Path) -> None:
+    snapshot, _ = await _indexed(db_session, tmp_path)
+    # Below three characters there are no trigrams to search: "ak" starts no name here.
+    assert await _found(db_session, snapshot, "ak") == []
+    assert ("make_item", "app/models.py") in await _found(db_session, snapshot, "ake")
 
 
 async def test_lookups_stay_in_their_snapshot(db_session: AsyncSession, tmp_path: Path) -> None:

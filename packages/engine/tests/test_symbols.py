@@ -344,6 +344,79 @@ def test_hooks_need_a_capital_after_use_and_components_need_jsx() -> None:
     assert plain["ts src/a.ts/Page()."].kind is SymbolKind.FUNCTION
 
 
+def test_comments_among_decorators_keep_them_in_the_span() -> None:
+    source = (
+        "class S {\n"
+        '  @Get(":id")\n'
+        "  // eslint-disable-next-line\n"
+        "  find() {}\n"
+        "\n"
+        "  /** Finds another. */\n"
+        '  @Get(":id")\n'
+        "  // between\n"
+        "  @Auth()\n"
+        "  other() {}\n"
+        "}\n"
+    )
+    symbols = _extract("src/s.ts", source, "typescript")
+    find = symbols["ts src/s.ts/S#find()."]
+    assert (find.start_line, find.end_line) == (2, 4)
+    assert find.attrs["decorators"] == ['@Get(":id")']
+    other = symbols["ts src/s.ts/S#other()."]
+    assert (other.start_line, other.end_line) == (7, 10)
+    assert other.attrs["decorators"] == ['@Get(":id")', "@Auth()"]
+    assert other.docstring == "Finds another."
+
+
+def test_one_of_several_exported_declarators_is_exported() -> None:
+    symbols = _extract("src/a.ts", "export const a = 1, b = () => 2;\n", "typescript")
+    assert symbols["ts src/a.ts/a."].attrs == {"exported": True}
+    assert symbols["ts src/a.ts/b()."].attrs == {"exported": True}
+
+
+def test_hooks_made_by_a_call_are_hooks() -> None:
+    source = (
+        "export const useStore = create((set) => ({}));\n"
+        "const useLocal = useCallback(() => 1, []);\n"
+        "const user = useUser();\n"
+    )
+    kinds = {s.name: s.kind for s in _extract("src/a.ts", source, "typescript").values()}
+    assert kinds["useStore"] is SymbolKind.HOOK
+    assert kinds["useLocal"] is SymbolKind.HOOK
+    assert kinds["user"] is SymbolKind.VARIABLE
+
+
+def test_members_of_inline_object_types_arent_symbols() -> None:
+    source = (
+        "interface I { a: string; m(): void }\n"
+        "type T = { b: number };\n"
+        "type U = Base & { c: 1 };\n"
+        "function App({ open }: { open: boolean }) {\n"
+        "  const [s] = useState<{ z: string }>();\n"
+        "  return s;\n"
+        "}\n"
+    )
+    keys = set(_extract("src/a.ts", source, "typescript"))
+    assert {
+        "ts src/a.ts/I#a.",
+        "ts src/a.ts/I#m().",
+        "ts src/a.ts/T#b.",
+        "ts src/a.ts/U#c.",
+    } <= keys
+    assert not any(
+        key.startswith("ts src/a.ts/App().") and key != "ts src/a.ts/App()." for key in keys
+    )
+
+
+def test_columns_count_characters_on_a_minified_line() -> None:
+    source = "/*é*/" + "".join(f"function f{i}(){{}}" for i in range(3000))
+    symbols = extract_symbols(parse_file("m.js", source, language="javascript"), "javascript")
+    last = symbols[-1]
+    assert last.name == "f2999"
+    assert last.start_col == len(source) - len("function f2999(){}")
+    assert last.end_col == len(source)
+
+
 # ---------------------------------------------------------------------------- stability
 
 

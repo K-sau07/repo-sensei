@@ -23,8 +23,14 @@
 (function_signature
   name: (_) @name) @definition.function
 
-(method_signature
-  name: (_) @name) @definition.method
+; Members of interfaces and of object types given a name (type T = {...}, also in an
+; intersection); not those of inline types (a parameter's {x: boolean}).
+(interface_body
+  (method_signature name: (_) @name) @definition.method)
+
+(type_alias_declaration
+  value: [(object_type (method_signature name: (_) @name) @definition.method)
+          (intersection_type (object_type (method_signature name: (_) @name) @definition.method))])
 
 (abstract_method_signature
   name: (_) @name) @definition.method
@@ -32,8 +38,12 @@
 (public_field_definition
   name: (_) @name) @definition.field
 
-(property_signature
-  name: (_) @name) @definition.field
+(interface_body
+  (property_signature name: (_) @name) @definition.field)
+
+(type_alias_declaration
+  value: [(object_type (property_signature name: (_) @name) @definition.field)
+          (intersection_type (object_type (property_signature name: (_) @name) @definition.field))])
 
 ; declare const x: T;
 (program

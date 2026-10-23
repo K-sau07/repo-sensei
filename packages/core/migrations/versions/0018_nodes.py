@@ -3,7 +3,7 @@
 snapshot has once they are extracted.
 
 Revision ID: 0018
-Revises: 0016
+Revises: 0017
 Create Date: 2026-10-23 12:00:00+00:00
 """
 
@@ -18,12 +18,14 @@ from sqlalchemy.dialects import postgresql
 from sensei_core.db.tenancy import disable_org_rls_sql, enable_org_rls_sql
 
 revision: str = "0018"
-down_revision: str | None = "0016"
+down_revision: str | None = "0017"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
+    # btree_gin (trusted, like pg_trgm): the snapshot and the name's trigrams in one GIN index.
+    op.execute("CREATE EXTENSION IF NOT EXISTS btree_gin")
     op.create_unique_constraint("uq_files_id_org_id", "files", ["id", "org_id"])
     op.create_table(
         "nodes",
@@ -83,15 +85,21 @@ def upgrade() -> None:
     op.create_index(op.f("ix_nodes_org_id"), "nodes", ["org_id"], unique=False)
     op.create_index("ix_nodes_repo_id", "nodes", ["repo_id"], unique=False)
     op.create_index(
-        "ix_nodes_repo_snapshot_lower_name",
+        "ix_nodes_snapshot_lower_name",
         "nodes",
-        ["repo_id", "snapshot_id", sa.text("lower(name) text_pattern_ops")],
+        ["snapshot_id", sa.text("lower(name) text_pattern_ops")],
         unique=False,
     )
     op.create_index(
-        "ix_nodes_name_trgm",
+        "ix_nodes_snapshot_reverse_qualified",
         "nodes",
-        ["name"],
+        ["snapshot_id", sa.text("reverse(lower(qualified_name)) text_pattern_ops")],
+        unique=False,
+    )
+    op.create_index(
+        "ix_nodes_snapshot_name_trgm",
+        "nodes",
+        ["snapshot_id", "name"],
         unique=False,
         postgresql_using="gin",
         postgresql_ops={"name": "gin_trgm_ops"},
@@ -109,8 +117,9 @@ def downgrade() -> None:
         op.execute(statement)
     op.drop_index("ix_nodes_owner_file_id", table_name="nodes")
     op.drop_index("ix_nodes_file_id_lines", table_name="nodes")
-    op.drop_index("ix_nodes_name_trgm", table_name="nodes", postgresql_using="gin")
-    op.drop_index("ix_nodes_repo_snapshot_lower_name", table_name="nodes")
+    op.drop_index("ix_nodes_snapshot_name_trgm", table_name="nodes", postgresql_using="gin")
+    op.drop_index("ix_nodes_snapshot_reverse_qualified", table_name="nodes")
+    op.drop_index("ix_nodes_snapshot_lower_name", table_name="nodes")
     op.drop_index("ix_nodes_repo_id", table_name="nodes")
     op.drop_index(op.f("ix_nodes_org_id"), table_name="nodes")
     op.drop_table("nodes")

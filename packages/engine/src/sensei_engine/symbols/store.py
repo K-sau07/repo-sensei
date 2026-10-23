@@ -10,7 +10,7 @@ every file of the snapshot; an incremental run passes only the files it re-extra
 from __future__ import annotations
 
 import uuid
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from typing import Any, cast
 
@@ -73,42 +73,41 @@ async def save_symbols(
     """Write the symbols of ``files`` (paths found in ``file_ids``, the snapshot's file rows);
     returns the rows written. ``replace_all``: the snapshot's other symbols go too (a full
     index). Runs in the caller's transaction, which must have the snapshot's org set."""
-    records: list[tuple[Any, ...]] = []
-    owners: list[uuid.UUID] = []
-    for file in files:
-        file_id = file_ids.get(file.path)
-        if file_id is None:
-            continue  # not a file of this snapshot
-        owners.append(file_id)
-        records.extend(
-            (
-                uuid7(),
-                snapshot.org_id,
-                snapshot.repo_id,
-                snapshot.id,
-                symbol.kind.value,
-                _text(symbol.symbol_key),
-                _text(symbol.name),
-                _text(symbol.qualified_name),
-                file_id,
-                symbol.start_line,
-                symbol.end_line,
-                symbol.start_col,
-                symbol.end_col,
-                file.language,
-                _maybe(symbol.signature),
-                _maybe(symbol.docstring),
-                orjson.dumps(symbol.attrs).decode().replace("\\u0000", "\\ufffd"),
-                symbol.content_hash,
-                file_id,
-            )
-            for symbol in file.symbols
-        )
+    present = [(file, file_id) for file in files if (file_id := file_ids.get(file.path))]
+    owners = [file_id for _, file_id in present]  # others aren't files of this snapshot
+    written = sum(len(file.symbols) for file, _ in present)
+
+    def records() -> Iterator[tuple[Any, ...]]:
+        # Made as COPY sends them: the symbols aren't held twice.
+        for file, file_id in present:
+            for symbol in file.symbols:
+                yield (
+                    uuid7(),
+                    snapshot.org_id,
+                    snapshot.repo_id,
+                    snapshot.id,
+                    symbol.kind.value,
+                    _text(symbol.symbol_key),
+                    _text(symbol.name),
+                    _text(symbol.qualified_name),
+                    file_id,
+                    symbol.start_line,
+                    symbol.end_line,
+                    symbol.start_col,
+                    symbol.end_col,
+                    file.language,
+                    _maybe(symbol.signature),
+                    _maybe(symbol.docstring),
+                    orjson.dumps(symbol.attrs).decode().replace("\\u0000", "\\ufffd"),
+                    symbol.content_hash,
+                    file_id,
+                )
+
     if replace_all:
         await db.execute(delete(CodeNode).where(CodeNode.snapshot_id == snapshot.id))
     elif owners:
         await db.execute(delete(CodeNode).where(CodeNode.owner_file_id.in_(owners)))
-    if records:
+    if written:
         connection = await db.connection()
         raw = await connection.get_raw_connection()
         driver = cast("Any", raw.driver_connection)  # asyncpg.Connection
@@ -117,10 +116,10 @@ async def save_symbols(
         await driver.execute(
             f"CREATE TEMPORARY TABLE {STAGING_TABLE} (LIKE nodes INCLUDING DEFAULTS) ON COMMIT DROP"
         )
-        await driver.copy_records_to_table(STAGING_TABLE, records=records, columns=list(COLUMNS))
+        await driver.copy_records_to_table(STAGING_TABLE, records=records(), columns=list(COLUMNS))
         await driver.execute(
             f"INSERT INTO nodes ({columns}) SELECT {columns} FROM {STAGING_TABLE} "  # noqa: S608 - constant names
             f"ON CONFLICT (snapshot_id, symbol_key) DO UPDATE SET {updates}"
         )
         await driver.execute(f"DROP TABLE {STAGING_TABLE}")
-    return len(records)
+    return written

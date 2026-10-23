@@ -12,6 +12,20 @@
   value: [(arrow_function) (function_expression)]
   (#match? @name "^use[A-Z0-9]")) @definition.hook
 
+; Module-level hooks made by a call: const useStore = create(...).
+(program
+  [(lexical_declaration
+     (variable_declarator
+       name: (identifier) @name
+       value: (call_expression)
+       (#match? @name "^use[A-Z0-9]")) @definition.hook)
+   (export_statement
+     declaration: (lexical_declaration
+       (variable_declarator
+         name: (identifier) @name
+         value: (call_expression)
+         (#match? @name "^use[A-Z0-9]")) @definition.hook))])
+
 (function_declaration
   name: (identifier) @name) @definition.function
 
