@@ -6,20 +6,27 @@ this interpreter gets approximate spans from indentation, reported as warnings).
 and JavaScript, until tree-sitter symbol extraction lands (step 2.4), a declaration is found by
 pattern and its end by matching brackets; a span that disagrees with that heuristic is reported
 as a warning to re-check by hand, not an error.
+
+Line numbers count ``\\n`` only (see :func:`split_lines`), and a gold target must be a file the
+indexer keeps (see :func:`indexed_paths`): retrieval can never return anything else.
 """
 
 from __future__ import annotations
 
 import ast
 import re
+from collections import Counter
 from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
+from sensei_engine.ingest.ignore import IgnoreRules
+from sensei_engine.ingest.walk import walk
 from sensei_evals import paths
 from sensei_evals.repos import PinnedRepo
-from sensei_evals.schema import GoldTarget, Suite
+from sensei_evals.schema import GoldTarget, QueryClass, Suite
 
+MAX_FILES = 500_000
 TS_SUFFIXES = frozenset({".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"})
 _TS_DECLARATION = re.compile(
     r"^\s*(?:export\s+)?(?:default\s+)?(?:declare\s+)?(?:abstract\s+)?(?:async\s+)?"
@@ -54,31 +61,82 @@ class Problem:
         return f"{self.suite}: {self.item}: {kind}: {self.message}"
 
 
+def split_lines(text: str) -> list[str]:
+    """``text`` cut at ``\\n`` only, the way git, the indexer and editors number lines.
+    ``str.splitlines`` also cuts at ``\\f``, ``\\v``, ``\\x1c``-``\\x1e``, ``\\x85``, U+2028,
+    U+2029 and a lone ``\\r``, which would shift every later line. A final newline ends the last
+    line rather than starting an empty one, and the ``\\r`` of a ``\\r\\n`` is dropped."""
+    lines = text.split("\n")
+    if lines and not lines[-1]:
+        lines.pop()
+    return [line.removesuffix("\r") for line in lines]
+
+
+def read_text(checkout: Path, path: str) -> str:
+    """A file's text as stored (no newline translation), undecodable bytes replaced."""
+    return (checkout / path).read_bytes().decode("utf-8", errors="replace")
+
+
 def read_lines(checkout: Path, path: str) -> list[str]:
-    return (checkout / path).read_text(encoding="utf-8", errors="replace").splitlines()
+    return split_lines(read_text(checkout, path))
+
+
+def indexed_paths(checkout: Path) -> frozenset[str]:
+    """The files indexing keeps in ``checkout``: the ingest walk with no repository settings, so
+    ``.gitignore``/``.senseiignore`` rules and the built-in deny list apply, and symbolic links
+    and ``.git`` are left out."""
+    files, _ = walk(checkout, IgnoreRules(()), max_files=MAX_FILES)
+    return frozenset(file.path for file in files)
 
 
 # ---------------------------------------------------------------- python
 
 
-def _python_symbols(source: str) -> Iterator[SymbolSpan]:
-    tree = ast.parse(source)
+def _blocks(node: ast.stmt) -> list[list[ast.stmt]]:
+    """The statement lists of a compound statement that runs where it stands, so what it
+    defines belongs to the enclosing module or class: ``if TYPE_CHECKING:`` blocks,
+    ``try``/``except ImportError`` fallbacks (every handler, ``else`` and ``finally``),
+    ``with`` and ``match``."""
+    if isinstance(node, ast.If):
+        return [node.body, node.orelse]
+    if isinstance(node, ast.Try | ast.TryStar):
+        return [
+            node.body,
+            *(handler.body for handler in node.handlers),
+            node.orelse,
+            node.finalbody,
+        ]
+    if isinstance(node, ast.With | ast.AsyncWith):
+        return [node.body]
+    if isinstance(node, ast.Match):
+        return [case.body for case in node.cases]
+    return []
 
-    def visit(node: ast.AST, prefix: str) -> Iterator[SymbolSpan]:
-        for child in ast.iter_child_nodes(node):
+
+def _python_symbols(tree: ast.Module) -> Iterator[SymbolSpan]:
+    def visit(body: list[ast.stmt], prefix: str, *, namespace: bool) -> Iterator[SymbolSpan]:
+        """The definitions in ``body``. In a module or class body (``namespace``) variables are
+        symbols too (``NAME``, ``Class.attr``), and blocks that run in place are entered."""
+        for child in body:
             if isinstance(child, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef):
                 name = f"{prefix}{child.name}"
                 start = min([d.lineno for d in child.decorator_list] + [child.lineno])
                 yield SymbolSpan(name, (start, child.end_lineno or child.lineno), exact=True)
-                yield from visit(child, f"{name}.")
-            elif isinstance(child, ast.Assign | ast.AnnAssign) and not prefix:
+                is_class = isinstance(child, ast.ClassDef)
+                yield from visit(child.body, f"{name}.", namespace=is_class)
+            elif not namespace:
+                continue
+            elif isinstance(child, ast.Assign | ast.AnnAssign):
                 targets = child.targets if isinstance(child, ast.Assign) else [child.target]
+                end = child.end_lineno or child.lineno
                 for target in targets:
                     if isinstance(target, ast.Name):
-                        end = child.end_lineno or child.lineno
-                        yield SymbolSpan(target.id, (child.lineno, end), exact=True)
+                        yield SymbolSpan(f"{prefix}{target.id}", (child.lineno, end), exact=True)
+            else:
+                for block in _blocks(child):
+                    yield from visit(block, prefix, namespace=True)
 
-    yield from visit(tree, "")
+    yield from visit(tree.body, "", namespace=True)
 
 
 # Python 3.14 (PEP 758) allows ``except A, B:``; parenthesized, older parsers read it, and the
@@ -86,6 +144,23 @@ def _python_symbols(source: str) -> Iterator[SymbolSpan]:
 _UNPARENTHESIZED_EXCEPT = re.compile(
     r"^(?P<head>[ \t]*except\*?[ \t]+)(?P<types>[^(:\n][^:\n]*,[^:\n]*?)[ \t]*:", re.MULTILINE
 )
+_LONE_CR = re.compile(r"\r(?!\n)")
+
+
+def parse_python(source: str) -> ast.Module | None:
+    """The module's tree (reading Python 3.14's unparenthesized ``except A, B:`` too, on the
+    same lines), or None if this interpreter can't parse it. Python ends a line at a lone
+    ``\\r`` too; here it reads as a space, so the tree's line numbers are :func:`split_lines`'s
+    and its columns stay where they were."""
+    source = _LONE_CR.sub(" ", source)
+    for attempt in (source, _UNPARENTHESIZED_EXCEPT.sub(r"\g<head>(\g<types>):", source)):
+        try:
+            return ast.parse(attempt)
+        except (SyntaxError, ValueError):  # ValueError: a null byte
+            continue
+    return None
+
+
 _PY_DEF = re.compile(r"^(?P<indent>[ \t]*)(?:async[ \t]+)?(?:def|class)[ \t]+(?P<name>\w+)")
 _PY_ASSIGN = re.compile(r"^(?P<name>[A-Za-z_]\w*)[ \t]*(?::[^=]+)?=(?!=)")
 
@@ -273,14 +348,12 @@ def symbols_in(checkout: Path, path: str) -> list[SymbolSpan]:
     """Every symbol the labeling tools know in one file (empty for other languages)."""
     suffix = PurePosixPath(path).suffix
     if suffix == ".py":
-        source = (checkout / path).read_text(encoding="utf-8", errors="replace")
-        for attempt in (source, _UNPARENTHESIZED_EXCEPT.sub(r"\g<head>(\g<types>):", source)):
-            try:
-                return list(_python_symbols(attempt))
-            except SyntaxError:
-                continue
+        source = read_text(checkout, path)
+        tree = parse_python(source)
+        if tree is not None:
+            return list(_python_symbols(tree))
         # Syntax newer than this interpreter's: approximate spans.
-        return list(_python_symbols_by_indent(source.splitlines()))
+        return list(_python_symbols_by_indent(split_lines(source)))
     if suffix in TS_SUFFIXES:
         return list(_ts_symbols(read_lines(checkout, path)))
     return []
@@ -299,10 +372,20 @@ def find_symbol(checkout: Path, path: str, name: str) -> list[SymbolSpan]:
 # ---------------------------------------------------------------- validation
 
 
-def check_target(checkout: Path, target: GoldTarget) -> tuple[list[str], list[str]]:
-    """``(errors, warnings)`` for one gold target against a checkout."""
+class CheckoutError(Exception):
+    """A checkout that couldn't be had (a failed fetch): reported against its repository."""
+
+
+def check_target(
+    checkout: Path, target: GoldTarget, indexed: frozenset[str] | None = None
+) -> tuple[list[str], list[str]]:
+    """``(errors, warnings)`` for one gold target against a checkout. With ``indexed`` (the
+    checkout's :func:`indexed_paths`), a target the indexer skips is an error too."""
     if not (checkout / target.path).is_file():
         return [f"{target.path}: no such file"], []
+    if indexed is not None and target.path not in indexed:
+        reason = "ignore rules or the built-in deny list skip it, or it is behind a symbolic link"
+        return [f"{target.path}: not a file the indexer keeps ({reason})"], []
     if target.lines is None:
         return [], []
     total = len(read_lines(checkout, target.path))
@@ -337,6 +420,44 @@ def _check_symbol(
     return ([message], []) if all(span.exact for span in found) else ([], [message])
 
 
+# The 2.2 mix per repository: answerable items by class, and at least this many unanswerable.
+CLASS_MIX: dict[QueryClass, int] = {
+    QueryClass.CONCEPTUAL: 10,
+    QueryClass.FLOW: 10,
+    QueryClass.SYMBOL: 5,
+    QueryClass.REGEX: 3,
+}
+MIN_UNANSWERABLE = 2
+
+
+def check_mix(name: str, suite: Suite) -> list[Problem]:
+    """A warning for each repository whose items depart from the planned class mix."""
+    problems: list[Problem] = []
+    for repo in suite.repos:
+        counts = Counter(item.class_ for item in suite.for_repo(repo))
+        unanswerable = counts.pop(QueryClass.UNANSWERABLE, 0)
+        off = [
+            f"{cls.value} {counts.get(cls, 0)} (planned {CLASS_MIX.get(cls, 0)})"
+            for cls in QueryClass
+            if cls is not QueryClass.UNANSWERABLE and counts.get(cls, 0) != CLASS_MIX.get(cls, 0)
+        ]
+        if unanswerable < MIN_UNANSWERABLE:
+            off.append(f"unanswerable {unanswerable} (planned at least {MIN_UNANSWERABLE})")
+        if off:
+            message = f"class mix departs from the plan: {', '.join(off)}"
+            problems.append(Problem(name, f"repo {repo}", message, warning=True))
+    return problems
+
+
+def _checkout_problem(checkout: Path, repo: PinnedRepo) -> str:
+    """Why ``checkout`` can't vouch for ``repo``'s pinned commit ("" if it can)."""
+    if paths.head_sha(checkout) != repo.sha:
+        return f"checkout {checkout} is not at {repo.sha}"
+    if paths.has_uncommitted_changes(checkout):
+        return f"checkout {checkout} has local changes (git status isn't clean)"
+    return ""
+
+
 def validate_suite(
     name: str,
     suite: Suite,
@@ -344,9 +465,11 @@ def validate_suite(
     checkout_for: Callable[[str], Path | None],
 ) -> list[Problem]:
     """Every problem with ``suite``: commits that don't match the pinned ones, checkouts at the
-    wrong commit, and gold targets that don't exist at the commit."""
-    problems: list[Problem] = []
-    checked: dict[str, Path | None] = {}
+    wrong commit or with local changes, gold targets that don't exist at the commit (or that the
+    indexer skips), and, as warnings, a class mix other than the plan's. ``checkout_for`` may
+    raise :class:`CheckoutError`, reported once for that repository."""
+    problems: list[Problem] = check_mix(name, suite)
+    checked: dict[str, tuple[Path, frozenset[str]] | None] = {}
     for item in suite.items:
         repo = pinned.get(item.repo)
         if repo is None:
@@ -356,22 +479,28 @@ def validate_suite(
             problems.append(Problem(name, item.id, f"sha {item.sha} is not the pinned {repo.sha}"))
             continue
         if item.repo not in checked:
-            checkout = checkout_for(item.repo)
-            if checkout is None:
-                reason = f"no checkout of {item.repo} to check against"
-            elif paths.head_sha(checkout) != repo.sha:
-                reason = f"checkout {checkout} is not at {repo.sha}"
-                checkout = None
+            try:
+                checkout = checkout_for(item.repo)
+            except CheckoutError as error:
+                checkout, reason = None, str(error)
             else:
-                reason = ""
-            checked[item.repo] = checkout
+                reason = (
+                    f"no checkout of {item.repo} to check against"
+                    if checkout is None
+                    else _checkout_problem(checkout, repo)
+                )
+            if checkout is None or reason:
+                checked[item.repo] = None
+            else:
+                checked[item.repo] = (checkout, indexed_paths(checkout))
             if reason:  # said once per repository, on its first item
                 problems.append(Problem(name, item.id, reason))
-        checkout = checked[item.repo]
-        if checkout is None:
+        entry = checked[item.repo]
+        if entry is None:
             continue
+        checkout, indexed = entry
         for target in item.gold:
-            errors, warnings = check_target(checkout, target)
+            errors, warnings = check_target(checkout, target, indexed)
             problems += [Problem(name, item.id, message) for message in errors]
             problems += [Problem(name, item.id, message, warning=True) for message in warnings]
     return problems

@@ -26,9 +26,17 @@ from sensei_core.db import make_system_database
 from sensei_evals import paths
 from sensei_evals import rename as rename_mod
 from sensei_evals.reports import compare, read_run, render_comparison, render_run, write_run
+from sensei_evals.repos import mapping_path, valid_repo_id
 from sensei_evals.retrieval import RETRIEVERS, RepoRef, RetrieverContext
 from sensei_evals.runner import DEFAULT_KS, RunRecord, run_suite
-from sensei_evals.schema import GoldenItem, Suite, SuiteError, load_suite
+from sensei_evals.schema import (
+    GoldenItem,
+    RenamedFrom,
+    Suite,
+    SuiteError,
+    load_suite,
+    parse_suite,
+)
 from sensei_evals.store import load_run, save_run
 
 app = typer.Typer(no_args_is_help=True, add_completion=False, help=__doc__)
@@ -97,6 +105,8 @@ def _checkout(root: Path, repo: str, sha: str, checkout: Path | None) -> Path | 
         )
     elif head != sha:
         raise _fail(f"checkout {checkout} is at {head}, the suite is pinned to {sha}")
+    elif paths.has_uncommitted_changes(checkout):
+        raise _fail(f"checkout {checkout} has local changes (git status isn't clean)")
     return checkout
 
 
@@ -243,7 +253,11 @@ def rename(
     ] = None,
     out: Annotated[
         Path | None,
-        typer.Option(help="Where the copy goes (default .cache/eval-repos/<repo>-renamed)."),
+        typer.Option(
+            help="Where the copy goes (default .cache/eval-repos/<repo>-renamed). Its folder "
+            "name is the copy's repository id; the mapping is written beside it, where "
+            "`label_helper.py validate --checkouts <its parent>` finds it."
+        ),
     ] = None,
     symbols: Annotated[
         Path | None, typer.Option(help="Names to rename, one per line (default: extracted).")
@@ -252,42 +266,67 @@ def rename(
     suite_out: Annotated[
         Path | None,
         typer.Option(
-            help="Translated suite file (default evals/private/golden/<suite>-renamed.yaml)."
+            help="Translated suite file (default evals/private/golden/<suite>-renamed.yaml). "
+            "Keep it beside the source suite: validation reads the source from there."
         ),
     ] = None,
 ) -> None:
     """Make a renamed copy of a repository, its mapping file and the translated suite."""
     root = paths.repo_root()
+    suite_file = paths.suite_path(root, suite)
     try:
-        loaded = load_suite(paths.suite_path(root, suite))
-    except FileNotFoundError as error:
-        raise _fail(str(error)) from None
+        raw = suite_file.read_bytes()
+        loaded = parse_suite(raw.decode("utf-8"), str(suite_file))
+    except FileNotFoundError:
+        raise _fail(f"no suite file {suite_file}") from None
+    except UnicodeDecodeError:
+        raise _fail(f"suite file {suite_file} is not UTF-8") from None
     except SuiteError as error:
         raise _fail(f"invalid suite:\n{error}") from None
     _, sha, _ = select_items(loaded, repo)
     source = _checkout(root, repo, sha, checkout)
     if source is None:
         raise _fail(f"no checkout of {repo}: pass --checkout")
-    new_repo = f"{repo}-renamed"
-    target = out or paths.checkouts_dir(root) / new_repo
+    target = out or paths.checkouts_dir(root) / f"{repo}-renamed"
+    new_repo = target.name
+    if not valid_repo_id(new_repo):
+        raise _fail(
+            "--out must end in a folder named like a repository id (lowercase letters, digits, "
+            f"'.', '_' or '-'), got {new_repo!r}"
+        )
     names = (
         rename_mod.symbols_from_file(symbols) if symbols else rename_mod.labeling_symbols(source)
     )
-    plan = rename_mod.make_plan(names, rename_mod.repository_tokens(source), seed=seed)
+    plan = rename_mod.plan_for(source, names, seed=seed)
     try:
         result = rename_mod.rename_tree(source, target, plan)
     except (FileExistsError, ValueError) as error:
         raise _fail(str(error)) from None
     result.sha = rename_mod.commit_tree(target)
-    result.source = {"repo": repo, "sha": sha}
-    mapping = target.with_name(f"{target.name}.mapping.json")  # outside the copy: never indexed
+    result.repo = new_repo
+    origin = RenamedFrom(
+        suite=suite_file.stem, repo=repo, sha=sha, sha256=hashlib.sha256(raw).hexdigest()
+    )
+    result.source = {
+        "repo": repo,
+        "sha": sha,
+        "suite": origin.suite,
+        "suite_sha256": origin.sha256,
+    }
+    try:
+        translated = rename_mod.translate_suite(
+            loaded, repo, result, new_repo=new_repo, source=origin
+        )
+    except rename_mod.TranslateError as error:
+        raise _fail(f"{error} (the copy at {target} is left for a look; delete it)") from None
+    mapping = mapping_path(target.parent, new_repo)  # outside the copy: never indexed
     rename_mod.write_mapping(result, mapping)
-    translated = rename_mod.translate_suite(loaded, repo, result, new_repo=new_repo)
     suite_out = suite_out or paths.golden_dir(root) / f"{translated.name}.yaml"
     suite_out.parent.mkdir(parents=True, exist_ok=True)
     suite_out.write_text(rename_mod.suite_yaml(translated), encoding="utf-8")
     typer.echo(
-        f"{len(plan.tokens)} names renamed, {result.rewritten} files rewritten, "
-        f"{result.copied} copied; {target} at {result.sha}\n"
+        f"{len(plan.tokens)} names renamed ({len(plan.kept)} kept, listed in the mapping), "
+        f"{result.rewritten} files rewritten, {result.copied} copied; "
+        f"{target} ({new_repo}) at {result.sha}\n"
         f"mapping: {mapping}\nsuite: {suite_out} ({len(translated.items)} items)"
     )

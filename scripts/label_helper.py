@@ -4,20 +4,34 @@
     uv run python scripts/label_helper.py symbol <repo> <path> <line>
     uv run python scripts/label_helper.py symbols <repo> <path>
     uv run python scripts/label_helper.py validate [suite.yaml ...] [--fetch]
+        [--root DIR] [--checkouts DIR]
 
 ``<repo>`` is a pinned repository id (evals/private/repos.yaml), read from its checkout in
 .cache/eval-repos/<repo>. ``validate`` checks every suite (default: all of them) against the
 pinned commits and exits 1 on any error; with no private files (CI) it says so and exits 0.
+A renamed copy's suite is also checked against its source suite and the copy's mapping (a
+stale one says to re-run ``sensei-eval rename``). ``--root`` reads the private files and
+checkouts of another checkout of this repository; ``--checkouts`` looks for checkouts and
+renamed copies (with their mappings) in another folder, such as a ``rename --out`` parent.
 """
 
 from __future__ import annotations
 
 import argparse
+import subprocess
 import sys
 from pathlib import Path
 
 from sensei_evals import paths
-from sensei_evals.golden import find_symbol, read_lines, symbol_at, symbols_in, validate_suite
+from sensei_evals.golden import (
+    CheckoutError,
+    find_symbol,
+    read_lines,
+    symbol_at,
+    symbols_in,
+    validate_suite,
+)
+from sensei_evals.rename import check_renamed
 from sensei_evals.repos import fetch_checkout, load_pinned, load_renamed
 from sensei_evals.schema import SuiteError, load_suite
 
@@ -55,18 +69,29 @@ def symbols(repo: str, path: str, name: str | None) -> None:
         print(f"{span.lines[0]:>5}-{span.lines[1]:<5} {span.name}{tag}")
 
 
-def validate(suites: list[Path], fetch: bool) -> int:
+def validate(
+    suites: list[Path],
+    fetch: bool,
+    *,
+    root: Path = ROOT,
+    checkouts: Path | None = None,
+) -> int:
+    checkouts = checkouts or paths.checkouts_dir(root)
     # Renamed copies pin themselves; a pinned repository of the same id wins.
-    pinned = load_renamed(paths.checkouts_dir(ROOT)) | load_pinned(paths.repos_file(ROOT))
-    suites = suites or sorted(paths.golden_dir(ROOT).glob("*.yaml"))
+    renamed = load_renamed(checkouts)
+    pinned = renamed | load_pinned(paths.repos_file(root))
+    suites = suites or sorted(paths.golden_dir(root).glob("*.yaml"))
     if not suites:
         print("no golden suites (the private files aren't here); skipping")
         return 0
 
     def checkout_for(repo: str) -> Path | None:
-        directory = paths.checkouts_dir(ROOT) / repo
+        directory = checkouts / repo
         if fetch and repo in pinned and not pinned[repo].url.startswith("file:"):
-            return fetch_checkout(pinned[repo], directory)
+            try:
+                return fetch_checkout(pinned[repo], directory)
+            except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError) as error:
+                raise CheckoutError(f"fetching {repo} into {directory} failed: {error}") from None
         return directory if directory.is_dir() else None
 
     errors = warnings = items = 0
@@ -78,7 +103,9 @@ def validate(suites: list[Path], fetch: bool) -> int:
             errors += len(error.problems)
             continue
         items += len(suite.items)
-        for problem in validate_suite(path.name, suite, pinned, checkout_for):
+        problems = validate_suite(path.name, suite, pinned, checkout_for)
+        problems += check_renamed(path.name, path, suite, checkouts, renamed)
+        for problem in problems:
             print(problem.render())
             warnings += problem.warning
             errors += not problem.warning
@@ -105,6 +132,8 @@ def main() -> int:
     p = commands.add_parser("validate", help="check suites against their pinned commits")
     p.add_argument("suites", nargs="*", type=Path)
     p.add_argument("--fetch", action="store_true", help="clone missing pinned checkouts")
+    p.add_argument("--root", type=Path, default=ROOT, help="checkout with the private files")
+    p.add_argument("--checkouts", type=Path, help="folder of checkouts and renamed copies")
     args = parser.parse_args()
     if args.command == "show":
         show(args.repo, args.path, args.start, args.end)
@@ -113,7 +142,7 @@ def main() -> int:
     elif args.command == "symbols":
         symbols(args.repo, args.path, args.name)
     else:
-        return validate(args.suites, args.fetch)
+        return validate(args.suites, args.fetch, root=args.root, checkouts=args.checkouts)
     return 0
 
 

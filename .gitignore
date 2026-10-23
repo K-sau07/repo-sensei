@@ -43,5 +43,8 @@ next-env.d.ts
 /.cache/
 *.log
 
+# Private eval data: golden suites, renamed-copy suites, reports (never committed)
+/evals/private/
+
 # Tooling workspace
 .context/

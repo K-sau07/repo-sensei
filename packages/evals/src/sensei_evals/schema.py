@@ -32,6 +32,7 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 SHA = re.compile(r"[0-9a-f]{40}")
+SHA256 = re.compile(r"[0-9a-f]{64}")
 ITEM_ID = re.compile(r"[a-z0-9][a-z0-9._-]*")
 
 
@@ -146,10 +147,37 @@ class GoldenItem(_Strict):
         return self
 
 
+class RenamedFrom(_Strict):
+    """Where a renamed copy's suite came from (written by ``sensei-eval rename``), so a copy
+    left behind by an edit to its source suite, or by a new pin, can be told apart."""
+
+    suite: Annotated[str, Field(min_length=1)]  # the source suite's name (its file stem)
+    repo: str  # the source repository id
+    sha: str  # the commit the source suite (and the copy) were made from
+    sha256: str  # of the source suite file's bytes
+
+    @field_validator("sha")
+    @classmethod
+    def _sha(cls, value: str) -> str:
+        if not SHA.fullmatch(value):
+            msg = "must be a full 40-character lowercase commit sha"
+            raise ValueError(msg)
+        return value
+
+    @field_validator("sha256")
+    @classmethod
+    def _sha256(cls, value: str) -> str:
+        if not SHA256.fullmatch(value):
+            msg = "must be a 64-character lowercase hex sha256"
+            raise ValueError(msg)
+        return value
+
+
 class Suite(_Strict):
     name: Annotated[str, Field(min_length=1)]
     version: Annotated[int, Field(ge=0)]
     items: list[GoldenItem]
+    renamed_from: RenamedFrom | None = None
 
     @model_validator(mode="after")
     def _unique(self) -> Self:
