@@ -3,6 +3,7 @@
     sensei-eval run --suite fastapi-template --retriever random --k 10,20,50,100
     sensei-eval compare <run_a> <run_b>
     sensei-eval report <run>
+    sensei-eval rename --suite fastapi-template --repo fastapi-template
 
 Runs are written to ``evals/private/reports/<id>.json`` and ``.md`` (private) and stored in
 ``eval_runs`` unless ``--no-store``. A run is named by its id (looked up in the reports folder,
@@ -23,6 +24,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sensei_core.config import get_settings
 from sensei_core.db import make_system_database
 from sensei_evals import paths
+from sensei_evals import rename as rename_mod
 from sensei_evals.reports import compare, read_run, render_comparison, render_run, write_run
 from sensei_evals.retrieval import RETRIEVERS, RepoRef, RetrieverContext
 from sensei_evals.runner import DEFAULT_KS, RunRecord, run_suite
@@ -228,3 +230,64 @@ def report(
     _, md_path = write_run(record, reports)
     typer.echo(render_run(record))
     typer.echo(f"written to {md_path}")
+
+
+@app.command()
+def rename(
+    *,
+    suite: Annotated[str, typer.Option(help="Suite whose gold is translated (name or path).")],
+    repo: Annotated[str, typer.Option(help="Benchmark repository id to copy.")],
+    checkout: Annotated[
+        Path | None,
+        typer.Option(help="Checkout of the pinned commit (default .cache/eval-repos/<repo>)."),
+    ] = None,
+    out: Annotated[
+        Path | None,
+        typer.Option(help="Where the copy goes (default .cache/eval-repos/<repo>-renamed)."),
+    ] = None,
+    symbols: Annotated[
+        Path | None, typer.Option(help="Names to rename, one per line (default: extracted).")
+    ] = None,
+    seed: Annotated[int, typer.Option(help="Seed for the generated names.")] = 0,
+    suite_out: Annotated[
+        Path | None,
+        typer.Option(
+            help="Translated suite file (default evals/private/golden/<suite>-renamed.yaml)."
+        ),
+    ] = None,
+) -> None:
+    """Make a renamed copy of a repository, its mapping file and the translated suite."""
+    root = paths.repo_root()
+    try:
+        loaded = load_suite(paths.suite_path(root, suite))
+    except FileNotFoundError as error:
+        raise _fail(str(error)) from None
+    except SuiteError as error:
+        raise _fail(f"invalid suite:\n{error}") from None
+    _, sha, _ = select_items(loaded, repo)
+    source = _checkout(root, repo, sha, checkout)
+    if source is None:
+        raise _fail(f"no checkout of {repo}: pass --checkout")
+    new_repo = f"{repo}-renamed"
+    target = out or paths.checkouts_dir(root) / new_repo
+    names = (
+        rename_mod.symbols_from_file(symbols) if symbols else rename_mod.labeling_symbols(source)
+    )
+    plan = rename_mod.make_plan(names, rename_mod.repository_tokens(source), seed=seed)
+    try:
+        result = rename_mod.rename_tree(source, target, plan)
+    except (FileExistsError, ValueError) as error:
+        raise _fail(str(error)) from None
+    result.sha = rename_mod.commit_tree(target)
+    result.source = {"repo": repo, "sha": sha}
+    mapping = target.with_name(f"{target.name}.mapping.json")  # outside the copy: never indexed
+    rename_mod.write_mapping(result, mapping)
+    translated = rename_mod.translate_suite(loaded, repo, result, new_repo=new_repo)
+    suite_out = suite_out or paths.golden_dir(root) / f"{translated.name}.yaml"
+    suite_out.parent.mkdir(parents=True, exist_ok=True)
+    suite_out.write_text(rename_mod.suite_yaml(translated), encoding="utf-8")
+    typer.echo(
+        f"{len(plan.tokens)} names renamed, {result.rewritten} files rewritten, "
+        f"{result.copied} copied; {target} at {result.sha}\n"
+        f"mapping: {mapping}\nsuite: {suite_out} ({len(translated.items)} items)"
+    )

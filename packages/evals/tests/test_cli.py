@@ -41,7 +41,7 @@ SUITE = dedent(
           - layer: handler
             path: backend/app/api/routes/login.py
             symbol: login_access_token
-            lines: [22, 39]
+            lines: [23, 42]
       - id: no-billing
         repo: fastapi-template
         sha: {SHA}
@@ -140,7 +140,7 @@ def test_run_rejects_bad_arguments(
 
 
 def test_invalid_suite_points_at_the_line(suite_file: Path, tmp_path: Path) -> None:
-    suite_file.write_text(SUITE.replace("lines: [22, 39]", "lines: [39, 22]"), encoding="utf-8")
+    suite_file.write_text(SUITE.replace("lines: [23, 42]", "lines: [42, 23]"), encoding="utf-8")
     code, output = _run(
         "run",
         "--suite",

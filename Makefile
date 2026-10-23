@@ -3,7 +3,7 @@ SHELL := /bin/bash
 
 PYTEST_UNIT := -m "not integration and not e2e"
 
-.PHONY: help setup up down reset-db psql infra-check api worker beat dev webhooks web web-build storybook storybook-build e2e e2e-real openapi migrate revision downgrade lint typecheck test test-int check fmt eval
+.PHONY: help setup up down reset-db psql infra-check api worker beat dev webhooks web web-build storybook storybook-build e2e e2e-real openapi migrate revision downgrade lint typecheck test test-int check fmt eval golden-validate
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2}'
@@ -119,6 +119,9 @@ check: lint typecheck test ## Lint, typecheck and unit tests (run before every c
 eval: ## Run a golden suite: make eval suite=<name> retriever=<name> [repo=<id>] [k=10,20,50,100] [args="--no-store …"]
 	@test -n "$(suite)" -a -n "$(retriever)" || { echo "usage: make eval suite=<name> retriever=<name>"; exit 1; }
 	uv run sensei-eval run --suite "$(suite)" --retriever "$(retriever)" $(if $(repo),--repo "$(repo)") $(if $(k),--k "$(k)") $(args)
+
+golden-validate: ## Check the private golden suites against their pinned commits (skips without them)
+	uv run python scripts/label_helper.py validate --fetch
 
 fmt: ## Auto-format everything
 	uv run ruff check --fix .
