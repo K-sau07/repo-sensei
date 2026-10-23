@@ -200,7 +200,7 @@ test.describe("command palette", () => {
     await openPalette(page);
     await expectNoAxeViolations(page);
     await page.keyboard.type("login_acc");
-    await expect(palette(page).getByRole("option", { name: /login_access_token/ })).toBeVisible();
+    await expect(palette(page).getByRole("option", { name: /^login_access_token/ })).toBeVisible();
     await expect(page.getByRole("status").filter({ hasText: /\d+ results/ })).toBeAttached();
     await expectNoAxeViolations(page);
   });
@@ -218,7 +218,9 @@ test.describe("command palette", () => {
       const box = await palette(page).boundingBox();
       expect(box?.width).toBe(390);
       await page.keyboard.type("login_acc");
-      await expect(palette(page).getByRole("option", { name: /login_access_token/ })).toBeVisible();
+      await expect(
+        palette(page).getByRole("option", { name: /^login_access_token/ }),
+      ).toBeVisible();
       await expectNoAxeViolations(page);
       await palette(page).getByRole("button", { name: "Close" }).click();
       await expect(palette(page)).toBeHidden();
@@ -444,7 +446,7 @@ test.describe("command palette", () => {
       });
       await page.keyboard.insertText("login_access_tok");
       await expect(
-        palette(page).locator('[data-kind="symbol"]', { hasText: "login_access_token" }),
+        palette(page).locator('[data-kind="symbol"]', { hasText: "login_access_token" }).first(),
       ).toBeVisible();
       await expect
         .poll(() =>

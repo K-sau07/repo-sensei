@@ -100,7 +100,7 @@ export const ServerResults: Story = {
   play: async () => {
     await userEvent.type(await input(), "login_acc");
     const go = await group("Go");
-    const symbol = await within(go).findByRole("option", { name: /login_access_token/ });
+    const symbol = await within(go).findByRole("option", { name: /^login_access_token/ });
     await expect(symbol).toHaveTextContent("function · backend/app/api/routes/login.py:23");
     await expect(symbol).toHaveTextContent("Symbol");
     await userEvent.clear(await input());

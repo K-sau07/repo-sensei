@@ -31,3 +31,6 @@ export type TreeEntry = Schemas["TreeEntry"];
 export type TreeListing = Schemas["TreeOut"];
 export type FileContent = Schemas["FileOut"];
 export type FileSearch = Schemas["SearchOut"];
+export type SymbolKind = Schemas["SymbolKind"];
+export type SymbolHit = Schemas["SymbolOut"];
+export type SymbolSearch = Schemas["SymbolsOut"];

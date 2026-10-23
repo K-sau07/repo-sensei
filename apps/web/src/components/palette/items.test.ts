@@ -76,7 +76,7 @@ describe("pages", () => {
 describe("symbols", () => {
   it("open their lines in the code browser, at the ref being browsed", () => {
     const item = symbolItem("acme", "api", SHA, {
-      symbol_key: "python backend/app/api/routes/login.py/login_access_token().",
+      symbol_key: "py backend/app/api/routes/login.py/login_access_token().",
       name: "login_access_token",
       qualified_name: "login_access_token",
       kind: "function",

@@ -5,8 +5,7 @@ import { useEffect } from "react";
 
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { api } from "@/lib/api/client";
-import { symbolsApi, type SymbolHit } from "@/lib/api/symbols";
-import type { FileSearch } from "@/lib/api/types";
+import type { FileSearch, SymbolHit } from "@/lib/api/types";
 
 /** Server searches wait for typing to pause this long. */
 export const SERVER_DEBOUNCE_MS = 120;
@@ -104,7 +103,7 @@ export function useServerResults({ org, repo, ref }: Scope, query: string) {
   const symbols = useQuery({
     queryKey: symbolKey,
     queryFn: async ({ signal }): Promise<SymbolHit[]> => {
-      const { data } = await symbolsApi.GET("/api/v1/orgs/{org}/repos/{repo}/symbols", {
+      const { data } = await api.GET("/api/v1/orgs/{org}/repos/{repo}/symbols", {
         params: {
           path: { org, repo: repo ?? "" },
           query: { q, limit: SYMBOLS_LIMIT, ...(ref ? { ref } : {}) },

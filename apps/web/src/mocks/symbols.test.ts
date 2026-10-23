@@ -1,20 +1,19 @@
-import type { Client } from "openapi-fetch";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { createApiClient } from "@/lib/api/client";
 import { ApiError } from "@/lib/api/errors";
-import type { SymbolPaths } from "@/lib/api/symbols";
 
 import { BROWSE_COMMIT, fileAt } from "./browse";
 import { db, resetMockDb } from "./db";
 import content from "./fixtures/browse-content.json";
+import { runEvents } from "./index-run";
 import { server } from "./node";
 import { searchSymbols, SYMBOLS } from "./symbols";
 
 const api = createApiClient({
   baseUrl: "http://api.test",
   getCsrfToken: () => null,
-}) as unknown as Client<SymbolPaths>;
+});
 const params = (query: Record<string, string | number>) => ({
   params: { path: { org: "acme", repo: "api" }, query: { q: "", ...query } },
 });
@@ -53,10 +52,21 @@ describe("the mock symbols", () => {
       expect(symbol.start_line).toBeGreaterThanOrEqual(1);
       expect(symbol.end_line).toBeGreaterThanOrEqual(symbol.start_line);
       expect(symbol.end_line).toBeLessThanOrEqual(lines.length);
-      // The name is defined at the start (after any decorators).
+      if (symbol.symbol_key.endsWith("/")) {
+        // The file itself.
+        const last = (text ?? "").endsWith("\n") ? lines.length - 1 : lines.length;
+        expect([symbol.start_line, symbol.end_line]).toEqual([1, Math.max(1, last)]);
+        continue;
+      }
+      // The name is defined at the start (after any decorators): a definition, an assignment or
+      // a field.
       const head = lines.slice(symbol.start_line - 1, symbol.start_line + 5).join("\n");
+      const name = symbol.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
       expect(head, symbol.symbol_key).toMatch(
-        new RegExp(`(def|class|function|const)\\s+${symbol.name}\\b|^${symbol.name}\\b`, "m"),
+        new RegExp(
+          `(def|class|function|const|let|var|interface|type|module)\\s+${name}(?!\\w)|^\\s*${name}(?!\\w)`,
+          "m",
+        ),
       );
     }
   });
@@ -64,9 +74,9 @@ describe("the mock symbols", () => {
   it("have unique keys in the endpoint's scheme", () => {
     const keys = SYMBOLS.map((symbol) => symbol.symbol_key);
     expect(new Set(keys).size).toBe(keys.length);
-    expect(keys).toContain("python backend/app/api/routes/login.py/login_access_token().");
-    expect(keys).toContain("python backend/app/core/config.py/Settings#");
-    expect(keys).toContain("python backend/app/core/config.py/Settings#emails_enabled().");
+    expect(keys).toContain("py backend/app/api/routes/login.py/login_access_token().");
+    expect(keys).toContain("py backend/app/core/config.py/Settings#");
+    expect(keys).toContain("py backend/app/core/config.py/Settings#emails_enabled().");
   });
 
   it("include login_access_token at lines 23–42 (its decorator to its last line)", () => {
@@ -81,8 +91,14 @@ describe("the mock symbols", () => {
 describe("searchSymbols", () => {
   it("ranks an exact name, then prefixes, then substrings", () => {
     const hits = searchSymbols("login", { kind: null, limit: 20 });
-    expect(hits[0]?.name).toBe("Login");
-    expect(hits[0]?.score).toBe(1);
+    // The same case first (useAuth's login), then the other case (the Login page), then the
+    // modules named login, which weigh less.
+    expect(hits.slice(0, 4).map((hit) => [hit.name, hit.kind, hit.score])).toEqual([
+      ["login", "function", 1],
+      ["Login", "component", 0.95],
+      ["login", "module", 0.9],
+      ["login", "module", 0.9],
+    ]);
     expect(hits.map((hit) => hit.name)).toContain("login_access_token");
     const scores = hits.map((hit) => hit.score);
     expect(scores).toEqual([...scores].sort((a, b) => b - a));
@@ -104,7 +120,7 @@ describe("GET /symbols", () => {
     expect(response.headers.get("X-Commit-Sha")).toBe(BROWSE_COMMIT);
     expect(data?.query).toBe("login_access");
     expect(data?.results[0]).toEqual({
-      symbol_key: "python backend/app/api/routes/login.py/login_access_token().",
+      symbol_key: "py backend/app/api/routes/login.py/login_access_token().",
       name: "login_access_token",
       qualified_name: "login_access_token",
       kind: "function",
@@ -137,13 +153,39 @@ describe("GET /symbols", () => {
     ).toMatchObject({ status: 422, code: "invalid_query" });
   });
 
-  it("is 409 not_indexed before the repository's first index", async () => {
+  it("is 404 repo_not_indexed before any index, as the browse endpoints are", async () => {
     const repo = db.repos.acme?.[0];
     if (repo) repo.last_indexed_sha = null;
     const error = await failure(
       api.GET("/api/v1/orgs/{org}/repos/{repo}/symbols", params({ q: "login" })),
     );
-    expect(error).toMatchObject({ status: 409, code: "not_indexed" });
+    expect(error).toMatchObject({ status: 404, code: "repo_not_indexed" });
+  });
+
+  it("is 409 not_indexed while the first run has a snapshot but no symbols yet", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      const repo = db.repos.acme?.find((r) => r.slug === "api");
+      if (!repo) throw new Error("no seeded repository");
+      repo.last_indexed_sha = null;
+      const discovered =
+        runEvents().find((e) => e.type === "stage_done" && e.stage === "discover")?.at ?? 0;
+      const queued = Date.now() - discovered - 10;
+      db.jobs[repo.id] = [
+        {
+          id: "first",
+          repo_id: repo.id,
+          created_at: new Date(queued).toISOString(),
+          queued_ms: queued,
+        },
+      ];
+      const error = await failure(
+        api.GET("/api/v1/orgs/{org}/repos/{repo}/symbols", params({ q: "login" })),
+      );
+      expect(error).toMatchObject({ status: 409, code: "not_indexed" });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("is 404 for a repository that isn't there", async () => {

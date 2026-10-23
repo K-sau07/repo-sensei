@@ -243,6 +243,16 @@ function trigrams(text: string): string[] {
   return out;
 }
 
+/** pg_trgm's `similarity(a, b)`: shared trigrams over all of both, |shared| / |a ∪ b|. */
+export function similarity(a: string, b: string): number {
+  const left = new Set(trigrams(a));
+  const right = new Set(trigrams(b));
+  let shared = 0;
+  for (const trigram of left) if (right.has(trigram)) shared += 1;
+  const all = left.size + right.size - shared;
+  return all === 0 ? 0 : shared / all;
+}
+
 /**
  * pg_trgm's `word_similarity(query, text)`: the best similarity between the query's trigrams
  * and any continuous run of the text's, |shared| / (|query| + |run| − |shared|).

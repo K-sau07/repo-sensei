@@ -15,8 +15,7 @@ import {
 
 import { ALL_TABS } from "@/components/repo/repo-tabs-config";
 import { PRIMARY_NAV, SECONDARY_NAV } from "@/components/shell/nav-items";
-import type { SymbolHit } from "@/lib/api/symbols";
-import type { Repo } from "@/lib/api/types";
+import type { SymbolHit, Repo } from "@/lib/api/types";
 import type { Feature } from "@/lib/indexing";
 import type { HistoryEntry } from "@/lib/palette/history";
 import {

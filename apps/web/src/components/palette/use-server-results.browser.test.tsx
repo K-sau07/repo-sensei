@@ -54,7 +54,7 @@ const files = (q: string, paths: string[]) => ({
 const symbols = (q: string, names: string[]) => ({
   query: q,
   results: names.map((name, index) => ({
-    symbol_key: `python a.py/${name}().`,
+    symbol_key: `py a.py/${name}().`,
     name,
     qualified_name: name,
     kind: "function",
