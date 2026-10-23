@@ -14,12 +14,13 @@ components and hooks, over methods, modules and variables) and by the file: test
 vendored code rank lower.
 
 Each kind of match is found by its own index (an OR of them all would read every symbol of the
-snapshot on each keystroke): the lowered name's prefix, the qualified name's ending (only for a
-query with a dot: otherwise it is the name), and trigrams for contains and typos (only from
-three characters, the shortest a trigram index can use). Each takes at most
-:data:`CANDIDATES_PER_MATCH`, the closest first, and the candidates are then ranked together.
-Typos are looked for only when the other matches don't fill the page: a typo scores at most
-half, below any of them, and finding near names is the costly part.
+snapshot on each keystroke): the lowered name's prefix, the qualified name's ending (also
+without a dot: ``__init__`` finds ``app.api.__init__``), and trigrams for contains and typos
+(only from three characters, the shortest a trigram index can use). Each search keeps its own
+best ``limit`` by the final score and order, so together they hold the overall best ``limit``:
+the answer is the one a single query over every match would give. Typos are looked for only
+when they could still make the page: it isn't full, or its last score is below the most a typo
+can score.
 """
 
 from __future__ import annotations
@@ -45,7 +46,7 @@ KIND_WEIGHTS: dict[SymbolKind, float] = {
 TEST_WEIGHT = 0.85
 GENERATED_WEIGHT = 0.9  # generated or vendored files
 FUZZY_FLOOR = 0.3  # trigram similarity below this isn't a match (pg_trgm's own threshold)
-CANDIDATES_PER_MATCH = 200
+TYPO_MAX = 0.5  # the most a typo can score: similarity (at most 1) times 0.5, times weights <= 1
 TRIGRAM_MIN = 3
 
 
@@ -86,70 +87,8 @@ async def find_symbols(
     length: ColumnElement[float] = func.greatest(func.length(CodeNode.name), 1).cast(Float)
     coverage: ColumnElement[float] = (_number(len(query)) / length).cast(Float)
     similarity: ColumnElement[float] = func.similarity(CodeNode.name, lowered).cast(Float)
+    reversed_qualified = func.reverse(qualified)
 
-    scope = [CodeNode.snapshot_id == snapshot_id]
-    if kind is not None:
-        scope.append(CodeNode.kind == kind.value)
-    shortest = (func.length(CodeNode.name), CodeNode.id)
-    legs = [
-        select(CodeNode.id)
-        .where(*scope, name.like(escaped + "%", escape="\\"))
-        .order_by(*shortest)
-        .limit(CANDIDATES_PER_MATCH)
-    ]
-    if "." in lowered:
-        reversed_qualified = func.reverse(qualified)
-        legs.append(
-            select(CodeNode.id)
-            .where(
-                *scope,
-                or_(
-                    reversed_qualified == lowered[::-1],
-                    reversed_qualified.like(_like_escape(lowered[::-1]) + ".%", escape="\\"),
-                ),
-            )
-            .order_by(*shortest)
-            .limit(CANDIDATES_PER_MATCH)
-        )
-    trigrams = len(lowered) >= TRIGRAM_MIN
-    if trigrams:
-        legs.append(
-            select(CodeNode.id)
-            .where(*scope, CodeNode.name.ilike("%" + escaped + "%", escape="\\"))
-            .order_by(*shortest)
-            .limit(CANDIDATES_PER_MATCH)
-        )
-    hits = await _ranked(
-        db, legs, query=query, similarity=similarity, coverage=coverage, limit=limit
-    )
-    if trigrams and len(hits) < limit:
-        legs.append(
-            select(CodeNode.id)
-            .where(*scope, CodeNode.name.op("%")(lowered), similarity >= FUZZY_FLOOR)
-            .order_by(similarity.desc(), CodeNode.id)
-            .limit(CANDIDATES_PER_MATCH)
-        )
-        hits = await _ranked(
-            db, legs, query=query, similarity=similarity, coverage=coverage, limit=limit
-        )
-    return hits
-
-
-async def _ranked(
-    db: AsyncSession,
-    legs: list[Select[tuple[uuid.UUID]]],
-    *,
-    query: str,
-    similarity: ColumnElement[float],
-    coverage: ColumnElement[float],
-    limit: int,
-) -> list[SymbolHit]:
-    """The candidates the legs found, scored and in order."""
-    lowered = query.lower()
-    escaped = _like_escape(lowered)
-    name = func.lower(CodeNode.name)
-    qualified = func.lower(CodeNode.qualified_name)
-    candidates = union(*legs).subquery()
     match: ColumnElement[float] = case(
         (CodeNode.name == query, 1.0),
         (or_(name == lowered, qualified == lowered), 0.95),
@@ -168,32 +107,68 @@ async def _ranked(
         else_=1.0,
     )
     score: ColumnElement[float] = (match * kind_weight * file_weight).cast(Float)
-    rows = await db.execute(
-        select(
-            CodeNode.symbol_key,
-            CodeNode.name,
-            CodeNode.qualified_name,
-            CodeNode.kind,
-            RepoFile.path,
-            CodeNode.start_line,
-            CodeNode.end_line,
-            CodeNode.signature,
-            score,
-        )
-        .join(candidates, candidates.c.id == CodeNode.id)
-        .join(RepoFile, RepoFile.id == CodeNode.file_id)
-        .order_by(
-            score.desc(),
-            func.length(CodeNode.name),
-            RepoFile.path,
-            CodeNode.start_line,
-        )
-        .limit(limit)
+    order = (
+        score.desc(),
+        func.length(CodeNode.name),
+        RepoFile.path,
+        CodeNode.start_line,
+        CodeNode.id,
     )
-    return [
-        SymbolHit(key, n, q, k, path, start, end, signature, round(float(s), 4))
-        for key, n, q, k, path, start, end, signature, s in rows
+    scope = [CodeNode.snapshot_id == snapshot_id]
+    if kind is not None:
+        scope.append(CodeNode.kind == kind.value)
+
+    def best(*condition: ColumnElement[bool]) -> Select[tuple[uuid.UUID]]:
+        return (
+            select(CodeNode.id)
+            .join(RepoFile, RepoFile.id == CodeNode.file_id)
+            .where(*scope, *condition)
+            .order_by(*order)
+            .limit(limit)
+        )
+
+    legs = [
+        best(name.like(escaped + "%", escape="\\")),
+        best(
+            or_(
+                reversed_qualified == lowered[::-1],
+                reversed_qualified.like(_like_escape(lowered[::-1]) + ".%", escape="\\"),
+            )
+        ),
     ]
+    trigrams = len(lowered) >= TRIGRAM_MIN
+    if trigrams:
+        legs.append(best(CodeNode.name.ilike("%" + escaped + "%", escape="\\")))
+
+    async def ranked() -> list[SymbolHit]:
+        candidates = union(*legs).subquery()
+        rows = await db.execute(
+            select(
+                CodeNode.symbol_key,
+                CodeNode.name,
+                CodeNode.qualified_name,
+                CodeNode.kind,
+                RepoFile.path,
+                CodeNode.start_line,
+                CodeNode.end_line,
+                CodeNode.signature,
+                score,
+            )
+            .join(candidates, candidates.c.id == CodeNode.id)
+            .join(RepoFile, RepoFile.id == CodeNode.file_id)
+            .order_by(*order)
+            .limit(limit)
+        )
+        return [
+            SymbolHit(key, n, q, k, path, start, end, signature, round(float(s), 4))
+            for key, n, q, k, path, start, end, signature, s in rows
+        ]
+
+    hits = await ranked()
+    if trigrams and (len(hits) < limit or hits[-1].score <= TYPO_MAX):
+        legs.append(best(CodeNode.name.op("%")(lowered), similarity >= FUZZY_FLOOR))
+        hits = await ranked()
+    return hits
 
 
 async def symbols_at(db: AsyncSession, file_id: uuid.UUID, line: int) -> list[CodeNode]:

@@ -91,15 +91,17 @@ def _extracted(files: dict[str, str]) -> list[FileSymbols]:
     return found
 
 
-async def _indexed(db: AsyncSession, root: Path) -> tuple[Snapshot, dict[str, uuid.UUID]]:
-    for path, content in FILES.items():
+async def _indexed(
+    db: AsyncSession, root: Path, files: dict[str, str] = FILES
+) -> tuple[Snapshot, dict[str, uuid.UUID]]:
+    for path, content in files.items():
         (root / path).parent.mkdir(parents=True, exist_ok=True)
         (root / path).write_text(content)
     snapshot = await _snapshot(db)
     discovery = discover(root, max_files=100)
     await save_discovery(db, snapshot, discovery)
     file_ids = {f.path: f.id for f in discovery.files}
-    await save_symbols(db, snapshot, file_ids, _extracted(FILES))
+    await save_symbols(db, snapshot, file_ids, _extracted(files))
     return snapshot, file_ids
 
 
@@ -276,6 +278,45 @@ async def test_short_queries_match_prefixes_only(db_session: AsyncSession, tmp_p
     # Below three characters there are no trigrams to search: "ak" starts no name here.
     assert await _found(db_session, snapshot, "ak") == []
     assert ("make_item", "app/models.py") in await _found(db_session, snapshot, "ake")
+
+
+async def test_many_shorter_matches_in_tests_dont_crowd_out_the_best(
+    db_session: AsyncSession, tmp_path: Path
+) -> None:
+    # 250 shorter names, each weighed down by its test file, against one longer name in app code.
+    generated = "".join(f"def get_{i:03}():\n    pass\n\n\n" for i in range(250))
+    files = {"app/svc.py": "def get_current_user():\n    pass\n", "tests/test_gen.py": generated}
+    snapshot, _ = await _indexed(db_session, tmp_path, files)
+    found = await _found(db_session, snapshot, "get")
+    assert found[0] == ("get_current_user", "app/svc.py")
+    hits = await find_symbols(db_session, snapshot.id, "get", limit=3)
+    assert [h.name for h in hits] == ["get_current_user", "get_000", "get_001"]
+
+
+async def test_a_package_module_is_found_by_its_qualified_name(
+    db_session: AsyncSession, tmp_path: Path
+) -> None:
+    files = {"app/api/__init__.py": "X = 1\n", "web/src/components/index.ts": "export {};\n"}
+    snapshot, _ = await _indexed(db_session, tmp_path, files)
+    assert await _found(db_session, snapshot, "__init__", SymbolKind.MODULE) == [
+        ("app.api.__init__", "app/api/__init__.py")
+    ]
+    assert await _found(db_session, snapshot, "index", SymbolKind.MODULE) == [
+        ("web.src.components.index", "web/src/components/index.ts")
+    ]
+
+
+async def test_a_typo_still_ranks_above_weak_contains_matches(
+    db_session: AsyncSession, tmp_path: Path
+) -> None:
+    # The page fills with contains matches weighed down twice (variables in a test file) to
+    # below what the typo scores: it is still looked for.
+    constants = "".join(f"T_USERS_LIST_{i:02} = {i}\n" for i in range(25))
+    files = {"app/svc.py": "def list_users():\n    pass\n", "tests/test_consts.py": constants}
+    snapshot, _ = await _indexed(db_session, tmp_path, files)
+    hits = await find_symbols(db_session, snapshot.id, "users_list")
+    assert len(hits) == 20
+    assert hits[0].name == "list_users"
 
 
 async def test_lookups_stay_in_their_snapshot(db_session: AsyncSession, tmp_path: Path) -> None:
