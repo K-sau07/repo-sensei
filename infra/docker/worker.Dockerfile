@@ -50,7 +50,10 @@ ENV PATH=/app/.venv/bin:$PATH \
     PYTHONDONTWRITEBYTECODE=1 \
     SENSEI_WORKER_QUEUES=default,webhooks,ingest,parse,embed,llm,graph,agent,sandbox,maintenance \
     SENSEI_WORKER_CONCURRENCY=2 \
-    SENSEI_INGEST_CACHE_DIR=/data/repos
+    SENSEI_INGEST_CACHE_DIR=/data/repos \
+    TIKTOKEN_CACHE_DIR=/app/.cache/tiktoken
+# The tokenizer that sizes chunks, fetched now: workers shouldn't download it at run time.
+RUN python -c "import tiktoken; tiktoken.get_encoding('cl100k_base')"
 USER sensei
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
     CMD ["python", "/app/scripts/worker_healthcheck.py"]

@@ -16,6 +16,8 @@ dependencies = [
     "pyyaml>=6.0",
     "redis>=6.2",
     "sensei-core",
+    "sqlglot>=27",  # SQL statement splitting (chunking)
+    "tiktoken>=0.12",  # token counts for chunk budgets (cl100k_base)
     # tree-sitter: exact pins, the query files are written against these grammars.
     "tree-sitter==0.25.2",  # 0.26.0 corrupts memory in QueryCursor (Python 3.13)
     "tree-sitter-javascript==0.25.0",
