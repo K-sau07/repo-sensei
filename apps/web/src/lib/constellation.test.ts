@@ -9,6 +9,7 @@ import {
   codeSection,
   EMPTY_SKY,
   isLowPower,
+  isSoftwareRenderer,
   nearest,
   project,
   reach,
@@ -116,6 +117,19 @@ describe("devices", () => {
     expect(isLowPower({ hardwareConcurrency: 8, connection: { saveData: true } })).toBe(true);
     expect(isLowPower({ hardwareConcurrency: 8 })).toBe(false);
     expect(isLowPower({})).toBe(false);
+  });
+
+  it("recognizes software WebGL renderers", () => {
+    expect(
+      isSoftwareRenderer("ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (LLVM 10.0.0)))"),
+    ).toBe(true);
+    expect(isSoftwareRenderer("llvmpipe (LLVM 15.0.7, 256 bits)")).toBe(true);
+    expect(isSoftwareRenderer("ANGLE (Microsoft, Microsoft Basic Render Driver, D3D11)")).toBe(
+      true,
+    );
+    expect(isSoftwareRenderer("ANGLE (Apple, ANGLE Metal Renderer: Apple M3 Pro)")).toBe(false);
+    expect(isSoftwareRenderer("ANGLE (NVIDIA, NVIDIA GeForce RTX 4070 Direct3D11)")).toBe(false);
+    expect(isSoftwareRenderer(null)).toBe(false);
   });
 });
 

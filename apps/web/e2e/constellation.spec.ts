@@ -1,8 +1,38 @@
 import AxeBuilder from "@axe-core/playwright";
+import type { Page } from "@playwright/test";
 
 import { expect, test } from "./fixtures";
 
 const SUMMARY = /Constellation of the repository: 245 files in \d+ directories/;
+
+/** Make WebGL report this renderer (headless Chromium draws with SwiftShader, a software one). */
+async function useRenderer(page: Page, name: string) {
+  await page.addInitScript((renderer) => {
+    const proto = WebGL2RenderingContext.prototype;
+    const original = Reflect.get(proto, "getParameter") as (...args: unknown[]) => unknown;
+    const RENDERER = 0x1f01;
+    const UNMASKED_RENDERER_WEBGL = 0x9246;
+    Reflect.set(proto, "getParameter", function (this: WebGL2RenderingContext, ...args: unknown[]) {
+      return args[0] === RENDERER || args[0] === UNMASKED_RENDERER_WEBGL
+        ? renderer
+        : Reflect.apply(original, this, args);
+    });
+  }, name);
+}
+
+/** Connect the template repository and stay on its overview while discovery runs. */
+async function watchDiscovery(page: Page) {
+  await page.goto("/acme/repos/new?tab=url");
+  await page
+    .getByLabel("Public repository URL")
+    .fill("https://github.com/fastapi/full-stack-fastapi-template");
+  await expect(page.getByRole("region", { name: /Estimate for/ })).toBeVisible();
+  await page.getByRole("button", { name: "Connect and index" }).click();
+  await expect(page).toHaveURL(/\/acme\/full-stack-fastapi-template$/);
+  const figure = page.getByRole("figure", { name: /Constellation/ });
+  await expect(figure.getByText("Stars appear as discovery finds the files.")).toBeVisible();
+  return figure;
+}
 
 test.describe("constellation", () => {
   test("the last index's constellation, in 3D, with its directories as a list", async ({
@@ -25,16 +55,8 @@ test.describe("constellation", () => {
   });
 
   test("it forms while a run discovers the files", async ({ page }) => {
-    await page.goto("/acme/repos/new?tab=url");
-    await page
-      .getByLabel("Public repository URL")
-      .fill("https://github.com/fastapi/full-stack-fastapi-template");
-    await expect(page.getByRole("region", { name: /Estimate for/ })).toBeVisible();
-    await page.getByRole("button", { name: "Connect and index" }).click();
-    await expect(page).toHaveURL(/\/acme\/full-stack-fastapi-template$/);
-
-    const figure = page.getByRole("figure", { name: /Constellation/ });
-    await expect(figure.getByText("Stars appear as discovery finds the files.")).toBeVisible();
+    await useRenderer(page, "ANGLE (Apple, ANGLE Metal Renderer: Apple M3 Pro)");
+    const figure = await watchDiscovery(page);
     // While the run is live the view turns, with a control to stop it.
     await figure.getByRole("button", { name: "Pause motion" }).click();
     await expect(figure.getByRole("button", { name: "Resume motion" })).toHaveAttribute(
@@ -53,6 +75,16 @@ test.describe("constellation", () => {
     const figure = page.getByRole("figure", { name: /Constellation/ });
     await expect(figure.getByRole("img", { name: SUMMARY })).toBeVisible();
     await expect(figure.getByTestId("constellation-webgl")).toBeVisible();
+    await expect(figure.getByRole("button", { name: /motion/ })).toHaveCount(0);
+  });
+
+  test("drawn by a software rasterizer it is still, without the motion control", async ({
+    page,
+  }) => {
+    await useRenderer(page, "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (LLVM 10.0.0)))");
+    // A live run: with a GPU this is where the view turns (the test above).
+    const figure = await watchDiscovery(page);
+    await expect(figure.getByTestId("constellation-webgl").locator("canvas")).toBeVisible();
     await expect(figure.getByRole("button", { name: /motion/ })).toHaveCount(0);
   });
 

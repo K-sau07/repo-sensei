@@ -6,9 +6,9 @@
  *
  * The 3D view (WebGL2) is loaded in the browser only (`next/dynamic` with `ssr: false`: three.js
  * never runs on the server). Without WebGL2 the same layout is drawn as a static SVG scatter;
- * with reduced motion, or on a low-power device (fewer than 4 cores, or Save-Data), the 3D view
- * is drawn still: no fading in, glow or drift. Nothing is drawn while the view is off screen or
- * the page hidden.
+ * with reduced motion, or on a low-power device (fewer than 4 cores, Save-Data, or WebGL drawn
+ * by a software rasterizer instead of a GPU), the 3D view is drawn still: no fading in, glow or
+ * drift. Nothing is drawn while the view is off screen or the page hidden.
  *
  * Hovering a cluster names its directory, file count and top language; clicking a star opens a
  * preview of the file, with a link into the code browser. Color is never the only signal: the
@@ -49,6 +49,7 @@ import {
   fileName,
   formatBytes,
   isLowPower,
+  isSoftwareRenderer,
   type Layer,
   type MotionMode,
   type Sky,
@@ -98,20 +99,35 @@ const ROLE_LABELS: Record<string, string> = {
 };
 const LISTED_DIRS = 100;
 
-let webgl2: boolean | null = null;
-/** Whether this browser can draw WebGL2 (asked once). */
-export function hasWebGL2(): boolean {
-  if (webgl2 === null) {
+interface WebGLSupport {
+  webgl2: boolean;
+  /** Drawn by a software rasterizer, not a GPU. */
+  software: boolean;
+}
+let support: WebGLSupport | null = null;
+/** Whether this browser can draw WebGL2, and with a GPU (asked once). */
+export function webGLSupport(): WebGLSupport {
+  if (support === null) {
     try {
       const probe = document.createElement("canvas").getContext("webgl2");
-      webgl2 = probe !== null;
+      // Firefox names the renderer in RENDERER (its debug extension is deprecated); Chrome and
+      // Safari answer a generic "WebKit WebGL" there and the real name through the extension.
+      let name: unknown = probe?.getParameter(probe.RENDERER);
+      if (probe && typeof name === "string" && /^webkit webgl$/i.test(name)) {
+        const debug = probe.getExtension("WEBGL_debug_renderer_info");
+        if (debug) name = probe.getParameter(debug.UNMASKED_RENDERER_WEBGL);
+      }
+      support = {
+        webgl2: probe !== null,
+        software: isSoftwareRenderer(typeof name === "string" ? name : null),
+      };
       // Give the probe's context back now: browsers allow only a few at a time.
       probe?.getExtension("WEBGL_lose_context")?.loseContext();
     } catch {
-      webgl2 = false;
+      support = { webgl2: false, software: false };
     }
   }
-  return webgl2;
+  return support;
 }
 
 const noSubscribe = () => () => undefined;
@@ -190,8 +206,10 @@ export function ConstellationView({
     () => true,
     () => false,
   );
-  const lowPower = client && isLowPower(navigator);
-  const webgl = client && renderer !== "svg" && (renderer === "webgl" || hasWebGL2());
+  // A forced renderer (stories) keeps its motion; on its own, a software rasterizer draws still.
+  const probed = client && renderer === "auto" ? webGLSupport() : null;
+  const lowPower = client && (isLowPower(navigator) || probed?.software === true);
+  const webgl = client && renderer !== "svg" && (renderer === "webgl" || probed?.webgl2 === true);
   const motion: MotionMode = reduced || lowPower ? "static" : "live";
   const colors = useSkyColors();
   const active = useActive(box);
