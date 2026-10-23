@@ -19,14 +19,22 @@ from sensei_core.db import Database
 from sensei_core.indexing.events import JobOutbox, job_stream, org_stream
 from sensei_core.indexing.jobs import settle_repo
 from sensei_core.indexing.state import IndexJobStateMachine
-from sensei_core.models import IndexJob, JobKind, JobStatus, Org, Repo, RepoSource, RepoStatus
+from sensei_core.models import (
+    CodeNode,
+    IndexJob,
+    JobKind,
+    JobStatus,
+    Org,
+    Repo,
+    RepoSource,
+    RepoStatus,
+    Snapshot,
+)
 from sensei_core.storage import Bucket, repo_prefix
 from sensei_workers.ingest.git import GitRunner
 from sensei_workers.runtime import Runtime, set_runtime
-from sensei_workers.tasks import orchestrate
 from sensei_workers.tasks.merkle import build_merkle
 from sensei_workers.tasks.orchestrate import run_index_job
-from sensei_workers.tasks.parse import parse_snapshot
 
 pytestmark = pytest.mark.integration
 
@@ -115,6 +123,18 @@ async def _state(
         return repo, job
 
 
+async def _nodes(database: Database, snapshot_id: uuid.UUID) -> tuple[Snapshot, list[CodeNode]]:
+    async with database.session() as db:
+        snapshot = await db.get(Snapshot, snapshot_id)
+        assert snapshot is not None
+        nodes = await db.scalars(
+            select(CodeNode)
+            .where(CodeNode.snapshot_id == snapshot_id)
+            .order_by(CodeNode.start_line, CodeNode.end_line.desc(), CodeNode.symbol_key)
+        )
+        return snapshot, list(nodes)
+
+
 def _run(org_id: uuid.UUID, repo_id: uuid.UUID, job_id: uuid.UUID) -> None:
     kwargs = {"job_id": str(job_id), "org_id": str(org_id), "repo_id": str(repo_id)}
     run_index_job.apply(kwargs=kwargs).get()
@@ -132,8 +152,9 @@ def test_a_full_run_streams_its_stages_in_order(
     repo, job = runtime.run(_state(runtime.system_database, repo_id, job_id))
     assert (job.status, job.stage, job.progress) == (JobStatus.SUCCEEDED, "finalize", 1.0)
     assert (repo.status, repo.last_indexed_sha) == (RepoStatus.READY, bare_repo.second)
+    assert job.stages["parse"]["status"] == job.stages["symbols"]["status"] == "done"
     # The stages this phase doesn't have yet are recorded as skipped.
-    assert job.stages["parse"]["status"] == job.stages["links"]["status"] == "skipped"
+    assert job.stages["chunks"]["status"] == job.stages["links"]["status"] == "skipped"
 
     events = runtime.run(_events(runtime, job_stream(job_id)))
     milestones = [(e["type"], e["stage"]) for e in events if e["type"] not in ("progress", "log")]
@@ -146,18 +167,25 @@ def test_a_full_run_streams_its_stages_in_order(
         ("unlock", "discover"),
         ("stage_started", "merkle"),
         ("stage_done", "merkle"),
+        ("stage_started", "parse"),
+        ("stage_done", "parse"),
+        ("stage_started", "symbols"),
+        ("stage_done", "symbols"),
+        ("unlock", "symbols"),
         ("stage_started", "finalize"),
         ("stage_done", "finalize"),
         ("done", "finalize"),
     ]
-    unlock = next(e for e in events if e["type"] == "unlock")
-    assert unlock["unlocks"] == ["code_browser"]
+    unlocks = [e["unlocks"] for e in events if e["type"] == "unlock"]
+    assert unlocks == [["code_browser"], ["goto_definition"]]
     progress = [e for e in events if e["type"] == "progress"]
     assert progress
     assert all(e["done"] <= e["total"] for e in progress)
     logs = [e["message"] for e in events if e["type"] == "log"]
     assert any(m.startswith("Checked out") for m in logs)
     assert any(m.startswith("Found 5 files") for m in logs)
+    assert "Parsed 1 of 1 source files." in logs
+    assert "Found 4 definitions. Go to definition is ready." in logs
     assert logs[-1].startswith("Indexed")
     assert {e["job_id"] for e in events} == {str(job_id)}
 
@@ -240,29 +268,33 @@ def test_cancelling_before_finalize_keeps_the_last_index(
     assert (repo.status, repo.last_indexed_sha) == (RepoStatus.PENDING, None)
 
 
-def test_the_parse_stage_runs_before_finalize_when_chained(
+def test_the_parse_and_symbols_stages_save_the_snapshots_definitions(
     runtime: Runtime,
     ids: tuple[uuid.UUID, uuid.UUID, uuid.UUID],
     github: respx.MockRouter,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """parse isn't in the chain yet; put in before finalize, it parses the snapshot's source files
-    and the run still finishes."""
     org_id, repo_id, job_id = ids
-    stages = (*orchestrate.STAGES[:-1], parse_snapshot, orchestrate.STAGES[-1])
-    monkeypatch.setattr(orchestrate, "STAGES", stages)
     _run(org_id, repo_id, job_id)
 
     repo, job = runtime.run(_state(runtime.system_database, repo_id, job_id))
     assert (job.status, repo.status) == (JobStatus.SUCCEEDED, RepoStatus.READY)
-    parse = job.stages["parse"]
-    assert parse["status"] == "done"
-    details = parse["details"]
+    details = job.stages["parse"]["details"]
     # src/app.py is the one file with a grammar (README.md, run.sh and the rest have none).
     assert (details["files"], details["parsed"], details["statuses"]) == (1, 1, {"parsed": 1})
-    assert details["captures"]["calls"] == 1  # print(...)
-    events = runtime.run(_events(runtime, job_stream(job_id)))
-    started = [e["stage"] for e in events if e["type"] == "stage_started"]
-    assert started == ["clone", "discover", "merkle", "parse", "finalize"]
-    logs = [e["message"] for e in events if e["type"] == "log"]
-    assert "Parsed 1 of 1 source files." in logs
+    assert details["captures"]["calls"] == 3  # print(...), Greeter(), .greet(...)
+    assert (details["symbols"], details["symbol_errors"]) == (4, 0)
+    symbols = job.stages["symbols"]
+    assert (symbols["status"], symbols["details"]["symbols"]) == ("done", 4)
+    assert symbols["details"]["kinds"] == {"class": 1, "function": 1, "method": 1, "module": 1}
+    assert job.snapshot_id is not None
+
+    snapshot, nodes = runtime.run(_nodes(runtime.system_database, job.snapshot_id))
+    assert snapshot.symbol_count == len(nodes) == 4
+    assert [(n.symbol_key, n.kind, n.start_line, n.end_line) for n in nodes] == [
+        ("py src/app.py/", "module", 1, 7),
+        ("py src/app.py/Greeter#", "class", 1, 3),
+        ("py src/app.py/Greeter#greet().", "method", 2, 3),
+        ("py src/app.py/main().", "function", 6, 7),
+    ]
+    assert {n.org_id for n in nodes} == {org_id}
+    assert {n.lang for n in nodes} == {"python"}

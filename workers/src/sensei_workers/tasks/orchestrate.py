@@ -1,8 +1,9 @@
 """Running an index job: its stages as a Celery chain, and the stage that finishes it.
 
-``run_index_job`` turns a queued job into the chain clone → discover → merkle → finalize (later
-phases add parse, symbols, chunks, embeddings, summaries, graph and links in between). Each stage
-is its own task, so a failure retries only that stage. Every stage checks the job first: a
+``run_index_job`` turns a queued job into the chain clone → discover → merkle → parse (with
+symbols) → finalize (later phases add chunks, embeddings, summaries, graph and links in
+between). Each stage is its own task (parse and symbols share one: the symbols come out of the
+parse), so a failure retries only that stage. Every stage checks the job first: a
 cancelled or failed job makes the rest of the chain do nothing. The stage task ids are kept in
 Redis so cancelling can revoke the ones still queued.
 
@@ -32,9 +33,11 @@ from sensei_workers.runtime import get_runtime
 from sensei_workers.tasks.discover import discover_files
 from sensei_workers.tasks.ingest import IngestTask, clone_snapshot
 from sensei_workers.tasks.merkle import build_merkle
+from sensei_workers.tasks.parse import parse_snapshot
 
 log = get_logger(__name__)
 
+STAGE_ORDER = list(Stage)
 CHAIN_TTL_SECONDS = 2 * 86_400
 # A running stage with no progress for the task time limit plus this is dead.
 STALL_MARGIN_SECONDS = 600
@@ -63,13 +66,15 @@ def finalize_index(self: IngestTask, *, job_id: str, org_id: str, repo_id: str) 
             if job is None or job.status not in ACTIVE_JOB_STATUSES:
                 return None  # finished, failed or cancelled meanwhile
             stages = job.stages or {}
-            # The last stage before finalize: merkle, or parse when it runs.
-            last = job.stage if job.stage in (Stage.MERKLE, Stage.PARSE) else None
-            last_done = last is not None and stages.get(last.value, {}).get("status") == "done"
+            symbols_done = (
+                job.stage is Stage.SYMBOLS and stages.get("symbols", {}).get("status") == "done"
+            )
             resuming = job.stage is Stage.FINALIZE
-            if not last_done and not resuming:
-                if job.stage in (None, Stage.CLONE, Stage.DISCOVER, Stage.MERKLE, Stage.PARSE):
-                    raise NotYetError("the stages before finalize haven't finished")
+            if not symbols_done and not resuming:
+                if job.stage is None or STAGE_ORDER.index(job.stage) <= STAGE_ORDER.index(
+                    Stage.SYMBOLS
+                ):
+                    raise NotYetError("the symbols stage hasn't finished")
                 return None
             repo = await scope.db.get(Repo, job.repo_id)
             snapshot = await scope.db.get(Snapshot, job.snapshot_id) if job.snapshot_id else None
@@ -79,7 +84,7 @@ def finalize_index(self: IngestTask, *, job_id: str, org_id: str, repo_id: str) 
                 return None
             if snapshot is None:
                 raise NotYetError("the job has no snapshot")
-            if last_done:
+            if symbols_done:
                 machine.advance(Stage.FINALIZE)  # later phases' stages: skipped for now
             repo.last_indexed_sha = snapshot.commit_sha
             settle_repo(repo, JobStatus.SUCCEEDED)
@@ -96,7 +101,7 @@ def finalize_index(self: IngestTask, *, job_id: str, org_id: str, repo_id: str) 
     return sha
 
 
-STAGES = (clone_snapshot, discover_files, build_merkle, finalize_index)
+STAGES = (clone_snapshot, discover_files, build_merkle, parse_snapshot, finalize_index)
 
 
 @celery_app.task(

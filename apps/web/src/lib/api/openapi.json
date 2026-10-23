@@ -2355,6 +2355,186 @@
         "title": "StagesOut",
         "type": "object"
       },
+      "SymbolAt": {
+        "properties": {
+          "docstring": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Docstring"
+          },
+          "end_line": {
+            "title": "End Line",
+            "type": "integer"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/SymbolKind"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "qualified_name": {
+            "title": "Qualified Name",
+            "type": "string"
+          },
+          "signature": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Signature"
+          },
+          "start_line": {
+            "title": "Start Line",
+            "type": "integer"
+          },
+          "symbol_key": {
+            "title": "Symbol Key",
+            "type": "string"
+          }
+        },
+        "required": [
+          "symbol_key",
+          "name",
+          "qualified_name",
+          "kind",
+          "start_line",
+          "end_line",
+          "signature",
+          "docstring"
+        ],
+        "title": "SymbolAt",
+        "type": "object"
+      },
+      "SymbolKind": {
+        "enum": [
+          "module",
+          "class",
+          "function",
+          "method",
+          "component",
+          "hook",
+          "variable"
+        ],
+        "title": "SymbolKind",
+        "type": "string"
+      },
+      "SymbolOut": {
+        "properties": {
+          "end_line": {
+            "title": "End Line",
+            "type": "integer"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/SymbolKind"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "qualified_name": {
+            "title": "Qualified Name",
+            "type": "string"
+          },
+          "score": {
+            "title": "Score",
+            "type": "number"
+          },
+          "signature": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Signature"
+          },
+          "start_line": {
+            "title": "Start Line",
+            "type": "integer"
+          },
+          "symbol_key": {
+            "title": "Symbol Key",
+            "type": "string"
+          }
+        },
+        "required": [
+          "symbol_key",
+          "name",
+          "qualified_name",
+          "kind",
+          "path",
+          "start_line",
+          "end_line",
+          "signature",
+          "score"
+        ],
+        "title": "SymbolOut",
+        "type": "object"
+      },
+      "SymbolsAtOut": {
+        "properties": {
+          "line": {
+            "title": "Line",
+            "type": "integer"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "symbols": {
+            "items": {
+              "$ref": "#/components/schemas/SymbolAt"
+            },
+            "title": "Symbols",
+            "type": "array"
+          }
+        },
+        "required": [
+          "path",
+          "line",
+          "symbols"
+        ],
+        "title": "SymbolsAtOut",
+        "type": "object"
+      },
+      "SymbolsOut": {
+        "properties": {
+          "query": {
+            "title": "Query",
+            "type": "string"
+          },
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/SymbolOut"
+            },
+            "title": "Results",
+            "type": "array"
+          }
+        },
+        "required": [
+          "query",
+          "results"
+        ],
+        "title": "SymbolsOut",
+        "type": "object"
+      },
       "TreeEntry": {
         "properties": {
           "child_count": {
@@ -5130,6 +5310,234 @@
         "summary": "Reindex",
         "tags": [
           "indexing"
+        ]
+      }
+    },
+    "/api/v1/orgs/{org}/repos/{repo}/symbols": {
+      "get": {
+        "description": "Symbols by name, best first: exact, prefix, qualified name, contains, then similar.",
+        "operationId": "search_symbols_api_v1_orgs__org__repos__repo__symbols_get",
+        "parameters": [
+          {
+            "description": "Repository slug",
+            "in": "path",
+            "name": "repo",
+            "required": true,
+            "schema": {
+              "description": "Repository slug",
+              "maxLength": 201,
+              "title": "Repo",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Organization slug",
+            "in": "path",
+            "name": "org",
+            "required": true,
+            "schema": {
+              "description": "Organization slug",
+              "title": "Org",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "q",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "Q",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "kind",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/SymbolKind"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Kind"
+            }
+          },
+          {
+            "description": "Branch or commit (or its first 7+ characters).",
+            "in": "query",
+            "name": "ref",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 255,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Branch or commit (or its first 7+ characters).",
+              "title": "Ref"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 50,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SymbolsOut"
+                }
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "X-Commit-Sha": {
+                "description": "The commit the response was read from.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Search Symbols",
+        "tags": [
+          "symbols"
+        ]
+      }
+    },
+    "/api/v1/orgs/{org}/repos/{repo}/symbols/at": {
+      "get": {
+        "description": "The definitions around a line of a file, innermost first.",
+        "operationId": "symbol_at_api_v1_orgs__org__repos__repo__symbols_at_get",
+        "parameters": [
+          {
+            "description": "Repository slug",
+            "in": "path",
+            "name": "repo",
+            "required": true,
+            "schema": {
+              "description": "Repository slug",
+              "maxLength": 201,
+              "title": "Repo",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Organization slug",
+            "in": "path",
+            "name": "org",
+            "required": true,
+            "schema": {
+              "description": "Organization slug",
+              "title": "Org",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "path",
+            "required": true,
+            "schema": {
+              "maxLength": 4096,
+              "minLength": 1,
+              "title": "Path",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "line",
+            "required": true,
+            "schema": {
+              "minimum": 1,
+              "title": "Line",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Branch or commit (or its first 7+ characters).",
+            "in": "query",
+            "name": "ref",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 255,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Branch or commit (or its first 7+ characters).",
+              "title": "Ref"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SymbolsAtOut"
+                }
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "X-Commit-Sha": {
+                "description": "The commit the response was read from.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Symbol At",
+        "tags": [
+          "symbols"
         ]
       }
     },

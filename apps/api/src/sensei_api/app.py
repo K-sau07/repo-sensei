@@ -33,6 +33,7 @@ from sensei_api.routers import (
     me,
     orgs,
     repos,
+    symbols,
     webhooks,
 )
 from sensei_api.routers.health import ReadinessCheck
@@ -150,6 +151,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(browse.router, prefix=API_PREFIX)
     app.include_router(constellation.router, prefix=API_PREFIX)
     app.include_router(internal.router, prefix=API_PREFIX)
+    app.include_router(symbols.router, prefix=API_PREFIX)
     # Wraps the whole middleware stack; RequestIdMiddleware tags the server span it creates.
     FastAPIInstrumentor.instrument_app(app, server_request_hook=scrub_server_span)
     return app

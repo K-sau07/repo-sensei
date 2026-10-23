@@ -18,6 +18,16 @@ LFS_POINTER = (
     "oid sha256:4d7a214614ab2935c943f9e0ff69d22eadbb8f32b1258daaa5e2ca24d17e2393\n"
     "size 12345\n"
 )
+# src/app.py in the second commit: definitions for the symbols stage.
+APP = (
+    "class Greeter:\n"
+    "    def greet(self, name):\n"
+    "        print(f'hello, {name}')\n"
+    "\n"
+    "\n"
+    "def main():\n"
+    "    Greeter().greet('again')\n"
+)
 
 
 @dataclass(frozen=True)
@@ -26,6 +36,7 @@ class BareRepo:
     web_root: Path  # what github.web_url points at (file://<web_root>)
     first: str  # commit ids
     second: str
+    app: str  # src/app.py in the second commit
 
 
 def _git(*args: str, cwd: Path) -> str:
@@ -63,7 +74,7 @@ def bare_repo(tmp_path_factory: pytest.TempPathFactory) -> BareRepo:
     first = _git("rev-parse", "HEAD", cwd=work)
 
     (work / "old.txt").unlink()
-    (work / "src" / "app.py").write_text("print('hello, again')\n")
+    (work / "src" / "app.py").write_text(APP)
     (work / ".gitattributes").write_text("*.bin filter=lfs diff=lfs merge=lfs -text\n")
     (work / "model.bin").write_text(LFS_POINTER)
     _git("add", "-A", cwd=work)
@@ -78,4 +89,4 @@ def bare_repo(tmp_path_factory: pytest.TempPathFactory) -> BareRepo:
     _git("clone", "--quiet", "--bare", str(work), str(bare), cwd=root)
     # GitHub lets clients fetch any reachable commit by id; a local bare repo must be told to.
     _git("config", "uploadpack.allowAnySHA1InWant", "true", cwd=bare)
-    return BareRepo(path=bare, web_root=web_root, first=first, second=second)
+    return BareRepo(path=bare, web_root=web_root, first=first, second=second, app=APP)

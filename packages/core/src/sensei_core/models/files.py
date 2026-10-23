@@ -31,6 +31,7 @@ class RepoFile(IdMixin, OrgScopedMixin, Base):
     __tablename__ = "files"
     __table_args__ = (
         UniqueConstraint("snapshot_id", "path"),
+        UniqueConstraint("id", "org_id"),  # for the (file, org) foreign keys of nodes
         Index("ix_files_repo_id", "repo_id"),  # deleting a repository cascades here
         # Fuzzy path search (⌘K): trigram matching on the path.
         Index(

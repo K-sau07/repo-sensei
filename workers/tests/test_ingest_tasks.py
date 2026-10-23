@@ -308,7 +308,10 @@ SECOND_COMMIT_FILES = [".gitattributes", "README.md", "model.bin", "run.sh", "sr
 
 
 def test_discover_records_the_snapshot_files(
-    runtime: Runtime, repo: tuple[uuid.UUID, uuid.UUID], github: respx.MockRouter
+    runtime: Runtime,
+    repo: tuple[uuid.UUID, uuid.UUID],
+    github: respx.MockRouter,
+    bare_repo: Any,
 ) -> None:
     org_id, repo_id = repo
     system = runtime.system_database
@@ -328,7 +331,7 @@ def test_discover_records_the_snapshot_files(
     assert (app.language, app.role, app.loc, app.snapshot_id) == (
         "python",
         "service",
-        1,
+        bare_repo.app.count("\n"),
         job.snapshot_id,
     )
     assert files["model.bin"].flags == ["lfs_pointer"]

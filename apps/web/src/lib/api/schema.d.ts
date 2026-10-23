@@ -786,6 +786,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/orgs/{org}/repos/{repo}/symbols": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Search Symbols
+         * @description Symbols by name, best first: exact, prefix, qualified name, contains, then similar.
+         */
+        get: operations["search_symbols_api_v1_orgs__org__repos__repo__symbols_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/repos/{repo}/symbols/at": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Symbol At
+         * @description The definitions around a line of a file, innermost first.
+         */
+        get: operations["symbol_at_api_v1_orgs__org__repos__repo__symbols_at_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/orgs/{org}/repos/{repo}/tree": {
         parameters: {
             query?: never;
@@ -1821,6 +1861,65 @@ export interface components {
              * @description In the order they run.
              */
             stages: components["schemas"]["StageInfo"][];
+        };
+        /** SymbolAt */
+        SymbolAt: {
+            /** Docstring */
+            docstring: string | null;
+            /** End Line */
+            end_line: number;
+            kind: components["schemas"]["SymbolKind"];
+            /** Name */
+            name: string;
+            /** Qualified Name */
+            qualified_name: string;
+            /** Signature */
+            signature: string | null;
+            /** Start Line */
+            start_line: number;
+            /** Symbol Key */
+            symbol_key: string;
+        };
+        /**
+         * SymbolKind
+         * @enum {string}
+         */
+        SymbolKind: "module" | "class" | "function" | "method" | "component" | "hook" | "variable";
+        /** SymbolOut */
+        SymbolOut: {
+            /** End Line */
+            end_line: number;
+            kind: components["schemas"]["SymbolKind"];
+            /** Name */
+            name: string;
+            /** Path */
+            path: string;
+            /** Qualified Name */
+            qualified_name: string;
+            /** Score */
+            score: number;
+            /** Signature */
+            signature: string | null;
+            /** Start Line */
+            start_line: number;
+            /** Symbol Key */
+            symbol_key: string;
+        };
+        /** SymbolsAtOut */
+        SymbolsAtOut: {
+            /** Line */
+            line: number;
+            /** Path */
+            path: string;
+            /** Symbols */
+            symbols: components["schemas"]["SymbolAt"][];
+        };
+        /** SymbolsOut */
+        SymbolsOut: {
+            /** Query */
+            query: string;
+            /** Results */
+            results: components["schemas"]["SymbolOut"][];
         };
         /** TreeEntry */
         TreeEntry: {
@@ -3459,6 +3558,89 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["IndexJobOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    search_symbols_api_v1_orgs__org__repos__repo__symbols_get: {
+        parameters: {
+            query: {
+                q: string;
+                kind?: components["schemas"]["SymbolKind"] | null;
+                /** @description Branch or commit (or its first 7+ characters). */
+                ref?: string | null;
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                /** @description Repository slug */
+                repo: string;
+                /** @description Organization slug */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    /** @description The commit the response was read from. */
+                    "X-Commit-Sha"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SymbolsOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    symbol_at_api_v1_orgs__org__repos__repo__symbols_at_get: {
+        parameters: {
+            query: {
+                path: string;
+                line: number;
+                /** @description Branch or commit (or its first 7+ characters). */
+                ref?: string | null;
+            };
+            header?: never;
+            path: {
+                /** @description Repository slug */
+                repo: string;
+                /** @description Organization slug */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    /** @description The commit the response was read from. */
+                    "X-Commit-Sha"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SymbolsAtOut"];
                 };
             };
             /** @description Validation Error */

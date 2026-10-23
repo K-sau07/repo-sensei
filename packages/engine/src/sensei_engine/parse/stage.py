@@ -1,8 +1,10 @@
-"""The parse stage: every file of a working copy we have a grammar for, parsed in parallel.
+"""The parse stage: every file of a working copy we have a grammar for, parsed in parallel,
+and its symbols extracted (in the worker process that has the tree).
 
-Each file comes back as a :class:`FileParse`: its status, its syntax error count and how many
-facts each query captured. Nothing a file holds stops the stage: syntax errors are counted, slow
-files time out, unreadable files and files that crash the parser are marked and passed over.
+Each file comes back as a :class:`FileParse`: its status, its syntax error count, how many
+facts each query captured and its symbols. Nothing a file holds stops the stage: syntax errors
+are counted, slow files time out, unreadable files and files that crash the parser are marked
+and passed over.
 :class:`ParseReport` adds them up for the job's stage details.
 
 Files are read inside the worker processes, so only paths cross between processes. A path must
@@ -22,6 +24,7 @@ from sensei_engine.ingest.classify import MAX_PARSE_BYTES
 from sensei_engine.parse.languages import SUPPORTED_LANGUAGES
 from sensei_engine.parse.parser import TIMEOUT_SECONDS, ParseStatus, parse_file
 from sensei_engine.parse.pool import BATCH_SIZE, Failed, run_parallel
+from sensei_engine.symbols.extract import Symbol, extract_symbols
 
 EXAMPLES = 10  # paths kept per problem, for the stage details
 
@@ -42,6 +45,8 @@ class FileParse:
     seconds: float = 0.0
     captures: dict[str, int] = field(default_factory=dict[str, int])  # matches per query kind
     failure: str | None = None  # why a failed file failed
+    symbols: list[Symbol] = field(default_factory=list[Symbol])
+    symbol_error: str | None = None  # extraction raised: the file parsed, its symbols are lost
 
 
 def read_source(root: Path, path: str) -> bytes:
@@ -60,7 +65,8 @@ def read_source(root: Path, path: str) -> bytes:
 
 
 def parse_request(request: ParseRequest) -> FileParse:
-    """Parse one file of the working copy (the pool's work: runs in a worker process)."""
+    """Parse one file of the working copy and extract its symbols (the pool's work: runs in a
+    worker process, where the tree is)."""
     try:
         data = read_source(Path(request.root), request.path)
     except OSError as exc:
@@ -68,6 +74,12 @@ def parse_request(request: ParseRequest) -> FileParse:
             request.path, request.language, ParseStatus.UNREADABLE, failure=type(exc).__name__
         )
     result = parse_file(request.path, data, language=request.language)
+    symbols: list[Symbol] = []
+    symbol_error: str | None = None
+    try:
+        symbols = extract_symbols(result, request.language)
+    except Exception as exc:  # a bug for one file's shape loses its symbols, not the stage
+        symbol_error = f"{type(exc).__name__}: {exc}"[:500]
     return FileParse(
         path=request.path,
         language=request.language,
@@ -75,6 +87,8 @@ def parse_request(request: ParseRequest) -> FileParse:
         error_count=result.error_count,
         seconds=result.seconds,
         captures={kind.value: len(matches) for kind, matches in result.captures.items()},
+        symbols=symbols,
+        symbol_error=symbol_error,
     )
 
 
@@ -120,6 +134,8 @@ class ParseReport:
     with_errors: int = 0
     error_nodes: int = 0
     seconds: float = 0.0  # parse time summed over files (not wall time)
+    symbols: int = 0
+    symbol_errors: int = 0
     statuses: dict[str, int] = field(default_factory=dict[str, int])
     captures: dict[str, int] = field(default_factory=dict[str, int])
     examples: dict[str, list[str]] = field(default_factory=dict[str, list[str]])
@@ -128,6 +144,10 @@ class ParseReport:
         self.files += 1
         self.seconds += file.seconds
         self.statuses[file.status.value] = self.statuses.get(file.status.value, 0) + 1
+        self.symbols += len(file.symbols)
+        if file.symbol_error is not None:
+            self.symbol_errors += 1
+            self._example("symbol_errors", file.path)
         for kind, count in file.captures.items():
             self.captures[kind] = self.captures.get(kind, 0) + count
         if file.status is ParseStatus.PARSED:
@@ -153,5 +173,7 @@ class ParseReport:
             "statuses": dict(sorted(self.statuses.items())),
             "captures": dict(sorted(self.captures.items())),
             "parse_seconds": round(self.seconds, 3),
+            "symbols": self.symbols,
+            "symbol_errors": self.symbol_errors,
             "examples": {k: sorted(v) for k, v in sorted(self.examples.items())},
         }

@@ -83,7 +83,7 @@ def test_the_cache_is_reused_and_cleaned(runner: GitRunner, bare_repo: Any, tmp_
     assert _head(dest) == bare_repo.second
     assert not (dest / "old.txt").exists()  # deleted in the second commit
     assert not (dest / "leftover.log").exists()  # untracked files are cleaned
-    assert (dest / "src" / "app.py").read_text() == "print('hello, again')\n"
+    assert (dest / "src" / "app.py").read_text() == bare_repo.app
     assert checkout.submodules == 1
     assert not (dest / "vendor" / "lib" / "README.md").exists()  # submodules aren't fetched
 

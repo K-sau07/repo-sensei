@@ -69,8 +69,11 @@ from sensei_engine.ingest.constellation import (
 from sensei_engine.ingest.discover import discover
 from sensei_engine.ingest.merkle import ARTIFACT_NAME, Leaf, build_tree
 from sensei_engine.ingest.store import save_discovery
+from sensei_engine.parse.parser import parse_file
 from sensei_engine.search.grep import ExactSearch
 from sensei_engine.snapshots import SnapshotCache
+from sensei_engine.symbols.extract import extract_symbols
+from sensei_engine.symbols.store import FileSymbols, save_symbols
 from sensei_testing import make_user, sign_in
 from sensei_workers.ingest.archive import write_archive
 
@@ -1588,6 +1591,145 @@ async def test_browsing_needs_an_index_and_access(
     fake.user_can_read[f"ghu_{member.login}"] = set()  # can't read acme-gh/api on GitHub
     hidden = await client.get(f"{API}/orgs/acme/repos/api/file", params={"path": "a.py"})
     assert hidden.json()["error"]["code"] == "repo_not_found_or_no_access"
+
+
+# ------------------------------------------------------------------ symbols
+
+
+async def _extract_symbols(db: AsyncSession, files: dict[str, bytes], sha: str) -> None:
+    """The symbols stage, on the snapshot ``_index`` left at ``sha``."""
+    snapshot = await db.scalar(select(Snapshot).where(Snapshot.commit_sha == sha))
+    assert snapshot is not None
+    rows = await db.execute(
+        select(RepoFile.path, RepoFile.id).where(RepoFile.snapshot_id == snapshot.id)
+    )
+    file_ids = {row.path: row.id for row in rows}
+    found: list[FileSymbols] = []
+    for path, data in files.items():
+        result = parse_file(path, data)
+        if result.ok and result.language is not None:
+            symbols = extract_symbols(result, result.language)
+            found.append(FileSymbols(path, result.language, symbols))
+    snapshot.symbol_count = await save_symbols(db, snapshot, file_ids, found)
+    await db.flush()
+
+
+async def test_symbols_by_name(
+    app: FastAPI,
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    fake: FakeGitHub,
+    storage: ObjectStorage,
+    tmp_path: Path,
+) -> None:
+    await _connected(app, client, db_session, fake)
+    await _index(app, db_session, storage, tmp_path, FILES, SHA_ONE)
+    url = f"{API}/orgs/acme/repos/api/symbols"
+    not_yet = await client.get(url, params={"q": "main"})
+    assert (not_yet.status_code, not_yet.json()["error"]["code"]) == (409, "not_indexed")
+
+    await _extract_symbols(db_session, FILES, SHA_ONE)
+    response = await client.get(url, params={"q": " main "})
+    assert response.status_code == 200, response.text
+    assert response.headers["x-commit-sha"] == SHA_ONE
+    body = response.json()
+    assert body["query"] == "main"
+    assert body["results"][0] == {
+        "symbol_key": "py src/app.py/main().",
+        "name": "main",
+        "qualified_name": "main",
+        "kind": "function",
+        "path": "src/app.py",
+        "start_line": 1,
+        "end_line": 2,
+        "signature": "def main()",
+        "score": 1.0,
+    }
+    found = (await client.get(url, params={"q": "user", "kind": "class"})).json()["results"]
+    assert [(r["name"], r["kind"]) for r in found] == [("UserController", "class")]
+    modules = (await client.get(url, params={"q": "util", "kind": "module"})).json()["results"]
+    assert [(r["symbol_key"], r["signature"]) for r in modules] == [("py src/lib/util.py/", None)]
+    one = (await client.get(url, params={"q": "a", "limit": 1})).json()["results"]
+    assert len(one) == 1
+    for params, status in (
+        ({"q": "main", "limit": 51}, 422),
+        ({"q": "main", "kind": "struct"}, 422),
+        ({"q": ""}, 422),
+    ):
+        assert (await client.get(url, params=params)).status_code == status, params
+    blank = await client.get(url, params={"q": "   "})
+    assert (blank.status_code, blank.json()["error"]["code"]) == (422, "invalid_query")
+    # An older commit indexed before symbols existed.
+    await _index(app, db_session, storage, tmp_path, FILES, SHA_TWO)
+    old = await client.get(url, params={"q": "main", "ref": SHA_ONE[:8]})
+    assert (old.status_code, old.headers["x-commit-sha"]) == (200, SHA_ONE)
+    latest = await client.get(url, params={"q": "main"})
+    assert latest.json()["error"]["code"] == "not_indexed"
+
+
+async def test_the_symbols_at_a_line(
+    app: FastAPI,
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    fake: FakeGitHub,
+    storage: ObjectStorage,
+    tmp_path: Path,
+) -> None:
+    await _connected(app, client, db_session, fake)
+    await _index(app, db_session, storage, tmp_path, FILES, SHA_ONE)
+    url = f"{API}/orgs/acme/repos/api/symbols/at"
+    not_yet = await client.get(url, params={"path": "src/app.py", "line": 2})
+    assert (not_yet.status_code, not_yet.json()["error"]["code"]) == (409, "not_indexed")
+
+    await _extract_symbols(db_session, FILES, SHA_ONE)
+    response = await client.get(url, params={"path": "src/app.py", "line": 2})
+    assert response.status_code == 200, response.text
+    assert response.headers["x-commit-sha"] == SHA_ONE
+    body = response.json()
+    assert (body["path"], body["line"]) == ("src/app.py", 2)
+    assert [(s["symbol_key"], s["kind"]) for s in body["symbols"]] == [
+        ("py src/app.py/main().", "function"),
+        ("py src/app.py/", "module"),
+    ]
+    assert body["symbols"][0] == {
+        "symbol_key": "py src/app.py/main().",
+        "name": "main",
+        "qualified_name": "main",
+        "kind": "function",
+        "start_line": 1,
+        "end_line": 2,
+        "signature": "def main()",
+        "docstring": None,
+    }
+    readme = await client.get(url, params={"path": "README.md", "line": 1})
+    assert readme.json()["symbols"] == []
+    missing = await client.get(url, params={"path": "src/nope.py", "line": 1})
+    assert (missing.status_code, missing.json()["error"]["code"]) == (404, "path_not_found")
+    outside = await client.get(url, params={"path": "../etc/passwd", "line": 1})
+    assert outside.status_code == 400
+    assert (await client.get(url, params={"path": "src/app.py", "line": 0})).status_code == 422
+
+
+async def test_symbols_need_access(
+    app: FastAPI,
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    fake: FakeGitHub,
+    storage: ObjectStorage,
+    tmp_path: Path,
+) -> None:
+    await _connected(app, client, db_session, fake)
+    await _index(app, db_session, storage, tmp_path, FILES, SHA_ONE)
+    await _extract_symbols(db_session, FILES, SHA_ONE)
+    member, _ = await _member(app, client, db_session)
+    fake.user_can_read[f"ghu_{member.login}"] = set()  # can't read acme-gh/api on GitHub
+    for path, params in (
+        ("symbols", {"q": "main"}),
+        ("symbols/at", {"path": "src/app.py", "line": 1}),
+    ):
+        hidden = await client.get(f"{API}/orgs/acme/repos/api/{path}", params=params)
+        assert hidden.json()["error"]["code"] == "repo_not_found_or_no_access", path
+        assert "x-commit-sha" not in hidden.headers
 
 
 async def test_repo_rows_carry_index_summaries(

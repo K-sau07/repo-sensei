@@ -140,6 +140,8 @@ def test_the_report_adds_up_problems() -> None:
         "statuses": {"failed": 1, "parsed": 2, "timed_out": 1},
         "captures": {"defs": 2},
         "parse_seconds": 2.5,
+        "symbols": 0,
+        "symbol_errors": 0,
         "examples": {"failed": ["d.ts"], "syntax_errors": ["a.py"], "timed_out": ["c.ts"]},
     }
 
