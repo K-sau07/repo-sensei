@@ -1,0 +1,53 @@
+{
+  "language": "typescript",
+  "status": "parsed",
+  "error_count": 0,
+  "defs": [
+    "definition.function L14-16 name=isLoggedIn",
+    "definition.hook L18-67 name=useAuth",
+    "definition.function L41-46 name=login",
+    "definition.function L56-59 name=logout",
+    "export L69-69 name=isLoggedIn",
+    "export.default L70-70 value=useAuth"
+  ],
+  "imports": [
+    "import.named L1-1 name=useMutation source=\"@tanstack/react-query\"",
+    "import.named L1-1 name=useQuery source=\"@tanstack/react-query\"",
+    "import.named L1-1 name=useQueryClient source=\"@tanstack/react-query\"",
+    "import.module L1-1 source=\"@tanstack/react-query\"",
+    "import.named L2-2 name=useNavigate source=\"@tanstack/react-router\"",
+    "import.module L2-2 source=\"@tanstack/react-router\"",
+    "import.named L4-10 alias=AccessToken name=Body_login_login_access_token source=\"@/client\"",
+    "import.named L4-10 name=LoginService source=\"@/client\"",
+    "import.named L4-10 name=UserPublic source=\"@/client\"",
+    "import.named L4-10 name=UserRegister source=\"@/client\"",
+    "import.named L4-10 name=UsersService source=\"@/client\"",
+    "import.module L4-10 source=\"@/client\"",
+    "import.named L11-11 name=handleError source=\"@/utils\"",
+    "import.module L11-11 source=\"@/utils\"",
+    "import.default L12-12 default=useCustomToast source=\"./useCustomToast\"",
+    "import.module L12-12 source=\"./useCustomToast\""
+  ],
+  "calls": [
+    "call.method L15-15 name=getItem receiver=localStorage",
+    "call L19-19 name=useNavigate",
+    "call L20-20 name=useQueryClient",
+    "call L21-21 name=useCustomToast",
+    "call L23-27 name=useQuery",
+    "call.method L25-25 name=readUserMe receiver=UsersService",
+    "call L26-26 name=isLoggedIn",
+    "call L29-39 name=useMutation",
+    "call.method L31-31 name=registerUser receiver=UsersService",
+    "call L33-33 name=navigate",
+    "call.method L35-35 name=bind receiver=handleError",
+    "call.method L37-37 name=invalidateQueries receiver=queryClient",
+    "call.method L42-44 name=loginAccessToken receiver=LoginService",
+    "call.method L45-45 name=setItem receiver=localStorage",
+    "call L48-54 name=useMutation",
+    "call L51-51 name=navigate",
+    "call.method L53-53 name=bind receiver=handleError",
+    "call.method L57-57 name=removeItem receiver=localStorage",
+    "call L58-58 name=navigate"
+  ],
+  "decorators": []
+}

@@ -1,0 +1,46 @@
+{
+  "language": "python",
+  "status": "parsed",
+  "error_count": 0,
+  "defs": [
+    "definition.variable L16-18 name=reusable_oauth2",
+    "definition.function L21-23 name=get_db",
+    "definition.variable L26-26 name=SessionDep",
+    "definition.variable L27-27 name=TokenDep",
+    "definition.function L30-46 name=get_current_user",
+    "definition.variable L49-49 name=CurrentUser",
+    "definition.function L52-57 name=get_current_active_superuser"
+  ],
+  "imports": [
+    "import.from L1-1 name=Generator source=collections.abc",
+    "import.from L2-2 name=Annotated source=typing",
+    "import L4-4 source=jwt",
+    "import.from L5-5 name=Depends source=fastapi",
+    "import.from L5-5 name=HTTPException source=fastapi",
+    "import.from L5-5 name=status source=fastapi",
+    "import.from L6-6 name=OAuth2PasswordBearer source=fastapi.security",
+    "import.from L7-7 name=InvalidTokenError source=jwt.exceptions",
+    "import.from L8-8 name=ValidationError source=pydantic",
+    "import.from L9-9 name=Session source=sqlmodel",
+    "import.from L11-11 name=security source=app.core",
+    "import.from L12-12 name=settings source=app.core.config",
+    "import.from L13-13 name=engine source=app.core.db",
+    "import.from L14-14 name=TokenPayload source=app.models",
+    "import.from L14-14 name=User source=app.models"
+  ],
+  "calls": [
+    "call L16-18 name=OAuth2PasswordBearer",
+    "call L22-22 name=Session",
+    "call L26-26 name=Depends",
+    "call L27-27 name=Depends",
+    "call.method L32-34 name=decode receiver=jwt",
+    "call L35-35 name=TokenPayload",
+    "call L37-40 name=HTTPException",
+    "call.method L41-41 name=get receiver=session",
+    "call L43-43 name=HTTPException",
+    "call L45-45 name=HTTPException",
+    "call L49-49 name=Depends",
+    "call L54-56 name=HTTPException"
+  ],
+  "decorators": []
+}

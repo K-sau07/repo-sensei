@@ -63,13 +63,13 @@ def finalize_index(self: IngestTask, *, job_id: str, org_id: str, repo_id: str) 
             if job is None or job.status not in ACTIVE_JOB_STATUSES:
                 return None  # finished, failed or cancelled meanwhile
             stages = job.stages or {}
-            merkle_done = (
-                job.stage is Stage.MERKLE and stages.get("merkle", {}).get("status") == "done"
-            )
+            # The last stage before finalize: merkle, or parse when it runs.
+            last = job.stage if job.stage in (Stage.MERKLE, Stage.PARSE) else None
+            last_done = last is not None and stages.get(last.value, {}).get("status") == "done"
             resuming = job.stage is Stage.FINALIZE
-            if not merkle_done and not resuming:
-                if job.stage in (None, Stage.CLONE, Stage.DISCOVER, Stage.MERKLE):
-                    raise NotYetError("the merkle stage hasn't finished")
+            if not last_done and not resuming:
+                if job.stage in (None, Stage.CLONE, Stage.DISCOVER, Stage.MERKLE, Stage.PARSE):
+                    raise NotYetError("the stages before finalize haven't finished")
                 return None
             repo = await scope.db.get(Repo, job.repo_id)
             snapshot = await scope.db.get(Snapshot, job.snapshot_id) if job.snapshot_id else None
@@ -79,7 +79,7 @@ def finalize_index(self: IngestTask, *, job_id: str, org_id: str, repo_id: str) 
                 return None
             if snapshot is None:
                 raise NotYetError("the job has no snapshot")
-            if merkle_done:
+            if last_done:
                 machine.advance(Stage.FINALIZE)  # later phases' stages: skipped for now
             repo.last_indexed_sha = snapshot.commit_sha
             settle_repo(repo, JobStatus.SUCCEEDED)

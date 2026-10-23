@@ -23,8 +23,10 @@ from sensei_core.models import IndexJob, JobKind, JobStatus, Org, Repo, RepoSour
 from sensei_core.storage import Bucket, repo_prefix
 from sensei_workers.ingest.git import GitRunner
 from sensei_workers.runtime import Runtime, set_runtime
+from sensei_workers.tasks import orchestrate
 from sensei_workers.tasks.merkle import build_merkle
 from sensei_workers.tasks.orchestrate import run_index_job
+from sensei_workers.tasks.parse import parse_snapshot
 
 pytestmark = pytest.mark.integration
 
@@ -236,3 +238,31 @@ def test_cancelling_before_finalize_keeps_the_last_index(
     assert job.stages["merkle"]["status"] == "done"
     assert "finalize" not in job.stages  # finalize saw the cancel and did nothing
     assert (repo.status, repo.last_indexed_sha) == (RepoStatus.PENDING, None)
+
+
+def test_the_parse_stage_runs_before_finalize_when_chained(
+    runtime: Runtime,
+    ids: tuple[uuid.UUID, uuid.UUID, uuid.UUID],
+    github: respx.MockRouter,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """parse isn't in the chain yet; put in before finalize, it parses the snapshot's source files
+    and the run still finishes."""
+    org_id, repo_id, job_id = ids
+    stages = (*orchestrate.STAGES[:-1], parse_snapshot, orchestrate.STAGES[-1])
+    monkeypatch.setattr(orchestrate, "STAGES", stages)
+    _run(org_id, repo_id, job_id)
+
+    repo, job = runtime.run(_state(runtime.system_database, repo_id, job_id))
+    assert (job.status, repo.status) == (JobStatus.SUCCEEDED, RepoStatus.READY)
+    parse = job.stages["parse"]
+    assert parse["status"] == "done"
+    details = parse["details"]
+    # src/app.py is the one file with a grammar (README.md, run.sh and the rest have none).
+    assert (details["files"], details["parsed"], details["statuses"]) == (1, 1, {"parsed": 1})
+    assert details["captures"]["calls"] == 1  # print(...)
+    events = runtime.run(_events(runtime, job_stream(job_id)))
+    started = [e["stage"] for e in events if e["type"] == "stage_started"]
+    assert started == ["clone", "discover", "merkle", "parse", "finalize"]
+    logs = [e["message"] for e in events if e["type"] == "log"]
+    assert "Parsed 1 of 1 source files." in logs

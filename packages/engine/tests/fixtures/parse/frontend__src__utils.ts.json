@@ -1,0 +1,26 @@
+{
+  "language": "typescript",
+  "status": "parsed",
+  "error_count": 0,
+  "defs": [
+    "definition.function L3-15 name=extractErrorMessage",
+    "export L17-20 declaration=const handleError = function (this: (msg: string) => void, …",
+    "definition.function L17-20 name=handleError",
+    "export L22-29 declaration=const getInitials = (name: string): string => { return name…",
+    "definition.function L22-29 name=getInitials"
+  ],
+  "imports": [
+    "import.named L1-1 name=AxiosError source=\"axios\"",
+    "import.module L1-1 source=\"axios\""
+  ],
+  "calls": [
+    "call.method L6-6 name=isArray receiver=Array",
+    "call L18-18 name=extractErrorMessage",
+    "call.method L23-28 name=toUpperCase receiver=name .split(\" \") .slice(0, 2) .map((word) => word[0]) .join…",
+    "call.method L23-27 name=join receiver=name .split(\" \") .slice(0, 2) .map((word) => word[0])",
+    "call.method L23-26 name=map receiver=name .split(\" \") .slice(0, 2)",
+    "call.method L23-25 name=slice receiver=name .split(\" \")",
+    "call.method L23-24 name=split receiver=name"
+  ],
+  "decorators": []
+}

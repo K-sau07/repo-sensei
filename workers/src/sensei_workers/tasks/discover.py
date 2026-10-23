@@ -20,6 +20,7 @@ import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Protocol
 
 from sensei_core.jobs import TaskName
 from sensei_core.logging import get_logger
@@ -62,6 +63,17 @@ class Target:
     snapshot_id: uuid.UUID
     commit_sha: str
     ignore_globs: tuple[str, ...]
+
+
+class SnapshotRef(Protocol):
+    """The snapshot a stage works on (any stage's target has these)."""
+
+    @property
+    def org_id(self) -> uuid.UUID: ...
+    @property
+    def repo_id(self) -> uuid.UUID: ...
+    @property
+    def commit_sha(self) -> str: ...
 
 
 class SnapshotUnavailableError(Exception):
@@ -113,7 +125,7 @@ def _checked_out(worktree: Path) -> str | None:
         return None
 
 
-async def _download(target: Target, out: Path) -> None:
+async def _download(target: SnapshotRef, out: Path) -> None:
     storage = await get_runtime().storage()
     key = snapshot_key(target.org_id, target.repo_id, target.commit_sha)
     if await storage.size(Bucket.SNAPSHOTS, key) is None:
@@ -123,9 +135,9 @@ async def _download(target: Target, out: Path) -> None:
             handle.write(chunk)
 
 
-def _worktree(target: Target) -> Path:
+def local_worktree(target: SnapshotRef) -> Path:
     """The snapshot's files on local disk: the cached working copy, or the archive unpacked in
-    its place."""
+    its place. Call it holding the repository's cache lock (``repo_lock``)."""
     runtime = get_runtime()
     settings = runtime.settings.ingest
     worktree = settings.cache_dir / str(target.repo_id)
@@ -305,7 +317,7 @@ def discover_files(self: IngestTask, *, job_id: str, org_id: str, repo_id: str) 
     try:
         with repo_lock(settings.cache_dir, str(target.repo_id)):  # no clone or eviction meanwhile
             found = discover(
-                _worktree(target),
+                local_worktree(target),
                 ignore_globs=target.ignore_globs,
                 max_files=settings.max_files,
                 walked=walked,
