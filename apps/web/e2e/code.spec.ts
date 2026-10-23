@@ -190,11 +190,15 @@ test.describe("code browser", () => {
     await item(page, "mock-extras").click();
     await item(page, "ten_thousand_lines.py").click();
     await expect(page.getByText("def handler_0001")).toBeVisible();
-    const paint = await page.evaluate(
-      () => performance.getEntriesByName("code-viewer:paint", "measure").at(-1)?.duration ?? null,
-    );
+    // The viewer records the measure in a task after the painted frame, so it can land just
+    // after the text shows: wait for it.
+    const measured = () =>
+      page.evaluate(
+        () => performance.getEntriesByName("code-viewer:paint", "measure").at(-1)?.duration ?? null,
+      );
+    await expect.poll(measured).not.toBeNull();
+    const paint = await measured();
     console.log(`10,000-line file: first paint ${String(paint?.toFixed(1))} ms after it arrived`);
-    expect(paint).not.toBeNull();
     expect(paint ?? Infinity).toBeLessThan(300);
   });
 

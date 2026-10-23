@@ -12,6 +12,19 @@ async function connect(page: Page, url: string) {
 
 test.describe("indexing", () => {
   test("watch a run live: stages, counters and unlocks, then the summary", async ({ page }) => {
+    // The recorded run unlocks the code browser 0.4 s before it finishes, and the finished run's
+    // overview shows its summary instead: polling for the link can miss it, so every link that
+    // appears is noted as it does.
+    await page.addInitScript(() => {
+      const seen: string[] = [];
+      Reflect.set(window, "__unlocks", seen);
+      new MutationObserver(() => {
+        for (const link of document.querySelectorAll('[aria-label="Now available"] a')) {
+          const entry = `${link.textContent} -> ${link.getAttribute("href") ?? ""}`;
+          if (!seen.includes(entry)) seen.push(entry);
+        }
+      }).observe(document, { childList: true, subtree: true, characterData: true });
+    });
     await connect(page, "https://github.com/fastapi/full-stack-fastapi-template");
     await expect(page).toHaveURL(/\/acme\/full-stack-fastapi-template$/);
 
@@ -19,15 +32,16 @@ test.describe("indexing", () => {
     await expect(stages).toBeVisible();
     await expect(stages.locator("[aria-current=step]")).toBeVisible();
     await expect(page.getByText("Live", { exact: true })).toBeVisible();
-    await expect(page.getByRole("link", { name: /Code browser available now/ })).toBeVisible({
-      timeout: 10_000,
-    });
 
     // At the end the overview shows what the run found.
     const summary = page.getByRole("region", { name: /^Indexed/ });
     await expect(summary).toBeVisible({ timeout: 15_000 });
     await expect(summary).toContainText("245");
     await expect(summary).toContainText("18,567");
+    // On the way, discovery unlocked the code browser, with a link to it.
+    expect(await page.evaluate(() => Reflect.get(window, "__unlocks") as string[])).toContain(
+      "Code browser available now -> /acme/full-stack-fastapi-template/code",
+    );
   });
 
   test("a locked tab unlocks while you watch it, without reloading", async ({ page }) => {
