@@ -18,26 +18,35 @@ What is not renamed, and why, is written to the mapping file (``kept``):
   that name alone.
 
 Paths are not code: every directory and file name is renamed word by word through the word map,
-kebab-case and protected words included (``routes/items.py`` → ``pudo/zorvat.py``,
-``recover-password.tsx`` → ``dabe-kinoru.tsx``); extensions and conventional names (``index``,
-``__init__``, ``src``, dotfiles) stay. Import statements are rewritten the same way, so every
-import still resolves in the copy: Python ``import``/``from ... import`` of the repository's own
-modules (binding the old name with ``as`` where the module's code name is kept), and relative or
-``@/`` specifiers in TypeScript and JavaScript. Library imports are left alone.
+kebab-case and protected words included (``items/list.py`` → ``zorvat/kinoru.py``,
+``recover-password.tsx`` → ``dabe-kinoru.tsx``); extensions, conventional names (``index``,
+``__init__``, ``src``, dotfiles) stay. The words the indexer reads a file's role from
+(``routes``, ``tests``, ``test_``, ``models``, ``alembic``: :data:`ROLE_WORDS`) and a hook's
+``use`` are never replaced, in names or paths (``user_settings`` → ``bemi_settings``,
+``useAuth`` → ``useVipe``), so each file keeps its role and each definition its kind.
+Dependency manifests are copied unchanged (:func:`is_verbatim`), so the same frameworks are
+detected.
+
+Import statements are rewritten the same way, so every import still resolves in the copy:
+Python ``import``/``from ... import`` of the repository's own modules (binding the old name with
+``as`` where the module's code name is kept), and relative or ``@/`` specifiers in TypeScript
+and JavaScript. Library imports are left alone.
 
 Replacements never add or remove a line, so a gold span keeps its line numbers; only its path
 and symbol change, and :func:`translate_suite` rewrites them with the same mapping (and the code
 each query quotes). The copy is for retrieval evals: it is indexed, not run, and a name shared
 with a library's attribute or keyword argument can still be renamed where that library is used.
 
-Which names count as the repository's own comes from a symbol source. Until tree-sitter symbol
-extraction lands (step 2.4) the default is the labeling parsers in :mod:`sensei_evals.golden`
-(exact for Python, top-level declarations and class methods for TypeScript).
+Which names count as the repository's own comes from a symbol source. The default is the
+indexer's tree-sitter symbol table (:func:`extracted_symbols`), so every definition the index
+knows is renamed; the labeling parsers in :mod:`sensei_evals.golden` (exact for Python,
+top-level declarations and class methods for TypeScript) are the other choice.
 """
 
 from __future__ import annotations
 
 import ast
+import enum
 import hashlib
 import json
 import os
@@ -51,8 +60,13 @@ from typing import Any, cast
 
 import yaml
 
+from sensei_engine.ingest.frameworks import is_manifest
 from sensei_engine.ingest.ignore import IgnoreRules
+from sensei_engine.ingest.languages import detect_language
 from sensei_engine.ingest.walk import walk
+from sensei_engine.parse.parser import parse_file
+from sensei_engine.parse.stage import parseable, read_source
+from sensei_engine.symbols.extract import SymbolKind, extract_symbols
 from sensei_evals.golden import MAX_FILES, TS_SUFFIXES, Problem, parse_python, symbols_in
 from sensei_evals.python_names import PYTHON_NAMES
 from sensei_evals.repos import mapping_path, read_mapping
@@ -129,6 +143,23 @@ PROTECTED = frozenset(
     }
 )
 PATH_KEPT = frozenset(_CONVENTIONAL)
+# Words the indexer reads a file's role from (ingest/roles.py: test, docs, config, db and api
+# directories and file names, and the names of docs like CHANGES or SECURITY), so every file of
+# the copy has its original's role. Generic, they don't give a repository away.
+ROLE_WORDS = frozenset(
+    """
+    test tests spec specs e2e cypress playwright mocks docs doc documentation scripts settings
+    migrations migration alembic models model repositories repository db database crud api
+    routes route routers router controllers controller endpoints handlers views urls resolver
+    config conf setup manage noxfile tasks fabfile gulpfile gruntfile entity schema pages server
+    readme changelog changes history contributing license licence copying notice authors code
+    conduct security support release notes releasing
+    """.split()  # noqa: SIM905
+)
+# Words never replaced, in names and paths alike (one word map keeps a module's code name and
+# its file name the same): the role words, and ``use``, which makes a name a React hook
+# (``useAuth`` → ``useVipe``) for React and the symbol extractor alike.
+KEPT_WORDS = ROLE_WORDS | {"use"}
 KEPT_PROTECTED = (
     "kept in code: also a language, standard library or framework name, so renaming it would "
     "rename those uses too (file and directory names are still renamed)"
@@ -232,6 +263,8 @@ class RenamePlan:
         word by word, kebab-case parts each in their own style), extensions kept."""
         if not segment or segment.startswith((".", "__")) or segment in PATH_KEPT:
             return segment
+        if is_manifest(segment):  # docker-compose.yml, next.config.ts: found by their names
+            return segment
         stem, dot, rest = segment.partition(".")
         if stem in self.tokens or stem in PATH_KEPT:
             renamed = self._path_word(stem)
@@ -309,12 +342,15 @@ def make_plan(
 
     def word_for(word: str) -> str:
         key = word.lower()
+        if key in KEPT_WORDS:
+            words[key] = key
         if key not in words:
             attempt = 0
             pseudo = key
             while not key.isdigit() and (
                 (pseudo := _pseudo_word(key, seed, attempt)) in taken_lower
                 or pseudo in words.values()
+                or pseudo in KEPT_WORDS
             ):
                 attempt += 1
             words[key] = pseudo
@@ -333,6 +369,11 @@ def make_plan(
         if blocked:
             kept[name] = f"not renamed in {where} code: imported from a library there"
         renamed = _restyle(name, word_for) or name
+        if renamed == name:
+            kept[name] = (
+                "kept: made only of words the indexer reads a file's role or a name's kind from"
+            )
+            continue
         candidate, n = renamed, 2
         while candidate in taken or candidate in tokens.values():
             candidate = f"{renamed}{n}"
@@ -549,9 +590,20 @@ def _rename_patterns(text: str, plan: RenamePlan, *, attributes: bool) -> str:
     return "\n".join(pattern(line) for line in text.split("\n"))
 
 
+def is_verbatim(path: str) -> bool:
+    """A dependency manifest (``package.json``, ``pyproject.toml``, requirements, compose files,
+    ``alembic.ini``): copied as it is. The indexer reads frameworks and package roots from its
+    keys and library names; renamed, they would match nothing (the project's own name in it
+    stays too)."""
+    name = PurePosixPath(path).name
+    return is_manifest(path) and language_of(path) is None and not name.startswith("openapi.")
+
+
 def rename_text(text: str, path: str, plan: RenamePlan, mods: PythonModules) -> str:
     """The renamed content of the file at ``path``: code with the names of its language and its
-    imports rewritten, other text with every name."""
+    imports rewritten, a dependency manifest unchanged, other text with every name."""
+    if is_verbatim(path):
+        return text
     name = PurePosixPath(path).name
     if name in IGNORE_FILES:
         return _rename_patterns(text, plan, attributes=False)
@@ -575,28 +627,67 @@ def _indexed(checkout: Path) -> list[str]:
     return [file.path for file in files]
 
 
+def _add_path_names(found: dict[str, set[str]], file: str, language: str | None) -> None:
+    """A file's directory names (defined by the languages of the files under them; none for a
+    directory without code) and, for code, its module file stem."""
+    path = PurePosixPath(file)
+    here = {language} if language else set[str]()
+    for part in path.parent.parts:
+        if not part.startswith(".") and TOKEN.fullmatch(part):
+            found.setdefault(part, set()).update(here)
+    stem = path.name.split(".")[0]
+    if language is not None and TOKEN.fullmatch(stem):
+        found.setdefault(stem, set()).add(language)
+
+
 def labeling_symbols(checkout: Path) -> dict[str, frozenset[str]]:
     """Names the repository defines, with the code languages that define them, from the
-    labeling parsers (until tree-sitter symbols): definitions (each part of ``Class.method``
-    and ``Class.attr``), module file stems and directory names (defined by the languages of the
-    files under them; none for a directory without code)."""
+    labeling parsers: definitions (each part of ``Class.method`` and ``Class.attr``), module
+    file stems and directory names. Top-level declarations and class methods only, for
+    TypeScript; :func:`extracted_symbols` finds every definition."""
     found: dict[str, set[str]] = {}
     for file in _indexed(checkout):
-        path = PurePosixPath(file)
         language = language_of(file)
-        here = {language} if language else set[str]()
-        for part in path.parent.parts:
-            if not part.startswith(".") and TOKEN.fullmatch(part):
-                found.setdefault(part, set()).update(here)
-        if language is None:
-            continue
-        stem = path.name.split(".")[0]
-        if TOKEN.fullmatch(stem):
-            found.setdefault(stem, set()).add(language)
-        if path.suffix in {".py", *TS_SUFFIXES}:
+        _add_path_names(found, file, language)
+        if language is not None and PurePosixPath(file).suffix in {".py", *TS_SUFFIXES}:
             for span in symbols_in(checkout, file):
                 for part in span.name.split("."):
                     found.setdefault(part, set()).add(language)
+    return {name: frozenset(languages) for name, languages in sorted(found.items())}
+
+
+EXTRACT_TIMEOUT_SECONDS = 30.0  # per file; the indexer's 2 s would leave a slow file's names
+
+
+def extracted_symbols(checkout: Path) -> dict[str, frozenset[str]]:
+    """Names the repository defines, with the code languages that define them, from the
+    tree-sitter symbol table the indexer builds: every definition it extracts (nested
+    functions, methods, class attributes, React components, hooks and variables, wherever they
+    are declared), plus module file stems and directory names as for
+    :func:`labeling_symbols`. Keys that aren't identifiers (``'/login'``, ``200``) and the
+    declarations in a ``declare module "<package>"`` block (they augment the library's own
+    interfaces) are left out. A file that doesn't parse (too large, binary, timed out) adds
+    only its path names."""
+    found: dict[str, set[str]] = {}
+    for file in _indexed(checkout):
+        language = language_of(file)
+        _add_path_names(found, file, language)
+        try:
+            data = read_source(checkout, file)
+        except OSError:
+            continue
+        detected = detect_language(file, data[:256])
+        if detected is None or not parseable(detected):
+            continue
+        result = parse_file(file, data, language=detected, timeout_seconds=EXTRACT_TIMEOUT_SECONDS)
+        # A file rewritten as plain text (a script without a code suffix) renames every name.
+        here = {language} if language else set[str]()
+        for symbol in extract_symbols(result, detected):
+            if symbol.kind is SymbolKind.MODULE or not TOKEN.fullmatch(symbol.name):
+                continue
+            if symbol.qualified_name.startswith(("'", '"')):
+                continue  # inside `declare module "pkg"`: the library's names, augmented
+            found.setdefault(symbol.name, set()).update(here)
     return {name: frozenset(languages) for name, languages in sorted(found.items())}
 
 
@@ -662,6 +753,17 @@ def _js_external(text: str) -> set[str]:
     return names
 
 
+class NameSource(enum.StrEnum):
+    EXTRACTED = "extracted"
+    LABELING = "labeling"
+
+
+NAME_SOURCES: dict[NameSource, SymbolSource] = {
+    NameSource.EXTRACTED: extracted_symbols,
+    NameSource.LABELING: labeling_symbols,
+}
+
+
 def symbols_from_file(path: Path) -> list[str]:
     """One name per line; blank lines and ``#`` comments are skipped."""
     lines = path.read_text(encoding="utf-8").splitlines()
@@ -703,11 +805,13 @@ class RenameResult:
     repo: str | None = None  # the copy's repository id
     # The repository, commit and suite it was made from: repo, sha, suite, suite_sha256.
     source: dict[str, str] = field(default_factory=dict[str, str])
+    names: str | None = None  # where the renamed names came from (a NameSource, or a file)
 
     def mapping(self) -> dict[str, object]:
         return {
             "repo": self.repo,
             "source": self.source,
+            "names": self.names,
             "seed": self.plan.seed,
             "sha": self.sha,
             "tokens": self.plan.tokens,
@@ -734,6 +838,7 @@ class RenameResult:
             sha=data.get("sha"),
             repo=data.get("repo"),
             source=dict(data.get("source", {})),
+            names=data.get("names"),
         )
 
 

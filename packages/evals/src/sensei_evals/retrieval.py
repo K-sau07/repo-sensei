@@ -1,9 +1,10 @@
 """What the harness evaluates: a retriever that turns a query into ranked hits.
 
 Real retrievers (BM25, dense, hybrid, ...) arrive with the steps that build them and register in
-:data:`RETRIEVERS`. The two stubs here validate the harness itself: the oracle returns exactly the
-gold (every metric is 1.0) and the random retriever returns ``k`` files drawn uniformly (file
-recall@k is ``k / N`` on average over a corpus of ``N`` files).
+:data:`RETRIEVERS`; the first is ``symbols``, 2.4's symbol lookup (:mod:`sensei_evals.symbols`).
+The two stubs here validate the harness itself: the oracle returns exactly the gold (every
+metric is 1.0) and the random retriever returns ``k`` files drawn uniformly (file recall@k is
+``k / N`` on average over a corpus of ``N`` files).
 """
 
 from __future__ import annotations
@@ -42,6 +43,9 @@ class RepoRef:
 
 
 class Retriever(Protocol):
+    """Optionally also ``async prepare(repo)``, awaited before the first search (and outside
+    its timing: building an index), and ``async aclose()``, awaited after the last."""
+
     name: str
 
     async def search(self, query: str, repo: RepoRef, k: int) -> list[Hit]:
@@ -117,9 +121,16 @@ def _random(context: RetrieverContext) -> Retriever:
     return RandomRetriever(file_corpus(context.repo.checkout), seed=context.seed)
 
 
+def _symbols(context: RetrieverContext) -> Retriever:
+    from sensei_evals.symbols import checkout_symbols  # noqa: PLC0415 - imports this module
+
+    return checkout_symbols(context)
+
+
 RetrieverFactory = Callable[[RetrieverContext], Retriever]
 
 RETRIEVERS: dict[str, RetrieverFactory] = {
     "oracle": _oracle,
     "random": _random,
+    "symbols": _symbols,
 }

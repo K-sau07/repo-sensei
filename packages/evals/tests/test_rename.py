@@ -17,6 +17,11 @@ from typing import cast
 import pytest
 from typer.testing import CliRunner
 
+from sensei_engine.ingest.discover import Discovery, discover
+from sensei_engine.ingest.languages import detect_language
+from sensei_engine.parse.parser import parse_file
+from sensei_engine.parse.stage import parseable, read_source
+from sensei_engine.symbols.extract import SymbolKind, extract_symbols
 from sensei_evals import paths
 from sensei_evals.cli import app
 from sensei_evals.golden import parse_python, read_lines, read_text, validate_suite
@@ -31,6 +36,7 @@ from sensei_evals.rename import (
     TranslateError,
     commit_tree,
     external_names,
+    extracted_symbols,
     labeling_symbols,
     language_of,
     make_plan,
@@ -144,14 +150,14 @@ def test_sub_replaces_whole_identifiers_only() -> None:
 
 def test_names_are_renamed_only_in_the_languages_that_define_them() -> None:
     plan = make_plan(
-        {"Settings": {PYTHON}, "Widget": {JS}, "img": set[str](), "Shared": {PYTHON, JS}},
+        {"Mailer": {PYTHON}, "Widget": {JS}, "img": set[str](), "Shared": {PYTHON, JS}},
         set(),
         external={JS: {"Shared"}},
     )
-    s, w, i, sh = (plan.tokens[n] for n in ("Settings", "Widget", "img", "Shared"))
-    text = "Settings Widget img Shared"
+    s, w, i, sh = (plan.tokens[n] for n in ("Mailer", "Widget", "img", "Shared"))
+    text = "Mailer Widget img Shared"
     assert plan.sub(text, PY) == f"{s} Widget img {sh}"
-    assert plan.sub(text, (JS,)) == f"Settings {w} img Shared"
+    assert plan.sub(text, (JS,)) == f"Mailer {w} img Shared"
     assert plan.sub(text) == f"{s} {w} {i} {sh}"  # non-code files: every name
     assert plan.kept["Shared"] == "not renamed in js code: imported from a library there"
     only = make_plan({"Toaster": {JS}}, set(), external={JS: {"Toaster"}})
@@ -171,12 +177,13 @@ def test_paths_are_renamed_word_by_word() -> None:
     ]
     plan = make_plan(["items", "routes"], set(), paths=files)
     w = plan.words
-    assert plan.path(files[0]) == f"{w['frontend']}/src/{plan.tokens['routes']}/" + (
+    # The words the indexer reads roles from stay: api, routes (and route in routeTree).
+    assert plan.kept["routes"].startswith("kept: made only of words the indexer reads")
+    assert (w["api"], w["route"]) == ("api", "route")
+    assert plan.path(files[0]) == f"{w['frontend']}/src/routes/" + (
         f"{w['recover']}-{w['password']}.tsx"
     )
-    assert plan.path(files[1]) == (
-        f"{w['backend']}/app/{w['api']}/{plan.tokens['routes']}/{w['items']}.py"
-    )
+    assert plan.path(files[1]) == f"{w['backend']}/app/api/routes/{w['items']}.py"
     assert plan.path(files[2]).endswith("/__init__.py")
     assert plan.path(files[3]).endswith("/__root.tsx")
     assert plan.path(files[4]).endswith(f"/src/{w['route']}{w['tree'].capitalize()}.gen.ts")
@@ -184,7 +191,7 @@ def test_paths_are_renamed_word_by_word() -> None:
     assert plan.path(files[6]) == f".github/{w['workflows']}/{w['ci']}.yml"
     # Specifiers rename the same way (no extension, ./ and ../ kept).
     assert plan.specifier("../routes/recover-password?raw") == (
-        f"../{plan.tokens['routes']}/{w['recover']}-{w['password']}?raw"
+        f"../routes/{w['recover']}-{w['password']}?raw"
     )
 
 
@@ -485,10 +492,9 @@ def test_library_names_are_kept_at_their_call_sites(template: Path, renamed: Cop
     )
     sonner = copied("frontend/src/components/ui/sonner.tsx")
     assert 'import { Toaster as Sonner, type ToasterProps } from "sonner"' in sonner
-    # The repository's own Python Settings class is still renamed, in Python only.
-    config = copied("backend/app/core/config.py")
-    assert f"class {plan.tokens['Settings']}(" in config
-    assert plan.scopes["Settings"] == frozenset({PYTHON})
+    # The repository's own Python Settings class keeps its name: settings is a role word.
+    assert "class Settings(" in copied("backend/app/core/config.py")
+    assert plan.kept["Settings"].startswith("kept: made only of words the indexer reads")
     # Names defined in TypeScript (the generated client's ValidationError type) stay there.
     assert plan.scopes["ValidationError"] == frozenset({JS})
     assert plan.tokens["ValidationError"] in copied("frontend/src/client/types.gen.ts")
@@ -702,6 +708,8 @@ def test_rename_command(template: Path, tmp_path: Path) -> None:
     assert translated.name == "ft-renamed"
     # The copy's id is its folder's name, in the mapping and the suite alike.
     assert mapping["repo"] == "my-copy"
+    assert mapping["names"] == "extracted"  # the indexer's symbol table by default
+    assert "names renamed from extracted" in output
     assert {item.repo for item in translated.items} == {"my-copy"}
     assert translated.items[0].sha == paths.head_sha(out) == mapping["sha"]
     assert translated.renamed_from is not None
@@ -862,10 +870,84 @@ def test_label_helper_finds_copies_made_elsewhere(
     assert "1 suites, 2 items: 0 errors" in out
 
 
-@pytest.mark.skip(reason="TODO(2.4): enable once tree-sitter symbol extraction lands")
-def test_tree_sitter_symbols_rename_every_definition(template: Path) -> None:  # pragma: no cover
+def _definitions(root: Path) -> dict[str, list[str]]:
+    """Every definition the indexer's extractor finds under ``root``: name → paths."""
+    found: dict[str, list[str]] = {}
+    for file in sorted(str(p.relative_to(root)) for p in root.rglob("*") if p.is_file()):
+        if file.startswith(".git/"):
+            continue
+        data = read_source(root, file)
+        language = detect_language(file, data[:256])
+        if language is None or not parseable(language):
+            continue
+        for symbol in extract_symbols(parse_file(file, data, language=language), language):
+            if symbol.kind is not SymbolKind.MODULE:
+                found.setdefault(symbol.name, []).append(file)
+    return found
+
+
+def test_tree_sitter_symbols_rename_every_definition(template: Path, tmp_path: Path) -> None:
     """With the 2.4 symbol table as the source, every definition is renamed: nested functions,
     methods, React components and hooks declared inside components, not only what the labeling
-    parsers find. Swap the source for the 2.4 extractor and assert that no symbol-table name
-    (other than protected ones) survives in the copy."""
-    raise NotImplementedError
+    parsers find. No symbol-table name survives in the copy unless the mapping says why."""
+    names = extracted_symbols(template)
+    labeled = labeling_symbols(template)
+    assert set(labeled) <= set(names)
+    # Handlers and helpers declared inside components and hooks, and functions nested in
+    # functions: the labeling parsers only see top-level declarations and class methods.
+    for name in ("handleLogout", "getInitialOpen", "showErrorToast", "abortHandler"):
+        assert name in names, name
+        assert name not in labeled, name
+    assert names["handleLogout"] == frozenset({JS})
+    # Keys that aren't identifiers, and the library interfaces `declare module` augments.
+    assert not {"'/login'", "200", "Register", "FileRoutesByPath"} & set(names)
+
+    plan = plan_for(template, names)
+    out = tmp_path / "copy"
+    rename_tree(template, out, plan)
+    before = _definitions(template)
+    after = _definitions(out)
+    survivors = {
+        name: files for name, files in after.items() if name in names and name not in plan.kept
+    }
+    assert not survivors, survivors
+    # What survives is kept for a reason the mapping gives: a language or framework name, or
+    # an import from a library.
+    kept = {name for name in after if name in before and name in plan.kept}
+    assert {"items", "children", "className"} <= kept
+    assert all(plan.kept[name] for name in kept)
+    # Every definition is still there under its new name, file for file.
+    assert sum(map(len, after.values())) == sum(map(len, before.values()))
+    for name in ("handleLogout", "getInitialOpen", "SidebarProvider", "useAuth"):
+        assert plan.tokens[name] in after, name
+        assert name not in after, name
+
+
+def test_every_file_keeps_its_role_and_the_frameworks_stay(template: Path, tmp_path: Path) -> None:
+    """The copy is indexed as its original is: the same role, language and flags per file, and
+    the same frameworks at the renamed package roots (manifests are copied unchanged)."""
+    plan = plan_for(template, extracted_symbols(template))
+    out = tmp_path / "copy"
+    result = rename_tree(template, out, plan)
+    before, after = discover(template, max_files=10_000), discover(out, max_files=10_000)
+    copied = {file.path: file for file in after.files}
+    changed = [
+        (file.path, file.role.value, copy.role.value)
+        for file in before.files
+        if (copy := copied[result.paths[file.path]]).role != file.role
+        or (copy.language, copy.flags) != (file.language, file.flags)
+    ]
+    assert not changed, changed[:10]
+
+    def frameworks(found: Discovery, rename: Callable[[str], str]) -> set[tuple[str, str]]:
+        return {(rename(f.root), f.name) for f in found.frameworks}
+
+    assert frameworks(before, lambda root: root if root == "." else plan.path(root)) == (
+        frameworks(after, lambda root: root)
+    )
+    assert {name for _, name in frameworks(after, str)} >= {"fastapi", "react", "sqlmodel"}
+    manifest = "frontend/package.json"
+    assert (out / result.paths[manifest]).read_bytes() == (template / manifest).read_bytes()
+    # A hook keeps its prefix, so it is still a hook.
+    assert plan.tokens["useAuth"].startswith("use")
+    assert plan.tokens["useAuth"] != "useAuth"

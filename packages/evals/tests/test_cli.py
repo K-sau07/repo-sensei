@@ -11,10 +11,11 @@ from textwrap import dedent
 import pytest
 from typer.testing import CliRunner
 
+from sensei_evals import cli
 from sensei_evals.cli import app
 from sensei_evals.reports import compare, read_run, render_comparison
 from sensei_evals.retrieval import OracleRetriever, RandomRetriever, RepoRef
-from sensei_evals.runner import run_suite
+from sensei_evals.runner import RunRecord, run_suite
 from sensei_evals.schema import parse_suite
 
 SHA = "b1125d8839482cb7bbae603ddc6d0081bf87532e"
@@ -95,11 +96,26 @@ def test_run_writes_json_and_markdown(suite_file: Path, tmp_path: Path) -> None:
     assert json.loads(json_path.read_text())["per_item"][0]["query_class"] == "conceptual"
 
 
-def test_random_needs_a_checkout(suite_file: Path, tmp_path: Path) -> None:
+def test_run_keeps_one_query_class(suite_file: Path, tmp_path: Path) -> None:
+    reports = tmp_path / "reports"
+    code, output = _run(
+        "run", "--suite", suite_file, "--retriever", "oracle", "--class", "unanswerable",
+        "--reports-dir", reports, "--no-store",
+    )  # fmt: skip
+    assert code == 0, output
+    run = read_run(next(reports.glob("*.json")))
+    assert [item.id for item in run.per_item] == ["no-billing"]
+    assert (run.config["class"], run.config["items"]) == ("unanswerable", 1)
+
+
+@pytest.mark.parametrize("retriever", ["random", "symbols"])
+def test_retrievers_that_read_files_need_a_checkout(
+    suite_file: Path, tmp_path: Path, retriever: str
+) -> None:
     # A repository id with no checkout under .cache/eval-repos/.
     suite_file.write_text(SUITE.replace("fastapi-template", "no-checkout-here"), encoding="utf-8")
     code, output = _run(
-        "run", "--suite", suite_file, "--retriever", "random", "--reports-dir", tmp_path,
+        "run", "--suite", suite_file, "--retriever", retriever, "--reports-dir", tmp_path,
         "--no-store", "--repo", "no-checkout-here",
     )  # fmt: skip
     assert code == 1
@@ -127,6 +143,7 @@ def test_random_runs_on_a_plain_checkout(suite_file: Path, checkout: Path, tmp_p
         (["--retriever", "oracle", "--k", "0"], "each at least 1"),
         (["--retriever", "oracle", "--repo", "langflow"], "no items for repository 'langflow'"),
         (["--retriever", "oracle", "--opt", "novalue"], "--opt must look like key=value"),
+        (["--retriever", "oracle", "--class", "regex"], "no regex items for repository"),
     ],
 )
 def test_run_rejects_bad_arguments(
@@ -260,3 +277,28 @@ def test_checkout_at_another_commit_is_rejected(suite_file: Path, tmp_path: Path
     )  # fmt: skip
     assert code == 1
     assert f"the suite is pinned to {SHA}" in output
+
+
+def test_store_command_stores_written_runs(
+    suite_file: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    reports = tmp_path / "reports"
+    code, output = _run(
+        "run", "--suite", suite_file, "--retriever", "oracle", "--reports-dir", reports,
+        "--no-store",
+    )  # fmt: skip
+    assert code == 0, output
+    [json_path] = reports.glob("*.json")
+    stored: list[RunRecord] = []
+
+    async def store(run: RunRecord) -> None:
+        stored.append(run)
+
+    monkeypatch.setattr(cli, "_store", store)
+    code, output = _run("store", json_path)
+    assert code == 0, output
+    assert [run.id for run in stored] == [read_run(json_path).id]
+    assert f"stored run {stored[0].id} (cli-demo, oracle)" in output
+    code, output = _run("store", tmp_path / "missing.json")
+    assert code == 1
+    assert "no report" in output

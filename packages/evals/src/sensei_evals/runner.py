@@ -146,25 +146,33 @@ async def run_suite(
         raise ValueError(msg)
     depth = max([*ks, RANK_K])
     results: list[ItemResult] = []
-    for item in items:
-        started = time.perf_counter()
-        hits = await retriever.search(item.query, repo, depth)
-        latency_ms = (time.perf_counter() - started) * 1000
-        found = covered(hits[: ks[-1]], item.gold, Level.SYMBOL)
-        missed = [target for target in item.gold if target not in found]
-        results.append(
-            ItemResult(
-                id=item.id,
-                query_class=item.class_.value,
-                answerable=item.answerable,
-                query=item.query,
-                abstained=not hits,
-                latency_ms=round(latency_ms, 3),
-                metrics=score_item(item, hits, ks),
-                hits=[_hit_json(hit) for hit in hits[:KEPT_HITS]],
-                missed=[target.model_dump(mode="json", exclude_none=True) for target in missed],
+    try:
+        prepare = getattr(retriever, "prepare", None)
+        if prepare is not None:
+            await prepare(repo)  # an index to build: not part of any search's latency
+        for item in items:
+            started = time.perf_counter()
+            hits = await retriever.search(item.query, repo, depth)
+            latency_ms = (time.perf_counter() - started) * 1000
+            found = covered(hits[: ks[-1]], item.gold, Level.SYMBOL)
+            missed = [target for target in item.gold if target not in found]
+            results.append(
+                ItemResult(
+                    id=item.id,
+                    query_class=item.class_.value,
+                    answerable=item.answerable,
+                    query=item.query,
+                    abstained=not hits,
+                    latency_ms=round(latency_ms, 3),
+                    metrics=score_item(item, hits, ks),
+                    hits=[_hit_json(hit) for hit in hits[:KEPT_HITS]],
+                    missed=[t.model_dump(mode="json", exclude_none=True) for t in missed],
+                )
             )
-        )
+    finally:
+        close = getattr(retriever, "aclose", None)
+        if close is not None:
+            await close()
     return RunRecord(
         id=uuid7(),
         suite=suite.name,

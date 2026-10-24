@@ -3,7 +3,10 @@
     sensei-eval run --suite fastapi-template --retriever random --k 10,20,50,100
     sensei-eval compare <run_a> <run_b>
     sensei-eval report <run>
+    sensei-eval store evals/private/reports/<id>.json
     sensei-eval rename --suite fastapi-template --repo fastapi-template
+    sensei-eval prepare-db && sensei-eval run --suite fastapi-template --retriever symbols \\
+        --class symbol
 
 Runs are written to ``evals/private/reports/<id>.json`` and ``.md`` (private) and stored in
 ``eval_runs`` unless ``--no-store``. A run is named by its id (looked up in the reports folder,
@@ -31,6 +34,7 @@ from sensei_evals.retrieval import RETRIEVERS, RepoRef, RetrieverContext
 from sensei_evals.runner import DEFAULT_KS, RunRecord, run_suite
 from sensei_evals.schema import (
     GoldenItem,
+    QueryClass,
     RenamedFrom,
     Suite,
     SuiteError,
@@ -38,6 +42,7 @@ from sensei_evals.schema import (
     parse_suite,
 )
 from sensei_evals.store import load_run, save_run
+from sensei_evals.symbols import EVAL_DATABASE, migrate_database, recreate_database
 
 app = typer.Typer(no_args_is_help=True, add_completion=False, help=__doc__)
 
@@ -167,6 +172,10 @@ def run(
     opt: Annotated[
         list[str] | None, typer.Option(help="Retriever option key=value (repeatable).")
     ] = None,
+    query_class: Annotated[
+        QueryClass | None,
+        typer.Option("--class", help="Only the items of this query class (symbol, regex, ...)."),
+    ] = None,
     reports_dir: Annotated[Path | None, typer.Option(help="Where reports go.")] = None,
     store: Annotated[bool, typer.Option(help="Also store the run in eval_runs.")] = True,
 ) -> None:
@@ -183,6 +192,10 @@ def run(
     except SuiteError as error:
         raise _fail(f"invalid suite:\n{error}") from None
     repo_id, sha, items = select_items(loaded, repo)
+    if query_class is not None:
+        items = [item for item in items if item.class_ is query_class]
+        if not items:
+            raise _fail(f"no {query_class.value} items for repository {repo_id!r}")
     ref = RepoRef(id=repo_id, sha=sha, checkout=_checkout(root, repo_id, sha, checkout))
     options = _options(opt or [])
     try:
@@ -193,6 +206,7 @@ def run(
         "seed": seed,
         "options": options,
         "items": len(items),
+        "class": query_class.value if query_class is not None else None,
         "dirty": paths.has_uncommitted_changes(root),
         # Which exact suite file ran: an edit without a version bump still tells.
         "suite_sha256": hashlib.sha256(paths.suite_path(root, suite).read_bytes()).hexdigest(),
@@ -210,6 +224,42 @@ def run(
             ) from None
     typer.echo(render_run(record))
     typer.echo(f"run {record.id}: {json_path} and {md_path}" + (" (stored)" if store else ""))
+
+
+@app.command("store")
+def store_runs(
+    runs: Annotated[list[Path], typer.Argument(help="JSON reports of runs made with --no-store.")],
+) -> None:
+    """Store runs from their JSON reports in eval_runs (for runs made while the database
+    couldn't take them)."""
+    records: list[RunRecord] = []
+    for path in runs:
+        if not path.is_file():
+            raise _fail(f"no report {path}")
+        records.append(read_run(path))
+    for record in records:
+        try:
+            asyncio.run(_store(record))
+        except (OSError, SQLAlchemyError) as error:
+            raise _fail(f"storing run {record.id} failed: {_db_error(error)}") from None
+        typer.echo(f"stored run {record.id} ({record.suite}, {record.retriever})")
+
+
+@app.command("prepare-db")
+def prepare_db(
+    name: Annotated[str, typer.Option(help="The eval database's name.")] = EVAL_DATABASE,
+) -> None:
+    """Recreate the throwaway database the symbols retriever indexes into, at the latest
+    schema (on the settings' server; it never is the app's own database)."""
+    alembic_ini = paths.repo_root() / "packages" / "core" / "alembic.ini"
+    try:
+        url = asyncio.run(recreate_database(name))
+        migrate_database(alembic_ini, url)
+    except (ValueError, RuntimeError) as error:
+        raise _fail(str(error)) from None
+    except (OSError, SQLAlchemyError) as error:
+        raise _fail(f"recreating {name} failed: {_db_error(error)}") from None
+    typer.echo(f"{name}: ready")
 
 
 @app.command("compare")
@@ -260,8 +310,16 @@ def rename(
         ),
     ] = None,
     symbols: Annotated[
-        Path | None, typer.Option(help="Names to rename, one per line (default: extracted).")
+        Path | None,
+        typer.Option(help="Names to rename, one per line (instead of --names-from)."),
     ] = None,
+    names_from: Annotated[
+        rename_mod.NameSource,
+        typer.Option(
+            help="Where the repository's own names come from: the indexer's tree-sitter "
+            "symbol table, or the labeling parsers."
+        ),
+    ] = rename_mod.NameSource.EXTRACTED,
     seed: Annotated[int, typer.Option(help="Seed for the generated names.")] = 0,
     suite_out: Annotated[
         Path | None,
@@ -294,9 +352,12 @@ def rename(
             "--out must end in a folder named like a repository id (lowercase letters, digits, "
             f"'.', '_' or '-'), got {new_repo!r}"
         )
-    names = (
-        rename_mod.symbols_from_file(symbols) if symbols else rename_mod.labeling_symbols(source)
-    )
+    if symbols is not None:
+        names: rename_mod.Names = rename_mod.symbols_from_file(symbols)
+        names_source = f"file {symbols.name}"
+    else:
+        names = rename_mod.NAME_SOURCES[names_from](source)
+        names_source = names_from.value
     plan = rename_mod.plan_for(source, names, seed=seed)
     try:
         result = rename_mod.rename_tree(source, target, plan)
@@ -304,6 +365,7 @@ def rename(
         raise _fail(str(error)) from None
     result.sha = rename_mod.commit_tree(target)
     result.repo = new_repo
+    result.names = names_source
     origin = RenamedFrom(
         suite=suite_file.stem, repo=repo, sha=sha, sha256=hashlib.sha256(raw).hexdigest()
     )
@@ -325,7 +387,8 @@ def rename(
     suite_out.parent.mkdir(parents=True, exist_ok=True)
     suite_out.write_text(rename_mod.suite_yaml(translated), encoding="utf-8")
     typer.echo(
-        f"{len(plan.tokens)} names renamed ({len(plan.kept)} kept, listed in the mapping), "
+        f"{len(plan.tokens)} names renamed from {names_source} ({len(plan.kept)} kept, listed "
+        "in the mapping), "
         f"{result.rewritten} files rewritten, {result.copied} copied; "
         f"{target} ({new_repo}) at {result.sha}\n"
         f"mapping: {mapping}\nsuite: {suite_out} ({len(translated.items)} items)"
