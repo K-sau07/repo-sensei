@@ -9,6 +9,7 @@ Groups are added here as features need them; ``.env.example`` documents every va
 
 from __future__ import annotations
 
+from decimal import Decimal
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
@@ -313,6 +314,9 @@ class PricingSettings(BaseSettings):
 
     # A JSON price table (see sensei_core.usage.PriceTable); the built-in table when unset.
     table_path: Path | None = None
+    # What one org may spend on models in a calendar month (UTC). Work that would take it over
+    # (a summaries batch, by its estimate) isn't started. Plans set their own caps later.
+    org_monthly_cap_usd: Decimal = Field(default=Decimal(25), ge=0)
 
 
 class Settings(BaseSettings):

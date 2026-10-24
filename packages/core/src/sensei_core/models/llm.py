@@ -9,8 +9,9 @@ from __future__ import annotations
 
 import enum
 from datetime import datetime
+from decimal import Decimal
 
-from sqlalchemy import DateTime, Enum, Index, Integer, String, func, text
+from sqlalchemy import DateTime, Enum, Index, Integer, Numeric, String, func, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from sensei_core.db.base import Base, IdMixin
@@ -64,6 +65,9 @@ class LLMBatch(IdMixin, OrgScopedMixin, Base):
     # What the batch belongs to (an index job), as in the usage ledger.
     ref_type: Mapped[str | None] = mapped_column(String(50))
     ref_id: Mapped[str | None] = mapped_column(String(100))
+    # What the cost guard expected the batch to cost before it was sent (the real cost is in
+    # the usage ledger).
+    estimated_cost_usd: Mapped[Decimal | None] = mapped_column(Numeric(12, 6))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     collected_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

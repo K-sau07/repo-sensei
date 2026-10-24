@@ -1,0 +1,545 @@
+"""File and symbol summaries (2.8): what each file and each of its symbols does, in the domain's
+words, written by Claude through the Message Batches API (half price).
+
+* **Requests** (:func:`build_requests`): one per file, with its path, language, the repository's
+  frameworks, its 2.4 symbols (key, kind, name, lines, signature) and its content with line
+  numbers. Content past :data:`MAX_PROMPT_CHARS` is cut (a note says so) and the symbols past the
+  cut are left out. The prompt is versioned (:data:`PROMPT_VERSION`, kept on every summary).
+* **Answers** (:func:`parse_answer`): JSON matching :func:`answer_schema`. The model sees each
+  symbol by a short handle (``s1``, ``s2`` ...), not its key: given the keys, it rewrote them
+  (``ts a.ts/f().`` came back as ``a.ts/f().``). Handles are checked against the file's symbols
+  and mapped back to their keys; unknown and repeated ones are dropped. Domain terms are tidied.
+* **Cost guard** (:func:`estimate_cost`, :func:`check_budget`): before anything is sent, the
+  input is counted with ``count_tokens`` (every request, or a sample and a fit when there are
+  many) and the output estimated per symbol. The run doesn't start if the month's spend plus
+  the estimate would pass the org's cap (:class:`CostCapExceeded`). The estimate is recorded on
+  the batch.
+* **Batch** (:func:`summarize_files`): reserved, sent, polled and collected through
+  :mod:`sensei_engine.llm.batches`; usage goes to the ledger in the collecting transaction.
+  A request that failed or whose answer is unusable (not JSON, cut off, not matching the
+  schema) is sent once more on its own; if that fails too the file is skipped, with the reason.
+
+Storing the summaries (summary-view chunks, embedded) is the summaries stage's, with 2.6.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import hashlib
+import math
+import uuid
+from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
+from contextlib import AbstractAsyncContextManager
+from dataclasses import dataclass, field
+from datetime import datetime
+from decimal import Decimal
+from functools import cache
+from importlib import resources
+from typing import Any
+
+from pydantic import BaseModel, ConfigDict, ValidationError
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from sensei_core.logging import get_logger
+from sensei_core.models import LLMBatch, LLMBatchStatus
+from sensei_core.usage import CostCalculator, month_start, spent_since
+from sensei_engine.llm import batches
+from sensei_engine.llm.anthropic_client import (
+    PROVIDER,
+    AnthropicClient,
+    BatchItem,
+    LLMError,
+    LLMRequest,
+    LLMResult,
+    LLMUsage,
+    Role,
+    tier_for,
+)
+from sensei_engine.llm.ledger import usage_ledger
+
+log = get_logger(__name__)
+
+PROMPT_VERSION = "summarize_file.v1"
+KIND = "summaries"  # the batches' kind
+# About 80K tokens of content at 3 characters a token: the prompt stays under 100K.
+MAX_PROMPT_CHARS = 240_000
+MAX_SYMBOLS = 80  # per file, in line order
+SKIPPED_KINDS = frozenset({"module", "variable"})  # the file summary covers the module
+MAX_TERMS = 6
+MAX_TERM_CHARS = 60
+# The answer, for max_tokens and the estimate: a file summary and its JSON, then each symbol's.
+OUTPUT_TOKENS_PER_FILE = 150
+OUTPUT_TOKENS_PER_SYMBOL = 130
+THINKING_ROOM = 2_000
+COUNT_SAMPLE = 20  # count_tokens calls at most; the rest is fitted
+POLL_SECONDS = 30.0
+RETRY_CONCURRENCY = 4
+
+Sleep = Callable[[float], Awaitable[None]]
+Sessions = Callable[[], AbstractAsyncContextManager[AsyncSession]]
+
+
+@dataclass(frozen=True, slots=True)
+class SymbolInput:
+    key: str  # the 2.4 symbol key (``nodes.symbol_key``)
+    kind: str
+    name: str
+    start_line: int
+    end_line: int
+    signature: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class FileInput:
+    path: str
+    language: str
+    content: str
+    symbols: tuple[SymbolInput, ...] = ()
+    frameworks: tuple[str, ...] = ()
+
+    @property
+    def custom_id(self) -> str:
+        """The batch request id: from the path, so a resumed run maps results back."""
+        return "f_" + hashlib.sha256(self.path.encode()).hexdigest()[:40]
+
+
+@dataclass(frozen=True, slots=True)
+class SymbolSummary:
+    key: str
+    summary: str
+    domain_terms: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class FileSummary:
+    path: str
+    summary: str
+    symbols: Mapping[str, SymbolSummary]  # by symbol key
+    prompt_version: str
+    model: str
+    truncated: bool = False  # the content was cut before it was sent
+
+
+@dataclass(frozen=True, slots=True)
+class CostEstimate:
+    requests: int
+    input_tokens: int
+    output_tokens: int
+    cost_usd: Decimal
+    counted: int  # requests whose input count_tokens counted (the rest were fitted)
+
+
+@dataclass(slots=True)
+class SummaryRun:
+    summaries: dict[str, FileSummary] = field(default_factory=dict[str, FileSummary])
+    skipped: dict[str, str] = field(default_factory=dict[str, str])  # path -> why
+    estimate: CostEstimate | None = None
+    batch_id: uuid.UUID | None = None
+    retried: int = 0
+    dropped_keys: int = 0  # symbol keys the model gave that the file doesn't have, or repeated
+
+
+class CostCapExceeded(Exception):
+    def __init__(self, estimate: CostEstimate, spent: Decimal, cap: Decimal) -> None:
+        super().__init__(
+            f"summaries would cost about ${estimate.cost_usd} on top of ${spent} spent this month"
+            f" (cap ${cap})"
+        )
+        self.estimate = estimate
+        self.spent = spent
+        self.cap = cap
+
+
+# ---------------------------------------------------------------- requests
+
+
+@cache
+def system_prompt() -> str:
+    path = resources.files("sensei_engine.llm").joinpath("prompts", f"{PROMPT_VERSION}.md")
+    return path.read_text(encoding="utf-8")
+
+
+def answer_schema() -> dict[str, Any]:
+    """The JSON schema the model answers in."""
+    symbol = {
+        "type": "object",
+        "properties": {
+            "key": {"type": "string"},
+            "summary": {"type": "string"},
+            "domain_terms": {"type": "array", "items": {"type": "string"}},
+        },
+        "required": ["key", "summary", "domain_terms"],
+        "additionalProperties": False,
+    }
+    return {
+        "type": "object",
+        "properties": {
+            "file_summary": {"type": "string"},
+            "symbols": {"type": "array", "items": symbol},
+        },
+        "required": ["file_summary", "symbols"],
+        "additionalProperties": False,
+    }
+
+
+def summarizable(symbols: Iterable[SymbolInput]) -> list[SymbolInput]:
+    """The symbols worth a summary, in line order, at most :data:`MAX_SYMBOLS`."""
+    kept = [s for s in symbols if s.kind not in SKIPPED_KINDS]
+    return sorted(kept, key=lambda s: (s.start_line, s.key))[:MAX_SYMBOLS]
+
+
+def render(file: FileInput) -> tuple[str, list[SymbolInput], bool]:
+    """The user message for ``file``, the symbols it asks about, and whether the content was
+    cut (symbols that start past the cut aren't asked about)."""
+    lines = file.content.splitlines()
+    numbered: list[str] = []
+    size = 0
+    for number, line in enumerate(lines, start=1):
+        entry = f"{number}\t{line}"
+        if size + len(entry) + 1 > MAX_PROMPT_CHARS:
+            break
+        numbered.append(entry)
+        size += len(entry) + 1
+    cut = len(numbered) < len(lines)
+    symbols = [s for s in summarizable(file.symbols) if s.start_line <= len(numbered)]
+    head = [f"<path>{file.path}</path>", f"<language>{file.language}</language>"]
+    if file.frameworks:
+        head.append(f"<frameworks>{', '.join(file.frameworks)}</frameworks>")
+    head.append("<symbols>")
+    for handle, symbol in zip(handles(symbols), symbols, strict=True):
+        signature = f" {symbol.signature}" if symbol.signature else ""
+        head.append(
+            f"{handle}\t{symbol.kind} {symbol.name} "
+            f"(lines {symbol.start_line}-{symbol.end_line}){signature}"
+        )
+    head.append("</symbols>")
+    note = f"\n(cut short after line {len(numbered)} of {len(lines)})" if cut else ""
+    body = "\n".join(numbered)
+    return "\n".join(head) + f"\n<content>\n{body}\n</content>{note}", symbols, cut
+
+
+def handles(symbols: Sequence[SymbolInput]) -> list[str]:
+    """What the model calls each symbol: ``s1``, ``s2`` ..."""
+    return [f"s{index}" for index in range(1, len(symbols) + 1)]
+
+
+def build_request(file: FileInput) -> LLMRequest:
+    prompt, symbols, _ = render(file)
+    return LLMRequest(
+        prompt,
+        system=system_prompt(),
+        tier=tier_for(Role.SUMMARY),
+        max_tokens=_output_budget(len(symbols)) + THINKING_ROOM,
+        effort="low",
+        schema=answer_schema(),
+        cache_system=True,
+    )
+
+
+def build_requests(files: Iterable[FileInput]) -> list[tuple[str, LLMRequest]]:
+    """One ``(custom id, request)`` per file. Paths must be unique."""
+    requests: dict[str, LLMRequest] = {}
+    for file in files:
+        if file.custom_id in requests:
+            msg = f"{file.path} is listed twice"
+            raise ValueError(msg)
+        requests[file.custom_id] = build_request(file)
+    return list(requests.items())
+
+
+def _output_budget(symbols: int) -> int:
+    return OUTPUT_TOKENS_PER_FILE + OUTPUT_TOKENS_PER_SYMBOL * symbols
+
+
+# ---------------------------------------------------------------- answers
+
+
+class _Symbol(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    key: str
+    summary: str
+    domain_terms: list[str]
+
+
+class _Answer(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    file_summary: str
+    symbols: list[_Symbol]
+
+
+def _tidy(text: str) -> str:
+    return " ".join(text.split())
+
+
+def terms(raw: Iterable[str]) -> tuple[str, ...]:
+    """Domain terms, tidied: single spaces, no surrounding punctuation, at most
+    :data:`MAX_TERMS`, repeats (any case) dropped."""
+    found: dict[str, str] = {}
+    for term in raw:
+        tidy = _tidy(term).strip(" .,;:!?\"'`()[]")
+        if 2 <= len(tidy) <= MAX_TERM_CHARS and tidy.casefold() not in found:
+            found[tidy.casefold()] = tidy
+    return tuple(found.values())[:MAX_TERMS]
+
+
+def parse_answer(file: FileInput, result: LLMResult) -> tuple[FileSummary, int]:
+    """The summary in ``result`` and how many symbol entries were dropped (unknown or repeated
+    keys, empty summaries). Raises ValueError when the answer is unusable."""
+    try:
+        answer = _Answer.model_validate(result.data)
+    except ValidationError as exc:
+        msg = "the answer doesn't match the schema"
+        raise ValueError(msg) from exc
+    summary = _tidy(answer.file_summary)
+    if not summary:
+        msg = "the answer has no file summary"
+        raise ValueError(msg)
+    _, asked, cut = render(file)
+    known = dict(zip(handles(asked), (symbol.key for symbol in asked), strict=True))
+    symbols: dict[str, SymbolSummary] = {}
+    dropped = 0
+    for entry in answer.symbols:
+        key, text = known.get(entry.key.strip()), _tidy(entry.summary)
+        if key is None or key in symbols or not text:
+            dropped += 1
+            continue
+        symbols[key] = SymbolSummary(key, text, terms(entry.domain_terms))
+    return FileSummary(file.path, summary, symbols, PROMPT_VERSION, result.model, cut), dropped
+
+
+# ---------------------------------------------------------------- the cost guard
+
+
+async def estimate_cost(
+    client: AnthropicClient,
+    requests: Sequence[LLMRequest],
+    calculator: CostCalculator,
+    *,
+    sample: int = COUNT_SAMPLE,
+) -> CostEstimate:
+    """What sending ``requests`` as a batch should cost. Input: ``count_tokens`` on every
+    request, or on ``sample`` of them across the sizes and a straight-line fit (tokens by
+    characters) for the rest. Output: the per-symbol budget."""
+    if not requests:
+        return CostEstimate(0, 0, 0, Decimal(0), 0)
+    sizes = [len(r.prompt) for r in requests]
+    by_size = sorted(range(len(requests)), key=lambda i: sizes[i])
+    if len(requests) <= sample:
+        chosen = by_size
+    else:
+        step = (len(requests) - 1) / (sample - 1)
+        chosen = sorted({by_size[round(i * step)] for i in range(sample)})
+    counts = await asyncio.gather(*(client.count_tokens(requests[i]) for i in chosen))
+    counted = dict(zip(chosen, counts, strict=True))
+    fit = _fit([(sizes[i], counted[i]) for i in chosen])
+    inputs = [counted.get(i, fit(sizes[i])) for i in range(len(requests))]
+    outputs = [r.max_tokens - THINKING_ROOM for r in requests]
+    model = client.model_for(requests[0].tier)
+    # Priced one request at a time: a request's size decides its rate (long-context pricing).
+    # Prompt caching isn't counted, so this is on the high side.
+    costs = [
+        calculator.cost(PROVIDER, model, tokens_in=i, tokens_out=o, batch=True)
+        for i, o in zip(inputs, outputs, strict=True)
+    ]
+    if any(cost is None for cost in costs):
+        msg = f"no price for {model}: the cost guard can't estimate"
+        raise ValueError(msg)
+    total = sum((cost for cost in costs if cost is not None), Decimal(0))
+    return CostEstimate(len(requests), sum(inputs), sum(outputs), total, len(chosen))
+
+
+def _fit(points: Sequence[tuple[int, int]]) -> Callable[[int], int]:
+    """tokens = a + b * characters by least squares (a ratio when the sizes don't differ)."""
+    n = len(points)
+    mean_x = sum(x for x, _ in points) / n
+    mean_y = sum(y for _, y in points) / n
+    spread = sum((x - mean_x) ** 2 for x, _ in points)
+    if spread == 0:
+        ratio = mean_y / mean_x if mean_x else 0.0
+        return lambda size: math.ceil(size * ratio)
+    slope = sum((x - mean_x) * (y - mean_y) for x, y in points) / spread
+    intercept = mean_y - slope * mean_x
+    return lambda size: max(1, math.ceil(intercept + slope * size))
+
+
+async def check_budget(
+    db: AsyncSession,
+    org_id: uuid.UUID,
+    estimate: CostEstimate,
+    cap_usd: Decimal,
+    *,
+    now: datetime | None = None,
+) -> Decimal:
+    """The org's spend this month; raises :class:`CostCapExceeded` if the estimate on top of it
+    would pass ``cap_usd``."""
+    spent = await spent_since(db, org_id, month_start(now))
+    if spent + estimate.cost_usd > cap_usd:
+        raise CostCapExceeded(estimate, spent, cap_usd)
+    return spent
+
+
+# ---------------------------------------------------------------- the run
+
+
+async def summarize_files(
+    sessions: Sessions,
+    client: AnthropicClient,
+    files: Sequence[FileInput],
+    *,
+    org_id: uuid.UUID,
+    calculator: CostCalculator,
+    cap_usd: Decimal,
+    ref_type: str | None = None,
+    ref_id: str | None = None,
+    poll_seconds: float = POLL_SECONDS,
+    sleep: Sleep = asyncio.sleep,
+) -> SummaryRun:
+    """Summarize ``files`` in one batch: estimate, check the cap, send, wait, collect, retry
+    what failed once. ``sessions`` opens a transaction scoped to ``org_id`` (committed when the
+    block ends): the batch row is committed before the batch is sent."""
+    requests = build_requests(files)
+    if not requests:
+        return SummaryRun()
+    estimate = await estimate_cost(client, [request for _, request in requests], calculator)
+    async with sessions() as db:
+        await check_budget(db, org_id, estimate, cap_usd)
+        row = await batches.reserve(
+            db, client, requests, org_id=org_id, kind=KIND, ref_type=ref_type, ref_id=ref_id
+        )
+        row.estimated_cost_usd = estimate.cost_usd
+        batch_id = row.id
+    async with sessions() as db:
+        await batches.send(db, client, batch_id, requests)
+    log.info("summaries batch sent", files=len(requests), estimate_usd=str(estimate.cost_usd))
+    while True:
+        async with sessions() as db:
+            row = await _batch(db, batch_id)
+            await batches.refresh(db, client, row)
+            ended = row.status is LLMBatchStatus.ENDED
+        if ended:
+            break
+        await sleep(poll_seconds)
+    async with sessions() as db:
+        run = await collect_summaries(
+            db,
+            client,
+            await _batch(db, batch_id),
+            files,
+            calculator=calculator,
+            org_id=org_id,
+            ref_type=ref_type,
+            ref_id=ref_id,
+        )
+    run.estimate = estimate
+    run.batch_id = batch_id
+    await retry_failed(
+        sessions,
+        client,
+        run,
+        [file for file in files if file.path in run.skipped],
+        calculator=calculator,
+        org_id=org_id,
+        ref_type=ref_type,
+        ref_id=ref_id,
+    )
+    return run
+
+
+async def _batch(db: AsyncSession, batch_id: uuid.UUID) -> LLMBatch:
+    row = await db.get(LLMBatch, batch_id)
+    if row is None:  # pragma: no cover - the row was committed above
+        msg = f"batch {batch_id} is gone"
+        raise LookupError(msg)
+    return row
+
+
+async def collect_summaries(
+    db: AsyncSession,
+    client: AnthropicClient,
+    batch: LLMBatch,
+    files: Iterable[FileInput],
+    *,
+    calculator: CostCalculator,
+    org_id: uuid.UUID,
+    ref_type: str | None = None,
+    ref_id: str | None = None,
+) -> SummaryRun:
+    """Collect an ended summaries batch in ``db``'s transaction (usage recorded there; a stage
+    stores the summaries in the same transaction). Files without a usable answer are in
+    ``skipped``, ready for :func:`retry_failed`. Works after a restart: ``files`` are matched
+    by path."""
+    by_id = {file.custom_id: file for file in files}
+    sink = usage_ledger(db, calculator, org_id=org_id, ref_type=ref_type, ref_id=ref_id)
+    items = await batches.collect(db, client, batch, json_output=True, on_usage=sink)
+    run = SummaryRun(batch_id=batch.id)
+    for item in items:
+        file = by_id.pop(item.custom_id, None)
+        if file is None:
+            log.warning("summaries batch answered an unknown request", custom_id=item.custom_id)
+            continue
+        _take(run, file, item)
+    for file in by_id.values():
+        run.skipped[file.path] = "no result in the batch"
+    return run
+
+
+def _take(run: SummaryRun, file: FileInput, item: BatchItem) -> None:
+    if item.outcome != "succeeded" or item.result is None:
+        reason = item.error.message if item.error is not None else item.outcome
+        run.skipped[file.path] = f"{item.outcome}: {reason}"
+        return
+    try:
+        summary, dropped = parse_answer(file, item.result)
+    except ValueError as exc:
+        run.skipped[file.path] = str(exc)
+        return
+    run.summaries[file.path] = summary
+    run.dropped_keys += dropped
+
+
+async def retry_failed(
+    sessions: Sessions,
+    client: AnthropicClient,
+    run: SummaryRun,
+    files: Sequence[FileInput],
+    *,
+    calculator: CostCalculator,
+    org_id: uuid.UUID,
+    ref_type: str | None = None,
+    ref_id: str | None = None,
+    concurrency: int = RETRY_CONCURRENCY,
+) -> None:
+    """Send each of ``files`` once more on its own (full price, at once); a file that fails
+    again stays in ``run.skipped``, with the reason logged."""
+    if not files:
+        return
+    gate = asyncio.Semaphore(concurrency)
+    billed: list[LLMUsage] = []
+
+    async def bill(usage: LLMUsage) -> None:
+        billed.append(usage)
+
+    async def retry(file: FileInput) -> None:
+        async with gate:
+            try:
+                result = await client.complete(build_request(file), on_usage=bill)
+                summary, dropped = parse_answer(file, result)
+            except (LLMError, ValueError) as exc:
+                reason = exc.message if isinstance(exc, LLMError) else str(exc)
+                run.skipped[file.path] = f"retried: {reason}"
+                log.warning("file summary skipped", path=file.path, reason=reason)
+                return
+        run.skipped.pop(file.path, None)
+        run.summaries[file.path] = summary
+        run.dropped_keys += dropped
+
+    run.retried += len(files)
+    try:
+        await asyncio.gather(*(retry(file) for file in files))
+    finally:
+        async with sessions() as db:
+            sink = usage_ledger(db, calculator, org_id=org_id, ref_type=ref_type, ref_id=ref_id)
+            for usage in billed:
+                await sink(usage)

@@ -9,10 +9,11 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from decimal import ROUND_HALF_UP, Decimal
 
 from pydantic import BaseModel, Field
-from sqlalchemy import insert
+from sqlalchemy import func, insert, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from sensei_core.config import PricingSettings
@@ -239,3 +240,19 @@ async def record_usage(
         )
     )
     return UsageRecord(id=event_id, cost_usd=cost, priced=priced)
+
+
+def month_start(now: datetime | None = None) -> datetime:
+    """The start of the calendar month (UTC) that ``now`` is in."""
+    now = now or datetime.now(UTC)
+    return now.astimezone(UTC).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+
+
+async def spent_since(db: AsyncSession, org_id: uuid.UUID, since: datetime) -> Decimal:
+    """What ``org_id`` has been charged since ``since``, every kind of usage."""
+    total = await db.scalar(
+        select(func.coalesce(func.sum(UsageEvent.cost_usd), 0)).where(
+            UsageEvent.org_id == org_id, UsageEvent.created_at >= since
+        )
+    )
+    return Decimal(total or 0)

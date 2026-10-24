@@ -8,6 +8,7 @@ from sensei_core.models.embeddings import EmbeddingCache
 from sensei_core.models.evals import EvalRun
 from sensei_core.models.files import RepoFile
 from sensei_core.models.github import GitHubInstallation
+from sensei_core.models.glossary import GlossaryTerm
 from sensei_core.models.indexing import (
     ACTIVE_JOB_STATUSES,
     IndexJob,
@@ -35,6 +36,7 @@ __all__ = [
     "EmbeddingCache",
     "EvalRun",
     "GitHubInstallation",
+    "GlossaryTerm",
     "IndexJob",
     "Invitation",
     "JobFailure",
