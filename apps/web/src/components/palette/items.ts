@@ -8,6 +8,7 @@ import {
   Folder,
   FolderGit2,
   MessageSquare,
+  Search,
   SquareFunction,
   Zap,
   type LucideIcon,
@@ -28,6 +29,7 @@ import {
 } from "@/lib/palette/locations";
 import type { PaletteItem, PaletteKind } from "@/lib/palette/types";
 import { codePath, orgPath, repoPath } from "@/lib/routes";
+import { searchPath } from "@/lib/search/url-state";
 
 /** An item and the icon it shows (icons stay out of the pure model the worker sees). */
 export type ShownItem = PaletteItem & { icon?: LucideIcon };
@@ -272,6 +274,22 @@ export function askHref(org: string, repo: string, query: string): string {
 }
 
 export const ASK_ID = "ask";
+export const SEARCH_ID = "search";
+
+/** "Search “…”": the query on the repository's search page (only once something is typed). */
+export function searchItem(org: string, repo: string, query: string): ShownItem | null {
+  const q = query.trim();
+  if (!q) return null;
+  return {
+    id: SEARCH_ID,
+    group: "ask",
+    kind: "action",
+    title: `Search “${q}”`,
+    subtitle: `in ${repo}`,
+    href: searchPath(org, repo, { q }),
+    icon: Search,
+  };
+}
 
 /** `repo`: where it goes (see `askTarget`); undefined while that isn't known yet. */
 export function askItem(org: string, repo: string | null | undefined, query: string): ShownItem {

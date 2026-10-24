@@ -34,3 +34,6 @@ export type FileSearch = Schemas["SearchOut"];
 export type SymbolKind = Schemas["SymbolKind"];
 export type SymbolHit = Schemas["SymbolOut"];
 export type SymbolSearch = Schemas["SymbolsOut"];
+export type GrepRequest = Schemas["GrepRequest"];
+export type GrepResult = Schemas["GrepOut"];
+export type GrepHit = Schemas["GrepHitOut"];

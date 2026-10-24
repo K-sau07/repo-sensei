@@ -138,6 +138,12 @@
   }
 }
 
+/* A search result morphing into the code viewer that opens it (lib/code/transition.ts). */
+::view-transition-group(open-code) {
+  animation-duration: var(--dur-slow);
+  animation-timing-function: var(--ease-inout);
+}
+
 /* Keyframe animations snap and loops stop; Motion components fade instead (reducedMotion="user"). */
 @media (prefers-reduced-motion: reduce) {
   *,
@@ -146,5 +152,11 @@
     animation-duration: 1ms !important;
     animation-iteration-count: 1 !important;
     scroll-behavior: auto !important;
+  }
+  /* View transitions don't move or fade: the new page is simply there. */
+  ::view-transition-group(*),
+  ::view-transition-old(*),
+  ::view-transition-new(*) {
+    animation: none !important;
   }
 }

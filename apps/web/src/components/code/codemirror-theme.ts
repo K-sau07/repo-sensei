@@ -3,7 +3,7 @@
  * viewer follows the dark and light themes (and a generated one) with no second palette, and
  * syntax colors keep the contrast the token tests check (APCA Lc ≥ 60 on every surface).
  */
-import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
+import { HighlightStyle, syntaxHighlighting, type TagStyle } from "@codemirror/language";
 import { EditorView } from "@codemirror/view";
 import { tags as t } from "@lezer/highlight";
 
@@ -104,37 +104,38 @@ export const viewerTheme = EditorView.theme({
   },
 });
 
-/** Syntax colors from the tokens: one hue per kind of thing, comments quiet. */
-export const viewerHighlight = syntaxHighlighting(
-  HighlightStyle.define([
-    { tag: [t.keyword, t.modifier, t.controlKeyword, t.operatorKeyword], color: token("layer-db") },
-    { tag: [t.string, t.special(t.string), t.regexp, t.character], color: token("layer-svc") },
-    { tag: [t.number, t.bool, t.null, t.atom, t.unit], color: token("layer-api") },
-    {
-      tag: [
-        t.function(t.variableName),
-        t.function(t.propertyName),
-        t.definition(t.function(t.variableName)),
-      ],
-      color: token("layer-ui"),
-    },
-    { tag: [t.typeName, t.className, t.namespace, t.definition(t.typeName)], color: token("warn") },
-    { tag: [t.tagName, t.angleBracket], color: token("layer-ui") },
-    { tag: [t.attributeName, t.propertyName, t.labelName], color: token("text") },
-    {
-      tag: [t.comment, t.lineComment, t.blockComment, t.docComment],
-      color: token("text-faint"),
-      fontStyle: "italic",
-    },
-    { tag: [t.meta, t.processingInstruction, t.annotation], color: token("text-muted") },
-    { tag: [t.operator, t.punctuation, t.separator, t.bracket], color: token("text-muted") },
-    { tag: t.heading, color: token("text"), fontWeight: "600" },
-    { tag: [t.link, t.url], color: token("layer-ui"), textDecoration: "underline" },
-    { tag: t.emphasis, fontStyle: "italic" },
-    { tag: t.strong, fontWeight: "600" },
-    { tag: t.strikethrough, textDecoration: "line-through" },
-    { tag: [t.inserted], color: token("ok") },
-    { tag: [t.deleted, t.invalid], color: token("danger") },
-    { tag: [t.self, t.special(t.variableName)], color: token("layer-db") },
-  ]),
-);
+/** Syntax colors from the tokens: one hue per kind of thing, comments quiet. Shared with the
+ * code previews (lib/code/syntax.ts), so a preview reads like the viewer. */
+export const SYNTAX_STYLES: readonly TagStyle[] = [
+  { tag: [t.keyword, t.modifier, t.controlKeyword, t.operatorKeyword], color: token("layer-db") },
+  { tag: [t.string, t.special(t.string), t.regexp, t.character], color: token("layer-svc") },
+  { tag: [t.number, t.bool, t.null, t.atom, t.unit], color: token("layer-api") },
+  {
+    tag: [
+      t.function(t.variableName),
+      t.function(t.propertyName),
+      t.definition(t.function(t.variableName)),
+    ],
+    color: token("layer-ui"),
+  },
+  { tag: [t.typeName, t.className, t.namespace, t.definition(t.typeName)], color: token("warn") },
+  { tag: [t.tagName, t.angleBracket], color: token("layer-ui") },
+  { tag: [t.attributeName, t.propertyName, t.labelName], color: token("text") },
+  {
+    tag: [t.comment, t.lineComment, t.blockComment, t.docComment],
+    color: token("text-faint"),
+    fontStyle: "italic",
+  },
+  { tag: [t.meta, t.processingInstruction, t.annotation], color: token("text-muted") },
+  { tag: [t.operator, t.punctuation, t.separator, t.bracket], color: token("text-muted") },
+  { tag: t.heading, color: token("text"), fontWeight: "600" },
+  { tag: [t.link, t.url], color: token("layer-ui"), textDecoration: "underline" },
+  { tag: t.emphasis, fontStyle: "italic" },
+  { tag: t.strong, fontWeight: "600" },
+  { tag: t.strikethrough, textDecoration: "line-through" },
+  { tag: [t.inserted], color: token("ok") },
+  { tag: [t.deleted, t.invalid], color: token("danger") },
+  { tag: [t.self, t.special(t.variableName)], color: token("layer-db") },
+];
+
+export const viewerHighlight = syntaxHighlighting(HighlightStyle.define(SYNTAX_STYLES));

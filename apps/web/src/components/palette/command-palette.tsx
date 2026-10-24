@@ -48,6 +48,7 @@ import {
   KIND_LABELS,
   noticeItem,
   pageItems,
+  searchItem,
   repoItems,
   symbolItem,
   type RepoContext,
@@ -209,7 +210,7 @@ interface PaletteProps {
 
 /** What to keep of an item picked, so it comes back as "Recent" and ranks higher. */
 function remember(item: ShownItem, org: string, user: string | null) {
-  if (item.notice || item.disabled || item.kind === "ask") return;
+  if (item.notice || item.disabled || item.group === "ask") return;
   const scope = item.scope;
   recordHistory(user, {
     id: item.id,
@@ -331,7 +332,13 @@ function Palette({ location, repo, onClose }: PaletteProps) {
     order: 0,
     score: 0,
   };
-  const ranked = [...rank(candidates, context, history, query), askRow];
+  // In a repository that can be searched, the query can open the search page too.
+  const search =
+    repo && repo.featuresReady && repo.unlocked("keyword_search")
+      ? searchItem(org, repo.slug, query)
+      : null;
+  const searchRows: Ranked[] = search ? [{ ...askRow, item: search }] : [];
+  const ranked = [...rank(candidates, context, history, query), ...searchRows, askRow];
   const sections = toSections(ranked, expanded);
 
   // The selection follows the top result until the user moves it (results arriving later

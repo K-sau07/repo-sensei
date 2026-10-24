@@ -8,6 +8,8 @@ export class ApiError extends Error {
   readonly code: string;
   readonly details: unknown;
   readonly requestId: string | null;
+  /** Seconds to wait before trying again (`Retry-After`, sent with a 429 or 503). */
+  readonly retryAfter: number | null;
 
   constructor(options: {
     status: number;
@@ -15,6 +17,7 @@ export class ApiError extends Error {
     message: string;
     details?: unknown;
     requestId?: string | null;
+    retryAfter?: number | null;
   }) {
     super(options.message);
     this.name = "ApiError";
@@ -22,6 +25,7 @@ export class ApiError extends Error {
     this.code = options.code;
     this.details = options.details;
     this.requestId = options.requestId ?? null;
+    this.retryAfter = options.retryAfter ?? null;
   }
 
   /** 4xx: the request itself is wrong (or not allowed); retrying won't help. */
@@ -45,9 +49,19 @@ function isEnvelope(body: unknown): body is ErrorEnvelope {
   );
 }
 
+/** `Retry-After` in seconds: a number of seconds, or an HTTP date. */
+export function parseRetryAfter(value: string | null, now = Date.now()): number | null {
+  if (value === null || value.trim() === "") return null;
+  const seconds = Number(value);
+  if (Number.isFinite(seconds)) return Math.max(0, Math.ceil(seconds));
+  const at = Date.parse(value);
+  return Number.isNaN(at) ? null : Math.max(0, Math.ceil((at - now) / 1000));
+}
+
 /** Build an ApiError from a non-2xx response (reads the body). */
 export async function apiErrorFromResponse(response: Response): Promise<ApiError> {
   const requestId = response.headers.get("x-request-id");
+  const retryAfter = parseRetryAfter(response.headers.get("retry-after"));
   let body: unknown = null;
   try {
     body = await response.clone().json();
@@ -61,6 +75,7 @@ export async function apiErrorFromResponse(response: Response): Promise<ApiError
       message: body.error.message,
       details: body.error.details,
       requestId: body.error.request_id ?? requestId,
+      retryAfter,
     });
   }
   return new ApiError({
@@ -68,6 +83,7 @@ export async function apiErrorFromResponse(response: Response): Promise<ApiError
     code: `http_${response.status}`,
     message: response.statusText || `Request failed with status ${response.status}`,
     requestId,
+    retryAfter,
   });
 }
 

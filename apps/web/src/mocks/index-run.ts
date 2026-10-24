@@ -37,7 +37,33 @@ interface Recorded {
   [field: string]: unknown;
 }
 
-const RECORDED = recording.events as unknown as Recorded[];
+/**
+ * The recording also predates the search pipeline (its parse to links stages were skipped). The
+ * mock API serves symbols and keyword search over the recorded commit, so those two stages are
+ * played as done, in no time, right after the Merkle stage (where the pipeline runs them), with
+ * what they unlock. Embeddings stay skipped: they would unlock Ask, which isn't built.
+ */
+const SEARCH_STAGES: { stage: Stage; unlocks: IndexJob["features"] }[] = [
+  { stage: "symbols", unlocks: ["goto_definition"] },
+  { stage: "chunks", unlocks: ["keyword_search"] },
+];
+
+function withSearchStages(events: Recorded[]): Recorded[] {
+  return events.flatMap((event) => {
+    if (event.type !== "stage_done" || event.stage !== "merkle") return [event];
+    const { at_ms: atMs, progress } = event;
+    return [
+      event,
+      ...SEARCH_STAGES.flatMap(({ stage, unlocks }) => [
+        { type: "stage_started", stage, progress, at_ms: atMs },
+        { type: "stage_done", stage, progress, at_ms: atMs },
+        { type: "unlock", stage, unlocks, at_ms: atMs },
+      ]),
+    ];
+  });
+}
+
+const RECORDED = withSearchStages(recording.events as unknown as Recorded[]);
 export const RUN_DETAILS = recording.stages as unknown as Record<string, Record<string, unknown>>;
 /** The run's constellation, complete (`GET …/constellation` from the start). */
 export const SKY = sky as unknown as ConstellationPage;

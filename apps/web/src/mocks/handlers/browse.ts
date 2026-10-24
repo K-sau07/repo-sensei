@@ -36,7 +36,7 @@ export function validationFailed(field: string, message: string) {
 /** The commit `ref` means: the last index (or the first run's, from its discovery on), a prefix
  * of its commit, or the branch it indexed. (Mock repositories index one commit, so nothing else
  * resolves.) */
-function resolveCommit(repo: MockRepo, ref: string | null): string | Response {
+export function resolveCommit(repo: MockRepo, ref: string | null): string | Response {
   const indexed = repo.last_indexed_sha;
   if (ref === null) {
     // Before the first index: the first run's snapshot, once its discovery is done.

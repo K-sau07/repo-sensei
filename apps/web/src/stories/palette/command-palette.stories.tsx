@@ -65,6 +65,7 @@ export const Empty: Story = {
     const go = await group("Go");
     // The repository's tabs, once its index state says they're unlocked.
     await expect(await within(go).findByRole("option", { name: /^Code/ })).toBeVisible();
+    await expect(within(go).getByRole("option", { name: /^Search/ })).toBeVisible();
     await expect(within(go).getByRole("option", { name: /Home/ })).toBeVisible();
     const actions = await group("Do");
     await expect(within(actions).getByRole("option", { name: /Reindex api/ })).toBeVisible();
@@ -73,7 +74,7 @@ export const Empty: Story = {
     // The first result is selected, and the input points at it.
     await waitFor(async () => {
       const first = await selectedOption();
-      await expect(first).toHaveTextContent("Code");
+      await expect(first).toHaveTextContent("Search");
       await expect(await input()).toHaveAttribute("aria-activedescendant", first.id);
     });
   },

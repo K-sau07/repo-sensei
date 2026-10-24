@@ -5,6 +5,7 @@ import { meHandlers } from "./me";
 import { memberHandlers } from "./members";
 import { orgHandlers } from "./orgs";
 import { repoHandlers } from "./repos";
+import { searchHandlers } from "./search";
 import { symbolHandlers } from "./symbols";
 
 export { apiError } from "./errors";
@@ -15,6 +16,7 @@ export const handlers = [
   ...constellationHandlers,
   ...browseHandlers,
   ...symbolHandlers,
+  ...searchHandlers,
   ...repoHandlers,
   ...orgHandlers,
   ...memberHandlers,

@@ -52,6 +52,12 @@ export const queryKeys = {
     version: string | null,
     path: string,
   ) => ["code", "file", slug, repo, ref ?? version, path] as const,
+  /** A search's first page, and one lane's further pages (POST bodies, so not `$api` queries). */
+  search: (slug: string, repo: string, body: object) => ["search", slug, repo, body] as const,
+  searchLane: (slug: string, repo: string, body: object, lane: string) =>
+    ["search", slug, repo, body, "lane", lane] as const,
+  /** An exact (ripgrep) search. */
+  grep: (slug: string, repo: string, body: object) => ["grep", slug, repo, body] as const,
   installations: (slug: string) =>
     $api.queryOptions("get", "/api/v1/orgs/{org}/github/installations", org(slug)).queryKey,
 };

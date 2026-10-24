@@ -13,6 +13,7 @@ import {
   linesOf,
   pageItems,
   permalinkFor,
+  searchItem,
   symbolItem,
   type RepoContext,
 } from "./items";
@@ -140,6 +141,18 @@ describe("ask", () => {
       title: "Ask “hi”",
       subtitle: "about api",
     });
+  });
+});
+
+describe("search", () => {
+  it("opens the repository's search page with what's typed, once something is", () => {
+    expect(searchItem("acme", "api", "  password hash ")).toMatchObject({
+      group: "ask",
+      title: "Search “password hash”",
+      subtitle: "in api",
+      href: "/acme/api/search?q=password+hash",
+    });
+    expect(searchItem("acme", "api", "   ")).toBeNull();
   });
 });
 

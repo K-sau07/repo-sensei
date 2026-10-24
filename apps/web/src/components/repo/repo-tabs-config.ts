@@ -11,6 +11,7 @@ import {
   Network,
   Orbit,
   Route as RouteIcon,
+  Search,
   Settings,
   Workflow,
   Wrench,
@@ -52,6 +53,13 @@ export const PRIMARY_TABS: RepoTab[] = [
     feature: "ask",
     phase: 4,
     shortcut: "repo-ask",
+  },
+  {
+    id: "search",
+    label: "Search",
+    section: "search",
+    icon: Search,
+    feature: "keyword_search",
   },
   {
     id: "code",

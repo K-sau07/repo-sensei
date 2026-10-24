@@ -214,14 +214,19 @@ interface ContentFixture {
 
 let content: Promise<ContentFixture> | null = null;
 
+/** The real content the fixture has, by path (the files the mock search reads). */
+export async function contentFiles(): Promise<Readonly<Record<string, string>>> {
+  content ??= import("./fixtures/browse-content.json").then((module) => module.default);
+  return (await content).files;
+}
+
 /** The file's text: the real content when the fixture has it, otherwise a placeholder. */
 export async function textOf(file: MockFile): Promise<string> {
   if (file.path === LONG_FILE) return longFileContent();
   if (file.path.startsWith(`${MANY_DIR}/`)) {
     return `export const name = "${nameOf(file.path)}";\nexport const index = 1;\nexport default name;\n`;
   }
-  content ??= import("./fixtures/browse-content.json").then((module) => module.default);
-  const known = (await content).files[file.path];
+  const known = (await contentFiles())[file.path];
   if (known !== undefined) return known;
   return [
     "The mock API has this file's metadata but not its content: only a selection of the",

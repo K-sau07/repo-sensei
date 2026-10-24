@@ -28,6 +28,7 @@ import { useShortcut } from "@/hooks/use-shortcut";
 import { ApiError } from "@/lib/api/errors";
 import { formatLineCount, languageName } from "@/lib/code/format";
 import { describeLines, formatLines, sameLines, type LineRange } from "@/lib/code/lines";
+import { codeViewKey } from "@/lib/code/transition";
 import { formatBytes } from "@/lib/constellation";
 import { codePath } from "@/lib/routes";
 import { shortcut } from "@/lib/shortcut-registry";
@@ -376,7 +377,13 @@ export function FileView({ path }: { path: string }) {
           </>
         }
       />
-      <div className="relative min-h-0 flex-1">{body}</div>
+      {/* A search result opening these lines morphs into the viewer (lib/code/transition). */}
+      <div
+        className="relative min-h-0 flex-1"
+        data-code-view={file.data ? codeViewKey(path, lines) : undefined}
+      >
+        {body}
+      </div>
     </div>
   );
 }

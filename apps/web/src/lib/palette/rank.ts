@@ -231,6 +231,8 @@ export interface Section {
 
 export const GROUP_CAP = 6;
 export const GROUP_MAX = 50;
+/** The free-text rows: Search (in a searchable repository) and Ask. */
+export const ASK_CAP = 2;
 
 /**
  * Ranked items → the palette's sections, each capped (`expanded` ones show up to `GROUP_MAX`).
@@ -251,7 +253,7 @@ export function toSections(
     // Notices (a provider's error) never take a result's place.
     const results = rows.filter((row) => !row.item.notice);
     const notices = rows.filter((row) => row.item.notice);
-    const cap = group === "ask" ? 1 : expanded.has(group) ? GROUP_MAX : GROUP_CAP;
+    const cap = group === "ask" ? ASK_CAP : expanded.has(group) ? GROUP_MAX : GROUP_CAP;
     sections.push({
       group,
       rows: [...results.slice(0, cap), ...notices],

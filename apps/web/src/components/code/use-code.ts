@@ -7,7 +7,7 @@ import { useCallback } from "react";
 
 import { useRepo, useRepoSlug } from "@/components/repo/use-repo";
 import { api } from "@/lib/api/client";
-import type { FileContent, TreeListing } from "@/lib/api/types";
+import type { FileContent, Repo, TreeListing } from "@/lib/api/types";
 import { parseAsLines } from "@/lib/code/lines";
 import type { DirState } from "@/lib/code/tree";
 import { queryKeys } from "@/lib/query/keys";
@@ -25,7 +25,7 @@ export const FILE_RECEIVED_MARK = "code-file:received";
 // a minute keeps browsing back and forth free.
 const STALE_MS = 60_000;
 
-interface Snapshot {
+export interface Snapshot {
   org: string;
   repo: string;
   ref: string | null;
@@ -56,6 +56,14 @@ export function treeOptions({ org, repo, ref, version }: Snapshot, path: string)
   };
 }
 
+/** What no `ref` means for a repository right now, which keys the reads (see `useCodeLocation`). */
+export function snapshotVersion(data: Repo | undefined): string | null {
+  const running = data?.active_job;
+  return (
+    data?.last_indexed_sha ?? (running ? `run:${running.id}:${running.stage ?? "queued"}` : null)
+  );
+}
+
 /** A path segment from the URL; a malformed escape ("%zz") is kept as typed. */
 function decodeSegment(segment: string): string {
   try {
@@ -81,10 +89,7 @@ export function useCodeLocation() {
   // the first one, the first run (from its discovery on, at each stage, so what was "not
   // indexed yet" is read again once discovery is done). A new index reads afresh.
   const repository = useRepo();
-  const data = repository.data;
-  const running = data?.active_job;
-  const version =
-    data?.last_indexed_sha ?? (running ? `run:${running.id}:${running.stage ?? "queued"}` : null);
+  const version = snapshotVersion(repository.data);
   return {
     org,
     repo,
@@ -147,11 +152,12 @@ export function useListings(paths: readonly string[]): Listings {
   });
 }
 
-export function useFile(path: string, enabled = true) {
-  const { org, repo, ref, version, ready } = useCodeLocation();
-  return useQuery({
+/** A file's read, shared by the viewer and the previews that lead to it (search results), so
+ * opening a previewed file needs no second read. */
+export function fileOptions({ org, repo, ref, version }: Snapshot, path: string) {
+  return {
     queryKey: queryKeys.codeFile(org, repo, ref, version, path),
-    queryFn: async ({ signal }): Promise<OpenedFile> => {
+    queryFn: async ({ signal }: { signal: AbortSignal }): Promise<OpenedFile> => {
       const { data, response } = await api.GET("/api/v1/orgs/{org}/repos/{repo}/file", {
         params: { path: { org, repo }, query: { path, ...(ref ? { ref } : {}) } },
         signal,
@@ -161,7 +167,14 @@ export function useFile(path: string, enabled = true) {
       return { ...data, commit: commitOf(response) };
     },
     staleTime: STALE_MS,
-    placeholderData: (previous, query) => (samePath(path, query?.queryKey) ? previous : undefined),
-    enabled: enabled && ready,
-  });
+    placeholderData: (
+      previous: OpenedFile | undefined,
+      query?: { queryKey: readonly unknown[] },
+    ) => (samePath(path, query?.queryKey) ? previous : undefined),
+  };
+}
+
+export function useFile(path: string, enabled = true) {
+  const location = useCodeLocation();
+  return useQuery({ ...fileOptions(location, path), enabled: enabled && location.ready });
 }
