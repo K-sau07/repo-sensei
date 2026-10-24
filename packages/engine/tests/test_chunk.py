@@ -16,6 +16,7 @@ import pytest
 import yaml
 
 from sensei_engine.chunk.files import chunk_file
+from sensei_engine.chunk.identifiers import index_terms
 from sensei_engine.chunk.model import MAX_TOKENS, Chunk, ChunkKind, Lines, split_lines
 from sensei_engine.chunk.text import WINDOW_LINES, WINDOW_OVERLAP
 from sensei_engine.chunk.tokens import count_tokens
@@ -201,12 +202,12 @@ def test_comments_belong_to_the_definition_below_and_scraps_to_a_neighbour() -> 
 def test_search_and_path_text() -> None:
     chunks = chunk_file("pkg/helpers.py", "python", PYTHON)
     load = chunks[3]
-    assert load.search_text.startswith(f"{load.header}\n{load.content}\n")
-    terms = load.search_text.removeprefix(f"{load.header}\n{load.content}\n").split()
-    assert {"value", "0", "option", "11"} <= set(terms)  # value_0, option_11
-    assert "transform" not in terms  # a single word is in the content already
-    assert load.path_text == "pkg/helpers.py pkg helpers py def load(self, key) load"
-    assert chunks[0].path_text == "pkg/helpers.py pkg helpers py"
+    assert load.search_text == index_terms(f"{load.header}\n{load.content}")
+    terms = load.search_text.split()
+    assert {"value0", "value", "0", "option11", "transform", "cached"} <= set(terms)
+    assert terms[:3] == ["path", "pkg", "helpers"]  # the header first
+    assert load.path_text == "pkg helpers py def load self key load"
+    assert chunks[0].path_text == "pkg helpers py"
 
 
 def test_chunks_are_deterministic() -> None:
@@ -335,7 +336,7 @@ def test_openapi_is_chunked_by_operation(path: str, language: str, source: str) 
         [f"# lang: {language} · operation: POST /items", "# operationId: create_item"],
     ]
     assert '"read_item"' in operations[0].content or "read_item" in operations[0].content
-    assert operations[0].path_text.endswith("read_item read item")
+    assert operations[0].path_text.endswith("readitem read item")
     assert {c.kind for c in chunks} == {ChunkKind.CONFIG, ChunkKind.OPENAPI_OPERATION}
 
 

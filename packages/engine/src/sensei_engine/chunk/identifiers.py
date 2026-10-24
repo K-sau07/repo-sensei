@@ -5,6 +5,8 @@ exact match still finds it), then its words, lowercased. Words come from camelCa
 humps, acronyms (``HTTPServer``: ``http server``), digits that end a word (``base64Encode``:
 ``base64 encode``) and the separators of snake_case, kebab-case, SCREAMING_CASE and dotted paths
 (``os.path.join``). A token that is a single word comes back as it is.
+
+:func:`index_terms` turns a text into the terms keyword search indexes and queries.
 """
 
 from __future__ import annotations
@@ -19,7 +21,8 @@ _WORDS = re.compile(
     r"|[A-Z]+\d*"  # an acronym at the end: ID, HTTP2
     rf"|\d+{_LOWER}*"  # digits first: 404, 2fa
 )
-_IDENTIFIER = re.compile(r"[^\W\d][\w$]*")
+_TERM = re.compile(r"[^\W\d][\w$]*|\d+")
+MAX_TERM = 100
 
 
 def words(token: str) -> list[str]:
@@ -35,16 +38,23 @@ def split_identifier(token: str) -> str:
     return " ".join([token, *found])
 
 
-def identifier_terms(text: str) -> str:
-    """The words of every compound identifier in ``text`` (``user_id``: ``user id``), once per
-    identifier, in order of first appearance. The identifiers themselves aren't repeated."""
-    seen: set[str] = set()
+def index_terms(text: str) -> str:
+    """``text`` as keyword-search terms: each identifier (or number) as one lowercase term,
+    its words joined (``read_items``: ``readitems``, ``getUserById``: ``getuserbyid``), then,
+    for a compound one, its words; punctuation goes.
+
+    This is what the BM25 indexes see. Postgres's parser would split ``read_items`` into its words
+    (losing the identifier) and keep ``self.session.get`` or ``app/models.py`` whole (losing
+    ``session`` and ``models``); terms made here pass through it unchanged. Tokens over
+    :data:`MAX_TERM` characters (encoded data) are left out."""
     terms: list[str] = []
-    for token in _IDENTIFIER.findall(text):
-        if token in seen:
+    for token in _TERM.findall(text):
+        if len(token) > MAX_TERM:
             continue
-        seen.add(token)
         found = words(token)
-        if len(found) > 1 or (found and found[0] != token.lower()):
+        if not found:
+            continue
+        terms.append("".join(found))
+        if len(found) > 1:
             terms.extend(found)
     return " ".join(terms)

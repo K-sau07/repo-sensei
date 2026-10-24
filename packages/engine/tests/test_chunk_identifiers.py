@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from sensei_engine.chunk.identifiers import identifier_terms, split_identifier, words
+from sensei_engine.chunk.identifiers import index_terms, split_identifier, words
 from sensei_engine.chunk.tokens import count_each, count_tokens
 
 
@@ -77,11 +77,16 @@ def test_words_are_lowercased_and_in_order() -> None:
     assert words("a.b-c_d") == ["a", "b", "c", "d"]
 
 
-def test_identifier_terms_lists_the_words_of_compound_identifiers_once() -> None:
-    text = "def get_user(user_id):\n    return getUserById(user_id) or User\n"
-    assert identifier_terms(text) == "get user user id get user by id"
-    assert identifier_terms("x = y + 1") == ""
-    assert identifier_terms("self.__init__()") == "init"
+def test_index_terms_join_each_identifier_and_add_its_words() -> None:
+    text = "def get_user(user_id):\n    return self.session.getUserById(user_id) or User\n"
+    assert index_terms(text) == (
+        "def getuser get user userid user id return self session "
+        "getuserbyid get user by id userid user id or user"
+    )
+    assert index_terms("backend/app/models.py: 404") == "backend app models py 404"
+    assert index_terms("x = y + 1; __init__") == "x y 1 init"
+    assert index_terms("blob " + "A" * 200) == "blob"  # encoded data isn't a term
+    assert index_terms("") == ""
 
 
 def test_tokens_are_counted_with_cl100k() -> None:

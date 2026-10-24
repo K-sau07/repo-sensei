@@ -7,10 +7,11 @@ whose header and content would pass :data:`MAX_TOKENS` is split into pieces of a
 marked ``part k/n``. No chunk's header and content together are larger than :data:`MAX_TOKENS`.
 
 A chunk's ``content`` is its lines of the file, exactly (line endings normalized, blank lines at
-either end dropped); its ``header`` says where it is and what it is; ``search_text`` (keyword
-search) is header, content and the words of the content's compound identifiers; ``path_text``
-is the path, the signature and the name, with their words. ``content_hash`` covers the header and
-the content: the same code at the same place hashes the same in every snapshot.
+either end dropped); its ``header`` says where it is and what it is. ``search_text`` (keyword
+search) is the header and content as index terms (each identifier joined, with its words: see
+:func:`~sensei_engine.chunk.identifiers.index_terms`); ``path_text`` the path, signature and
+name, the same way. ``content_hash`` covers the header and the content: the same code at the
+same place hashes the same in every snapshot.
 """
 
 from __future__ import annotations
@@ -21,7 +22,7 @@ import math
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 
-from sensei_engine.chunk.identifiers import identifier_terms, split_identifier, words
+from sensei_engine.chunk.identifiers import index_terms
 from sensei_engine.chunk.tokens import count_each, count_tokens
 
 MIN_TOKENS = 100
@@ -286,7 +287,7 @@ def _chunk(
         end_line=span[1],
         content=content,
         header=header,
-        search_text=f"{embedded}\n{identifier_terms(embedded)}".rstrip(),
+        search_text=index_terms(embedded),
         path_text=path_text(path, spec.signature, spec.name),
         content_hash=hashlib.sha256(embedded.encode("utf-8", "surrogatepass")).digest(),
         tokens=count_tokens(embedded),
@@ -296,10 +297,5 @@ def _chunk(
 
 
 def path_text(path: str, signature: str | None, name: str | None) -> str:
-    """The path and its words, the signature, and the name with its words."""
-    parts = [path, " ".join(words(path))]
-    if signature:
-        parts.append(signature)
-    if name:
-        parts.append(split_identifier(name))
-    return " ".join(p for p in parts if p)
+    """The path, the signature and the name, as keyword-search terms."""
+    return index_terms(" ".join(part for part in (path, signature, name) if part))
