@@ -268,6 +268,30 @@ class VoyageSettings(BaseSettings):
         return self.api_key is not None
 
 
+class AnthropicSettings(BaseSettings):
+    """Claude models (summaries, query routing, reranking, answers), named by tier: ``fast`` for
+    bulk work, ``standard`` for most calls, ``deep`` for the hardest."""
+
+    model_config = _config("SENSEI_ANTHROPIC_")
+
+    api_key: SecretStr | None = None
+    base_url: str = "https://api.anthropic.com"
+    fast_model: str = "claude-haiku-5-5"
+    standard_model: str = "claude-sonnet-5-5"
+    deep_model: str = "claude-opus-5-5"
+    timeout_seconds: float = Field(default=600.0, gt=0)
+    # The SDK retries connection errors, 408, 409, 429 and 5xx with backoff.
+    max_retries: int = Field(default=4, ge=0)
+    # A request a safety classifier declines is retried server-side on the model Anthropic
+    # recommends for that category (models that offer it; never in batches).
+    refusal_fallback: bool = True
+    batch_poll_seconds: float = Field(default=60.0, gt=0)
+
+    @property
+    def configured(self) -> bool:
+        return self.api_key is not None
+
+
 class TelemetrySettings(BaseSettings):
     model_config = _config("SENSEI_")
 
@@ -304,6 +328,7 @@ class Settings(BaseSettings):
     auth: AuthSettings = Field(default_factory=AuthSettings)
     github: GitHubSettings = Field(default_factory=GitHubSettings)
     voyage: VoyageSettings = Field(default_factory=VoyageSettings)
+    anthropic: AnthropicSettings = Field(default_factory=AnthropicSettings)
     telemetry: TelemetrySettings = Field(default_factory=TelemetrySettings)
     pricing: PricingSettings = Field(default_factory=PricingSettings)
     worker: WorkerSettings = Field(default_factory=WorkerSettings)

@@ -18,6 +18,7 @@ from sensei_core.models.indexing import (
     Stage,
 )
 from sensei_core.models.jobs import JobFailure
+from sensei_core.models.llm import LLMBatch, LLMBatchStatus
 from sensei_core.models.org import Invitation, Membership, Org, Role
 from sensei_core.models.repo import Repo, RepoSource, RepoStatus
 from sensei_core.models.symbols import CodeNode
@@ -39,6 +40,8 @@ __all__ = [
     "JobFailure",
     "JobKind",
     "JobStatus",
+    "LLMBatch",
+    "LLMBatchStatus",
     "Membership",
     "OAuthToken",
     "Org",
