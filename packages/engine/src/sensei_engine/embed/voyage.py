@@ -1,18 +1,21 @@
 """Voyage AI embeddings (``POST /v1/embeddings``), for code chunks and queries.
 
 * **Batches** of at most ``max_batch_texts`` texts and ``max_batch_tokens`` tokens by our
-  estimate (:func:`estimate_tokens`, on the high side), and never more than a minute's tokens
-  (an account without a payment method gets 10K a minute; a bigger request is refused).
-  Voyage counts with its own tokenizer, so a batch it still finds too big (a 400 that names the
-  token limit) is split in two and sent again, down to single texts.
+  estimate (:func:`estimate_tokens`), and never more than a minute's tokens (an account without
+  a payment method gets 10K a minute; a bigger request is refused). Voyage counts with its own
+  tokenizer, so a batch it still finds too big (its 400 naming the batch token limit) is split in
+  two and sent again, down to single texts.
 * **Concurrency**: at most ``max_concurrency`` requests at once; the first to fail cancels the
   rest and its error is raised.
-* **Rate limits**: requests and tokens per minute are spent from buckets that refill
-  continuously (:class:`RateLimiter`), so a big index paces itself instead of meeting 429s.
+* **Rate limits**: no 60-second window holds more than ``requests_per_minute`` requests or
+  ``tokens_per_minute`` tokens (:class:`RateLimiter`, a sliding window); every attempt counts,
+  retries included. The limits are per process: with N workers, give each 1/N of the account's.
 * **Retries**: network errors, 429 and 5xx, with exponential backoff and jitter, or after the
-  ``Retry-After`` the answer gives (one longer than ``max_retry_wait_seconds`` gives up).
-* **Cost**: each request's billed tokens (``usage.total_tokens``) go to ``on_usage`` as it
-  finishes, one call at a time.
+  ``Retry-After`` the answer gives (seconds or an HTTP date; one longer than
+  ``max_retry_wait_seconds`` gives up).
+* **Cost**: the billed tokens (``usage.total_tokens``) of every answer go to ``on_usage``, one
+  call at a time, once the call's requests have all finished or the first failure has stopped
+  them: requests billed before a failure are reported too, as are billed answers we reject.
 """
 
 from __future__ import annotations
@@ -20,19 +23,33 @@ from __future__ import annotations
 import asyncio
 import math
 import random
+import re
 import time
+from collections import deque
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
+from email.utils import parsedate_to_datetime
 from typing import Any, cast
 
 import httpx
 
 from sensei_core.config import VoyageSettings
+from sensei_core.db.types import HALF_MAX
 from sensei_engine.embed.provider import EmbeddingUsage, InputType, UsageSink
 
-CHARS_PER_TOKEN = 3  # code runs 3-4 characters a token; the lower bound keeps batches small
+# Code in Latin script runs 3-4 characters a token, so this is on the high side there. CJK text
+# and emoji run 1-2 characters a token and are under-counted: a batch Voyage then refuses as too
+# big is split and sent again.
+CHARS_PER_TOKEN = 3
 BACKOFF_SECONDS = 1.0
 BACKOFF_CAP_SECONDS = 30.0
+WINDOW_SECONDS = 60.0
+# Voyage's 400 for a batch over its token limit ("The max allowed tokens per submitted batch is
+# N. Your batch has M tokens after truncation. Please lower the number of tokens in the batch.").
+_BATCH_TOO_BIG = re.compile(
+    r"max allowed tokens per submitted batch|lower the number of tokens in the batch", re.I
+)
 
 Sleep = Callable[[float], Awaitable[None]]
 Clock = Callable[[], float]
@@ -67,7 +84,7 @@ class VoyageRateLimited(VoyageError):
 
 
 def estimate_tokens(text: str) -> int:
-    """A token count on the high side for ``text`` (Voyage's tokenizer isn't public)."""
+    """A token count for ``text`` (Voyage's tokenizer isn't public): see :data:`CHARS_PER_TOKEN`."""
     return max(1, math.ceil(len(text) / CHARS_PER_TOKEN))
 
 
@@ -88,8 +105,9 @@ def plan_batches(estimates: Sequence[int], *, max_texts: int, max_tokens: int) -
 
 
 class RateLimiter:
-    """Requests and tokens per minute as two buckets that refill continuously; :meth:`acquire`
-    waits until both hold enough. Waiters are served in order."""
+    """At most ``requests_per_minute`` requests and ``tokens_per_minute`` tokens in any 60
+    seconds: a log of what went out in the last minute, and :meth:`acquire` waits until the next
+    request fits. Waiters are served in order. Per process (see the module)."""
 
     def __init__(
         self,
@@ -99,50 +117,51 @@ class RateLimiter:
         clock: Clock = time.monotonic,
         sleep: Sleep = asyncio.sleep,
     ) -> None:
-        self._request_rate = requests_per_minute / 60
-        self._token_rate = tokens_per_minute / 60
-        self._request_capacity = float(requests_per_minute)
-        self._token_capacity = float(tokens_per_minute)
-        self._requests = self._request_capacity
-        self._tokens = self._token_capacity
+        self._max_requests = requests_per_minute
+        self._max_tokens = tokens_per_minute
         self._clock = clock
         self._sleep = sleep
-        self._updated = clock()
+        self._sent: deque[tuple[float, int]] = deque()  # (when, tokens), oldest first
+        self._tokens = 0  # in the log
         self._lock = asyncio.Lock()
 
-    def _refill(self) -> None:
-        now = self._clock()
-        elapsed, self._updated = now - self._updated, now
-        self._requests = min(self._request_capacity, self._requests + elapsed * self._request_rate)
-        self._tokens = min(self._token_capacity, self._tokens + elapsed * self._token_rate)
-
     async def acquire(self, tokens: int) -> None:
-        # A request bigger than a minute's tokens waits for a full bucket, then goes.
-        needed = min(float(tokens), self._token_capacity)
+        # A request bigger than a minute's tokens waits for an empty window, then goes.
+        needed = min(tokens, self._max_tokens)
         async with self._lock:
             while True:
-                self._refill()
-                if self._requests >= 1 and self._tokens >= needed:
-                    self._requests -= 1
-                    self._tokens -= needed
+                now = self._clock()
+                while self._sent and self._sent[0][0] <= now - WINDOW_SECONDS:
+                    self._tokens -= self._sent.popleft()[1]
+                if (
+                    len(self._sent) < self._max_requests
+                    and self._tokens + needed <= self._max_tokens
+                ):
+                    self._sent.append((now, needed))
+                    self._tokens += needed
                     return
-                wait = max(
-                    (1 - self._requests) / self._request_rate,
-                    (needed - self._tokens) / self._token_rate,
-                )
-                await self._sleep(wait)
+                await self._sleep(self._wait(now, needed))
+
+    def _wait(self, now: float, needed: int) -> float:
+        """How long until enough of the oldest requests leave the window."""
+        requests, tokens = len(self._sent), self._tokens
+        for when, spent in self._sent:
+            requests, tokens = requests - 1, tokens - spent
+            if requests < self._max_requests and tokens + needed <= self._max_tokens:
+                return max(0.0, when + WINDOW_SECONDS - now) + 1e-6
+        return WINDOW_SECONDS  # pragma: no cover - an empty window always fits
 
 
 @dataclass(slots=True)
 class _Job:
-    """One :meth:`VoyageClient.embed` call: its texts, and the vectors as batches fill them."""
+    """One :meth:`VoyageClient.embed` call: its texts, the vectors as batches fill them, and what
+    each answered request was billed."""
 
     texts: Sequence[str]
     estimates: list[int]
     input_type: InputType
-    on_usage: UsageSink | None
     vectors: list[list[float] | None] = field(default_factory=list[list[float] | None])
-    report: asyncio.Lock = field(default_factory=asyncio.Lock)  # one on_usage at a time
+    billed: list[EmbeddingUsage] = field(default_factory=list[EmbeddingUsage])
 
     def __post_init__(self) -> None:
         self.vectors = [None] * len(self.texts)
@@ -191,7 +210,7 @@ class VoyageClient:
             return []
         if self._settings.api_key is None:
             raise VoyageNotConfigured
-        job = _Job(texts, [estimate_tokens(text) for text in texts], input_type, on_usage)
+        job = _Job(texts, [estimate_tokens(text) for text in texts], input_type)
         batches = plan_batches(
             job.estimates,
             max_texts=self._settings.max_batch_texts,
@@ -210,6 +229,12 @@ class VoyageClient:
                     group.create_task(run(batch))
         except ExceptionGroup as failed:  # the first failure; it cancelled the other batches
             raise failed.exceptions[0] from None
+        finally:
+            # Reported here, not in the batches: a cancelled batch must not stop part way
+            # through a sink's database write.
+            if on_usage is not None:
+                for usage in job.billed:
+                    await on_usage(usage)
         done = [vector for vector in job.vectors if vector is not None]
         if len(done) != len(texts):  # pragma: no cover - every batch fills its range or raises
             raise VoyageError(502, "an embedding is missing")
@@ -218,7 +243,7 @@ class VoyageClient:
     async def _embed_range(self, job: _Job, batch: range) -> None:
         """Embed ``job.texts[batch]``; a batch too big for the API is halved."""
         try:
-            found, tokens = await self._request(job, batch)
+            found = await self._request(job, batch)
         except VoyageError as error:
             if not (_too_many_tokens(error) and len(batch) > 1):
                 raise
@@ -228,13 +253,10 @@ class VoyageClient:
             return
         for index, vector in zip(batch, found, strict=True):
             job.vectors[index] = vector
-        if job.on_usage is not None:
-            async with job.report:
-                await job.on_usage(EmbeddingUsage(self.provider, self.model, len(batch), tokens))
 
-    async def _request(self, job: _Job, indexes: range) -> tuple[list[list[float]], int]:
-        """One request for ``job.texts[indexes]``, retried; the vectors in order and the tokens
-        billed."""
+    async def _request(self, job: _Job, indexes: range) -> list[list[float]]:
+        """One request for ``job.texts[indexes]``, retried; the vectors in order. What the answer
+        was billed goes to ``job.billed``, even if the answer is then rejected."""
         batch = [job.texts[i] for i in indexes]
         key = self._settings.api_key
         if key is None:  # pragma: no cover - embed checked it
@@ -249,10 +271,11 @@ class VoyageClient:
         }
         headers = {"Authorization": f"Bearer {key.get_secret_value()}"}
         url = f"{self._settings.api_url.rstrip('/')}/embeddings"
-        await self._limiter.acquire(sum(job.estimates[i] for i in indexes))
+        estimate = sum(job.estimates[i] for i in indexes)
         attempt = 0
         while True:
             attempt += 1
+            await self._limiter.acquire(estimate)  # every attempt counts against the limits
             try:
                 response = await self._http.post(
                     url, json=body, headers=headers, timeout=self._settings.timeout_seconds
@@ -277,10 +300,17 @@ class VoyageClient:
                 continue
             if status >= 400:
                 raise VoyageError(status, _message(response))
-            return self._parse(response.json(), len(batch))
+            return self._parse(response, job, len(batch))
 
-    def _parse(self, payload: Any, expected: int) -> tuple[list[list[float]], int]:
-        body = _object(payload)
+    def _parse(self, response: httpx.Response, job: _Job, expected: int) -> list[list[float]]:
+        try:
+            body = _object(response.json())
+        except ValueError as exc:
+            raise VoyageError(502, "the answer isn't JSON") from exc
+        tokens = _object(body.get("usage")).get("total_tokens")
+        if not isinstance(tokens, int) or isinstance(tokens, bool) or tokens < 0:
+            raise VoyageError(502, "the answer has no usage")
+        job.billed.append(EmbeddingUsage(self.provider, self.model, expected, tokens))
         data = body.get("data")
         if not isinstance(data, list) or len(cast("list[Any]", data)) != expected:
             raise VoyageError(502, f"expected {expected} embeddings in the answer")
@@ -293,25 +323,42 @@ class VoyageClient:
             values = cast("list[Any]", embedding)
             if len(values) != self.dims:
                 raise VoyageError(502, f"an embedding of {len(values)} floats, not {self.dims}")
-            by_index[index] = [float(value) for value in values]
+            by_index[index] = [_component(value) for value in values]
         if sorted(by_index) != list(range(expected)):
             raise VoyageError(502, "the answer's indexes don't match the request")
-        tokens = _object(body.get("usage")).get("total_tokens")
-        return [by_index[i] for i in range(expected)], tokens if isinstance(tokens, int) else 0
+        return [by_index[i] for i in range(expected)]
 
     def _backoff(self, attempt: int) -> float:
         base = min(BACKOFF_CAP_SECONDS, BACKOFF_SECONDS * 2 ** (attempt - 1))
         return base * (0.5 + self._jitter() / 2)
 
 
+def _component(value: Any) -> float:
+    """One vector component: a finite number that fits in half precision (how it is stored)."""
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        raise VoyageError(502, "an embedding with a value that isn't a number")
+    number = float(value)
+    if not math.isfinite(number) or abs(number) > HALF_MAX:
+        raise VoyageError(502, f"an embedding value out of range ({number!r})")
+    return number
+
+
 def _retry_after(response: httpx.Response) -> float | None:
+    """``Retry-After`` in seconds: given as seconds or as an HTTP date."""
     value = response.headers.get("retry-after")
     if value is None:
         return None
     try:
         return max(0.0, float(value))
     except ValueError:
+        pass
+    try:
+        when = parsedate_to_datetime(value)
+    except (TypeError, ValueError):
         return None
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=UTC)
+    return max(0.0, (when - datetime.now(UTC)).total_seconds())
 
 
 def _object(value: Any) -> dict[str, Any]:
@@ -329,5 +376,5 @@ def _message(response: httpx.Response) -> str:
 
 
 def _too_many_tokens(error: VoyageError) -> bool:
-    """Voyage's answer to a batch over its token limit (a 400 naming the batch's tokens)."""
-    return error.status == 400 and "token" in error.message.lower()
+    """Voyage's answer to a batch over its token limit (and no other 400)."""
+    return error.status == 400 and bool(_BATCH_TOO_BIG.search(error.message))

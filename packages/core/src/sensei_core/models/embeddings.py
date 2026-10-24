@@ -1,16 +1,18 @@
-"""The embedding cache: one vector per content hash, model and size, shared by every org.
+"""The embedding cache: one vector per org, content hash, model and size.
 
-Content-addressed and holding no text (a SHA-256 and a vector), so it needs no org scoping: the
-same chunk in two repositories, or in two snapshots of one, is embedded once. Rows are never
+Within an org, the same chunk in two repositories, or in two snapshots of one, is embedded once.
+Orgs never share rows: a vector can be partly inverted back to its text, and a shared cache would
+tell one org which chunks another has already indexed (a hit costs nothing). Rows are never
 changed (a model's vector for a content hash doesn't change): the app role may only read and add
-them; the system role may also delete (a model retired).
+them, in its own org; the system role may also delete (a model retired).
 """
 
 from __future__ import annotations
 
+import uuid
 from datetime import datetime
 
-from sqlalchemy import CheckConstraint, DateTime, Integer, LargeBinary, String, func
+from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Integer, LargeBinary, String, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from sensei_core.db.base import Base
@@ -26,6 +28,10 @@ class EmbeddingCache(Base):
         CheckConstraint("vector_dims(embedding) = dims", name="embedding_dims"),
     )
 
+    # Leads the primary key, which also serves as the org index (row-level security on it).
+    org_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("orgs.id", ondelete="CASCADE"), primary_key=True
+    )
     content_hash: Mapped[bytes] = mapped_column(LargeBinary, primary_key=True)
     model: Mapped[str] = mapped_column(String(100), primary_key=True)  # "provider/model"
     dims: Mapped[int] = mapped_column(Integer, primary_key=True)

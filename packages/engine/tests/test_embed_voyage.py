@@ -5,7 +5,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+import random
 from collections.abc import Callable
+from datetime import UTC, datetime, timedelta
+from email.utils import format_datetime
 from typing import Any, cast
 
 import httpx
@@ -242,20 +245,52 @@ async def test_a_batch_over_the_api_token_limit_is_split_in_two() -> None:
 
 
 @respx.mock
-async def test_other_bad_requests_and_bad_answers_raise() -> None:
-    respx.post(URL).mock(return_value=httpx.Response(400, json={"detail": "bad input_type"}))
+async def test_other_bad_requests_are_not_split() -> None:
+    # A 400 that mentions tokens, but not Voyage's batch limit, is a plain error.
+    route = respx.post(URL).mock(
+        return_value=httpx.Response(400, json={"detail": "invalid token in input_type"})
+    )
     async with httpx.AsyncClient() as http:
-        with pytest.raises(VoyageError, match="400: bad input_type"):
+        with pytest.raises(VoyageError, match="400: invalid token"):
             await _client(http, Sleeps()).embed(["a", "b"], InputType.DOCUMENT)
-    wrong = {"data": [{"index": 0, "embedding": [1.0, 2.0]}], "usage": {"total_tokens": 1}}
-    respx.post(URL).mock(return_value=httpx.Response(200, json=wrong))
+    assert route.call_count == 1
+
+
+def _billed(data: list[dict[str, Any]]) -> dict[str, Any]:
+    return {"data": data, "usage": {"total_tokens": 7}}
+
+
+@pytest.mark.parametrize(
+    ("answer", "error"),
+    [
+        (httpx.Response(200, text="<html>oops</html>"), "isn't JSON"),
+        (httpx.Response(200, json={"data": [{"index": 0, "embedding": [1, 2, 3, 4]}]}), "no usage"),
+        (httpx.Response(200, json=_billed([])), "expected 1 embeddings"),
+        (httpx.Response(200, json=_billed([{"index": 0, "embedding": [1.0, 2.0]}])), "2 floats"),
+        (httpx.Response(200, json=_billed([{"index": 0, "embedding": ["1", 0, 0, 0]}])), "number"),
+        (httpx.Response(200, json=_billed([{"index": 0, "embedding": [True, 0, 0, 0]}])), "number"),
+        (httpx.Response(200, json=_billed([{"index": 0, "embedding": [1e6, 0, 0, 0]}])), "range"),
+        (
+            httpx.Response(
+                200,
+                content=b'{"data": [{"index": 0, "embedding": [NaN, 0, 0, 0]}],'
+                b' "usage": {"total_tokens": 7}}',
+            ),
+            "range",
+        ),
+        (httpx.Response(200, json=_billed([{"index": 3, "embedding": [0, 0, 0, 0]}])), "indexes"),
+    ],
+)
+@respx.mock
+async def test_a_bad_answer_is_a_voyage_error(answer: httpx.Response, error: str) -> None:
+    respx.post(URL).mock(return_value=answer)
+    usages, sink = _collect()
     async with httpx.AsyncClient() as http:
-        with pytest.raises(VoyageError, match="2 floats, not 4"):
-            await _client(http, Sleeps()).embed(["a"], InputType.DOCUMENT)
-    respx.post(URL).mock(return_value=httpx.Response(200, json={"data": []}))
-    async with httpx.AsyncClient() as http:
-        with pytest.raises(VoyageError, match="expected 1 embeddings"):
-            await _client(http, Sleeps()).embed(["a"], InputType.DOCUMENT)
+        with pytest.raises(VoyageError, match=error):
+            await _client(http, Sleeps()).embed(["a"], InputType.DOCUMENT, on_usage=sink)
+    # An answer that says what it billed is reported, even when it is then rejected.
+    billed = json.loads(answer.content).get("usage") if b"usage" in answer.content else None
+    assert [u.tokens for u in usages] == ([7] if billed else [])
 
 
 async def test_without_a_key_nothing_is_sent() -> None:
@@ -296,6 +331,13 @@ async def test_one_failed_batch_cancels_the_others() -> None:
         client = _client(http, Sleeps(), max_batch_texts=1, max_concurrency=2)
         with pytest.raises(VoyageError, match="403: forbidden"):
             await client.embed(["ok", "bad", "ok"], InputType.DOCUMENT)
+    # What was billed before the failure is still reported.
+    usages, sink = _collect()
+    async with httpx.AsyncClient() as http:
+        client = _client(http, Sleeps(), max_batch_texts=1, max_concurrency=1)
+        with pytest.raises(VoyageError, match="403: forbidden"):
+            await client.embed(["ok", "ok2", "bad"], InputType.DOCUMENT, on_usage=sink)
+    assert [(u.texts, u.tokens) for u in usages] == [(1, 2), (1, 3)]
 
 
 async def test_rate_limiter_paces_requests_and_tokens() -> None:
@@ -303,24 +345,80 @@ async def test_rate_limiter_paces_requests_and_tokens() -> None:
     waits: list[float] = []
 
     async def sleep(seconds: float) -> None:
-        waits.append(round(seconds, 6))
+        waits.append(round(seconds, 3))
         now[0] += seconds
 
     limiter = RateLimiter(2, 600, clock=lambda: now[0], sleep=sleep)
     await limiter.acquire(100)
+    now[0] += 10
     await limiter.acquire(100)
-    assert waits == []  # a full minute's budget to start with
-    await limiter.acquire(100)  # requests run out: one refills every 30 s
-    assert waits == [30.0]
-    waits.clear()
-    now[0] += 60  # both buckets full again
-    await limiter.acquire(600)
-    await limiter.acquire(300)  # tokens run out: 10 a second refill
-    assert waits == [30.0]
-    waits.clear()
-    now[0] += 120
-    await limiter.acquire(5000)  # more than a minute's tokens: waits for a full bucket, then goes
     assert waits == []
+    await limiter.acquire(100)  # requests run out: the first leaves the window at 60 s
+    assert waits == [50.0]
+    waits.clear()
+    now[0] += 200  # an empty window
+    await limiter.acquire(600)
+    await limiter.acquire(300)  # tokens run out: wait for the 600 to leave the window
+    assert waits == [60.0]
+    waits.clear()
+    now[0] += 200
+    await limiter.acquire(5000)  # more than a minute's tokens: an empty window, then it goes
+    assert waits == []
+
+
+async def test_no_minute_ever_holds_more_than_the_limits() -> None:
+    rng = random.Random(7)  # noqa: S311 - a seeded test sequence, not a secret
+    now = [0.0]
+
+    async def sleep(seconds: float) -> None:
+        now[0] += seconds
+
+    rpm, tpm = 5, 1_000
+    limiter = RateLimiter(rpm, tpm, clock=lambda: now[0], sleep=sleep)
+    sent: list[tuple[float, int]] = []
+    for _ in range(300):
+        tokens = rng.randint(1, 400)
+        await limiter.acquire(tokens)
+        sent.append((now[0], tokens))
+        now[0] += rng.choice([0.0, 0.0, 0.5, 3.0, 20.0])
+    assert now[0] > 600  # it had to wait: the test exercised the limits
+    for end, _ in sent:
+        window = [t for when, t in sent if end - 60 < when <= end]
+        assert len(window) <= rpm
+        assert sum(window) <= tpm
+
+
+@respx.mock
+async def test_retries_count_against_the_rate_limit() -> None:
+    route = respx.post(URL).mock(
+        side_effect=[httpx.Response(503, json={"detail": "busy"}), _ok(["x"])]
+    )
+    sleeps = Sleeps()
+    async with httpx.AsyncClient() as http:
+        await _client(http, sleeps, requests_per_minute=1).embed(["x"], InputType.DOCUMENT)
+    assert route.call_count == 2
+    # The backoff (1 s), then the rest of the minute the first attempt used.
+    assert sleeps.calls[0] == 1.0
+    assert round(sum(sleeps.calls), 3) == 60.0
+
+
+@respx.mock
+async def test_retry_after_may_be_an_http_date() -> None:
+    when = format_datetime(datetime.now(UTC) + timedelta(seconds=30), usegmt=True)
+    respx.post(URL).mock(
+        side_effect=[httpx.Response(429, headers={"retry-after": when}), _ok(["x"])]
+    )
+    sleeps = Sleeps()
+    async with httpx.AsyncClient() as http:
+        await _client(http, sleeps).embed(["x"], InputType.DOCUMENT)
+    assert 25 <= sleeps.calls[0] <= 30
+    respx.post(URL).mock(
+        side_effect=[httpx.Response(429, headers={"retry-after": "soon"}), _ok(["x"])]
+    )
+    sleeps = Sleeps()
+    async with httpx.AsyncClient() as http:
+        await _client(http, sleeps).embed(["x"], InputType.DOCUMENT)
+    assert sleeps.calls == [1.0]  # unreadable: the usual backoff
 
 
 def test_tests_never_take_the_developers_key() -> None:
