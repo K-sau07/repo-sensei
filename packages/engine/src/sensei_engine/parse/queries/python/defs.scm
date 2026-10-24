@@ -39,6 +39,20 @@
     (assignment
       left: (identifier) @name) @definition.variable))
 
+; ... and those assigned in a module-level if/elif/else, try/except/else/finally or with block
+; (if TYPE_CHECKING: ..., try: import ... except ImportError: X = None).
+(module
+  [(if_statement
+     consequence: (block (expression_statement (assignment left: (identifier) @name) @definition.variable)))
+   (if_statement
+     alternative: (_ (block (expression_statement (assignment left: (identifier) @name) @definition.variable))))
+   (try_statement
+     body: (block (expression_statement (assignment left: (identifier) @name) @definition.variable)))
+   (try_statement
+     (_ (block (expression_statement (assignment left: (identifier) @name) @definition.variable))))
+   (with_statement
+     body: (block (expression_statement (assignment left: (identifier) @name) @definition.variable)))])
+
 (module
   (type_alias_statement
     left: (type

@@ -344,6 +344,23 @@ def test_hooks_need_a_capital_after_use_and_components_need_jsx() -> None:
     assert plain["ts src/a.ts/Page()."].kind is SymbolKind.FUNCTION
 
 
+def test_module_names_assigned_in_if_try_and_with_blocks() -> None:
+    source = (
+        "if TYPE_CHECKING:\n    Alias = int\nelse:\n    Alias = str\n"
+        "try:\n    HAVE = True\nexcept ImportError:\n    HAVE = False\n"
+        "with ctx():\n    DATA = 1\n"
+        "def g():\n    if x:\n        local = 1\n"
+    )
+    symbols = _extract("m.py", source, "python")
+    assert [(s.name, s.start_line) for s in symbols.values() if s.kind is SymbolKind.VARIABLE] == [
+        ("Alias", 2),
+        ("Alias", 4),
+        ("HAVE", 6),
+        ("HAVE", 8),
+        ("DATA", 10),
+    ]  # a function's locals stay out
+
+
 def test_comments_among_decorators_keep_them_in_the_span() -> None:
     source = (
         "class S {\n"
