@@ -26,7 +26,7 @@ from fastapi import FastAPI
 from pydantic_settings import BaseSettings
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from sensei_core.config import GitHubSettings, Settings
+from sensei_core.config import GitHubSettings, Settings, VoyageSettings
 from sensei_core.models import User
 
 
@@ -45,7 +45,7 @@ ROOT = ALEMBIC_INI.parents[2]
 
 # Outside services whose credentials tests never take from a developer's .env or shell: a test
 # that needs them passes its own, and "not configured" means what it says. Add each new one.
-EXTERNAL_SERVICES: tuple[type[BaseSettings], ...] = (GitHubSettings,)
+EXTERNAL_SERVICES: tuple[type[BaseSettings], ...] = (GitHubSettings, VoyageSettings)
 
 
 def pytest_configure() -> None:

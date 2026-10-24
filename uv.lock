@@ -2482,6 +2482,7 @@ version = "0.1.0"
 source = { editable = "packages/engine" }
 dependencies = [
     { name = "charset-normalizer" },
+    { name = "httpx" },
     { name = "identify" },
     { name = "msgpack" },
     { name = "orjson" },
@@ -2502,6 +2503,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "charset-normalizer", specifier = ">=3.4" },
+    { name = "httpx", specifier = ">=0.28" },
     { name = "identify", specifier = ">=2.6" },
     { name = "msgpack", specifier = ">=1.1" },
     { name = "orjson", specifier = ">=3.11" },

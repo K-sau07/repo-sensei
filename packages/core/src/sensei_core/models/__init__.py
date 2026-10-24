@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from sensei_core.db.base import Base
 from sensei_core.models.audit import ActorType, AuditEvent, UsageEvent, UsageKind
+from sensei_core.models.embeddings import EmbeddingCache
 from sensei_core.models.evals import EvalRun
 from sensei_core.models.files import RepoFile
 from sensei_core.models.github import GitHubInstallation
@@ -30,6 +31,7 @@ __all__ = [
     "Base",
     "CodeNode",
     "DeliveryStatus",
+    "EmbeddingCache",
     "EvalRun",
     "GitHubInstallation",
     "IndexJob",
