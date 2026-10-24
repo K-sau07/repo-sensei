@@ -1,4 +1,5 @@
-"""Voyage AI embeddings (``POST /v1/embeddings``), for code chunks and queries.
+"""Voyage AI embeddings (``POST /v1/embeddings``), for code chunks and queries; :class:`VoyageAPI`
+(the key, rate limits and retries) is shared with the reranker (:mod:`sensei_engine.search.rerank`).
 
 * **Batches** of at most ``max_batch_texts`` texts and ``max_batch_tokens`` tokens by our
   estimate (:func:`estimate_tokens`), and never more than a minute's tokens (an account without
@@ -152,6 +153,89 @@ class RateLimiter:
         return WINDOW_SECONDS  # pragma: no cover - an empty window always fits
 
 
+class VoyageAPI:
+    """Voyage's HTTP API: the key, the rate limits (:class:`RateLimiter`) and the retries
+    (network errors, 429 and 5xx; see the module). :meth:`post` returns the answer's JSON
+    object or raises :class:`VoyageError`."""
+
+    def __init__(
+        self,
+        settings: VoyageSettings,
+        http: httpx.AsyncClient,
+        *,
+        limiter: RateLimiter | None = None,
+        sleep: Sleep = asyncio.sleep,
+        jitter: Callable[[], float] = random.random,
+    ) -> None:
+        self.settings = settings
+        self._http = http
+        self._sleep = sleep
+        self._jitter = jitter
+        self._limiter = limiter or RateLimiter(
+            settings.requests_per_minute, settings.tokens_per_minute, sleep=sleep
+        )
+
+    async def post(
+        self,
+        endpoint: str,
+        body: dict[str, Any],
+        *,
+        tokens: int,
+        timeout_seconds: float | None = None,
+        max_retries: int | None = None,
+    ) -> dict[str, Any]:
+        """``POST /{endpoint}`` with ``body``, an estimated ``tokens`` long, retried."""
+        key = self.settings.api_key
+        if key is None:
+            raise VoyageNotConfigured
+        headers = {"Authorization": f"Bearer {key.get_secret_value()}"}
+        url = f"{self.settings.api_url.rstrip('/')}/{endpoint}"
+        timeout = timeout_seconds or self.settings.timeout_seconds
+        retries = self.settings.max_retries if max_retries is None else max_retries
+        attempt = 0
+        while True:
+            attempt += 1
+            await self._limiter.acquire(tokens)  # every attempt counts against the limits
+            try:
+                response = await self._http.post(url, json=body, headers=headers, timeout=timeout)
+            except httpx.TransportError as exc:
+                if attempt > retries:
+                    raise VoyageUnreachable(exc) from exc
+                await self._sleep(self._backoff(attempt))
+                continue
+            status = response.status_code
+            if status == 429 or status >= 500:
+                retry_after = _retry_after(response)
+                if attempt > retries:
+                    if status == 429:
+                        raise VoyageRateLimited(retry_after)
+                    raise VoyageError(status, _message(response))
+                if retry_after is not None and retry_after > self.settings.max_retry_wait_seconds:
+                    raise VoyageRateLimited(retry_after)
+                await self._sleep(
+                    retry_after if retry_after is not None else self._backoff(attempt)
+                )
+                continue
+            if status >= 400:
+                raise VoyageError(status, _message(response))
+            try:
+                return _object(response.json())
+            except ValueError as exc:
+                raise VoyageError(502, "the answer isn't JSON") from exc
+
+    def _backoff(self, attempt: int) -> float:
+        base = min(BACKOFF_CAP_SECONDS, BACKOFF_SECONDS * 2 ** (attempt - 1))
+        return base * (0.5 + self._jitter() / 2)
+
+
+def billed_tokens(body: dict[str, Any]) -> int:
+    """The tokens an answer was billed (``usage.total_tokens``)."""
+    tokens = _object(body.get("usage")).get("total_tokens")
+    if not isinstance(tokens, int) or isinstance(tokens, bool) or tokens < 0:
+        raise VoyageError(502, "the answer has no usage")
+    return tokens
+
+
 @dataclass(slots=True)
 class _Job:
     """One :meth:`VoyageClient.embed` call: its texts, the vectors as batches fill them, and what
@@ -180,12 +264,7 @@ class VoyageClient:
         jitter: Callable[[], float] = random.random,
     ) -> None:
         self._settings = settings
-        self._http = http
-        self._sleep = sleep
-        self._jitter = jitter
-        self._limiter = limiter or RateLimiter(
-            settings.requests_per_minute, settings.tokens_per_minute, sleep=sleep
-        )
+        self._api = VoyageAPI(settings, http, limiter=limiter, sleep=sleep, jitter=jitter)
 
     @property
     def provider(self) -> str:
@@ -257,59 +336,21 @@ class VoyageClient:
     async def _request(self, job: _Job, indexes: range) -> list[list[float]]:
         """One request for ``job.texts[indexes]``, retried; the vectors in order. What the answer
         was billed goes to ``job.billed``, even if the answer is then rejected."""
-        batch = [job.texts[i] for i in indexes]
-        key = self._settings.api_key
-        if key is None:  # pragma: no cover - embed checked it
-            raise VoyageNotConfigured
         body = {
-            "input": batch,
+            "input": [job.texts[i] for i in indexes],
             "model": self.model,
             "input_type": job.input_type.value,
             "output_dimension": self.dims,
             "output_dtype": "float",
             "truncation": True,
         }
-        headers = {"Authorization": f"Bearer {key.get_secret_value()}"}
-        url = f"{self._settings.api_url.rstrip('/')}/embeddings"
         estimate = sum(job.estimates[i] for i in indexes)
-        attempt = 0
-        while True:
-            attempt += 1
-            await self._limiter.acquire(estimate)  # every attempt counts against the limits
-            try:
-                response = await self._http.post(
-                    url, json=body, headers=headers, timeout=self._settings.timeout_seconds
-                )
-            except httpx.TransportError as exc:
-                if attempt > self._settings.max_retries:
-                    raise VoyageUnreachable(exc) from exc
-                await self._sleep(self._backoff(attempt))
-                continue
-            status = response.status_code
-            if status == 429 or status >= 500:
-                retry_after = _retry_after(response)
-                if attempt > self._settings.max_retries:
-                    if status == 429:
-                        raise VoyageRateLimited(retry_after)
-                    raise VoyageError(status, _message(response))
-                if retry_after is not None and retry_after > self._settings.max_retry_wait_seconds:
-                    raise VoyageRateLimited(retry_after)
-                await self._sleep(
-                    retry_after if retry_after is not None else self._backoff(attempt)
-                )
-                continue
-            if status >= 400:
-                raise VoyageError(status, _message(response))
-            return self._parse(response, job, len(batch))
+        return self._parse(
+            await self._api.post("embeddings", body, tokens=estimate), job, len(indexes)
+        )
 
-    def _parse(self, response: httpx.Response, job: _Job, expected: int) -> list[list[float]]:
-        try:
-            body = _object(response.json())
-        except ValueError as exc:
-            raise VoyageError(502, "the answer isn't JSON") from exc
-        tokens = _object(body.get("usage")).get("total_tokens")
-        if not isinstance(tokens, int) or isinstance(tokens, bool) or tokens < 0:
-            raise VoyageError(502, "the answer has no usage")
+    def _parse(self, body: dict[str, Any], job: _Job, expected: int) -> list[list[float]]:
+        tokens = billed_tokens(body)
         job.billed.append(EmbeddingUsage(self.provider, self.model, expected, tokens))
         data = body.get("data")
         if not isinstance(data, list) or len(cast("list[Any]", data)) != expected:
@@ -327,10 +368,6 @@ class VoyageClient:
         if sorted(by_index) != list(range(expected)):
             raise VoyageError(502, "the answer's indexes don't match the request")
         return [by_index[i] for i in range(expected)]
-
-    def _backoff(self, attempt: int) -> float:
-        base = min(BACKOFF_CAP_SECONDS, BACKOFF_SECONDS * 2 ** (attempt - 1))
-        return base * (0.5 + self._jitter() / 2)
 
 
 def _component(value: Any) -> float:

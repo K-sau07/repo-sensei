@@ -79,6 +79,8 @@ class Role(enum.StrEnum):
     """What a call is for; each role runs on a tier (:func:`tier_for`)."""
 
     ROUTER = "router"  # query routing
+    RERANK = "rerank"  # ordering search results
+    RERANK_DEEP = "rerank_deep"  # ordering search results in deep mode
     SUMMARY = "summary"  # file and symbol summaries, rollups
     AGENT = "agent"  # the answering agent
     ESCALATE = "escalate"  # the hardest questions
@@ -86,6 +88,8 @@ class Role(enum.StrEnum):
 
 ROLE_TIERS: Mapping[Role, Tier] = {
     Role.ROUTER: Tier.FAST,
+    Role.RERANK: Tier.FAST,
+    Role.RERANK_DEEP: Tier.STANDARD,
     Role.SUMMARY: Tier.FAST,
     Role.AGENT: Tier.STANDARD,
     Role.ESCALATE: Tier.DEEP,

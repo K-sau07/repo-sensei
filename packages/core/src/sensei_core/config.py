@@ -262,6 +262,13 @@ class VoyageSettings(BaseSettings):
     max_concurrency: int = Field(default=4, gt=0)
     requests_per_minute: int = Field(default=2000, gt=0)
     tokens_per_minute: int = Field(default=3_000_000, gt=0)
+    # Reranking (search results): ``rerank_model``, or the lite one for the cheap tier. A search
+    # waits for it, so it gets a short timeout and one retry; on failure the search keeps the
+    # order it had. Its rate limits are counted apart from the embeddings'.
+    rerank_model: str = "rerank-3"
+    rerank_lite_model: str = "rerank-3-lite"
+    rerank_timeout_seconds: float = Field(default=5.0, gt=0)
+    rerank_max_retries: int = Field(default=1, ge=0)
 
     @property
     def configured(self) -> bool:

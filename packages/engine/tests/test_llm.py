@@ -330,7 +330,14 @@ def test_the_sdks_debug_logs_stay_off() -> None:
 
 
 def test_callers_ask_by_role() -> None:
-    assert [tier_for(role) for role in Role] == [Tier.FAST, Tier.FAST, Tier.STANDARD, Tier.DEEP]
+    assert {role: tier_for(role) for role in Role} == {
+        Role.ROUTER: Tier.FAST,
+        Role.RERANK: Tier.FAST,
+        Role.RERANK_DEEP: Tier.STANDARD,
+        Role.SUMMARY: Tier.FAST,
+        Role.AGENT: Tier.STANDARD,
+        Role.ESCALATE: Tier.DEEP,
+    }
 
 
 def test_fallback_models_are_priced() -> None:
