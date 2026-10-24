@@ -95,6 +95,12 @@ def insert_only_sql(table: str) -> list[str]:
     return [f'REVOKE SELECT, UPDATE, DELETE, TRUNCATE ON "{table}" FROM {APP_ROLE}']
 
 
+def read_only_sql(table: str) -> list[str]:
+    """The app role may read rows of ``table`` but not add, change or remove them (system tables
+    that tooling writes through the system role and staff routes read)."""
+    return [f'REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON "{table}" FROM {APP_ROLE}']
+
+
 def disable_org_rls_sql(table: str) -> list[str]:
     """Inverse of the ``*_rls_sql`` helpers above (use in migration downgrades)."""
     return [

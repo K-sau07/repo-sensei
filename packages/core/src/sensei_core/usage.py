@@ -58,7 +58,7 @@ def _d(value: str) -> Decimal:
 # 5-minute rate (1.25x input); cache reads are 0.1x input, except Opus 5.5 (0.05x) and Fable 5.1
 # (0.025x). Voyage rates: Voyage pricing page. "sensei/*" rows are our own infrastructure estimates.
 DEFAULT_PRICE_TABLE = PriceTable(
-    version="2026-10-19",
+    version="2026-10-24",
     prices={
         "anthropic/claude-haiku-5-5": ModelPrice(
             input=_d("0.10"),
@@ -83,6 +83,29 @@ DEFAULT_PRICE_TABLE = PriceTable(
             output=_d("20"),
             cache_read=_d("0.20"),
             cache_write=_d("5"),
+            batch_multiplier=_d("0.5"),
+        ),
+        # Models a refused request may fall back to (server-side fallbacks), billed at their own
+        # rates: Sonnet 5 for Sonnet 5.5, Opus 5 and Opus 4.8 for Opus 5.5.
+        "anthropic/claude-sonnet-5": ModelPrice(
+            input=_d("2"),
+            output=_d("10"),
+            cache_read=_d("0.20"),
+            cache_write=_d("2.50"),
+            batch_multiplier=_d("0.5"),
+        ),
+        "anthropic/claude-opus-5": ModelPrice(
+            input=_d("5"),
+            output=_d("25"),
+            cache_read=_d("0.50"),
+            cache_write=_d("6.25"),
+            batch_multiplier=_d("0.5"),
+        ),
+        "anthropic/claude-opus-4-8": ModelPrice(
+            input=_d("5"),
+            output=_d("25"),
+            cache_read=_d("0.50"),
+            cache_write=_d("6.25"),
             batch_multiplier=_d("0.5"),
         ),
         "anthropic/claude-fable-5-1": ModelPrice(

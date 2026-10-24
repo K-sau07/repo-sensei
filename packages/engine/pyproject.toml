@@ -4,7 +4,10 @@ version = "0.1.0"
 description = "Code understanding engine: ingestion, parsing, retrieval, graph and agent."
 requires-python = ">=3.13"
 dependencies = [
+    "anthropic>=2.3",
     "charset-normalizer>=3.4",
+    "httpx>=0.28",
+    "httpx2>=2.0",
     "identify>=2.6",
     "msgpack>=1.1",
     "orjson>=3.11",
@@ -13,6 +16,11 @@ dependencies = [
     "pyyaml>=6.0",
     "redis>=6.2",
     "sensei-core",
+    # tree-sitter: exact pins, the query files are written against these grammars.
+    "tree-sitter==0.25.2",  # 0.26.0 corrupts memory in QueryCursor (Python 3.13)
+    "tree-sitter-javascript==0.25.0",
+    "tree-sitter-python==0.25.0",
+    "tree-sitter-typescript==0.23.2",
     "uuid-utils>=0.11",
     "xxhash>=3.5",
     "zstandard>=0.25",

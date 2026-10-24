@@ -1,0 +1,96 @@
+/** How the code browser names languages and line counts (sizes: `formatBytes` in
+ * lib/constellation.ts). */
+
+// The engine's language ids (sensei_engine.ingest.languages) by name: GitHub's names for the ones
+// its language bar counts, the usual names for data and prose formats.
+const LANGUAGE_NAMES: Record<string, string> = {
+  python: "Python",
+  jupyter: "Jupyter Notebook",
+  typescript: "TypeScript",
+  tsx: "TypeScript (TSX)",
+  javascript: "JavaScript",
+  jsx: "JavaScript (JSX)",
+  vue: "Vue",
+  svelte: "Svelte",
+  astro: "Astro",
+  sql: "SQL",
+  html: "HTML",
+  jinja: "Jinja",
+  mako: "Mako",
+  handlebars: "Handlebars",
+  ejs: "EJS",
+  css: "CSS",
+  scss: "SCSS",
+  sass: "Sass",
+  less: "Less",
+  go: "Go",
+  java: "Java",
+  kotlin: "Kotlin",
+  scala: "Scala",
+  groovy: "Groovy",
+  rust: "Rust",
+  ruby: "Ruby",
+  php: "PHP",
+  c: "C",
+  cpp: "C++",
+  "objective-c": "Objective-C",
+  "objective-cpp": "Objective-C++",
+  csharp: "C#",
+  fsharp: "F#",
+  swift: "Swift",
+  dart: "Dart",
+  lua: "Lua",
+  r: "R",
+  julia: "Julia",
+  elixir: "Elixir",
+  erlang: "Erlang",
+  haskell: "Haskell",
+  ocaml: "OCaml",
+  clojure: "Clojure",
+  zig: "Zig",
+  nim: "Nim",
+  perl: "Perl",
+  shell: "Shell",
+  fish: "fish",
+  powershell: "PowerShell",
+  batch: "Batchfile",
+  hcl: "HCL",
+  nix: "Nix",
+  cmake: "CMake",
+  makefile: "Makefile",
+  dockerfile: "Dockerfile",
+  solidity: "Solidity",
+  prisma: "Prisma",
+  graphql: "GraphQL",
+  protobuf: "Protocol Buffer",
+  just: "Just",
+  json: "JSON",
+  yaml: "YAML",
+  toml: "TOML",
+  ini: "INI",
+  properties: "Properties",
+  xml: "XML",
+  svg: "SVG",
+  markdown: "Markdown",
+  mdx: "MDX",
+  rst: "reStructuredText",
+  asciidoc: "AsciiDoc",
+  text: "Plain text",
+  csv: "CSV",
+  dotenv: "Dotenv",
+  ignore: "Ignore file",
+  gitattributes: "Git attributes",
+  "pip-requirements": "Pip requirements",
+  procfile: "Procfile",
+};
+
+/** "python" → "Python"; an id we don't know is shown as it is. */
+export function languageName(id: string | null | undefined): string | null {
+  if (!id) return null;
+  return LANGUAGE_NAMES[id] ?? id;
+}
+
+/** "1 line", "18,567 lines". */
+export function formatLineCount(lines: number): string {
+  return `${lines.toLocaleString("en")} ${lines === 1 ? "line" : "lines"}`;
+}

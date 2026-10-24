@@ -14,11 +14,19 @@ export function useRepoSlug(): { org: string; repo: string } {
   return { org, repo };
 }
 
-export function useRepo() {
+/** Readers that only want what's already loaded (the ⌘K palette) pass `refetchOnMount: false`. */
+export interface CachedReadOptions {
+  refetchOnMount?: boolean;
+}
+
+export function useRepo(options: CachedReadOptions = {}) {
   const { org, repo } = useRepoSlug();
-  return $api.useQuery("get", "/api/v1/orgs/{org}/repos/{repo}", {
-    params: { path: { org, repo } },
-  });
+  return $api.useQuery(
+    "get",
+    "/api/v1/orgs/{org}/repos/{repo}",
+    { params: { path: { org, repo } } },
+    options,
+  );
 }
 
 export interface FeatureState {
@@ -36,12 +44,15 @@ export interface FeatureState {
  * in progress has unlocked so far. Updated live: the org and job event streams refetch the job
  * list.
  */
-export function useRepoFeatures() {
+export function useRepoFeatures(options: CachedReadOptions = {}) {
   const { org, repo } = useRepoSlug();
   const stages = $api.useQuery("get", "/api/v1/indexing/stages", {}, { staleTime: Infinity });
-  const jobs = $api.useQuery("get", "/api/v1/orgs/{org}/repos/{repo}/index-jobs", {
-    params: { path: { org, repo } },
-  });
+  const jobs = $api.useQuery(
+    "get",
+    "/api/v1/orgs/{org}/repos/{repo}/index-jobs",
+    { params: { path: { org, repo } } },
+    options,
+  );
 
   const history = jobs.data ?? [];
   const active = history.find((job) => job.status === "queued" || job.status === "running");

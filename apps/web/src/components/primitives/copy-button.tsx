@@ -1,7 +1,7 @@
 "use client";
 
 import { Check, Copy } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 
 import { Button } from "@/components/ui/button";
 
@@ -9,6 +9,8 @@ interface CopyButtonProps {
   value: string;
   /** Accessible name, e.g. "Copy request ID". */
   label?: string;
+  /** What the button shows until it confirms (a copy icon by default). */
+  icon?: ReactNode;
   className?: string;
 }
 
@@ -16,7 +18,7 @@ const RESET_AFTER_MS = 2000;
 
 type CopyState = { status: "idle" } | { status: "copied" | "failed"; at: number };
 
-async function writeClipboard(value: string): Promise<void> {
+export async function writeClipboard(value: string): Promise<void> {
   // navigator.clipboard is missing outside secure contexts (plain http on a LAN address).
   if (typeof navigator === "undefined" || !("clipboard" in navigator)) {
     throw new Error("Clipboard unavailable");
@@ -25,7 +27,7 @@ async function writeClipboard(value: string): Promise<void> {
 }
 
 /** Copies `value` to the clipboard and confirms for two seconds (announced politely). */
-export function CopyButton({ value, label = "Copy", className }: CopyButtonProps) {
+export function CopyButton({ value, label = "Copy", icon, className }: CopyButtonProps) {
   const [state, setState] = useState<CopyState>({ status: "idle" });
 
   // Keyed on `at`, so copying again restarts the two seconds.
@@ -61,7 +63,7 @@ export function CopyButton({ value, label = "Copy", className }: CopyButtonProps
           );
         }}
       >
-        {state.status === "copied" ? <Check className="text-ok" /> : <Copy />}
+        {state.status === "copied" ? <Check className="text-ok" /> : (icon ?? <Copy />)}
       </Button>
       {/* The key re-mounts the region so a repeat copy is announced again. */}
       <span key={state.status === "idle" ? "idle" : state.at} role="status" className="sr-only">

@@ -38,7 +38,10 @@ jobs:
           enable-cache: true
 
       - name: Install
-        run: uv sync --frozen
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends ripgrep
+          uv sync --frozen
 
       - name: Lint
         run: |
@@ -70,6 +73,11 @@ jobs:
           uv run alembic -c packages/core/alembic.ini upgrade head
           uv run alembic -c packages/core/alembic.ini downgrade base
           uv run alembic -c packages/core/alembic.ini upgrade head
+
+      # The suites are private, so CI normally has none and this says so; with them, it checks
+      # every gold span against the pinned commits.
+      - name: Golden suites
+        run: uv run python scripts/label_helper.py validate --fetch
 
       - name: Tests (unit and integration)
         run: uv run pytest -m "not e2e" --cov --cov-report=term --cov-report=xml
@@ -103,6 +111,7 @@ jobs:
         run: |
           test "$(docker run --rm --entrypoint id repo-sensei/api:ci -u)" = "10001"
           docker run --rm --entrypoint python repo-sensei/api:ci -c "import sensei_api.app"
+          docker run --rm --entrypoint rg repo-sensei/api:ci --version
       - name: Build the worker image
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:

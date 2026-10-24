@@ -1,0 +1,52 @@
+{
+  "language": "tsx",
+  "status": "parsed",
+  "error_count": 0,
+  "defs": [
+    "definition.function L22-30 name=handleApiError",
+    "definition.variable L31-38 name=queryClient",
+    "definition.variable L40-40 name=router",
+    "definition.module L41-45 name=\"@tanstack/react-router\"",
+    "definition.interface L42-44 name=Register",
+    "definition.field L43-43 name=router"
+  ],
+  "imports": [
+    "import.named L1-6 name=MutationCache source=\"@tanstack/react-query\"",
+    "import.named L1-6 name=QueryCache source=\"@tanstack/react-query\"",
+    "import.named L1-6 name=QueryClient source=\"@tanstack/react-query\"",
+    "import.named L1-6 name=QueryClientProvider source=\"@tanstack/react-query\"",
+    "import.module L1-6 source=\"@tanstack/react-query\"",
+    "import.named L7-7 name=createRouter source=\"@tanstack/react-router\"",
+    "import.named L7-7 name=RouterProvider source=\"@tanstack/react-router\"",
+    "import.module L7-7 source=\"@tanstack/react-router\"",
+    "import.named L8-8 name=AxiosError source=\"axios\"",
+    "import.module L8-8 source=\"axios\"",
+    "import.named L9-9 name=StrictMode source=\"react\"",
+    "import.module L9-9 source=\"react\"",
+    "import.default L10-10 default=ReactDOM source=\"react-dom/client\"",
+    "import.module L10-10 source=\"react-dom/client\"",
+    "import.named L11-11 name=client source=\"./client/client.gen\"",
+    "import.module L11-11 source=\"./client/client.gen\"",
+    "import.named L12-12 name=ThemeProvider source=\"./components/theme-provider\"",
+    "import.module L12-12 source=\"./components/theme-provider\"",
+    "import.named L13-13 name=Toaster source=\"./components/ui/sonner\"",
+    "import.module L13-13 source=\"./components/ui/sonner\"",
+    "import.module L14-14 source=\"./index.css\"",
+    "import.named L15-15 name=routeTree source=\"./routeTree.gen\"",
+    "import.module L15-15 source=\"./routeTree.gen\""
+  ],
+  "calls": [
+    "call.method L17-20 name=setConfig receiver=client",
+    "call.method L19-19 name=getItem receiver=localStorage",
+    "call.method L25-25 name=includes receiver=[401, 403]",
+    "call.method L27-27 name=removeItem receiver=localStorage",
+    "call.new L31-38 name=QueryClient",
+    "call.new L32-34 name=QueryCache",
+    "call.new L35-37 name=MutationCache",
+    "call L40-40 name=createRouter",
+    "call.method L47-56 name=render receiver=ReactDOM.createRoot(document.getElementById(\"root\")!)",
+    "call.method L47-47 name=createRoot receiver=ReactDOM",
+    "call.method L47-47 name=getElementById receiver=document"
+  ],
+  "decorators": []
+}

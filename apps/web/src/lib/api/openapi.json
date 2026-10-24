@@ -317,6 +317,15 @@
         "title": "AvailableRepoOut",
         "type": "object"
       },
+      "Case": {
+        "enum": [
+          "sensitive",
+          "insensitive",
+          "smart"
+        ],
+        "title": "Case",
+        "type": "string"
+      },
       "ConnectRepo": {
         "properties": {
           "github_repo_id": {
@@ -674,6 +683,175 @@
         "title": "EstimateRequest",
         "type": "object"
       },
+      "EvalRunOut": {
+        "properties": {
+          "config": {
+            "additionalProperties": true,
+            "title": "Config",
+            "type": "object"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "git_sha": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Git Sha"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "metrics": {
+            "additionalProperties": true,
+            "description": "Averages: overall, by_class, counts and latency_ms.",
+            "title": "Metrics",
+            "type": "object"
+          },
+          "per_item": {
+            "description": "Each item's metrics, top hits and the gold it missed.",
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Per Item",
+            "type": "array"
+          },
+          "repo_sha": {
+            "title": "Repo Sha",
+            "type": "string"
+          },
+          "retriever": {
+            "title": "Retriever",
+            "type": "string"
+          },
+          "suite": {
+            "title": "Suite",
+            "type": "string"
+          },
+          "suite_version": {
+            "title": "Suite Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "suite",
+          "suite_version",
+          "retriever",
+          "config",
+          "repo_sha",
+          "git_sha",
+          "metrics",
+          "created_at",
+          "per_item"
+        ],
+        "title": "EvalRunOut",
+        "type": "object"
+      },
+      "EvalRunPage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/EvalRunSummary"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "title": "EvalRunPage",
+        "type": "object"
+      },
+      "EvalRunSummary": {
+        "properties": {
+          "config": {
+            "additionalProperties": true,
+            "title": "Config",
+            "type": "object"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "git_sha": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Git Sha"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "metrics": {
+            "additionalProperties": true,
+            "description": "Averages: overall, by_class, counts and latency_ms.",
+            "title": "Metrics",
+            "type": "object"
+          },
+          "repo_sha": {
+            "title": "Repo Sha",
+            "type": "string"
+          },
+          "retriever": {
+            "title": "Retriever",
+            "type": "string"
+          },
+          "suite": {
+            "title": "Suite",
+            "type": "string"
+          },
+          "suite_version": {
+            "title": "Suite Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "suite",
+          "suite_version",
+          "retriever",
+          "config",
+          "repo_sha",
+          "git_sha",
+          "metrics",
+          "created_at"
+        ],
+        "title": "EvalRunSummary",
+        "type": "object"
+      },
       "Feature": {
         "enum": [
           "code_browser",
@@ -762,6 +940,183 @@
           "content"
         ],
         "title": "FileOut",
+        "type": "object"
+      },
+      "GrepHitOut": {
+        "properties": {
+          "after": {
+            "description": "The lines just below.",
+            "items": {
+              "type": "string"
+            },
+            "title": "After",
+            "type": "array"
+          },
+          "before": {
+            "description": "The lines just above, in order.",
+            "items": {
+              "type": "string"
+            },
+            "title": "Before",
+            "type": "array"
+          },
+          "col": {
+            "description": "Where the first match starts: 1-based, in characters.",
+            "title": "Col",
+            "type": "integer"
+          },
+          "line": {
+            "title": "Line",
+            "type": "integer"
+          },
+          "offset": {
+            "description": "Characters of the line before ``text``.",
+            "title": "Offset",
+            "type": "integer"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "ranges": {
+            "description": "Each match on the line: start column (1-based) and end column (exclusive).",
+            "items": {
+              "maxItems": 2,
+              "minItems": 2,
+              "prefixItems": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "integer"
+                }
+              ],
+              "type": "array"
+            },
+            "title": "Ranges",
+            "type": "array"
+          },
+          "text": {
+            "description": "The line, or part of a long one (starting after ``offset``).",
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "line",
+          "col",
+          "text",
+          "offset",
+          "ranges",
+          "before",
+          "after"
+        ],
+        "title": "GrepHitOut",
+        "type": "object"
+      },
+      "GrepOut": {
+        "properties": {
+          "commit_sha": {
+            "title": "Commit Sha",
+            "type": "string"
+          },
+          "hits": {
+            "items": {
+              "$ref": "#/components/schemas/GrepHitOut"
+            },
+            "title": "Hits",
+            "type": "array"
+          },
+          "long_lines": {
+            "description": "Lines too long to read; a match on one isn't listed.",
+            "title": "Long Lines",
+            "type": "integer"
+          },
+          "timed_out": {
+            "description": "The time limit stopped the search: there may be more.",
+            "title": "Timed Out",
+            "type": "boolean"
+          },
+          "truncated": {
+            "description": "There are more matches than ``limit``.",
+            "title": "Truncated",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "commit_sha",
+          "hits",
+          "truncated",
+          "timed_out",
+          "long_lines"
+        ],
+        "title": "GrepOut",
+        "type": "object"
+      },
+      "GrepRequest": {
+        "properties": {
+          "case": {
+            "$ref": "#/components/schemas/Case",
+            "default": "sensitive",
+            "description": "``smart``: insensitive unless the pattern has an upper-case letter."
+          },
+          "context": {
+            "default": 0,
+            "description": "Lines around each hit.",
+            "maximum": 10.0,
+            "minimum": 0.0,
+            "title": "Context",
+            "type": "integer"
+          },
+          "limit": {
+            "default": 50,
+            "maximum": 500.0,
+            "minimum": 1.0,
+            "title": "Limit",
+            "type": "integer"
+          },
+          "path_globs": {
+            "description": "Only paths matching these globs (\"src/**\", \"*.py\"); \"!\" in front excludes.",
+            "items": {
+              "maxLength": 256,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 20,
+            "title": "Path Globs",
+            "type": "array"
+          },
+          "pattern": {
+            "maxLength": 1000,
+            "minLength": 1,
+            "title": "Pattern",
+            "type": "string"
+          },
+          "ref": {
+            "anyOf": [
+              {
+                "maxLength": 255,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Branch or commit (or its first 7+ characters).",
+            "title": "Ref"
+          },
+          "regex": {
+            "default": false,
+            "description": "A regular expression (Rust syntax); else a literal string.",
+            "title": "Regex",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "pattern"
+        ],
+        "title": "GrepRequest",
         "type": "object"
       },
       "HTTPValidationError": {
@@ -2000,6 +2355,186 @@
         "title": "StagesOut",
         "type": "object"
       },
+      "SymbolAt": {
+        "properties": {
+          "docstring": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Docstring"
+          },
+          "end_line": {
+            "title": "End Line",
+            "type": "integer"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/SymbolKind"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "qualified_name": {
+            "title": "Qualified Name",
+            "type": "string"
+          },
+          "signature": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Signature"
+          },
+          "start_line": {
+            "title": "Start Line",
+            "type": "integer"
+          },
+          "symbol_key": {
+            "title": "Symbol Key",
+            "type": "string"
+          }
+        },
+        "required": [
+          "symbol_key",
+          "name",
+          "qualified_name",
+          "kind",
+          "start_line",
+          "end_line",
+          "signature",
+          "docstring"
+        ],
+        "title": "SymbolAt",
+        "type": "object"
+      },
+      "SymbolKind": {
+        "enum": [
+          "module",
+          "class",
+          "function",
+          "method",
+          "component",
+          "hook",
+          "variable"
+        ],
+        "title": "SymbolKind",
+        "type": "string"
+      },
+      "SymbolOut": {
+        "properties": {
+          "end_line": {
+            "title": "End Line",
+            "type": "integer"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/SymbolKind"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "qualified_name": {
+            "title": "Qualified Name",
+            "type": "string"
+          },
+          "score": {
+            "title": "Score",
+            "type": "number"
+          },
+          "signature": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Signature"
+          },
+          "start_line": {
+            "title": "Start Line",
+            "type": "integer"
+          },
+          "symbol_key": {
+            "title": "Symbol Key",
+            "type": "string"
+          }
+        },
+        "required": [
+          "symbol_key",
+          "name",
+          "qualified_name",
+          "kind",
+          "path",
+          "start_line",
+          "end_line",
+          "signature",
+          "score"
+        ],
+        "title": "SymbolOut",
+        "type": "object"
+      },
+      "SymbolsAtOut": {
+        "properties": {
+          "line": {
+            "title": "Line",
+            "type": "integer"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "symbols": {
+            "items": {
+              "$ref": "#/components/schemas/SymbolAt"
+            },
+            "title": "Symbols",
+            "type": "array"
+          }
+        },
+        "required": [
+          "path",
+          "line",
+          "symbols"
+        ],
+        "title": "SymbolsAtOut",
+        "type": "object"
+      },
+      "SymbolsOut": {
+        "properties": {
+          "query": {
+            "title": "Query",
+            "type": "string"
+          },
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/SymbolOut"
+            },
+            "title": "Results",
+            "type": "array"
+          }
+        },
+        "required": [
+          "query",
+          "results"
+        ],
+        "title": "SymbolsOut",
+        "type": "object"
+      },
       "TreeEntry": {
         "properties": {
           "child_count": {
@@ -2497,6 +3032,145 @@
         "summary": "Indexing Stages",
         "tags": [
           "indexing"
+        ]
+      }
+    },
+    "/api/v1/internal/evals": {
+      "get": {
+        "description": "Stored eval runs, newest first (staff).",
+        "operationId": "list_eval_runs_api_v1_internal_evals_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "suite",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Suite"
+            }
+          },
+          {
+            "in": "query",
+            "name": "retriever",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Retriever"
+            }
+          },
+          {
+            "in": "query",
+            "name": "before",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Before"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvalRunPage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Eval Runs",
+        "tags": [
+          "internal"
+        ]
+      }
+    },
+    "/api/v1/internal/evals/{run}": {
+      "get": {
+        "description": "One eval run with its per-item results (staff).",
+        "operationId": "get_eval_run_api_v1_internal_evals__run__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Run",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvalRunOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Eval Run",
+        "tags": [
+          "internal"
         ]
       }
     },
@@ -4138,7 +4812,7 @@
             "description": "Over 2 MB: metadata and a download URL instead"
           },
           "415": {
-            "description": "Binary: metadata only"
+            "description": "Binary: metadata and a download URL"
           },
           "422": {
             "content": {
@@ -4251,6 +4925,69 @@
           }
         },
         "summary": "Search Files",
+        "tags": [
+          "browse"
+        ]
+      }
+    },
+    "/api/v1/orgs/{org}/repos/{repo}/grep": {
+      "post": {
+        "description": "Exact search (ripgrep) in the files discovery recorded: hits in path order, at most\n``limit`` of them, each with ``context`` lines around it. A search stops after 3 seconds\nwith what it found (``timed_out``).",
+        "operationId": "grep_api_v1_orgs__org__repos__repo__grep_post",
+        "parameters": [
+          {
+            "description": "Repository slug",
+            "in": "path",
+            "name": "repo",
+            "required": true,
+            "schema": {
+              "description": "Repository slug",
+              "maxLength": 201,
+              "title": "Repo",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Organization slug",
+            "in": "path",
+            "name": "org",
+            "required": true,
+            "schema": {
+              "description": "Organization slug",
+              "title": "Org",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GrepRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GrepOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "A pattern or glob that can't be used (``invalid_pattern``)"
+          },
+          "503": {
+            "description": "Search is busy or unavailable; try again"
+          }
+        },
+        "summary": "Grep",
         "tags": [
           "browse"
         ]
@@ -4573,6 +5310,234 @@
         "summary": "Reindex",
         "tags": [
           "indexing"
+        ]
+      }
+    },
+    "/api/v1/orgs/{org}/repos/{repo}/symbols": {
+      "get": {
+        "description": "Symbols by name, best first: exact, prefix, qualified name, contains, then similar.",
+        "operationId": "search_symbols_api_v1_orgs__org__repos__repo__symbols_get",
+        "parameters": [
+          {
+            "description": "Repository slug",
+            "in": "path",
+            "name": "repo",
+            "required": true,
+            "schema": {
+              "description": "Repository slug",
+              "maxLength": 201,
+              "title": "Repo",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Organization slug",
+            "in": "path",
+            "name": "org",
+            "required": true,
+            "schema": {
+              "description": "Organization slug",
+              "title": "Org",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "q",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "Q",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "kind",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/SymbolKind"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Kind"
+            }
+          },
+          {
+            "description": "Branch or commit (or its first 7+ characters).",
+            "in": "query",
+            "name": "ref",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 255,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Branch or commit (or its first 7+ characters).",
+              "title": "Ref"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 50,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SymbolsOut"
+                }
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "X-Commit-Sha": {
+                "description": "The commit the response was read from.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Search Symbols",
+        "tags": [
+          "symbols"
+        ]
+      }
+    },
+    "/api/v1/orgs/{org}/repos/{repo}/symbols/at": {
+      "get": {
+        "description": "The definitions around a line of a file, innermost first.",
+        "operationId": "symbol_at_api_v1_orgs__org__repos__repo__symbols_at_get",
+        "parameters": [
+          {
+            "description": "Repository slug",
+            "in": "path",
+            "name": "repo",
+            "required": true,
+            "schema": {
+              "description": "Repository slug",
+              "maxLength": 201,
+              "title": "Repo",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Organization slug",
+            "in": "path",
+            "name": "org",
+            "required": true,
+            "schema": {
+              "description": "Organization slug",
+              "title": "Org",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "path",
+            "required": true,
+            "schema": {
+              "maxLength": 4096,
+              "minLength": 1,
+              "title": "Path",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "line",
+            "required": true,
+            "schema": {
+              "minimum": 1,
+              "title": "Line",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Branch or commit (or its first 7+ characters).",
+            "in": "query",
+            "name": "ref",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 255,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Branch or commit (or its first 7+ characters).",
+              "title": "Ref"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SymbolsAtOut"
+                }
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "X-Commit-Sha": {
+                "description": "The commit the response was read from.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Symbol At",
+        "tags": [
+          "symbols"
         ]
       }
     },

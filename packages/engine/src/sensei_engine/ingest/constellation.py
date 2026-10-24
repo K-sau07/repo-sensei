@@ -10,7 +10,9 @@ same paths always give the same picture (within a cluster, files follow a low-di
 sequence in name order, and a hash of the path nudges each one off its shell a little).
 Positions fall inside the unit sphere. The semantic layout (by embeddings) comes later.
 
-Stored per snapshot as zstd-compressed msgpack (:meth:`Constellation.to_bytes`): the directories
+Stored per discovery (:func:`artifact_parts`: each generation its own object, so a discovery that
+fails after storing never replaces the one the snapshot uses) as zstd-compressed msgpack
+(:meth:`Constellation.to_bytes`): the directories
 (path, parent, depth, anchor, direct file count) and the points in discovery order (path order),
 coordinates quantised to 1e-4. A point's index in that order is its cursor.
 
@@ -24,6 +26,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import math
+import re
 import uuid
 from collections import defaultdict
 from collections.abc import Awaitable, Callable, Iterable, Sequence
@@ -41,13 +44,16 @@ from sensei_engine.ingest.roles import Role
 FORMAT_VERSION = 1
 LAYOUT = "directory"
 ZSTD_LEVEL = 10
-ARTIFACT_NAME = "constellation.bin"  # stored per snapshot in the artifacts bucket
+ARTIFACT_DIR = "constellation"  # under the commit's artifacts: one object per generation
 MAX_STORED_BYTES = 128 * 1024 * 1024
 ROOT = ""  # the root directory's path
 QUANTUM = 10_000  # stored coordinates are integers: round(x * QUANTUM)
 
 SHELL_BASE = 0.75  # the shell for depth d has radius 1 - SHELL_BASE ** (d + 1)
-SHELL_JITTER = 0.02  # how far a file may sit off its shell
+SHELL_JITTER = 0.02  # how far a file may sit off its shell, at most
+# ... and at most this share of the gap to the next shell, so deep shells (whose gaps shrink)
+# stay in order and inside the unit sphere.
+SHELL_JITTER_SHARE = 0.4
 PATCH_INSET = 0.06  # each side of a child patch gives up this share, leaving gaps between them
 CLUSTER_INSET = 0.1  # and the files keep this far from their patch's edges
 _PLASTIC = 1.324717957244746  # R2 sequence (Roberts): evenly spread points in a square
@@ -130,6 +136,25 @@ class Patch:
 
 def shell(depth: int) -> float:
     return 1 - SHELL_BASE ** (depth + 1)
+
+
+def shell_jitter(depth: int) -> float:
+    """How far a file at ``depth`` may sit off its shell: never past the middle ground with the
+    shells either side (the gap below is the wider one), so radius grows with depth and stays
+    under 1."""
+    return min(SHELL_JITTER, SHELL_JITTER_SHARE * (shell(depth + 1) - shell(depth)))
+
+
+_GENERATION = re.compile(r"[0-9A-Za-z_-]{1,64}")
+
+
+def artifact_parts(generation: str) -> tuple[str, str]:
+    """Where discovery ``generation``'s constellation is stored, as the name segments of
+    ``storage.artifact_key``."""
+    if not _GENERATION.fullmatch(generation):
+        msg = f"not a constellation generation: {generation!r}"
+        raise ValueError(msg)
+    return ARTIFACT_DIR, f"{generation}.bin"
 
 
 def _on_sphere(u: float, v: float, radius: float) -> Position:
@@ -273,12 +298,13 @@ class DirectoryLayout:
 
     def _place(self, paths: list[str], patch: Patch, depth: int) -> None:
         radius = shell(depth)
+        jitter = shell_jitter(depth)
         for i, path in enumerate(paths):
             a = (0.5 + i * _R2[0]) % 1
             b = (0.5 + i * _R2[1]) % 1
             u = patch.u0 + a * (patch.u1 - patch.u0)
             v = patch.v0 + b * (patch.v1 - patch.v0)
-            self._spots[path] = _on_sphere(u, v, radius + SHELL_JITTER * _nudge(path))
+            self._spots[path] = _on_sphere(u, v, radius + jitter * _nudge(path))
 
     def __len__(self) -> int:
         return len(self._spots)

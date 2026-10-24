@@ -160,6 +160,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/internal/evals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Eval Runs
+         * @description Stored eval runs, newest first (staff).
+         */
+        get: operations["list_eval_runs_api_v1_internal_evals_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/internal/evals/{run}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Eval Run
+         * @description One eval run with its per-item results (staff).
+         */
+        get: operations["get_eval_run_api_v1_internal_evals__run__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/invitations/{token}": {
         parameters: {
             query?: never;
@@ -624,6 +664,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/orgs/{org}/repos/{repo}/grep": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Grep
+         * @description Exact search (ripgrep) in the files discovery recorded: hits in path order, at most
+         *     ``limit`` of them, each with ``context`` lines around it. A search stops after 3 seconds
+         *     with what it found (``timed_out``).
+         */
+        post: operations["grep_api_v1_orgs__org__repos__repo__grep_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/orgs/{org}/repos/{repo}/index-jobs": {
         parameters: {
             query?: never;
@@ -718,6 +780,46 @@ export interface paths {
          *     ``index_job_running`` while a run is queued or running.
          */
         post: operations["reindex_api_v1_orgs__org__repos__repo__reindex_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/repos/{repo}/symbols": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Search Symbols
+         * @description Symbols by name, best first: exact, prefix, qualified name, contains, then similar.
+         */
+        get: operations["search_symbols_api_v1_orgs__org__repos__repo__symbols_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/repos/{repo}/symbols/at": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Symbol At
+         * @description The definitions around a line of a file, innermost first.
+         */
+        get: operations["symbol_at_api_v1_orgs__org__repos__repo__symbols_at_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -891,6 +993,11 @@ export interface components {
             /** Pushed At */
             pushed_at: string | null;
         };
+        /**
+         * Case
+         * @enum {string}
+         */
+        Case: "sensitive" | "insensitive" | "smart";
         /** ConnectRepo */
         ConnectRepo: {
             /** Github Repo Id */
@@ -1049,6 +1156,88 @@ export interface components {
             /** Url */
             url?: string | null;
         };
+        /** EvalRunOut */
+        EvalRunOut: {
+            /** Config */
+            config: {
+                [key: string]: unknown;
+            };
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Git Sha */
+            git_sha: string | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Metrics
+             * @description Averages: overall, by_class, counts and latency_ms.
+             */
+            metrics: {
+                [key: string]: unknown;
+            };
+            /**
+             * Per Item
+             * @description Each item's metrics, top hits and the gold it missed.
+             */
+            per_item: {
+                [key: string]: unknown;
+            }[];
+            /** Repo Sha */
+            repo_sha: string;
+            /** Retriever */
+            retriever: string;
+            /** Suite */
+            suite: string;
+            /** Suite Version */
+            suite_version: number;
+        };
+        /** EvalRunPage */
+        EvalRunPage: {
+            /** Items */
+            items: components["schemas"]["EvalRunSummary"][];
+            /** Next Cursor */
+            next_cursor: string | null;
+        };
+        /** EvalRunSummary */
+        EvalRunSummary: {
+            /** Config */
+            config: {
+                [key: string]: unknown;
+            };
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Git Sha */
+            git_sha: string | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Metrics
+             * @description Averages: overall, by_class, counts and latency_ms.
+             */
+            metrics: {
+                [key: string]: unknown;
+            };
+            /** Repo Sha */
+            repo_sha: string;
+            /** Retriever */
+            retriever: string;
+            /** Suite */
+            suite: string;
+            /** Suite Version */
+            suite_version: number;
+        };
         /**
          * Feature
          * @enum {string}
@@ -1081,6 +1270,105 @@ export interface components {
             sha: string;
             /** Size */
             size: number;
+        };
+        /** GrepHitOut */
+        GrepHitOut: {
+            /**
+             * After
+             * @description The lines just below.
+             */
+            after: string[];
+            /**
+             * Before
+             * @description The lines just above, in order.
+             */
+            before: string[];
+            /**
+             * Col
+             * @description Where the first match starts: 1-based, in characters.
+             */
+            col: number;
+            /** Line */
+            line: number;
+            /**
+             * Offset
+             * @description Characters of the line before ``text``.
+             */
+            offset: number;
+            /** Path */
+            path: string;
+            /**
+             * Ranges
+             * @description Each match on the line: start column (1-based) and end column (exclusive).
+             */
+            ranges: [
+                number,
+                number
+            ][];
+            /**
+             * Text
+             * @description The line, or part of a long one (starting after ``offset``).
+             */
+            text: string;
+        };
+        /** GrepOut */
+        GrepOut: {
+            /** Commit Sha */
+            commit_sha: string;
+            /** Hits */
+            hits: components["schemas"]["GrepHitOut"][];
+            /**
+             * Long Lines
+             * @description Lines too long to read; a match on one isn't listed.
+             */
+            long_lines: number;
+            /**
+             * Timed Out
+             * @description The time limit stopped the search: there may be more.
+             */
+            timed_out: boolean;
+            /**
+             * Truncated
+             * @description There are more matches than ``limit``.
+             */
+            truncated: boolean;
+        };
+        /** GrepRequest */
+        GrepRequest: {
+            /**
+             * @description ``smart``: insensitive unless the pattern has an upper-case letter.
+             * @default sensitive
+             */
+            case: components["schemas"]["Case"];
+            /**
+             * Context
+             * @description Lines around each hit.
+             * @default 0
+             */
+            context: number;
+            /**
+             * Limit
+             * @default 50
+             */
+            limit: number;
+            /**
+             * Path Globs
+             * @description Only paths matching these globs ("src/**", "*.py"); "!" in front excludes.
+             */
+            path_globs?: string[];
+            /** Pattern */
+            pattern: string;
+            /**
+             * Ref
+             * @description Branch or commit (or its first 7+ characters).
+             */
+            ref?: string | null;
+            /**
+             * Regex
+             * @description A regular expression (Rust syntax); else a literal string.
+             * @default false
+             */
+            regex: boolean;
         };
         /** HTTPValidationError */
         HTTPValidationError: {
@@ -1574,6 +1862,65 @@ export interface components {
              */
             stages: components["schemas"]["StageInfo"][];
         };
+        /** SymbolAt */
+        SymbolAt: {
+            /** Docstring */
+            docstring: string | null;
+            /** End Line */
+            end_line: number;
+            kind: components["schemas"]["SymbolKind"];
+            /** Name */
+            name: string;
+            /** Qualified Name */
+            qualified_name: string;
+            /** Signature */
+            signature: string | null;
+            /** Start Line */
+            start_line: number;
+            /** Symbol Key */
+            symbol_key: string;
+        };
+        /**
+         * SymbolKind
+         * @enum {string}
+         */
+        SymbolKind: "module" | "class" | "function" | "method" | "component" | "hook" | "variable";
+        /** SymbolOut */
+        SymbolOut: {
+            /** End Line */
+            end_line: number;
+            kind: components["schemas"]["SymbolKind"];
+            /** Name */
+            name: string;
+            /** Path */
+            path: string;
+            /** Qualified Name */
+            qualified_name: string;
+            /** Score */
+            score: number;
+            /** Signature */
+            signature: string | null;
+            /** Start Line */
+            start_line: number;
+            /** Symbol Key */
+            symbol_key: string;
+        };
+        /** SymbolsAtOut */
+        SymbolsAtOut: {
+            /** Line */
+            line: number;
+            /** Path */
+            path: string;
+            /** Symbols */
+            symbols: components["schemas"]["SymbolAt"][];
+        };
+        /** SymbolsOut */
+        SymbolsOut: {
+            /** Query */
+            query: string;
+            /** Results */
+            results: components["schemas"]["SymbolOut"][];
+        };
         /** TreeEntry */
         TreeEntry: {
             /**
@@ -1836,6 +2183,71 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["StagesOut"];
+                };
+            };
+        };
+    };
+    list_eval_runs_api_v1_internal_evals_get: {
+        parameters: {
+            query?: {
+                suite?: string | null;
+                retriever?: string | null;
+                before?: string | null;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EvalRunPage"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_eval_run_api_v1_internal_evals__run__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EvalRunOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -2883,7 +3295,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description Binary: metadata only */
+            /** @description Binary: metadata and a download URL */
             415: {
                 headers: {
                     [name: string]: unknown;
@@ -2937,6 +3349,49 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
+            };
+        };
+    };
+    grep_api_v1_orgs__org__repos__repo__grep_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Repository slug */
+                repo: string;
+                /** @description Organization slug */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GrepRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GrepOut"];
+                };
+            };
+            /** @description A pattern or glob that can't be used (``invalid_pattern``) */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Search is busy or unavailable; try again */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };
@@ -3103,6 +3558,89 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["IndexJobOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    search_symbols_api_v1_orgs__org__repos__repo__symbols_get: {
+        parameters: {
+            query: {
+                q: string;
+                kind?: components["schemas"]["SymbolKind"] | null;
+                /** @description Branch or commit (or its first 7+ characters). */
+                ref?: string | null;
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                /** @description Repository slug */
+                repo: string;
+                /** @description Organization slug */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    /** @description The commit the response was read from. */
+                    "X-Commit-Sha"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SymbolsOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    symbol_at_api_v1_orgs__org__repos__repo__symbols_at_get: {
+        parameters: {
+            query: {
+                path: string;
+                line: number;
+                /** @description Branch or commit (or its first 7+ characters). */
+                ref?: string | null;
+            };
+            header?: never;
+            path: {
+                /** @description Repository slug */
+                repo: string;
+                /** @description Organization slug */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    /** @description The commit the response was read from. */
+                    "X-Commit-Sha"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SymbolsAtOut"];
                 };
             };
             /** @description Validation Error */

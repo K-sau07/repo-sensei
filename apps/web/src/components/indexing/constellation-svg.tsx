@@ -55,6 +55,17 @@ export function ConstellationSvg({ sky, highlight, label, onHover, onSelect }: S
     [sky.points, far],
   );
 
+  // The same points as one packed array (in viewBox units), for picking without allocating.
+  const packed = useMemo(() => {
+    const out = new Float32Array(flat.length * 2);
+    flat.forEach(([x, y], i) => {
+      out[2 * i] = x;
+      out[2 * i + 1] = y;
+    });
+    return out;
+  }, [flat]);
+
+  // One path per layer and size, joined once per sky (not on every render).
   const paths = useMemo(() => {
     const d: Record<string, string[]> = {};
     flat.forEach(([x, y], i) => {
@@ -64,7 +75,7 @@ export function ConstellationSvg({ sky, highlight, label, onHover, onSelect }: S
         `M${String(r4(x))} ${String(r4(y))}h0`,
       );
     });
-    return d;
+    return Object.fromEntries(Object.entries(d).map(([key, parts]) => [key, parts.join("")]));
   }, [flat, sky.points]);
 
   const edges = useMemo(() => {
@@ -97,15 +108,24 @@ export function ConstellationSvg({ sky, highlight, label, onHover, onSelect }: S
     const scale = Math.min(box.width, box.height) / 2.2;
     const left = box.width / 2;
     const top = box.height / 2;
-    const screen = new Float32Array(flat.length * 2);
-    flat.forEach(([x, y], i) => {
-      screen[2 * i] = left + x * scale;
-      screen[2 * i + 1] = top + y * scale;
-    });
     const px = event.clientX - box.left;
     const py = event.clientY - box.top;
-    const index = nearest(screen, flat.length, px, py, PICK_PX);
-    return index < 0 ? null : { index, x: screen[2 * index] ?? px, y: screen[2 * index + 1] ?? py };
+    // The pointer in viewBox units, so the points needn't be converted to pixels first.
+    const index = nearest(
+      packed,
+      flat.length,
+      (px - left) / scale,
+      (py - top) / scale,
+      PICK_PX / scale,
+    );
+    if (index < 0) return null;
+    const x = packed[2 * index];
+    const y = packed[2 * index + 1];
+    return {
+      index,
+      x: x === undefined ? px : left + x * scale,
+      y: y === undefined ? py : top + y * scale,
+    };
   };
 
   return (
@@ -140,7 +160,7 @@ export function ConstellationSvg({ sky, highlight, label, onHover, onSelect }: S
           return d ? (
             <path
               key={`${layer}-${String(b)}`}
-              d={d.join("")}
+              d={d}
               fill="none"
               stroke={STROKE[layer]}
               strokeWidth={DOT * size}

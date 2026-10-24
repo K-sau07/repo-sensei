@@ -33,6 +33,7 @@ export const SHORTCUTS = [
   { id: "list-prev", keys: "k", label: "Previous item in a list", group: "Navigation" },
   { id: "toggle-sidebar", keys: "[", label: "Toggle the sidebar", group: "View" },
   { id: "toggle-rail", keys: "]", label: "Toggle the right rail", group: "View" },
+  { id: "code-search", keys: "mod+f", label: "Search in the open file", group: "View" },
 ] as const satisfies readonly { id: string; keys: string; label: string; group: ShortcutGroup }[];
 
 export type ShortcutId = (typeof SHORTCUTS)[number]["id"];

@@ -30,11 +30,11 @@ import { $api, api } from "@/lib/api/client";
 import { ApiError } from "@/lib/api/errors";
 import type { IndexJob, Stage } from "@/lib/api/types";
 import { FEATURE_LABELS, STAGE_LABELS, type Feature } from "@/lib/indexing";
-import { queryKeys } from "@/lib/query/keys";
 import { repoPath } from "@/lib/routes";
 
 import { Constellation } from "./constellation";
 import { LogViewer } from "./log-viewer";
+import { refreshIndexState, startReindex } from "./reindex";
 import { useJobEvents } from "./use-job-events";
 
 /** The repository the view is about (for links and actions inside it). */
@@ -248,13 +248,7 @@ function JobActions({ job }: { job: IndexJob }) {
   const [confirming, setConfirming] = useState(false);
   if (!context || !roleAtLeast(role, "admin")) return null;
   const { org, repo } = context;
-  const refresh = () =>
-    Promise.all([
-      queryClient.invalidateQueries({ queryKey: queryKeys.indexJob(org, repo, job.id) }),
-      queryClient.invalidateQueries({ queryKey: queryKeys.indexJobs(org, repo) }),
-      queryClient.invalidateQueries({ queryKey: queryKeys.repo(org, repo) }),
-      queryClient.invalidateQueries({ queryKey: queryKeys.repos(org) }),
-    ]);
+  const refresh = () => refreshIndexState(queryClient, org, repo, job.id);
   const run = async (action: () => Promise<unknown>, success: string) => {
     setBusy(true);
     try {
@@ -308,15 +302,7 @@ function JobActions({ job }: { job: IndexJob }) {
       variant={job.status === "failed" ? "default" : "outline"}
       size="sm"
       disabled={busy}
-      onClick={() =>
-        void run(
-          () =>
-            api.POST("/api/v1/orgs/{org}/repos/{repo}/reindex", {
-              params: { path: { org, repo } },
-            }),
-          "Indexing started",
-        )
-      }
+      onClick={() => void run(() => startReindex(org, repo), "Indexing started")}
     >
       <RotateCw aria-hidden data-icon="inline-start" />
       {job.status === "failed" ? "Retry" : "Index again"}

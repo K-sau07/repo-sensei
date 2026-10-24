@@ -20,6 +20,7 @@ import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Protocol
 
 from sensei_core.jobs import TaskName
 from sensei_core.logging import get_logger
@@ -62,6 +63,17 @@ class Target:
     snapshot_id: uuid.UUID
     commit_sha: str
     ignore_globs: tuple[str, ...]
+
+
+class SnapshotRef(Protocol):
+    """The snapshot a stage works on (any stage's target has these)."""
+
+    @property
+    def org_id(self) -> uuid.UUID: ...
+    @property
+    def repo_id(self) -> uuid.UUID: ...
+    @property
+    def commit_sha(self) -> str: ...
 
 
 class SnapshotUnavailableError(Exception):
@@ -113,7 +125,7 @@ def _checked_out(worktree: Path) -> str | None:
         return None
 
 
-async def _download(target: Target, out: Path) -> None:
+async def _download(target: SnapshotRef, out: Path) -> None:
     storage = await get_runtime().storage()
     key = snapshot_key(target.org_id, target.repo_id, target.commit_sha)
     if await storage.size(Bucket.SNAPSHOTS, key) is None:
@@ -123,9 +135,9 @@ async def _download(target: Target, out: Path) -> None:
             handle.write(chunk)
 
 
-def _worktree(target: Target) -> Path:
+def local_worktree(target: SnapshotRef) -> Path:
     """The snapshot's files on local disk: the cached working copy, or the archive unpacked in
-    its place."""
+    its place. Call it holding the repository's cache lock (``repo_lock``)."""
     runtime = get_runtime()
     settings = runtime.settings.ingest
     worktree = settings.cache_dir / str(target.repo_id)
@@ -215,11 +227,14 @@ async def _progress(
 
 
 async def _store_constellation(target: Target, sky: Sky, found: Discovery) -> int:
+    """Store this discovery's constellation under its own generation. Before the transaction
+    (no row lock held for an upload): if the transaction then fails, the object is simply never
+    used, since the snapshot only names the generation its committed file rows belong to."""
     storage = await get_runtime().storage()
     live = sky.live
     data = Constellation.build(live.generation, live.layout, sky.points(found.files)).to_bytes()
-    name = constellation.ARTIFACT_NAME
-    key = artifact_key(target.org_id, target.repo_id, target.commit_sha, name)
+    parts = constellation.artifact_parts(live.generation)
+    key = artifact_key(target.org_id, target.repo_id, target.commit_sha, *parts)
     await storage.put_bytes(Bucket.ARTIFACTS, key, data, content_type="application/zstd")
     return len(data)
 
@@ -229,16 +244,18 @@ async def _save(
 ) -> bool:
     """Write the discovery and its constellation and complete the stage (stops quietly if the
     job moved on)."""
+    stored = await _store_constellation(target, sky, found)
+    generation = sky.live.generation
     async with job_scope(task, target.org_id, job_id) as scope:
         scope.require(Stage.DISCOVER)
         snapshot = await scope.db.get(Snapshot, target.snapshot_id)
         if snapshot is None:
             raise JobGoneError("the snapshot is gone")
         rows = await save_discovery(scope.db, snapshot, found)
-        # Stored while the job row is locked (a cancel can't come in between) and before the
-        # commit (the stage is never done without it); its points carry the rows' ids.
-        stored = await _store_constellation(target, sky, found)
+        # The constellation that goes with these rows (its points carry their ids), named in the
+        # same transaction: committed together or not at all.
         summary = snapshot.summary or {}
+        snapshot.summary = {**summary, "constellation": {"generation": generation}}
         machine = scope.machine
         total = max(rows, 1)
         machine.update_progress(Stage.DISCOVER, total, total)
@@ -253,7 +270,7 @@ async def _save(
             skipped=summary.get("skipped", {}),
             invalid_ignore_globs=summary.get("invalid_ignore_globs", []),
             constellation={
-                "generation": sky.live.generation,
+                "generation": generation,
                 "points": rows,
                 "directories": len(sky.live.layout.dirs),
                 "bytes": stored,
@@ -300,7 +317,7 @@ def discover_files(self: IngestTask, *, job_id: str, org_id: str, repo_id: str) 
     try:
         with repo_lock(settings.cache_dir, str(target.repo_id)):  # no clone or eviction meanwhile
             found = discover(
-                _worktree(target),
+                local_worktree(target),
                 ignore_globs=target.ignore_globs,
                 max_files=settings.max_files,
                 walked=walked,

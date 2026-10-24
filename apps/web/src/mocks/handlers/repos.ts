@@ -76,7 +76,7 @@ function estimateFor(
   } satisfies Estimate;
 }
 
-function repoOf(org: string, slug: string): MockRepo | Response {
+export function repoOf(org: string, slug: string): MockRepo | Response {
   const access = orgAccess(org);
   if (access instanceof Response) return access;
   const repo = reposOf(org).find((r) => r.slug === slug);

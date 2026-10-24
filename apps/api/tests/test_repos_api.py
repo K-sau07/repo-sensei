@@ -58,18 +58,22 @@ from sensei_core.models import (
 from sensei_core.orgs.service import OrgService
 from sensei_core.repos.access import RepoAccess
 from sensei_core.storage import Bucket, ObjectStorage, artifact_key, repo_prefix, snapshot_key
-from sensei_engine.ingest.constellation import ARTIFACT_NAME as CONSTELLATION_ARTIFACT
 from sensei_engine.ingest.constellation import (
     LIVE_BATCH,
     Constellation,
     DirectoryLayout,
     LiveConstellation,
+    artifact_parts,
     layer_for,
 )
 from sensei_engine.ingest.discover import discover
 from sensei_engine.ingest.merkle import ARTIFACT_NAME, Leaf, build_tree
 from sensei_engine.ingest.store import save_discovery
+from sensei_engine.parse.parser import parse_file
+from sensei_engine.search.grep import ExactSearch
 from sensei_engine.snapshots import SnapshotCache
+from sensei_engine.symbols.extract import extract_symbols
+from sensei_engine.symbols.store import FileSymbols, save_symbols
 from sensei_testing import make_user, sign_in
 from sensei_workers.ingest.archive import write_archive
 
@@ -1233,6 +1237,58 @@ async def test_tree_lists_directories_first_with_etags(
     assert unknown.json()["error"]["code"] == "ref_not_indexed"
 
 
+async def test_a_first_run_is_browsable_once_discovery_is_done(
+    app: FastAPI,
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    fake: FakeGitHub,
+    storage: ObjectStorage,
+    tmp_path: Path,
+) -> None:
+    _, _, job_id = await _connected(app, client, db_session, fake)
+    tree = f"{API}/orgs/acme/repos/api/tree"
+    early = await client.get(tree)
+    assert (early.status_code, early.json()["error"]["code"]) == (404, "repo_not_indexed")
+    # Discovery has written the rows; the Merkle stage hasn't run (the code browser unlocks
+    # at discovery). A failed earlier run left the snapshot's archive, which reads the same.
+    await _index(app, db_session, storage, tmp_path, FILES, SHA_ONE, outcome=JobStatus.FAILED)
+    snapshot = await db_session.scalar(select(Snapshot).where(Snapshot.commit_sha == SHA_ONE))
+    job = await db_session.get(IndexJob, uuid.UUID(job_id))
+    assert snapshot is not None
+    assert job is not None
+    snapshot.merkle_root = None
+    job.status, job.snapshot_id = JobStatus.RUNNING, snapshot.id
+    job.stages = {"discover": {"status": "done"}}
+    await db_session.flush()
+
+    root = await client.get(tree)
+    assert root.status_code == 200, root.text
+    assert (root.headers["x-commit-sha"], root.headers["cache-control"]) == (SHA_ONE, "no-store")
+    assert "etag" not in root.headers
+    assert [(e["name"], e["type"]) for e in root.json()["entries"]] == [
+        ("docs", "dir"),
+        ("src", "dir"),
+        ("big.txt", "file"),
+        ("logo.png", "file"),
+        ("README.md", "file"),
+        ("Zeta.txt", "file"),
+    ]
+    src = next(e for e in root.json()["entries"] if e["name"] == "src")
+    assert src["child_count"] == 3
+    nested = (await client.get(tree, params={"path": "src"})).json()
+    assert [e["path"] for e in nested["entries"]] == [
+        "src/lib",
+        "src/app.py",
+        "src/user_controller.py",
+    ]
+    not_dir = await client.get(tree, params={"path": "README.md"})
+    assert not_dir.json()["error"]["code"] == "not_a_directory"
+    missing = await client.get(tree, params={"path": "nope"})
+    assert missing.json()["error"]["code"] == "path_not_found"
+    shown = await client.get(f"{API}/orgs/acme/repos/api/file", params={"path": "src/app.py"})
+    assert shown.json()["content"] == FILES["src/app.py"].decode()
+
+
 async def test_a_snapshot_whose_run_failed_is_not_browsable(
     app: FastAPI,
     client: httpx.AsyncClient,
@@ -1263,7 +1319,7 @@ async def test_symlinks_never_lead_outside_the_snapshot(
     outside = tmp_path / "outside"
     outside.mkdir()
     (outside / "secret.txt").write_text("not yours\n")
-    await _connected(app, client, db_session, fake)
+    _, headers, _ = await _connected(app, client, db_session, fake)
     await _index(
         app,
         db_session,
@@ -1280,6 +1336,10 @@ async def test_symlinks_never_lead_outside_the_snapshot(
         assert "not yours" not in response.text
     listing = (await client.get(f"{API}/orgs/acme/repos/api/tree", params={"path": "src"})).json()
     assert "src/secret.txt" not in [e["path"] for e in listing["entries"]]
+    found = await client.post(
+        f"{API}/orgs/acme/repos/api/grep", json={"pattern": "not yours"}, headers=headers
+    )
+    assert (found.status_code, found.json()["hits"]) == (200, [])
 
 
 async def test_files_text_binary_and_large(
@@ -1317,11 +1377,14 @@ async def test_files_text_binary_and_large(
     binary = await client.get(url, params={"path": "logo.png"})
     assert (binary.status_code, binary.json()["error"]["code"]) == (415, "binary_file")
     assert binary.json()["error"]["details"]["size"] == len(FILES["logo.png"])
+    github.route(host="localhost", port=9000).pass_through()  # the local object storage
+    async with httpx.AsyncClient() as http:
+        saved = await http.get(binary.json()["error"]["details"]["download_url"])
+    assert saved.content == FILES["logo.png"]  # binaries get a download link too
 
     large = await client.get(url, params={"path": "big.txt"})
     assert (large.status_code, large.json()["error"]["code"]) == (413, "file_too_large")
     link = large.json()["error"]["details"]["download_url"]
-    github.route(host="localhost", port=9000).pass_through()  # the local object storage
     async with httpx.AsyncClient() as http:
         downloaded = await http.get(link)
     assert downloaded.content == FILES["big.txt"]
@@ -1375,6 +1438,143 @@ async def test_fuzzy_path_search(
     assert (await paths("util"))[0] == "src/lib/util.py"
 
 
+GREP_FILES = {
+    "src/app.py": (
+        b"def main():\n    return handle_request(1)\n\n\ndef handle_request(n):\n    return n\n"
+    ),
+    "src/routes.ts": b"fetch('/api/v1/items')\nfetch('/api/v1/users')\n",
+    "README.md": b"Call handle_request( to start.\n",
+    "node_modules/dep/index.js": b"handle_request()\n",  # discovery skips dependencies
+}
+
+
+async def test_exact_search(
+    app: FastAPI,
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    fake: FakeGitHub,
+    storage: ObjectStorage,
+    tmp_path: Path,
+) -> None:
+    _, headers, _ = await _connected(app, client, db_session, fake)
+    await _index(app, db_session, storage, tmp_path, GREP_FILES, SHA_ONE)
+    await _index(
+        app, db_session, storage, tmp_path, {"src/app.py": b"def renamed(): ...\n"}, SHA_TWO
+    )
+    url = f"{API}/orgs/acme/repos/api/grep"
+
+    async def grep(**body: Any) -> dict[str, Any]:
+        response = await client.post(url, json=body, headers=headers)
+        assert response.status_code == 200, response.text
+        return response.json()
+
+    def places(body: dict[str, Any]) -> list[tuple[str, int]]:
+        return [(hit["path"], hit["line"]) for hit in body["hits"]]
+
+    old = await grep(pattern="handle_request(", ref=SHA_ONE[:8])
+    assert old["commit_sha"] == SHA_ONE
+    assert places(old) == [("README.md", 1), ("src/app.py", 2), ("src/app.py", 5)]
+    assert (old["truncated"], old["timed_out"], old["long_lines"]) == (False, False, 0)
+    assert old["hits"][1] == {
+        "path": "src/app.py",
+        "line": 2,
+        "col": 12,
+        "text": "    return handle_request(1)",
+        "offset": 0,
+        "ranges": [[12, 27]],
+        "before": [],
+        "after": [],
+    }
+    regex = await grep(pattern=r"^def \w+\(", regex=True, ref=SHA_ONE, context=1)
+    assert places(regex) == [("src/app.py", 1), ("src/app.py", 5)]
+    assert (regex["hits"][1]["before"], regex["hits"][1]["after"]) == ([""], ["    return n"])
+    globbed = await grep(pattern="/api/v1/", path_globs=["src/**", "!*.py"], ref=SHA_ONE, limit=1)
+    assert (places(globbed), globbed["truncated"]) == ([("src/routes.ts", 1)], True)
+    ignoring_case = await grep(pattern="HANDLE_request", case="insensitive", ref=SHA_ONE)
+    assert len(ignoring_case["hits"]) == 3
+
+    latest = await grep(pattern="handle_request")  # the last index by default
+    assert (latest["commit_sha"], latest["hits"]) == (SHA_TWO, [])
+
+    for body, code in (
+        ({"pattern": "handle_request(", "regex": True}, "invalid_pattern"),
+        ({"pattern": "x", "path_globs": ["["]}, "invalid_pattern"),
+        ({"pattern": "a\nb"}, "invalid_pattern"),
+        ({"pattern": ""}, "validation_failed"),
+        ({"pattern": "x", "limit": 501}, "validation_failed"),
+        ({"pattern": "x", "path_globs": ["*"] * 21}, "validation_failed"),
+    ):
+        refused = await client.post(url, json=body, headers=headers)
+        assert (refused.status_code, refused.json()["error"]["code"]) == (422, code), body
+    unknown = await client.post(url, json={"pattern": "x", "ref": "nope"}, headers=headers)
+    assert unknown.json()["error"]["code"] == "ref_not_indexed"
+
+
+async def test_exact_search_in_a_first_run_leaves_binaries_out(
+    app: FastAPI,
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    fake: FakeGitHub,
+    storage: ObjectStorage,
+    tmp_path: Path,
+) -> None:
+    _, headers, job_id = await _connected(app, client, db_session, fake)
+    # A binary file whose text matches before its first NUL: rg could report it; we don't.
+    files = {**GREP_FILES, "assets/blob.bin": b"handle_request(\0\1\2"}
+    await _index(app, db_session, storage, tmp_path, files, SHA_ONE, outcome=JobStatus.FAILED)
+    # The first run is between discovery and its Merkle stage: searchable from the rows.
+    snapshot = await db_session.scalar(select(Snapshot).where(Snapshot.commit_sha == SHA_ONE))
+    job = await db_session.get(IndexJob, uuid.UUID(job_id))
+    assert snapshot is not None
+    assert job is not None
+    blob = await db_session.scalar(select(RepoFile).where(RepoFile.path == "assets/blob.bin"))
+    assert blob is not None
+    assert "binary" in blob.flags  # discovery saw what it is
+    snapshot.merkle_root = None
+    job.status, job.snapshot_id = JobStatus.RUNNING, snapshot.id
+    job.stages = {"discover": {"status": "done"}}
+    await db_session.flush()
+    response = await client.post(
+        f"{API}/orgs/acme/repos/api/grep", json={"pattern": "handle_request("}, headers=headers
+    )
+    assert response.status_code == 200, response.text
+    paths = {hit["path"] for hit in response.json()["hits"]}
+    assert paths == {"README.md", "src/app.py"}
+
+
+async def test_exact_search_access_and_failures(
+    app: FastAPI,
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    fake: FakeGitHub,
+    storage: ObjectStorage,
+    tmp_path: Path,
+) -> None:
+    await _connected(app, client, db_session, fake)
+    await _index(app, db_session, storage, tmp_path, GREP_FILES, SHA_ONE)
+    url = f"{API}/orgs/acme/repos/api/grep"
+    outsider, headers = await _member(app, client, db_session)
+    fake.user_can_read[f"ghu_{outsider.login}"] = set()  # can't read acme-gh/api on GitHub
+    hidden = await client.post(url, json={"pattern": "items"}, headers=headers)
+    assert hidden.json()["error"]["code"] == "repo_not_found_or_no_access"
+
+    member, headers = await _member(app, client, db_session)
+    fake.user_can_read[f"ghu_{member.login}"] = {101}
+    read = await client.post(url, json={"pattern": "items"}, headers=headers)
+    assert (read.status_code, len(read.json()["hits"])) == (200, 1)  # members search too
+    no_csrf = await client.post(url, json={"pattern": "items"})
+    assert no_csrf.json()["error"]["code"] == "csrf_failed"
+
+    app.state.exact_search = ExactSearch(binary="no-such-rg")
+    broken = await client.post(url, json={"pattern": "items"}, headers=headers)
+    assert (broken.status_code, broken.json()["error"]["code"]) == (503, "search_unavailable")
+    busy_search = ExactSearch(timeout=0.2, max_concurrent=1)
+    await busy_search._slots.acquire()  # pyright: ignore[reportPrivateUsage] - one still running
+    app.state.exact_search = busy_search
+    busy = await client.post(url, json={"pattern": "items"}, headers=headers)
+    assert (busy.status_code, busy.json()["error"]["code"]) == (503, "search_busy")
+
+
 async def test_browsing_needs_an_index_and_access(
     app: FastAPI,
     client: httpx.AsyncClient,
@@ -1391,6 +1591,145 @@ async def test_browsing_needs_an_index_and_access(
     fake.user_can_read[f"ghu_{member.login}"] = set()  # can't read acme-gh/api on GitHub
     hidden = await client.get(f"{API}/orgs/acme/repos/api/file", params={"path": "a.py"})
     assert hidden.json()["error"]["code"] == "repo_not_found_or_no_access"
+
+
+# ------------------------------------------------------------------ symbols
+
+
+async def _extract_symbols(db: AsyncSession, files: dict[str, bytes], sha: str) -> None:
+    """The symbols stage, on the snapshot ``_index`` left at ``sha``."""
+    snapshot = await db.scalar(select(Snapshot).where(Snapshot.commit_sha == sha))
+    assert snapshot is not None
+    rows = await db.execute(
+        select(RepoFile.path, RepoFile.id).where(RepoFile.snapshot_id == snapshot.id)
+    )
+    file_ids = {row.path: row.id for row in rows}
+    found: list[FileSymbols] = []
+    for path, data in files.items():
+        result = parse_file(path, data)
+        if result.ok and result.language is not None:
+            symbols = extract_symbols(result, result.language)
+            found.append(FileSymbols(path, result.language, symbols))
+    snapshot.symbol_count = await save_symbols(db, snapshot, file_ids, found)
+    await db.flush()
+
+
+async def test_symbols_by_name(
+    app: FastAPI,
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    fake: FakeGitHub,
+    storage: ObjectStorage,
+    tmp_path: Path,
+) -> None:
+    await _connected(app, client, db_session, fake)
+    await _index(app, db_session, storage, tmp_path, FILES, SHA_ONE)
+    url = f"{API}/orgs/acme/repos/api/symbols"
+    not_yet = await client.get(url, params={"q": "main"})
+    assert (not_yet.status_code, not_yet.json()["error"]["code"]) == (409, "not_indexed")
+
+    await _extract_symbols(db_session, FILES, SHA_ONE)
+    response = await client.get(url, params={"q": " main "})
+    assert response.status_code == 200, response.text
+    assert response.headers["x-commit-sha"] == SHA_ONE
+    body = response.json()
+    assert body["query"] == "main"
+    assert body["results"][0] == {
+        "symbol_key": "py src/app.py/main().",
+        "name": "main",
+        "qualified_name": "main",
+        "kind": "function",
+        "path": "src/app.py",
+        "start_line": 1,
+        "end_line": 2,
+        "signature": "def main()",
+        "score": 1.0,
+    }
+    found = (await client.get(url, params={"q": "user", "kind": "class"})).json()["results"]
+    assert [(r["name"], r["kind"]) for r in found] == [("UserController", "class")]
+    modules = (await client.get(url, params={"q": "util", "kind": "module"})).json()["results"]
+    assert [(r["symbol_key"], r["signature"]) for r in modules] == [("py src/lib/util.py/", None)]
+    one = (await client.get(url, params={"q": "a", "limit": 1})).json()["results"]
+    assert len(one) == 1
+    for params, status in (
+        ({"q": "main", "limit": 51}, 422),
+        ({"q": "main", "kind": "struct"}, 422),
+        ({"q": ""}, 422),
+    ):
+        assert (await client.get(url, params=params)).status_code == status, params
+    blank = await client.get(url, params={"q": "   "})
+    assert (blank.status_code, blank.json()["error"]["code"]) == (422, "invalid_query")
+    # An older commit indexed before symbols existed.
+    await _index(app, db_session, storage, tmp_path, FILES, SHA_TWO)
+    old = await client.get(url, params={"q": "main", "ref": SHA_ONE[:8]})
+    assert (old.status_code, old.headers["x-commit-sha"]) == (200, SHA_ONE)
+    latest = await client.get(url, params={"q": "main"})
+    assert latest.json()["error"]["code"] == "not_indexed"
+
+
+async def test_the_symbols_at_a_line(
+    app: FastAPI,
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    fake: FakeGitHub,
+    storage: ObjectStorage,
+    tmp_path: Path,
+) -> None:
+    await _connected(app, client, db_session, fake)
+    await _index(app, db_session, storage, tmp_path, FILES, SHA_ONE)
+    url = f"{API}/orgs/acme/repos/api/symbols/at"
+    not_yet = await client.get(url, params={"path": "src/app.py", "line": 2})
+    assert (not_yet.status_code, not_yet.json()["error"]["code"]) == (409, "not_indexed")
+
+    await _extract_symbols(db_session, FILES, SHA_ONE)
+    response = await client.get(url, params={"path": "src/app.py", "line": 2})
+    assert response.status_code == 200, response.text
+    assert response.headers["x-commit-sha"] == SHA_ONE
+    body = response.json()
+    assert (body["path"], body["line"]) == ("src/app.py", 2)
+    assert [(s["symbol_key"], s["kind"]) for s in body["symbols"]] == [
+        ("py src/app.py/main().", "function"),
+        ("py src/app.py/", "module"),
+    ]
+    assert body["symbols"][0] == {
+        "symbol_key": "py src/app.py/main().",
+        "name": "main",
+        "qualified_name": "main",
+        "kind": "function",
+        "start_line": 1,
+        "end_line": 2,
+        "signature": "def main()",
+        "docstring": None,
+    }
+    readme = await client.get(url, params={"path": "README.md", "line": 1})
+    assert readme.json()["symbols"] == []
+    missing = await client.get(url, params={"path": "src/nope.py", "line": 1})
+    assert (missing.status_code, missing.json()["error"]["code"]) == (404, "path_not_found")
+    outside = await client.get(url, params={"path": "../etc/passwd", "line": 1})
+    assert outside.status_code == 400
+    assert (await client.get(url, params={"path": "src/app.py", "line": 0})).status_code == 422
+
+
+async def test_symbols_need_access(
+    app: FastAPI,
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    fake: FakeGitHub,
+    storage: ObjectStorage,
+    tmp_path: Path,
+) -> None:
+    await _connected(app, client, db_session, fake)
+    await _index(app, db_session, storage, tmp_path, FILES, SHA_ONE)
+    await _extract_symbols(db_session, FILES, SHA_ONE)
+    member, _ = await _member(app, client, db_session)
+    fake.user_can_read[f"ghu_{member.login}"] = set()  # can't read acme-gh/api on GitHub
+    for path, params in (
+        ("symbols", {"q": "main"}),
+        ("symbols/at", {"path": "src/app.py", "line": 1}),
+    ):
+        hidden = await client.get(f"{API}/orgs/acme/repos/api/{path}", params=params)
+        assert hidden.json()["error"]["code"] == "repo_not_found_or_no_access", path
+        assert "x-commit-sha" not in hidden.headers
 
 
 async def test_repo_rows_carry_index_summaries(
@@ -1478,14 +1817,29 @@ async def test_the_last_index_constellation_in_pages(
             )
         ],
     )
-    key = artifact_key(repo.org_id, repo.id, SHA_ONE, CONSTELLATION_ARTIFACT)
+    key = artifact_key(repo.org_id, repo.id, SHA_ONE, *artifact_parts("gen-stored"))
     await storage.put_bytes(Bucket.ARTIFACTS, key, stored.to_bytes())
+    # Stored, but the snapshot's rows don't name it (that discovery never committed): unused.
+    orphan = (await client.get(url)).json()
+    assert orphan["generation"] == body["generation"]
+    snapshot = await db_session.scalar(select(Snapshot).where(Snapshot.commit_sha == SHA_ONE))
+    assert snapshot is not None
+    snapshot.summary = {**(snapshot.summary or {}), "constellation": {"generation": "gen-stored"}}
+    await db_session.flush()
     again = (await client.get(url)).json()
     assert (again["generation"], [p["path"] for p in again["points"]]) == (
         "gen-stored",
         ["only/one.py"],
     )
     assert again["points"][0]["layer"] == "db"
+    # A damaged stored one: laid out from the rows instead, not an error.
+    bad = artifact_key(repo.org_id, repo.id, SHA_ONE, *artifact_parts("gen-bad"))
+    await storage.put_bytes(Bucket.ARTIFACTS, bad, b"not a constellation")
+    snapshot.summary = {**(snapshot.summary or {}), "constellation": {"generation": "gen-bad"}}
+    await db_session.flush()
+    damaged = await client.get(url)
+    assert damaged.status_code == 200
+    assert damaged.json()["generation"] == body["generation"]
     both = await client.get(url, params={"ref": SHA_ONE, "job": str(uuid.uuid4())})
     assert (both.status_code, both.json()["error"]["code"]) == (422, "job_and_ref")
 

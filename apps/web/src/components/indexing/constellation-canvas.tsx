@@ -90,6 +90,8 @@ function Stars({ sky, colors, motion, drift, active, highlight, onFrame, registe
   // Per star: position, size, layer color, when it appears; written once, animated in place.
   const state = useRef({
     generation: null as string | null,
+    // False until the first fill: what is already there when the view opens is drawn as it is.
+    seeded: false,
     written: 0,
     animFrom: 0,
     positions: new Float32Array(0),
@@ -211,7 +213,11 @@ function Stars({ sky, colors, motion, drift, active, highlight, onFrame, registe
     }
     const now = performance.now();
     const fresh = sky.points.length - s.written;
-    const delays = live ? stagger(fresh) : [];
+    // Only stars discovery adds while this is on screen are "just added" (scale in, glow);
+    // those already there when it opens, or read after discovery finished, simply show.
+    const animate = live && s.seeded && sky.status === "streaming";
+    s.seeded = true;
+    const delays = animate ? stagger(fresh) : [];
     const parents = new Map(sky.dirs.map((d) => [d.id, d.parent]));
     for (let k = 0; k < fresh; k += 1) {
       const i = s.written + k;
@@ -219,11 +225,11 @@ function Stars({ sky, colors, motion, drift, active, highlight, onFrame, registe
       if (!point) continue;
       s.positions.set([point.x, point.y, point.z], i * 3);
       s.scales[i] = starScale(point.size);
-      s.appear[i] = now + (delays[k] ?? 0);
+      s.appear[i] = animate ? now + (delays[k] ?? 0) : -Infinity;
       // Its directory and every one above it get their link, a moment after this star.
       let dir: number | null | undefined = point.dir_cluster;
       while (dir !== null && dir !== undefined && (s.linkStart[dir] ?? 0) === Infinity) {
-        s.linkStart[dir] = (s.appear[i] ?? now) + LINK_DELAY_MS;
+        s.linkStart[dir] = animate ? (s.appear[i] ?? now) + LINK_DELAY_MS : -Infinity;
         dir = parents.get(dir);
       }
     }
@@ -328,13 +334,16 @@ function Stars({ sky, colors, motion, drift, active, highlight, onFrame, registe
     };
   }, [camera, register]);
 
-  const scale = 1 / reach(sky);
+  // O(points): only when the sky changes, not on every hover.
+  const scale = useMemo(() => 1 / reach(sky), [sky]);
   return (
     <group rotation={[VIEW.pitch, 0, 0]} scale={[scale, scale, scale]}>
       <group ref={spin} rotation={[0, VIEW.yaw, 0]}>
         <lineSegments ref={links} geometry={linkGeometry} material={linkMaterial} />
+        {/* A new generation (discovery started over) gets a new mesh, so the old one's GPU
+            buffers are freed with it instead of replaced on it. */}
         <instancedMesh
-          key={capacity}
+          key={`${String(capacity)}:${sky.generation ?? ""}`}
           ref={mesh}
           args={[geometry, material, capacity]}
           frustumCulled={false}

@@ -35,6 +35,23 @@ export const queryKeys = {
    * picture, so it isn't an `$api` query. */
   constellation: (slug: string, repo: string, job: string | null) =>
     ["constellation", slug, repo, job] as const,
+  /** The code browser's directory listings and files at `ref` (null: what that means now,
+   * `version`: the last index, or the first run's stage, so they are read again when it
+   * changes). Their commit comes in a response header, so they aren't `$api` queries either. */
+  codeTree: (
+    slug: string,
+    repo: string,
+    ref: string | null,
+    version: string | null,
+    path: string,
+  ) => ["code", "tree", slug, repo, ref ?? version, path] as const,
+  codeFile: (
+    slug: string,
+    repo: string,
+    ref: string | null,
+    version: string | null,
+    path: string,
+  ) => ["code", "file", slug, repo, ref ?? version, path] as const,
   installations: (slug: string) =>
     $api.queryOptions("get", "/api/v1/orgs/{org}/github/installations", org(slug)).queryKey,
 };

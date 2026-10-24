@@ -1,14 +1,11 @@
-import type { Metadata } from "next";
 import { Suspense } from "react";
 
-import { TabPlaceholder } from "@/components/repo/tab-placeholder";
-
-export const metadata: Metadata = { title: "Code" };
+import { CodePathView } from "@/components/code/code-browser";
 
 export default function CodePage() {
   return (
     <Suspense>
-      <TabPlaceholder tab="code" />
+      <CodePathView />
     </Suspense>
   );
 }

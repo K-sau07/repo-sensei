@@ -51,12 +51,13 @@ class JobScope:
         if self._machine is not None:
             self.outbox.collect(self._machine)
 
-    def require(self, stage: Stage) -> IndexJob:
-        """The job, if it is still running ``stage``; otherwise stop the task quietly."""
+    def require(self, *stages: Stage) -> IndexJob:
+        """The job, if it is still running one of ``stages``; otherwise stop the task quietly."""
         job = self.job
-        running = job is not None and job.status is JobStatus.RUNNING and job.stage is stage
+        running = job is not None and job.status is JobStatus.RUNNING and job.stage in stages
         if not running or job is None:
-            raise JobGoneError(f"the job is no longer at {stage.value}")
+            names = " or ".join(stage.value for stage in stages)
+            raise JobGoneError(f"the job is no longer at {names}")
         return job
 
 

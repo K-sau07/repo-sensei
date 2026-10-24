@@ -253,7 +253,9 @@ export function useJobEvents(org: string, repo: string, jobId: string | null) {
         (event.type === "constellation" ||
           (event.type === "stage_done" && event.stage === "discover"))
       ) {
-        void queryClient.invalidateQueries({ queryKey: skyKey });
+        // Never cancel a read in progress: it carries on from its cursor, and cancelling on
+        // every event would throw away the pages read so far.
+        void queryClient.invalidateQueries({ queryKey: skyKey }, { cancelRefetch: false });
       }
       if (event.type === "log" && event.message) {
         lines.push({
@@ -287,7 +289,9 @@ export function useJobEvents(org: string, repo: string, jobId: string | null) {
         void queryClient.invalidateQueries({ queryKey: listKey });
         void queryClient.invalidateQueries({ queryKey: queryKeys.repo(org, repo) });
         void queryClient.invalidateQueries({ queryKey: queryKeys.repos(org) });
-        void queryClient.invalidateQueries({ queryKey: skyKey });
+        // Never cancel a read in progress: it carries on from its cursor, and cancelling on
+        // every event would throw away the pages read so far.
+        void queryClient.invalidateQueries({ queryKey: skyKey }, { cancelRefetch: false });
         // The last index may be another commit now: its picture is read again from the start.
         void queryClient.resetQueries({ queryKey: queryKeys.constellation(org, repo, null) });
       }

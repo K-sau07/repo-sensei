@@ -1,0 +1,23 @@
+{
+  "language": "typescript",
+  "status": "parsed",
+  "error_count": 0,
+  "defs": [
+    "export L3-3 declaration=type AuthToken = string | undefined;",
+    "definition.type L3-3 name=AuthToken",
+    "export L5-20 declaration=interface Auth { /** * Which part of the request do we use …",
+    "definition.interface L5-20 name=Auth",
+    "definition.field L11-11 name=in",
+    "definition.field L17-17 name=name",
+    "definition.field L18-18 name=scheme",
+    "definition.field L19-19 name=type",
+    "export L22-41 declaration=const getAuthToken = async ( auth: Auth, callback: ((auth: …",
+    "definition.function L22-41 name=getAuthToken"
+  ],
+  "imports": [],
+  "calls": [
+    "call L26-26 name=callback",
+    "call L37-37 name=btoa"
+  ],
+  "decorators": []
+}

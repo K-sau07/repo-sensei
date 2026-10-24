@@ -22,4 +22,13 @@ export const test = base.extend<{ signedIn: boolean }>({
   },
 });
 
+/**
+ * A timing budget in ms. The budgets are the product's, met on a developer machine. CI's shared
+ * runners (2 CPUs, no GPU) are 3-5x slower and vary from run to run, so there a budget is
+ * `CI_PERF_SLACK` times as long: still short enough to catch what matters (a freeze, a lost
+ * virtualisation), not the runner's noise. The measured numbers are logged either way.
+ */
+export const CI_PERF_SLACK = 4;
+export const budget = (ms: number) => (process.env.CI ? ms * CI_PERF_SLACK : ms);
+
 export { expect };

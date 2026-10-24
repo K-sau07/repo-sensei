@@ -185,6 +185,12 @@ export function isLowPower(nav: {
   return (typeof cores === "number" && cores > 0 && cores < 4) || nav.connection?.saveData === true;
 }
 
+/** Whether a WebGL renderer name is a software rasterizer (no GPU): there the bloom pass alone
+ * blocks the page for about half a second, so the picture is drawn still. */
+export function isSoftwareRenderer(name: string | null | undefined): boolean {
+  return /swiftshader|llvmpipe|softpipe|software|basic render/i.test(name ?? "");
+}
+
 /** When each new point starts to appear, in ms from now: a batch that arrives at once is spread
  * out (up to `spread` ms), so it still forms rather than pops. */
 export function stagger(count: number, spread = 1200): number[] {

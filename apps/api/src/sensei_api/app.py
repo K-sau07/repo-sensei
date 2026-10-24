@@ -17,7 +17,7 @@ from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from starlette.middleware.gzip import GZipMiddleware
 
 from sensei_api import __version__
-from sensei_api.browse import TreeCache
+from sensei_api.browse import ConstellationCache, TreeCache
 from sensei_api.errors import install_error_handlers
 from sensei_api.middleware import RequestIdMiddleware
 from sensei_api.routers import (
@@ -28,10 +28,12 @@ from sensei_api.routers import (
     health,
     index_jobs,
     indexing,
+    internal,
     invitations,
     me,
     orgs,
     repos,
+    symbols,
     webhooks,
 )
 from sensei_api.routers.health import ReadinessCheck
@@ -46,6 +48,7 @@ from sensei_core.redis import make_redis, ping_redis
 from sensei_core.security.crypto import TokenCipher
 from sensei_core.storage import ObjectStorage
 from sensei_core.telemetry import init_telemetry, instrument_engine, scrub_server_span
+from sensei_engine.search.grep import ExactSearch
 from sensei_engine.snapshots import SnapshotCache
 
 API_PREFIX = "/api/v1"
@@ -71,7 +74,9 @@ def _install_services(app: FastAPI, settings: Settings) -> None:
         max_bytes=settings.ingest.snapshot_cache_max_bytes,
         max_snapshot_bytes=settings.ingest.max_checkout_bytes,
     )
-    app.state.tree_cache = TreeCache()
+    app.state.tree_cache = TreeCache(max_mb=settings.api.tree_cache_mb)
+    app.state.constellation_cache = ConstellationCache(max_mb=settings.api.constellation_cache_mb)
+    app.state.exact_search = ExactSearch()  # ripgrep over those unpacked snapshots
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -145,6 +150,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(index_jobs.router, prefix=API_PREFIX)
     app.include_router(browse.router, prefix=API_PREFIX)
     app.include_router(constellation.router, prefix=API_PREFIX)
+    app.include_router(internal.router, prefix=API_PREFIX)
+    app.include_router(symbols.router, prefix=API_PREFIX)
     # Wraps the whole middleware stack; RequestIdMiddleware tags the server span it creates.
     FastAPIInstrumentor.instrument_app(app, server_request_hook=scrub_server_span)
     return app

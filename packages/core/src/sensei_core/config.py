@@ -166,6 +166,11 @@ class ApiSettings(BaseSettings):
     # client sent (Fly.io: "fly-client-ip"). None: the connecting peer's address. Never trust a
     # header a client can forge, such as X-Forwarded-For's first entry.
     client_ip_header: str | None = None
+    # Memory for what browsing keeps decoded (per API process), sized for a 512 MB machine:
+    # Merkle trees (about 700 bytes a file) and constellations (about 650 bytes a point),
+    # least recently used out first. One snapshot larger than its budget is still served.
+    tree_cache_mb: int = Field(default=96, gt=0)
+    constellation_cache_mb: int = Field(default=64, gt=0)
 
 
 class WebSettings(BaseSettings):
@@ -234,6 +239,59 @@ class GitHubSettings(BaseSettings):
         raise RuntimeError(msg)
 
 
+class VoyageSettings(BaseSettings):
+    """Voyage AI embeddings (code chunks and queries). Defaults are Voyage's documented limits
+    for a paid account; an account without a payment method gets far lower ones (lower
+    ``requests_per_minute`` and ``tokens_per_minute`` to match)."""
+
+    model_config = _config("SENSEI_VOYAGE_")
+
+    api_key: SecretStr | None = None
+    api_url: str = "https://api.voyageai.com/v1"
+    model: str = "voyage-code-4"
+    dims: int = Field(default=1024, gt=0)
+    timeout_seconds: float = Field(default=60.0, gt=0)
+    max_retries: int = Field(default=5, ge=0)
+    # Wait at most this long for one retry (a longer Retry-After gives up with an error).
+    max_retry_wait_seconds: float = Field(default=60.0, ge=0)
+    # Per request: at most this many texts, and this many tokens by our estimate (below the
+    # API's limit, since its tokenizer counts differently; a request it still finds too big is
+    # split in two and sent again).
+    max_batch_texts: int = Field(default=128, gt=0, le=1000)
+    max_batch_tokens: int = Field(default=100_000, gt=0)
+    max_concurrency: int = Field(default=4, gt=0)
+    requests_per_minute: int = Field(default=2000, gt=0)
+    tokens_per_minute: int = Field(default=3_000_000, gt=0)
+
+    @property
+    def configured(self) -> bool:
+        return self.api_key is not None
+
+
+class AnthropicSettings(BaseSettings):
+    """Claude models (summaries, query routing, reranking, answers), named by tier: ``fast`` for
+    bulk work, ``standard`` for most calls, ``deep`` for the hardest."""
+
+    model_config = _config("SENSEI_ANTHROPIC_")
+
+    api_key: SecretStr | None = None
+    base_url: str = "https://api.anthropic.com"
+    fast_model: str = "claude-haiku-5-5"
+    standard_model: str = "claude-sonnet-5-5"
+    deep_model: str = "claude-opus-5-5"
+    timeout_seconds: float = Field(default=600.0, gt=0)
+    # The SDK retries connection errors, 408, 409, 429 and 5xx with backoff.
+    max_retries: int = Field(default=4, ge=0)
+    # A request a safety classifier declines is retried server-side on the model Anthropic
+    # recommends for that category (models that offer it; never in batches).
+    refusal_fallback: bool = True
+    batch_poll_seconds: float = Field(default=60.0, gt=0)
+
+    @property
+    def configured(self) -> bool:
+        return self.api_key is not None
+
+
 class TelemetrySettings(BaseSettings):
     model_config = _config("SENSEI_")
 
@@ -269,6 +327,8 @@ class Settings(BaseSettings):
     api: ApiSettings = Field(default_factory=ApiSettings)
     auth: AuthSettings = Field(default_factory=AuthSettings)
     github: GitHubSettings = Field(default_factory=GitHubSettings)
+    voyage: VoyageSettings = Field(default_factory=VoyageSettings)
+    anthropic: AnthropicSettings = Field(default_factory=AnthropicSettings)
     telemetry: TelemetrySettings = Field(default_factory=TelemetrySettings)
     pricing: PricingSettings = Field(default_factory=PricingSettings)
     worker: WorkerSettings = Field(default_factory=WorkerSettings)

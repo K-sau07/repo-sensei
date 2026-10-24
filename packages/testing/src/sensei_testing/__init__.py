@@ -12,6 +12,7 @@ afterwards, so tests never see each other's data.
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from collections.abc import AsyncGenerator
@@ -22,9 +23,10 @@ import httpx
 import pytest
 from fakeredis import FakeAsyncRedis
 from fastapi import FastAPI
+from pydantic_settings import BaseSettings
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from sensei_core.config import Settings
+from sensei_core.config import AnthropicSettings, GitHubSettings, Settings, VoyageSettings
 from sensei_core.models import User
 
 
@@ -40,6 +42,27 @@ def _find_alembic_ini() -> Path:
 
 ALEMBIC_INI = _find_alembic_ini()
 ROOT = ALEMBIC_INI.parents[2]
+
+# Outside services whose credentials tests never take from a developer's .env or shell: a test
+# that needs them passes its own, and "not configured" means what it says. Add each new one.
+EXTERNAL_SERVICES: tuple[type[BaseSettings], ...] = (
+    GitHubSettings,
+    VoyageSettings,
+    AnthropicSettings,
+)
+
+
+# Variables provider SDKs read on their own (keys, extra headers, logging): never in a test.
+SDK_ENV_PREFIXES = ("ANTHROPIC_",)
+
+
+def pytest_configure() -> None:
+    prefixes: list[str] = list(SDK_ENV_PREFIXES)
+    for service in EXTERNAL_SERVICES:
+        service.model_config["env_file"] = None
+        prefixes.append(service.model_config.get("env_prefix", "").upper())
+    for key in [k for k in os.environ if k.upper().startswith(tuple(prefixes))]:
+        del os.environ[key]
 
 
 def settings_for_tests() -> Settings:
