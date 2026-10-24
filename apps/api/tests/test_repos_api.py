@@ -138,6 +138,8 @@ class FakeGitHub:
         self.user_can_read: dict[str, set[int]] = {}  # user token -> readable repository ids
         self.user_checks = 0
         self.public_lookups: list[str] = []
+        self.tree_lookups: list[str] = []  # the credential each tree was asked with
+        self.tree_status = 200
         router.post(f"{GITHUB_API}/app/installations/{INSTALLATION}/access_tokens").mock(
             return_value=httpx.Response(
                 201,
@@ -166,6 +168,20 @@ class FakeGitHub:
             side_effect=self._anonymous(PUBLIC)
         )
         router.get(f"{GITHUB_API}/repos/acme-gh/api").mock(side_effect=self._anonymous(None))
+        router.get(url__regex=rf"{GITHUB_API}/repos/[^/]+/[^/]+/git/trees/main(\?.*)?$").mock(
+            side_effect=self._tree
+        )
+
+    def _tree(self, request: httpx.Request) -> httpx.Response:
+        self.tree_lookups.append(request.headers.get("authorization", ""))
+        if self.tree_status != 200:
+            return httpx.Response(self.tree_status, json={"message": "Git Repository is empty."})
+        assert request.url.params["recursive"] == "1"
+        blobs = [("app.py", 3_000), ("src/view.ts", 7_000), ("README.md", 500), ("logo.png", 9_000)]
+        entries = [{"path": "src", "type": "tree"}] + [
+            {"path": path, "type": "blob", "size": size} for path, size in blobs
+        ]
+        return httpx.Response(200, json={"sha": "t", "tree": entries, "truncated": False})
 
     def _by_id(self, request: httpx.Request) -> httpx.Response:
         repo_id = int(request.url.path.rsplit("/", 1)[1])
@@ -510,8 +526,9 @@ async def test_estimate_before_connecting(
     estimate = by_url.json()
     assert estimate["full_name"] == "langflow-ai/langflow"
     assert fake.public_lookups == [f"Bearer ghu_{admin.login}"]  # not anonymous
-    # The mocked GitHub reports 10 KB of code in two languages.
-    assert (estimate["files"], estimate["tokens"]) == (1, 2857)  # 10,000 bytes / 3.5
+    # Files from the default branch's tree (4, two of them code: 10,000 bytes / 3.5 tokens).
+    assert fake.tree_lookups == [f"Bearer ghu_{admin.login}"]
+    assert (estimate["files"], estimate["tokens"]) == (4, 2857)
     assert estimate["languages"] == {"Python": 9000, "TypeScript": 1000}
     assert estimate["index_minutes"] > 0
     assert float(estimate["cost_usd"]) > 0
@@ -522,6 +539,17 @@ async def test_estimate_before_connecting(
         f"{API}/orgs/acme/repos/estimate", json={"github_repo_id": 101}, headers=headers
     )
     assert (by_id.status_code, by_id.json()["private"]) == (200, True)
+    assert fake.tree_lookups[-1] == "Bearer ghs_installation"  # a private one, as the app
+    # Without a tree (an empty repository, say) the language bytes are the basis.
+    fake.tree_status = 409
+    no_tree = await client.post(
+        f"{API}/orgs/acme/repos/estimate",
+        json={"url": "github.com/langflow-ai/langflow"},
+        headers=headers,
+    )
+    assert no_tree.status_code == 200, no_tree.text
+    # 10,000 bytes of code: 2 code files at 4 KB, 3 files in all at 70% code.
+    assert (no_tree.json()["files"], no_tree.json()["tokens"]) == (3, 2857)
     for body in ({}, {"url": "github.com/a/b", "github_repo_id": 101}):
         bad = await client.post(f"{API}/orgs/acme/repos/estimate", json=body, headers=headers)
         assert (bad.status_code, bad.json()["error"]["code"]) == (422, "invalid_input")

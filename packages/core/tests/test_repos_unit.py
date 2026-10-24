@@ -8,7 +8,7 @@ import pytest
 from pydantic import ValidationError
 
 from sensei_core.errors import InvalidError
-from sensei_core.repos.estimate import estimate_index
+from sensei_core.repos.estimate import TreeStats, estimate_index, tree_stats
 from sensei_core.repos.service import RepoSettings
 from sensei_core.repos.urls import parse_github_url
 from sensei_core.usage import DEFAULT_PRICE_TABLE, CostCalculator
@@ -69,30 +69,85 @@ def test_enterprise_hosts_follow_the_configured_web_url() -> None:
 CALC = CostCalculator(DEFAULT_PRICE_TABLE)
 
 
-def test_estimates_grow_with_code_and_cost_money() -> None:
-    small = estimate_index(1_000, {"Python": 1_000_000}, CALC)
-    large = estimate_index(1_000, {"Python": 50_000_000}, CALC)
-    assert small.files < large.files
-    assert small.index_minutes < large.index_minutes
-    assert Decimal(0) < small.cost_usd < large.cost_usd
-    # Heavier-to-parse languages take longer for the same amount of code.
-    java = estimate_index(1_000, {"Java": 50_000_000}, CALC)
-    assert java.index_minutes > large.index_minutes
+# Four repositories as GitHub described them (2026-10-24: size, language bytes, the default
+# branch's tree) and the files discovery kept when they were indexed.
+MEASURED = {
+    "fastapi": (
+        57_058, {"Python": 4_626_334, "JavaScript": 1_066},
+        TreeStats(3_233, 1_223, 4_649_992, 35_437_078, truncated=False), 3_232,
+    ),
+    "full-stack-fastapi-template": (
+        7_103, {"TypeScript": 317_948, "Python": 90_980, "HTML": 21_286},
+        TreeStats(252, 152, 409_084, 1_886_624, truncated=False), 245,
+    ),
+    "langflow": (
+        1_672_161, {"Python": 41_349_533, "TypeScript": 12_250_366, "JavaScript": 4_193_857},
+        TreeStats(11_850, 8_415, 58_648_403, 239_895_098, truncated=False), 11_407,
+    ),
+    "flask-api": (
+        1_772, {"Python": 74_007, "HTML": 8_809},
+        TreeStats(89, 31, 207_698, 539_236, truncated=False), 87,
+    ),
+}  # fmt: skip
 
 
-def test_language_bytes_beat_the_on_disk_size() -> None:
-    """Langflow, as GitHub reported it: 1.6 GB on disk (history, assets), 57 MB of code. The
-    estimate follows the code (the repository has several thousand files, not 80 thousand)."""
-    langflow = {"Python": 40_929_561, "TypeScript": 12_096_284, "JavaScript": 4_193_846}
-    estimate = estimate_index(1_635_492, langflow, CALC)
-    assert 5_000 < estimate.files < 10_000
-    assert 10_000_000 < estimate.tokens < 25_000_000
-    assert estimate.cost_usd < Decimal(5)
+def test_the_tree_counts_files_and_code() -> None:
+    body = {
+        "tree": [
+            {"path": "src", "type": "tree"},
+            {"path": "src/app.py", "type": "blob", "size": 3_000},
+            {"path": "src/View.TSX", "type": "blob", "size": 7_000},
+            {"path": "README.md", "type": "blob", "size": 500},
+            {"path": "vendor/lib", "type": "commit"},  # a submodule
+            {"path": "odd.py", "type": "blob", "size": "big"},
+            "not an entry",
+        ],
+        "truncated": True,
+    }
+    assert tree_stats(body) == TreeStats(4, 3, 10_000, 10_500, truncated=True)
+    assert tree_stats({"message": "Not Found"}) is None
 
 
-def test_without_languages_a_share_of_the_size_is_used() -> None:
+@pytest.mark.parametrize("name", list(MEASURED))
+def test_with_the_tree_files_are_within_a_few_percent(name: str) -> None:
+    size_kb, languages, tree, discovered = MEASURED[name]
+    estimate = estimate_index(size_kb, languages, CALC, tree)
+    assert abs(estimate.files - discovered) / discovered < 0.05
+    assert estimate.tokens == round(tree.code_bytes / 3.5)
+
+
+@pytest.mark.parametrize("name", list(MEASURED))
+def test_without_the_tree_language_bytes_are_within_three_times(name: str) -> None:
+    """Language bytes count code only, so docs-heavy repositories come out low and code-heavy
+    ones high; the old guess was 5-8 times low on all four."""
+    size_kb, languages, _, discovered = MEASURED[name]
+    estimate = estimate_index(size_kb, languages, CALC)
+    assert discovered / 3 < estimate.files < discovered * 3
+
+
+def test_a_truncated_tree_is_a_floor() -> None:
+    size_kb, languages, _, _ = MEASURED["langflow"]
+    cut = TreeStats(1_000, 500, 1_000_000, 5_000_000, truncated=True)
+    estimate = estimate_index(size_kb, languages, CALC, cut)
+    assert estimate.files == estimate_index(size_kb, languages, CALC).files  # the languages win
+
+
+def test_time_and_cost_follow_the_measured_stages() -> None:
+    size_kb, languages, tree, _ = MEASURED["langflow"]
+    langflow = estimate_index(size_kb, languages, CALC, tree)
+    # ~59K chunks to embed (~$2.30) and 8,415 file summaries (~$2.20), each priced as its own
+    # short request (one 22M-token prompt would be at the long-context rate).
+    assert Decimal(4) < langflow.cost_usd < Decimal(6)
+    assert 15 < langflow.index_minutes < 30
+    size_kb, languages, tree, _ = MEASURED["full-stack-fastapi-template"]
+    template = estimate_index(size_kb, languages, CALC, tree)
+    assert Decimal("0.05") < template.cost_usd < Decimal("0.15")
+    assert template.index_minutes < langflow.index_minutes
+
+
+def test_with_nothing_known_a_share_of_the_size_is_used() -> None:
     estimate = estimate_index(100_000, {}, CALC)  # 100 MB on disk
-    assert 1_000 < estimate.files < 2_000
+    assert 1_000 < estimate.files < 5_000
     empty = estimate_index(0, {}, CALC)
     assert (empty.files, empty.tokens) == (1, 0)
 

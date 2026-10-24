@@ -23,11 +23,14 @@ from sensei_core.audit import AuditAction, audit
 from sensei_core.errors import ConflictError, DomainError, InvalidError, NotFoundError
 from sensei_core.github.app import GitHubApp
 from sensei_core.github.client import Credential, GitHubClient, GitHubError, RateLimited, as_object
+from sensei_core.logging import get_logger
 from sensei_core.models import GitHubInstallation, Repo, RepoSource, RepoStatus, Role
 from sensei_core.orgs.service import OrgAccess, require_role
-from sensei_core.repos.estimate import IndexEstimate, estimate_index
+from sensei_core.repos.estimate import IndexEstimate, TreeStats, estimate_index, tree_stats
 from sensei_core.repos.urls import parse_github_url
 from sensei_core.usage import CostCalculator
+
+log = get_logger(__name__)
 
 MAX_LISTED = 5_000  # repositories scanned across an org's installations for the picker
 # Org-level pages share the URL space with repositories (/acme/settings vs /acme/<repo>).
@@ -318,7 +321,31 @@ class RepoService:
             if url is not None
             else await self._facts_via_installation(db, access, github_repo_id or 0, viewer)
         )
-        return facts, estimate_index(facts.size_kb, facts.languages, self._calc)
+        tree = await self._tree(facts, viewer if url is not None else None)
+        return facts, estimate_index(facts.size_kb, facts.languages, self._calc, tree)
+
+    async def _tree(self, facts: RepoFacts, viewer: Credential | None) -> TreeStats | None:
+        """File counts from the default branch's git tree, asked the way the facts were (the
+        installation, or the admin's own credential); None if GitHub won't give it (the
+        estimate then works from language bytes)."""
+        branch = facts.body.get("default_branch")
+        if not isinstance(branch, str) or not branch:
+            return None
+        path = f"/repos/{facts.body['full_name']}/git/trees/{quote(branch, safe='')}"
+        try:
+            if facts.installation is not None and self._app is not None:
+                credential = await self._app.installation_credential(
+                    facts.installation.installation_id
+                )
+                body = await self._app.client.get_json(path, credential, recursive=1)
+            else:
+                body = await self._client.get_json(
+                    path, viewer or Credential.anonymous(), recursive=1
+                )
+        except GitHubError as exc:
+            log.info("repository tree unavailable for the estimate", status=exc.status)
+            return None
+        return tree_stats(as_object(body) or {})
 
     async def _slug_for(self, db: AsyncSession, access: OrgAccess, owner: str, name: str) -> str:
         taken = set(
