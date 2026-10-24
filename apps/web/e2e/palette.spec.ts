@@ -1,7 +1,7 @@
 import AxeBuilder from "@axe-core/playwright";
 import type { BrowserContext, Page } from "@playwright/test";
 
-import { expect, test } from "./fixtures";
+import { budget, expect, test } from "./fixtures";
 import tree from "../src/mocks/fixtures/browse-tree.json" with { type: "json" };
 
 // historyKey(OCTO) in lib/palette/history.ts: the mock's signed-in user.
@@ -316,7 +316,7 @@ test.describe("command palette", () => {
       console.log(
         `⌘K open → first local results: in the DOM ${runs.map((r) => r.results.toFixed(1)).join(", ")} ms; painted ${painted.map((p) => p.toFixed(1)).join(", ")} ms (median ${median.toFixed(1)})`,
       );
-      expect(median).toBeLessThan(50);
+      expect(median).toBeLessThan(budget(50));
 
       // 50 rows: show the whole Go group (6 → 50 rows), then type with all of them up.
       await openPalette(page);
@@ -391,9 +391,9 @@ test.describe("command palette", () => {
       console.log(
         `50 rows: shown and painted in ${grown.toFixed(1)} ms; typing over them: ${String(typing.frames)} frames, p95 ${typing.p95.toFixed(1)} ms, max ${typing.max.toFixed(1)} ms, ${String(typing.over)} frames over 20.7 ms, long tasks [${typing.longTasks.map((t) => t.toFixed(0)).join(", ")}] ms`,
       );
-      expect(grown).toBeLessThan(50);
+      expect(grown).toBeLessThan(budget(50));
       // No frame dropped badly while typing: nothing near a long task.
-      expect(typing.max).toBeLessThan(50);
+      expect(typing.max).toBeLessThan(budget(50));
 
       // Server results, in a fresh palette: the query arrives in one input event, so the
       // symbols search is made once, for all of it. The frontend spec's budget for server fuzzy
@@ -472,7 +472,7 @@ test.describe("command palette", () => {
       console.log(
         `server results: request start → painted ${server.fromRequest.toFixed(1)} ms (the request itself ${String(server.request?.toFixed(1))} ms); typed → painted ${server.fromTyping.toFixed(1)} ms, the 120 ms debounce included`,
       );
-      expect(server.fromRequest).toBeLessThan(200 - 120);
+      expect(server.fromRequest).toBeLessThan(budget(200 - 120));
     },
   );
 });

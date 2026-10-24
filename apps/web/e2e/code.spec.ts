@@ -1,7 +1,7 @@
 import AxeBuilder from "@axe-core/playwright";
 import type { BrowserContext, Page } from "@playwright/test";
 
-import { expect, test } from "./fixtures";
+import { budget, expect, test } from "./fixtures";
 
 const COMMIT = "b1125d8839482cb7bbae603ddc6d0081bf87532e";
 
@@ -199,7 +199,7 @@ test.describe("code browser", () => {
     await expect.poll(measured).not.toBeNull();
     const paint = await measured();
     console.log(`10,000-line file: first paint ${String(paint?.toFixed(1))} ms after it arrived`);
-    expect(paint ?? Infinity).toBeLessThan(300);
+    expect(paint ?? Infinity).toBeLessThan(budget(300));
   });
 
   test("the tree scrolls 100,000 files at 60 fps", { tag: "@perf" }, async ({ page, context }) => {
@@ -222,8 +222,8 @@ test.describe("code browser", () => {
     const p95 = frames[Math.floor(frames.length * 0.95)] ?? Infinity;
     console.log(`100,000-row tree: median frame ${median.toFixed(1)} ms, p95 ${p95.toFixed(1)} ms`);
     // A 60 Hz frame is 16.7 ms; allow for the timer's jitter.
-    expect(median).toBeLessThan(18);
-    expect(p95).toBeLessThan(34);
+    expect(median).toBeLessThan(budget(18));
+    expect(p95).toBeLessThan(budget(34));
     // Only the rows on screen exist.
     expect(await tree(page).getByRole("treeitem").count()).toBeLessThan(120);
   });
