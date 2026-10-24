@@ -188,12 +188,18 @@ def _run_pools[T, R](
             yield from _isolate(work, [item for batch in lost for item in batch], limits)
 
 
-def _healthy_executor() -> ProcessPoolExecutor:
+def _ready(work: Callable[..., object]) -> int:
+    return os.getpid()
+
+
+def _healthy_executor(work: Callable[..., object]) -> ProcessPoolExecutor:
     """A fresh one-process pool that has shown it can run something: otherwise every item would
-    look like it crashed when the processes can't even start."""
+    look like it crashed when the processes can't even start. Sending it ``work`` imports
+    ``work``'s module there (the parser and its grammars), so that time isn't counted against
+    the first item's timeout: on a busy machine it alone can take longer."""
     executor = _executor(1)
     try:
-        executor.submit(os.getpid).result()
+        executor.submit(_ready, work).result()
     except BrokenProcessPool as exc:
         executor.shutdown(wait=True)
         raise WorkersUnavailableError("worker processes exit before running anything") from exc
@@ -204,7 +210,7 @@ def _isolate[T, R](
     work: Callable[[T], R], items: list[T], limits: _Limits
 ) -> Iterator[tuple[T, R | Failed]]:
     """Run ``items`` one at a time in one process, so a crash or a hang points at its item."""
-    executor = _healthy_executor()
+    executor = _healthy_executor(work)
     try:
         for item in items:
             future = executor.submit(_apply_batch, work, [item])
@@ -217,7 +223,7 @@ def _isolate[T, R](
                 result = Failed("timeout", f"took longer than {limits.item_timeout:g} s")
             if isinstance(result, Failed) and result.reason != "error":
                 executor.shutdown(wait=True, cancel_futures=True)
-                executor = _healthy_executor()
+                executor = _healthy_executor(work)
             yield item, result
     finally:
         executor.shutdown(wait=True, cancel_futures=True)
