@@ -17,4 +17,4 @@ Each candidate is one JSON object with an `id` (`c1`, `c2` ...), and when known 
 
 - `ranking`: the picks, best first, at most as many as asked for. Use only ids from the candidates, each once. Leave out candidates that are unrelated.
 - `grade`: 3 answers the question directly; 2 is a step of the answer or closely involved; 1 is related context; 0 is unrelated.
-- `reason`: one short line (under 15 words) on what the code does for the question.
+- `reason` (only when the schema has it): one short line (under 15 words) on what the code does for the question.

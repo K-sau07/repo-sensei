@@ -8,8 +8,8 @@ database here: the retriever (2.9) hands candidates in and takes the order back.
    - A score doesn't depend on the other documents in its request, so the answers merge.
    - What each request was billed goes to ``on_usage``.
 2. :class:`LLMReranker` is listwise: Claude (Haiku, or Sonnet in deep mode) reads the query and
-   the survivors together and picks the best 10-20 in order, each with a grade and a one-line
-   reason.
+   the survivors together and picks the best 10-20 in order, each with a grade (and a one-line
+   reason, when asked).
    - The candidates are split into windows, dealt round robin so each window holds strong and
      weak ones, and the windows are ranked in parallel. That keeps each answer short and the
      stage fast.
@@ -19,6 +19,17 @@ database here: the retriever (2.9) hands candidates in and takes the order back.
      handles are dropped, and if too few picks remain, the first stage's order fills the rest.
    - A window that fails or is too slow keeps the first stage's order.
 
+Which stages run is decided by mode (:class:`RerankPolicy`, :data:`POLICIES`, applied by
+:class:`Reranker`), so callers pick a mode, not stages:
+
+- ``interactive`` (the search box): the cross-encoder only. Its p95 is about 1.2 s; the model's
+  is about 3 s, over the 1.5 s budget.
+- ``deep``: the cross-encoder, then the model on the standard tier (Sonnet).
+- ``agent`` (Ask's final evidence rerank): the cross-encoder keeps 50, then the fast model
+  keeps 20.
+
+The model gives reasons only when asked: they are most of its answer, so most of its time.
+
 Both stages see each candidate's code cut to its first :data:`MAX_CODE_LINES` lines, with long
 lines cut to :data:`MAX_LINE_CHARS`.
 """
@@ -26,6 +37,7 @@ lines cut to :data:`MAX_LINE_CHARS`.
 from __future__ import annotations
 
 import asyncio
+import enum
 import json
 import math
 import random
@@ -114,9 +126,11 @@ class Ranked:
 @dataclass(frozen=True, slots=True)
 class Ranking:
     items: tuple[Ranked, ...]
-    # llm: every window answered; partial: some kept the first stage's order; fallback: none did
+    # The model's stage. llm: every window answered; partial: some kept the first stage's
+    # order; fallback: none did, or it didn't run.
     source: Literal["llm", "partial", "fallback"]
     dropped: int = 0  # handles the model gave that it wasn't shown, or gave twice
+    scored: bool = False  # whether the cross-encoder ordered the candidates (:class:`Reranker`)
 
 
 def _check_ids(candidates: Sequence[Candidate]) -> None:
@@ -319,16 +333,19 @@ class _Answer(BaseModel):
     ranking: list[_Pick]
 
 
-def answer_schema() -> dict[str, Any]:
-    """The JSON schema the model answers in."""
+def answer_schema(*, reasons: bool = False) -> dict[str, Any]:
+    """The JSON schema the model answers in (a reason per pick only when asked: they are most
+    of the answer's tokens, so most of its time)."""
+    properties: dict[str, Any] = {
+        "id": {"type": "string"},
+        "grade": {"type": "integer", "enum": [0, 1, 2, 3]},
+    }
+    if reasons:
+        properties["reason"] = {"type": "string"}
     pick = {
         "type": "object",
-        "properties": {
-            "id": {"type": "string"},
-            "grade": {"type": "integer", "enum": [0, 1, 2, 3]},
-            "reason": {"type": "string"},
-        },
-        "required": ["id", "grade", "reason"],
+        "properties": properties,
+        "required": list(properties),
         "additionalProperties": False,
     }
     return {
@@ -352,7 +369,9 @@ def windows(count: int, size: int) -> list[list[int]]:
     return [list(range(start, count, number)) for start in range(number)]
 
 
-def render(query: str, shown: Sequence[tuple[str, Candidate]], picks: int) -> str:
+def render(
+    query: str, shown: Sequence[tuple[str, Candidate]], picks: int, *, reasons: bool = False
+) -> str:
     """The user message: the query and each candidate as one JSON object (code is data)."""
     lines = [f"<query>{json.dumps(query)}</query>", "<candidates>"]
     for handle, candidate in shown:
@@ -368,12 +387,14 @@ def render(query: str, shown: Sequence[tuple[str, Candidate]], picks: int) -> st
         entry["code"] = candidate.excerpt()
         lines.append(json.dumps(entry, ensure_ascii=False))
     lines.append("</candidates>")
-    lines.append(f"Pick at most {picks}, best first.")
+    ask = "with a reason for each" if reasons else "without reasons"
+    lines.append(f"Pick at most {picks}, best first, {ask}.")
     return "\n".join(lines)
 
 
 @dataclass(frozen=True, slots=True)
 class _Window:
+    shown: list[int]  # the candidates (indexes) the window held
     picks: list[tuple[int, _Pick]]  # (candidate index, pick), in the model's order
     dropped: int
     answered: bool
@@ -403,10 +424,12 @@ class LLMReranker:
         *,
         top_n: int = LLM_TOP_N,
         deep: bool = False,
+        reasons: bool = False,
         on_usage: LLMUsageSink | None = None,
     ) -> Ranking:
-        """The best ``top_n`` of ``candidates`` (given in the first stage's order), best first.
-        Never raises for the model's sake: a window that fails keeps the first stage's order."""
+        """The best ``top_n`` of ``candidates`` (given in the first stage's order), best first,
+        with a one-line reason each if ``reasons``. Never raises for the model's sake: a window
+        that fails keeps the first stage's order."""
         ranked = [c if isinstance(c, Ranked) else Ranked(c) for c in candidates]
         _check_ids([r.candidate for r in ranked])
         if top_n <= 0 or not ranked:
@@ -418,7 +441,15 @@ class LLMReranker:
         role = Role.RERANK_DEEP if deep else Role.RERANK
         results = await asyncio.gather(
             *(
-                self._window(query, ranked, group, picks=per_window, role=role, on_usage=on_usage)
+                self._window(
+                    query,
+                    ranked,
+                    group,
+                    picks=per_window,
+                    role=role,
+                    reasons=reasons,
+                    on_usage=on_usage,
+                )
                 for group in groups
             )
         )
@@ -432,17 +463,18 @@ class LLMReranker:
         *,
         picks: int,
         role: Role,
+        reasons: bool,
         on_usage: LLMUsageSink | None,
     ) -> _Window:
         handles = {f"c{index + 1}": index for index in group}
         shown = [(handle, ranked[index].candidate) for handle, index in handles.items()]
         request = LLMRequest(
-            render(query, shown, picks),
+            render(query, shown, picks, reasons=reasons),
             system=system_prompt(),
             tier=tier_for(role),
             max_tokens=MAX_TOKENS,
             effort="low",
-            schema=answer_schema(),
+            schema=answer_schema(reasons=reasons),
             cache_system=True,
         )
         try:
@@ -451,7 +483,7 @@ class LLMReranker:
             answer = _Answer.model_validate(result.data)
         except (LLMError, TimeoutError, ValidationError) as exc:
             log.warning("listwise rerank kept the first stage's order", error=type(exc).__name__)
-            return _Window([], 0, answered=False)
+            return _Window(group, [], 0, answered=False)
         chosen: list[tuple[int, _Pick]] = []
         seen: set[int] = set()
         dropped = 0
@@ -461,13 +493,14 @@ class LLMReranker:
                 dropped += 1
                 continue
             seen.add(index)
-            chosen.append((index, pick))
-        return _Window(chosen[:picks], dropped, answered=True)
+            chosen.append((index, pick if reasons else pick.model_copy(update={"reason": ""})))
+        return _Window(group, chosen[:picks], dropped, answered=True)
 
 
 def _merge(ranked: list[Ranked], results: Sequence[_Window], top_n: int) -> Ranking:
     """The picks by grade, then rank in their window, then the first stage's order; then the
-    unpicked candidates of windows that didn't answer, then the rest, in the first stage's order."""
+    candidates of windows that didn't answer (never judged), then those the model left out of
+    its picks (judged worse), each in the first stage's order."""
     picked: list[tuple[int, int, int, Ranked]] = []
     for result in results:
         for rank, (index, pick) in enumerate(result.picks):
@@ -476,11 +509,85 @@ def _merge(ranked: list[Ranked], results: Sequence[_Window], top_n: int) -> Rank
             picked.append((-pick.grade, rank, index, item))
     picked.sort(key=lambda entry: entry[:3])
     order = [entry[3] for entry in picked]
+    unjudged = {index for result in results if not result.answered for index in result.shown}
     taken = {entry[2] for entry in picked}
-    order += [r for i, r in enumerate(ranked) if i not in taken]
+    order += [r for i, r in enumerate(ranked) if i in unjudged]
+    order += [r for i, r in enumerate(ranked) if i not in taken and i not in unjudged]
     answered = sum(result.answered for result in results)
     source: Literal["llm", "partial", "fallback"] = (
         "llm" if answered == len(results) else "partial" if answered else "fallback"
     )
     dropped = sum(result.dropped for result in results)
     return Ranking(tuple(order[:top_n]), source, dropped)
+
+
+# ---------------------------------------------------------------- which stages run, by mode
+
+
+class RerankMode(enum.StrEnum):
+    INTERACTIVE = "interactive"  # the search box (auto, keyword, semantic): within 1.5 s
+    DEEP = "deep"  # deep search: a few seconds more for a better order
+    AGENT = "agent"  # Ask's final evidence rerank (4.4)
+
+
+@dataclass(frozen=True, slots=True)
+class RerankPolicy:
+    """Which stages run and how much each keeps. Callers pick by mode (:data:`POLICIES`)."""
+
+    top_k: int = VOYAGE_TOP_K  # what the cross-encoder keeps
+    listwise: bool = False  # whether the model reorders them (2-3 s: not interactive)
+    top_n: int = LLM_TOP_N  # what the model keeps
+    deep: bool = False  # the standard tier (Sonnet) instead of the fast one
+    reasons: bool = False  # a reason per pick (most of the model's answer time)
+
+
+POLICIES: dict[RerankMode, RerankPolicy] = {
+    RerankMode.INTERACTIVE: RerankPolicy(),
+    RerankMode.DEEP: RerankPolicy(listwise=True, deep=True),
+    RerankMode.AGENT: RerankPolicy(top_k=50, listwise=True, top_n=20),
+}
+
+
+class Reranker:
+    """Both stages, run as a mode's policy says. The cross-encoder failing (or not configured)
+    keeps the order the candidates came in; the model failing keeps the cross-encoder's."""
+
+    def __init__(self, voyage: VoyageReranker, llm: LLMReranker) -> None:
+        self._voyage = voyage
+        self._llm = llm
+
+    async def rerank(
+        self,
+        query: str,
+        candidates: Sequence[Candidate],
+        mode: RerankMode,
+        *,
+        reasons: bool | None = None,
+        on_rerank_usage: RerankUsageSink | None = None,
+        on_llm_usage: LLMUsageSink | None = None,
+    ) -> Ranking:
+        """``candidates`` (in the first stage's order) reranked for ``mode``. ``reasons``
+        overrides the policy's."""
+        policy = POLICIES[mode]
+        _check_ids(candidates)
+        first: list[Ranked] = [Ranked(candidate) for candidate in candidates[: policy.top_k]]
+        scored = False
+        if candidates and self._voyage.configured:
+            try:
+                first = await self._voyage.rerank(
+                    query, candidates, top_k=policy.top_k, on_usage=on_rerank_usage
+                )
+                scored = True
+            except VoyageError as exc:
+                log.warning("rerank kept the retriever's order", error=type(exc).__name__)
+        if not policy.listwise:
+            return Ranking(tuple(first), "fallback", scored=scored)
+        ranking = await self._llm.rerank(
+            query,
+            first,
+            top_n=policy.top_n,
+            deep=policy.deep,
+            reasons=policy.reasons if reasons is None else reasons,
+            on_usage=on_llm_usage,
+        )
+        return replace(ranking, scored=scored)

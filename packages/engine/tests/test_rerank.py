@@ -32,9 +32,13 @@ from sensei_engine.search import rerank
 from sensei_engine.search.rerank import (
     MAX_CODE_LINES,
     MAX_LINE_CHARS,
+    POLICIES,
     Candidate,
     LLMReranker,
     Ranked,
+    Reranker,
+    RerankMode,
+    RerankPolicy,
     RerankUsage,
     VoyageReranker,
     answer_schema,
@@ -311,13 +315,18 @@ async def test_the_model_orders_the_candidates_with_reasons() -> None:
         billed.append(usage)
 
     candidates = _candidates(8)
-    ranking = await LLMReranker(api.client()).rerank(QUERY, candidates, top_n=6, on_usage=sink)
+    ranking = await LLMReranker(api.client()).rerank(
+        QUERY, candidates, top_n=6, reasons=True, on_usage=sink
+    )
 
     [body] = api.bodies("/v1/messages")
     assert body["model"] == "claude-haiku-5-5"
     assert body["output_config"]["effort"] == "low"
-    assert body["output_config"]["format"]["schema"] == answer_schema()
+    assert body["output_config"]["format"]["schema"] == answer_schema(reasons=True)
     assert body["system"][0]["text"] == system_prompt()
+    assert body["messages"][0]["content"].endswith(
+        "Pick at most 9, best first, with a reason for each."
+    )
     shown = _shown(body)
     # Short handles, never the caller's ids; the code is the excerpt.
     assert [entry["id"] for entry in shown] == [f"c{i}" for i in range(1, 9)]
@@ -368,7 +377,9 @@ async def test_windows_run_in_parallel_and_merge_by_grade() -> None:
     bodies = api.bodies("/v1/messages")
     assert len(bodies) == 3
     assert [entry["id"] for entry in _shown(bodies[0])][:3] == ["c1", "c4", "c7"]
-    assert "Pick at most 8, best first." in bodies[0]["messages"][0]["content"]
+    assert bodies[0]["messages"][0]["content"].endswith(
+        "Pick at most 8, best first, without reasons."
+    )
     ids = [r.candidate.id for r in ranking.items]
     assert ids[0] == "node-1"  # the only grade 3
     # Then the 2s, by rank in their window, ties in the first stage's order.
@@ -386,7 +397,9 @@ async def test_ids_it_was_not_shown_or_gave_twice_are_dropped_and_the_rest_fille
             {"id": " c1 ", "grade": 1, "reason": "  spaced \n out  "},
         ]
 
-    ranking = await LLMReranker(_model(pick).client()).rerank(QUERY, _candidates(5), top_n=4)
+    ranking = await LLMReranker(_model(pick).client()).rerank(
+        QUERY, _candidates(5), top_n=4, reasons=True
+    )
     assert ranking.dropped == 3
     assert [r.candidate.id for r in ranking.items] == ["node-2", "node-0", "node-1", "node-3"]
     assert ranking.items[1].reason == "spaced out"
@@ -415,14 +428,16 @@ async def test_a_window_that_fails_keeps_the_first_stage_order() -> None:
         handles = [entry["id"] for entry in _shown(json.loads(request.content))]
         if "c1" in handles:
             return httpx2.Response(200, json=message("not json"))
-        return httpx2.Response(200, json=message(json.dumps({"ranking": _picks(handles)})))
+        # The other window picks only its last candidate: the first was judged worse.
+        return httpx2.Response(200, json=message(json.dumps({"ranking": _picks(handles[-1:])})))
 
     api = FakeAnthropic({"/v1/messages": answer})
     ranking = await LLMReranker(api.client(), window_size=2).rerank(QUERY, _candidates(4), top_n=4)
     assert calls == 2
     assert ranking.source == "partial"
-    # Window 2 (node-1, node-3) answered: its picks first, then the rest in order.
-    assert [r.candidate.id for r in ranking.items] == ["node-3", "node-1", "node-0", "node-2"]
+    # Window 1 (node-0, node-2) failed, window 2 (node-1, node-3) picked node-3: the pick, then
+    # the failed window's candidates (never judged), then node-1 (judged worse).
+    assert [r.candidate.id for r in ranking.items] == ["node-3", "node-0", "node-2", "node-1"]
 
 
 async def test_a_model_that_errs_or_is_too_slow_keeps_the_first_stage_order() -> None:
@@ -465,3 +480,96 @@ async def test_code_that_looks_like_markup_stays_inside_its_candidate() -> None:
     shown = _shown(api.bodies("/v1/messages")[0])
     assert [entry["id"] for entry in shown] == ["c1", "c2"]
     assert shown[0]["code"] == sneaky.code
+
+
+async def test_without_being_asked_the_model_gives_no_reasons() -> None:
+    api = _model(_picks)  # answers with reasons anyway
+    ranking = await LLMReranker(api.client()).rerank(QUERY, _candidates(4), top_n=2)
+    [body] = api.bodies("/v1/messages")
+    schema = body["output_config"]["format"]["schema"]
+    assert schema == answer_schema()
+    assert "reason" not in schema["properties"]["ranking"]["items"]["properties"]
+    assert all(r.reason is None and r.grade == 2 for r in ranking.items)
+
+
+# ---------------------------------------------------------------- the policy per mode
+
+
+def test_each_mode_has_its_policy() -> None:
+    assert {
+        RerankMode.INTERACTIVE: RerankPolicy(top_k=40, listwise=False),
+        RerankMode.DEEP: RerankPolicy(top_k=40, listwise=True, top_n=15, deep=True),
+        RerankMode.AGENT: RerankPolicy(top_k=50, listwise=True, top_n=20),
+    } == POLICIES
+    assert not any(policy.reasons for policy in POLICIES.values())
+
+
+@respx.mock
+async def test_interactive_search_uses_the_cross_encoder_only() -> None:
+    route = respx.post(URL).mock(side_effect=_scored)
+    api = _model(_picks)
+    async with httpx.AsyncClient() as http:
+        reranker = Reranker(_voyage(http), LLMReranker(api.client()))
+        ranking = await reranker.rerank(QUERY, _candidates(150), RerankMode.INTERACTIVE)
+    assert route.call_count == 1
+    assert api.requests == []
+    assert ranking.scored
+    assert ranking.source == "fallback"
+    assert [r.candidate.id for r in ranking.items] == [f"node-{i}" for i in range(149, 109, -1)]
+
+
+@respx.mock
+async def test_deep_mode_reorders_the_cross_encoders_best_on_the_standard_tier() -> None:
+    route = respx.post(URL).mock(side_effect=_scored)
+    api = _model(lambda handles: _picks(handles[:2], 3), model="claude-sonnet-5-5")
+    async with httpx.AsyncClient() as http:
+        reranker = Reranker(_voyage(http), LLMReranker(api.client()))
+        ranking = await reranker.rerank(QUERY, _candidates(60), RerankMode.DEEP)
+    assert _bodies(route)[0]["top_k"] == 40
+    bodies = api.bodies("/v1/messages")
+    assert len(bodies) == 4  # 40 candidates, windows of 12
+    assert {body["model"] for body in bodies} == {"claude-sonnet-5-5"}
+    # The model sees the cross-encoder's order: c1 is its best, node-59.
+    assert _shown(bodies[0])[0]["code"].startswith("def f59(")
+    assert ranking.scored
+    assert ranking.source == "llm"
+    assert len(ranking.items) == 15
+    assert ranking.items[0].score is not None
+    assert ranking.items[0].grade == 3
+    assert all(r.reason is None for r in ranking.items)
+
+
+@respx.mock
+async def test_the_agent_keeps_more_and_may_ask_for_reasons() -> None:
+    route = respx.post(URL).mock(side_effect=_scored)
+    api = _model(_picks)
+    async with httpx.AsyncClient() as http:
+        reranker = Reranker(_voyage(http), LLMReranker(api.client()))
+        ranking = await reranker.rerank(QUERY, _candidates(80), RerankMode.AGENT, reasons=True)
+    assert _bodies(route)[0]["top_k"] == 50
+    bodies = api.bodies("/v1/messages")
+    assert {body["model"] for body in bodies} == {"claude-haiku-5-5"}
+    assert bodies[0]["output_config"]["format"]["schema"] == answer_schema(reasons=True)
+    assert len(ranking.items) == 20
+    assert ranking.items[0].reason is not None
+
+
+@respx.mock
+async def test_without_the_cross_encoder_the_retrievers_order_stands() -> None:
+    down = respx.post(URL).mock(return_value=httpx.Response(503, json={"detail": "down"}))
+    api = _model(_picks)
+    candidates = _candidates(60)
+    async with httpx.AsyncClient() as http:
+        failing = Reranker(_voyage(http), LLMReranker(api.client()))
+        ranking = await failing.rerank(QUERY, candidates, RerankMode.INTERACTIVE)
+        assert down.call_count == 2  # the attempt and one retry
+        assert not ranking.scored
+        assert [r.candidate for r in ranking.items] == candidates[:40]
+
+        unconfigured = Reranker(_voyage(http, api_key=None), LLMReranker(api.client()))
+        ranking = await unconfigured.rerank(QUERY, candidates, RerankMode.DEEP)
+    assert down.call_count == 2
+    # The model still runs on the retriever's first 40.
+    assert len(api.bodies("/v1/messages")) == 4
+    assert not ranking.scored
+    assert ranking.source == "llm"

@@ -18,9 +18,10 @@ Two steps:
 2. :class:`QueryRouter` asks Claude (the fast tier, low effort, structured output) for the
    class, the layers involved, likely identifiers and routes, and two rewrites: a structural
    one (which component, route or layer) and a behavioural one (what it does). Answers are
-   cached per normalized query. The rules' literals always survive: the model may add
-   literals only if they are in the query verbatim. If the model fails, refuses or is too
-   slow, the rules' answer is used.
+   cached per scope (the org) and normalized query: orgs never share an entry, so a fast
+   answer can't tell one org what another asked. The rules' literals always survive: the
+   model may add literals only if they are in the query verbatim. If the model fails,
+   refuses or is too slow, the rules' answer is used.
 
 Rewrites are additive (the original query always runs as its own leg); running them is for
 the retriever (2.9), not this module.
@@ -34,7 +35,7 @@ import hashlib
 import json
 import re
 import unicodedata
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field, replace
 from functools import cache
 from importlib import resources
@@ -85,6 +86,37 @@ class Layer(enum.StrEnum):
     CONFIG = "config"
     TEST = "test"
     DOCS = "docs"
+
+
+class Lane(enum.StrEnum):
+    """The design system's swimlanes, as the API, the constellation and the flow view (2.13)
+    draw them. The router's finer layers fold into them (:func:`lane_of`)."""
+
+    UI = "ui"
+    API = "api"
+    SVC = "svc"
+    DB = "db"
+    OTHER = "other"
+
+
+LANES: Mapping[Layer, Lane] = {
+    Layer.UI: Lane.UI,
+    Layer.STATE: Lane.UI,
+    Layer.CLIENT: Lane.UI,
+    Layer.ROUTE: Lane.API,
+    Layer.HANDLER: Lane.API,
+    Layer.SERVICE: Lane.SVC,
+    Layer.WORKER: Lane.SVC,
+    Layer.DB: Lane.DB,
+    Layer.CONFIG: Lane.OTHER,
+    Layer.TEST: Lane.OTHER,
+    Layer.DOCS: Lane.OTHER,
+}
+
+
+def lane_of(layer: Layer) -> Lane:
+    """The swimlane ``layer`` is drawn in (search filters lanes through it)."""
+    return LANES[layer]
 
 
 Source = Literal["rules", "llm", "cache", "fallback"]
@@ -488,9 +520,13 @@ def normalize(query: str) -> str:
     return " ".join(text.split()).rstrip(" ?.!")
 
 
-def cache_key(query: str, model: str) -> str:
-    digest = hashlib.sha256(f"{PROMPT_VERSION}\0{model}\0{normalize(query)}".encode()).hexdigest()
-    return CACHE_PREFIX + digest
+def cache_key(query: str, model: str, scope: str) -> str:
+    """The cache entry for ``query`` within ``scope`` (an org id)."""
+    if not scope:
+        msg = "a cache scope is required"
+        raise ValueError(msg)
+    parts = f"{PROMPT_VERSION}\0{model}\0{scope}\0{normalize(query)}"
+    return CACHE_PREFIX + hashlib.sha256(parts.encode()).hexdigest()
 
 
 def _clean(values: Iterable[str]) -> list[str]:
@@ -535,14 +571,15 @@ class QueryRouter:
         self._timeout = timeout_seconds
         self._ttl = cache_ttl_seconds
 
-    async def route(self, query: str, *, on_usage: LLMUsageSink | None = None) -> Route:
+    async def route(self, query: str, *, scope: str, on_usage: LLMUsageSink | None = None) -> Route:
+        """Route ``query`` for ``scope`` (the org asking: answers are cached per org)."""
         classified = classify(query)
         if classified.decided or not self._client.configured:
             return classified.route
         rules = classified.route
         tier = tier_for(Role.ROUTER)
         model = self._client.model_for(tier)
-        key = cache_key(rules.query, model)
+        key = cache_key(rules.query, model, scope)
         cached = await self._cached(key)
         if cached is not None:
             return _merge(rules, cached, "cache")

@@ -11,14 +11,18 @@ import pytest
 from fakeredis import FakeAsyncRedis
 from redis.exceptions import ConnectionError as RedisConnectionError
 
+from sensei_engine.ingest.constellation import LAYERS, OTHER_LAYER
 from sensei_engine.llm.anthropic_client import LLMUsage
 from sensei_engine.search.route import (
+    LANES,
+    Lane,
     Layer,
     QueryClass,
     QueryRouter,
     answer_schema,
     cache_key,
     classify,
+    lane_of,
     normalize,
     system_prompt,
 )
@@ -144,6 +148,7 @@ ANSWER = {
     "structural_rewrite": "InvoiceForm component, POST /api/v2/invoices handler, invoices table",
     "behavioural_rewrite": "submit the invoice form and save a new invoice row",
 }
+ORG = "org-1"
 QUERY = "how does the invoice form reach /api/v2/invoices and what row is written (not tests)?"
 
 
@@ -160,7 +165,7 @@ async def test_the_model_routes_what_the_rules_cannot_and_literals_survive() -> 
     async def sink(usage: LLMUsage) -> None:
         billed.append(usage)
 
-    route = await QueryRouter(api.client()).route(QUERY, on_usage=sink)
+    route = await QueryRouter(api.client()).route(QUERY, on_usage=sink, scope=ORG)
 
     [body] = api.bodies("/v1/messages")
     assert body["model"] == "claude-haiku-5-5"
@@ -183,14 +188,16 @@ async def test_the_model_routes_what_the_rules_cannot_and_literals_survive() -> 
 
 async def test_a_rule_decided_query_never_reaches_the_model() -> None:
     api = _api()
-    route = await QueryRouter(api.client()).route("where is `PaymentQueueService` defined?")
+    route = await QueryRouter(api.client()).route(
+        "where is `PaymentQueueService` defined?", scope=ORG
+    )
     assert (route.source, route.query_class) == ("rules", QueryClass.SYMBOL)
     assert api.requests == []
 
 
 async def test_without_a_key_the_rules_route_alone() -> None:
     api = _api()
-    route = await QueryRouter(api.client(api_key=None)).route(QUERY)
+    route = await QueryRouter(api.client(api_key=None)).route(QUERY, scope=ORG)
     assert (route.source, route.query_class) == ("fallback", QueryClass.FLOW)
     assert api.requests == []
 
@@ -200,16 +207,34 @@ async def test_answers_are_cached_per_normalized_query() -> None:
     redis = FakeAsyncRedis(decode_responses=True)
     router = QueryRouter(api.client(), redis, cache_ttl_seconds=60)
 
-    first = await router.route(QUERY)
-    again = await router.route("  " + QUERY.upper().replace("?", "") + " ")
+    first = await router.route(QUERY, scope=ORG)
+    again = await router.route("  " + QUERY.upper().replace("?", "") + " ", scope=ORG)
 
     assert (first.source, again.source) == ("llm", "cache")
     assert len(api.requests) == 1
-    key = cache_key(QUERY, "claude-haiku-5-5")
+    key = cache_key(QUERY, "claude-haiku-5-5", ORG)
     assert 0 < await redis.ttl(key) <= 60
     assert again.query_class is first.query_class
     # Literals come from the query asked, in its own spelling.
     assert again.literals == ("/API/V2/INVOICES",)
+
+
+async def test_orgs_never_share_a_cached_answer() -> None:
+    api = _api()
+    redis = FakeAsyncRedis(decode_responses=True)
+    router = QueryRouter(api.client(), redis, cache_ttl_seconds=60)
+
+    mine = await router.route(QUERY, scope="org-a")
+    theirs = await router.route(QUERY, scope="org-b")
+
+    # The second org pays for its own answer: a cache hit would tell it the first one asked.
+    assert (mine.source, theirs.source) == ("llm", "llm")
+    assert len(api.requests) == 2
+    assert cache_key(QUERY, "claude-haiku-5-5", "org-a") != cache_key(
+        QUERY, "claude-haiku-5-5", "org-b"
+    )
+    with pytest.raises(ValueError, match="scope"):
+        cache_key(QUERY, "claude-haiku-5-5", "")
 
 
 def test_normalize() -> None:
@@ -226,7 +251,7 @@ async def test_a_broken_cache_is_skipped() -> None:
             raise RedisConnectionError
 
     api = _api()
-    route = await QueryRouter(api.client(), Broken()).route(QUERY)
+    route = await QueryRouter(api.client(), Broken()).route(QUERY, scope=ORG)
     assert route.source == "llm"
 
 
@@ -246,7 +271,7 @@ async def test_a_failed_answer_falls_back_to_the_rules(reply: dict[str, object])
     async def sink(usage: LLMUsage) -> None:
         billed.append(usage)
 
-    route = await QueryRouter(api.client()).route(QUERY, on_usage=sink)
+    route = await QueryRouter(api.client()).route(QUERY, on_usage=sink, scope=ORG)
 
     assert (route.source, route.query_class) == ("fallback", QueryClass.FLOW)
     assert route.literals == ("/api/v2/invoices",)
@@ -256,7 +281,7 @@ async def test_a_failed_answer_falls_back_to_the_rules(reply: dict[str, object])
 async def test_api_errors_fall_back_to_the_rules() -> None:
     overloaded = {"type": "error", "error": {"type": "overloaded_error", "message": "busy"}}
     api = FakeAnthropic({"/v1/messages": httpx2.Response(529, json=overloaded)})
-    route = await QueryRouter(api.client()).route(QUERY)
+    route = await QueryRouter(api.client()).route(QUERY, scope=ORG)
     assert route.source == "fallback"
 
 
@@ -269,7 +294,21 @@ async def test_a_slow_model_is_not_waited_for() -> None:
     redis = FakeAsyncRedis(decode_responses=True)
     router = QueryRouter(api.client(), redis, timeout_seconds=0.05)
 
-    route = await router.route(QUERY)
+    route = await router.route(QUERY, scope=ORG)
 
     assert route.source == "fallback"
-    assert await redis.ttl(cache_key(QUERY, "claude-haiku-5-5")) == -2  # a fallback isn't cached
+    assert (
+        await redis.ttl(cache_key(QUERY, "claude-haiku-5-5", ORG)) == -2
+    )  # a fallback isn't cached
+
+
+def test_every_layer_folds_into_one_of_the_design_systems_lanes() -> None:
+    assert set(LANES) == set(Layer)
+    assert {lane_of(layer) for layer in Layer} == set(Lane)
+    assert [lane_of(layer) for layer in (Layer.STATE, Layer.HANDLER, Layer.WORKER)] == [
+        Lane.UI,
+        Lane.API,
+        Lane.SVC,
+    ]
+    # The same five names the constellation (and the API) use.
+    assert {lane.value for lane in Lane} == {*LAYERS.values(), OTHER_LAYER}

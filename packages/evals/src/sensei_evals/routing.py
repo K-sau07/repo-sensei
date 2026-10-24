@@ -107,7 +107,7 @@ async def evaluate(
             spent.append(usage)
 
         started = time.perf_counter()
-        route = await router.route(query.query, on_usage=sink)
+        route = await router.route(query.query, scope="evals", on_usage=sink)
         latency_ms = (time.perf_counter() - started) * 1000
         cost = sum(
             (
