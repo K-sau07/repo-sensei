@@ -4,23 +4,26 @@ tracked in the database, collected once, their usage in the ledger."""
 
 from __future__ import annotations
 
+import asyncio
 import json
+import logging
 import uuid
-from collections.abc import Callable
+from collections.abc import AsyncGenerator, AsyncIterator, Callable
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
 import httpx2
 import pytest
 from pydantic import SecretStr
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import delete, func, insert, select
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
 from sensei_core.config import AnthropicSettings, Settings
 from sensei_core.db.tenancy import set_org_context
 from sensei_core.mail import MemoryMailer
-from sensei_core.models import LLMBatchStatus, UsageEvent, UsageKind
+from sensei_core.models import LLMBatch, LLMBatchStatus, Org, UsageEvent, UsageKind
 from sensei_core.orgs.service import OrgService
 from sensei_core.usage import DEFAULT_PRICE_TABLE, CostCalculator
 from sensei_engine.llm import batches
@@ -35,7 +38,9 @@ from sensei_engine.llm.anthropic_client import (
     LLMTruncated,
     LLMUnavailable,
     LLMUsage,
+    Role,
     Tier,
+    tier_for,
 )
 from sensei_engine.llm.ledger import usage_ledger
 from sensei_testing import make_user
@@ -240,6 +245,82 @@ async def test_a_fallback_bills_each_model_that_ran() -> None:
     )
 
 
+async def test_an_attempt_without_a_model_is_billed_as_the_one_requested() -> None:
+    attempt = {
+        "type": "message",
+        "model": None,
+        "input_tokens": 150,
+        "output_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "cache_creation_input_tokens": 0,
+    }
+    usage = {"input_tokens": 150, "output_tokens": 0, "iterations": [attempt]}
+    answer = message("ok", model="claude-sonnet-5", usage=usage)  # served by the fallback
+    api = FakeAnthropic({"/v1/messages": httpx2.Response(200, json=answer)})
+
+    result = await api.client().complete(LLMRequest("hi", tier=Tier.DEEP))
+
+    assert [u.model for u in result.usage] == ["claude-opus-5-5"]
+
+
+class _Stream(httpx2.AsyncByteStream):
+    """A results stream: these lines, then (optionally) a broken connection."""
+
+    def __init__(self, lines: list[bytes], *, then_fail: bool = False) -> None:
+        self.lines = lines
+        self.then_fail = then_fail
+        self.closed = False
+
+    async def __aiter__(self) -> AsyncIterator[bytes]:
+        for line in self.lines:
+            yield line + b"\n"
+        if self.then_fail:
+            raise httpx2.ReadError("connection reset")
+
+    async def aclose(self) -> None:
+        self.closed = True
+
+
+def _results_api(stream: _Stream) -> FakeAnthropic:
+    path = "/v1/messages/batches/msgbatch_1"
+    return FakeAnthropic(
+        {
+            path: httpx2.Response(200, json=batch("msgbatch_1", "ended", succeeded=2)),
+            f"{path}/results": httpx2.Response(200, stream=stream),
+        }
+    )
+
+
+_LINE = json.dumps(
+    {"custom_id": "a", "result": {"type": "succeeded", "message": message("ok")}}
+).encode()
+
+
+@pytest.mark.parametrize(
+    ("stream", "error"),
+    [
+        (_Stream([_LINE], then_fail=True), LLMUnavailable),
+        (_Stream([_LINE, b"{not json"]), LLMError),
+    ],
+)
+async def test_a_broken_results_stream_is_our_error_and_is_closed(
+    stream: _Stream, error: type[LLMError]
+) -> None:
+    client = _results_api(stream).client()
+    with pytest.raises(error):
+        _ = [item async for item in client.batch_results("msgbatch_1")]
+    assert stream.closed
+
+
+async def test_the_results_stream_is_closed_when_reading_stops_early() -> None:
+    stream = _Stream([_LINE, _LINE])
+    results = _results_api(stream).client().batch_results("msgbatch_1")
+    async for _ in results:
+        break
+    await results.aclose()
+    assert stream.closed
+
+
 @pytest.mark.parametrize(
     ("answer", "error"),
     [
@@ -325,18 +406,47 @@ async def test_count_tokens() -> None:
         {"/v1/messages/count_tokens": httpx2.Response(200, json={"input_tokens": 29})}
     )
 
-    count = await api.client().count_tokens(LLMRequest("x", system="s", tier=Tier.FAST))
+    request = LLMRequest("x", system="s", tier=Tier.FAST, schema=SCHEMA, effort="low")
+    count = await api.client().count_tokens(request)
 
     assert count == 29
     [body] = api.bodies("/v1/messages/count_tokens")
     assert body["model"] == "claude-haiku-5-5"
     assert body["system"] == [{"type": "text", "text": "s"}]
+    # The schema is part of what the model reads, so it is counted.
+    assert body["output_config"]["format"]["schema"] == SCHEMA
+
+
+async def test_extra_headers_from_the_environment_are_refused(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ANTHROPIC_CUSTOM_HEADERS", "X-Leak: yes")
+    api = FakeAnthropic({"/v1/messages": httpx2.Response(200, json=message("ok"))})
+    with pytest.raises(LLMError, match="ANTHROPIC_CUSTOM_HEADERS"):
+        await api.client().complete(LLMRequest("x"))
+    assert api.requests == []
+
+
+def test_the_sdks_debug_logs_stay_off() -> None:
+    # ANTHROPIC_LOG=debug would make the SDK log request bodies (customers' code).
+    for name in ("anthropic", "httpx2"):
+        assert logging.getLogger(name).getEffectiveLevel() >= logging.WARNING
+
+
+def test_callers_ask_by_role() -> None:
+    assert [tier_for(role) for role in Role] == [Tier.FAST, Tier.FAST, Tier.STANDARD, Tier.DEEP]
+
+
+def test_fallback_models_are_priced() -> None:
+    calculator = CostCalculator(DEFAULT_PRICE_TABLE)
+    for model in ("claude-sonnet-5", "claude-opus-5", "claude-opus-4-8"):
+        assert calculator.price_for("anthropic", model) is not None
 
 
 async def test_batch_request_ids_are_checked_before_sending() -> None:
     api = FakeAnthropic()
     client = api.client()
-    for ids in ([], ["a", "a"], ["has space"], ["x" * 65]):
+    for ids in ([], ["a", "a"], ["has space"], ["x" * 65], ["file_1\n"]):
         with pytest.raises(ValueError, match="batch"):
             await client.submit_batch([(i, LLMRequest("x")) for i in ids])
     assert api.requests == []
@@ -417,24 +527,34 @@ async def _org(db: AsyncSession) -> uuid.UUID:
     return access.org.id
 
 
-def _batch_api(*results: dict[str, Any]) -> tuple[FakeAnthropic, list[str]]:
-    """A fake API whose batch ``msgbatch_1`` runs through ``statuses`` as it is polled."""
-    path = "/v1/messages/batches"
+BATCHES = "/v1/messages/batches"
+
+
+def _batch_api(
+    *results: dict[str, Any], listed: list[dict[str, Any]] | None = None
+) -> FakeAnthropic:
+    """A fake API with one batch, ``msgbatch_1``: created on POST, in progress on the first poll
+    and ended after; ``listed`` is what listing the account's batches returns."""
     statuses = ["in_progress", "ended"]
     counts = {"succeeded": len(results)}
+
+    def batches_root(request: httpx2.Request) -> httpx2.Response:
+        if request.method == "GET":
+            page = {"data": listed or [], "has_more": False, "first_id": None, "last_id": None}
+            return httpx2.Response(200, json=page)
+        return httpx2.Response(200, json=batch("msgbatch_1"))
 
     def state(_: httpx2.Request) -> httpx2.Response:
         status = statuses.pop(0) if len(statuses) > 1 else statuses[0]
         return httpx2.Response(200, json=batch("msgbatch_1", status, **counts))
 
-    api = FakeAnthropic(
+    return FakeAnthropic(
         {
-            path: httpx2.Response(200, json=batch("msgbatch_1")),
-            f"{path}/msgbatch_1": state,
-            f"{path}/msgbatch_1/results": jsonl(*results),
+            BATCHES: batches_root,
+            f"{BATCHES}/msgbatch_1": state,
+            f"{BATCHES}/msgbatch_1/results": jsonl(*results),
         }
     )
-    return api, statuses
 
 
 def _succeeded(custom_id: str, text: str) -> dict[str, Any]:
@@ -448,35 +568,44 @@ def _succeeded(custom_id: str, text: str) -> dict[str, Any]:
     return {"custom_id": custom_id, "result": {"type": "succeeded", "message": answer}}
 
 
+async def _sent(
+    db: AsyncSession,
+    client: AnthropicClient,
+    requests: list[tuple[str, LLMRequest]],
+    org_id: uuid.UUID,
+    **ref: str,
+) -> LLMBatch:
+    row = await batches.reserve(db, client, requests, org_id=org_id, kind="summaries", **ref)
+    return await batches.send(db, client, row.id, requests)
+
+
 @pytest.mark.integration
-async def test_a_batch_is_tracked_until_its_results_are_collected_once(
+async def test_a_batch_is_recorded_sent_and_its_results_collected_once(
     db_session: AsyncSession,
 ) -> None:
     org_id = await _org(db_session)
-    api, _ = _batch_api(
-        _succeeded("f1", '{"summary": "one"}'), _succeeded("f2", '{"summary": "two"}')
-    )
+    api = _batch_api(_succeeded("f1", '{"summary": "one"}'), _succeeded("f2", '{"summary": "two"}'))
     client = api.client()
-    request = LLMRequest("x", tier=Tier.FAST, schema=SCHEMA)
+    requests = [("f1", LLMRequest("x", tier=Tier.FAST, schema=SCHEMA))] * 1
+    requests.append(("f2", LLMRequest("y", tier=Tier.FAST, schema=SCHEMA)))
 
-    row = await batches.submit(
-        db_session,
-        client,
-        [("f1", request), ("f2", request)],
-        org_id=org_id,
-        kind="summaries",
-        ref_type="index_job",
+    row = await batches.reserve(
+        db_session, client, requests, org_id=org_id, kind="summaries", ref_type="index_job",
         ref_id="job-1",
-    )
-    assert (row.model, row.request_count, row.status) == (
-        "claude-haiku-5-5",
-        2,
-        LLMBatchStatus.IN_PROGRESS,
-    )
+    )  # fmt: skip
+    # Recorded before anything is sent (the caller commits here).
+    assert (row.status, row.provider_batch_id, api.requests) == (
+        LLMBatchStatus.SUBMITTING, None, [],
+    )  # fmt: skip
+    await batches.send(db_session, client, row.id, requests)
+    assert (row.provider_batch_id, row.model, row.status) == (
+        "msgbatch_1", "claude-haiku-5-5", LLMBatchStatus.IN_PROGRESS,
+    )  # fmt: skip
+    with pytest.raises(ValueError, match="isn't waiting to be sent"):
+        await batches.send(db_session, client, row.id, requests)  # never twice
 
     # A restarted worker finds it, polls it until it ends, then collects it.
     [found] = await batches.uncollected(db_session, kind="summaries", ref_id="job-1")
-    assert found.id == row.id
     slept: list[float] = []
 
     async def sleep(seconds: float) -> None:
@@ -487,20 +616,15 @@ async def test_a_batch_is_tracked_until_its_results_are_collected_once(
     assert found.ended_at is not None
 
     sink = usage_ledger(
-        db_session,
-        CostCalculator(DEFAULT_PRICE_TABLE),
-        org_id=org_id,
-        ref_type="index_job",
+        db_session, CostCalculator(DEFAULT_PRICE_TABLE), org_id=org_id, ref_type="index_job",
         ref_id="job-1",
-    )
-    items = [
-        i async for i in batches.collect(db_session, client, found, json_output=True, on_usage=sink)
-    ]
+    )  # fmt: skip
+    items = await batches.collect(db_session, client, found, json_output=True, on_usage=sink)
     assert sorted(i.result.data["summary"] for i in items if i.result) == ["one", "two"]
     assert found.collected_at is not None
     assert await batches.uncollected(db_session, kind="summaries") == []
-    with pytest.raises(ValueError, match="already collected"):
-        _ = [i async for i in batches.collect(db_session, client, found)]
+    with pytest.raises(batches.BatchNotCollectable):
+        await batches.collect(db_session, client, found)
 
     # Haiku 5.5 lists at $0.10 / $0.50 per million tokens in / out; batches are half price.
     rows = (await db_session.scalars(select(UsageEvent).where(UsageEvent.org_id == org_id))).all()
@@ -512,32 +636,168 @@ async def test_a_batch_is_tracked_until_its_results_are_collected_once(
 @pytest.mark.integration
 async def test_a_running_batch_cannot_be_collected(db_session: AsyncSession) -> None:
     org_id = await _org(db_session)
-    api, _ = _batch_api()
+    client = _batch_api().client()
+    row = await _sent(db_session, client, [("a", LLMRequest("x"))], org_id)
+    with pytest.raises(batches.BatchNotCollectable):
+        await batches.collect(db_session, client, row)
+
+
+@pytest.mark.integration
+async def test_a_collection_that_fails_part_way_leaves_nothing_behind(
+    db_session: AsyncSession,
+) -> None:
+    org_id = await _org(db_session)
+    api = _batch_api(_succeeded("f1", "{}"))
     client = api.client()
-    row = await batches.submit(
-        db_session, client, [("a", LLMRequest("x"))], org_id=org_id, kind="summaries"
-    )
-    with pytest.raises(ValueError, match="hasn't ended"):
-        _ = [i async for i in batches.collect(db_session, client, row)]
+    row = await _sent(db_session, client, [("f1", LLMRequest("x"))], org_id)
+    await batches.refresh(db_session, client, row)
+    await batches.refresh(db_session, client, row)  # ended
+    stream = _Stream([json.dumps(_succeeded("f1", "{}")).encode()], then_fail=True)
+    api.routes[f"{BATCHES}/msgbatch_1/results"] = httpx2.Response(200, stream=stream)
+    sink = usage_ledger(db_session, CostCalculator(DEFAULT_PRICE_TABLE), org_id=org_id)
+
+    with pytest.raises(LLMUnavailable):
+        async with db_session.begin_nested():  # the caller's transaction, rolled back
+            await batches.collect(db_session, client, row, on_usage=sink)
+
+    await db_session.refresh(row)
+    assert row.collected_at is None  # the claim went with the rollback: it can run again
+    usage = await db_session.scalar(select(func.count()).select_from(UsageEvent))
+    assert usage == 0
+    assert stream.closed
 
 
 @pytest.mark.integration
 async def test_a_batch_uses_one_model(db_session: AsyncSession) -> None:
     org_id = await _org(db_session)
-    api, _ = _batch_api()
+    api = _batch_api()
     mixed = [("a", LLMRequest("x", tier=Tier.FAST)), ("b", LLMRequest("x", tier=Tier.DEEP))]
     with pytest.raises(ValueError, match="one model tier"):
-        await batches.submit(db_session, api.client(), mixed, org_id=org_id, kind="summaries")
+        await batches.reserve(db_session, api.client(), mixed, org_id=org_id, kind="summaries")
     assert api.requests == []
 
 
 @pytest.mark.integration
 async def test_batches_are_org_scoped(db_session: AsyncSession) -> None:
     org_id = await _org(db_session)
-    api, _ = _batch_api()
-    await batches.submit(
-        db_session, api.client(), [("a", LLMRequest("x"))], org_id=org_id, kind="summaries"
-    )
+    await _sent(db_session, _batch_api().client(), [("a", LLMRequest("x"))], org_id)
     assert len(await batches.uncollected(db_session, kind="summaries")) == 1
     await set_org_context(db_session, uuid.uuid4())  # another org
     assert await batches.uncollected(db_session, kind="summaries") == []
+
+
+def _listed(batch_id: str, created: datetime, requests: int) -> dict[str, Any]:
+    listed = batch(batch_id, succeeded=requests)
+    listed["created_at"] = created.isoformat()
+    listed["request_counts"] = {
+        "processing": requests, "succeeded": 0, "errored": 0, "canceled": 0, "expired": 0,
+    }  # fmt: skip
+    return listed
+
+
+@pytest.mark.integration
+async def test_reconcile_settles_rows_left_submitting(db_session: AsyncSession) -> None:
+    org_id = await _org(db_session)
+    rows: dict[str, LLMBatch] = {}
+    for name, count in (("adopted", 3), ("lost", 5), ("ambiguous", 7), ("recent", 9)):
+        rows[name] = await batches.reserve(
+            db_session, _batch_api().client(), [(f"r{i}", LLMRequest("x")) for i in range(count)],
+            org_id=org_id, kind="summaries",
+        )  # fmt: skip
+    created = rows["adopted"].created_at
+    listed = [
+        _listed("msgbatch_adopt", created + timedelta(seconds=2), 3),
+        _listed("msgbatch_amb1", created + timedelta(seconds=1), 7),
+        _listed("msgbatch_amb2", created + timedelta(seconds=3), 7),
+        _listed("msgbatch_far", created - timedelta(hours=2), 5),  # far too early: not "lost"'s
+    ]
+    client = _batch_api(listed=listed).client()
+    later = created + timedelta(minutes=11)
+    rows["recent"].created_at = created + timedelta(minutes=5)  # not stuck long enough yet
+    await db_session.flush()
+
+    settled = await batches.reconcile(db_session, client, now=later)
+
+    assert {b.id for b in settled} == {rows[n].id for n in ("adopted", "lost", "ambiguous")}
+    assert (rows["adopted"].provider_batch_id, rows["adopted"].status) == (
+        "msgbatch_adopt", LLMBatchStatus.IN_PROGRESS,
+    )  # fmt: skip
+    assert rows["lost"].status is LLMBatchStatus.FAILED
+    assert rows["ambiguous"].status is LLMBatchStatus.FAILED
+    assert rows["recent"].status is LLMBatchStatus.SUBMITTING
+    # Failed rows are no longer waiting for anything.
+    waiting = await batches.uncollected(db_session, kind="summaries")
+    assert {b.id for b in waiting} == {rows["adopted"].id, rows["recent"].id}
+
+
+@pytest.fixture
+async def ended_batch(migrated_test_db: Settings) -> AsyncGenerator[tuple[uuid.UUID, uuid.UUID]]:
+    """An org with one ended, uncollected batch, committed by the system role and removed
+    afterwards."""
+    system = create_async_engine(migrated_test_db.database.system_url.get_secret_value())
+    org_id, batch_id = uuid.uuid4(), uuid.uuid4()
+    async with system.begin() as conn:
+        await conn.execute(insert(Org).values(id=org_id, slug=f"race-{org_id.hex[:8]}", name="R"))
+        await conn.execute(
+            insert(LLMBatch).values(
+                id=batch_id, org_id=org_id, kind="summaries", provider="anthropic",
+                provider_batch_id=f"msgbatch_{org_id.hex[:8]}", model="claude-haiku-5-5",
+                status=LLMBatchStatus.ENDED, request_count=1,
+            )
+        )  # fmt: skip
+    try:
+        yield org_id, batch_id
+    finally:
+        async with system.begin() as conn:
+            await conn.execute(delete(Org).where(Org.id == org_id))
+        await system.dispose()
+
+
+@pytest.mark.integration
+async def test_two_collectors_at_once_collect_and_bill_once(
+    migrated_test_db: Settings, ended_batch: tuple[uuid.UUID, uuid.UUID]
+) -> None:
+    org_id, batch_id = ended_batch
+    engine = create_async_engine(migrated_test_db.database.url.get_secret_value())
+    first_claimed, first_may_commit = asyncio.Event(), asyncio.Event()
+    outcomes: list[str] = []
+
+    async def collector(name: str) -> None:
+        async with AsyncSession(engine, expire_on_commit=False) as db, db.begin():
+            await set_org_context(db, org_id)
+            row = await db.get(LLMBatch, batch_id)
+            assert row is not None
+            assert row.provider_batch_id is not None
+            api = FakeAnthropic(
+                {f"{BATCHES}/{row.provider_batch_id}": httpx2.Response(
+                    200, json=batch(row.provider_batch_id, "ended", succeeded=1)
+                ), f"{BATCHES}/{row.provider_batch_id}/results": jsonl(_succeeded("f1", "{}"))}
+            )  # fmt: skip
+            sink = usage_ledger(db, CostCalculator(DEFAULT_PRICE_TABLE), org_id=org_id)
+            try:
+                items = await batches.collect(db, api.client(), row, on_usage=sink)
+            except batches.BatchNotCollectable:
+                outcomes.append(f"{name}: already collected")
+                return
+            outcomes.append(f"{name}: {len(items)} collected")
+            if name == "first":
+                first_claimed.set()
+                await first_may_commit.wait()  # hold the claim open while the second tries
+
+    first = asyncio.create_task(collector("first"))
+    await first_claimed.wait()
+    second = asyncio.create_task(collector("second"))
+    await asyncio.sleep(0.2)  # the second is now blocked on the first's claim
+    assert not second.done()
+    first_may_commit.set()
+    await asyncio.gather(first, second)
+    await engine.dispose()
+
+    assert outcomes == ["first: 1 collected", "second: already collected"]
+    system = create_async_engine(migrated_test_db.database.system_url.get_secret_value())
+    async with system.connect() as conn:
+        billed = await conn.scalar(
+            select(func.count()).select_from(UsageEvent).where(UsageEvent.org_id == org_id)
+        )
+    await system.dispose()
+    assert billed == 1

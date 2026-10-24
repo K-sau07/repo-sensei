@@ -1,5 +1,9 @@
 """LLM batches: requests sent to a provider's batch API, tracked so a restarted worker picks up
-where it left off (polls the batches still running, collects the results of those that ended)."""
+where it left off (polls the batches still running, collects the results of those that ended).
+
+A row is written (and committed) before the batch is sent, so a batch the provider accepted is
+never forgotten: a row still ``submitting`` after a crash is matched to the provider's list of
+batches, or marked ``failed`` if it was never sent."""
 
 from __future__ import annotations
 
@@ -18,8 +22,11 @@ def _values(enum_type: type[enum.StrEnum]) -> list[str]:
 
 
 class LLMBatchStatus(enum.StrEnum):
-    """The provider's processing status (Anthropic's ``processing_status``)."""
+    """The provider's processing status (Anthropic's ``processing_status``), plus ours before and
+    instead of it."""
 
+    SUBMITTING = "submitting"  # recorded, not yet known to be accepted by the provider
+    FAILED = "failed"  # never accepted (refused, or lost before it was sent)
     IN_PROGRESS = "in_progress"
     CANCELING = "canceling"
     ENDED = "ended"  # every request has a result (succeeded, errored, canceled or expired)
@@ -42,12 +49,12 @@ class LLMBatch(IdMixin, OrgScopedMixin, Base):
 
     kind: Mapped[str] = mapped_column(String(50))  # what the requests are for: "summaries"
     provider: Mapped[str] = mapped_column(String(50))
-    provider_batch_id: Mapped[str] = mapped_column(String(100), unique=True)
+    provider_batch_id: Mapped[str | None] = mapped_column(String(100), unique=True)
     model: Mapped[str] = mapped_column(String(100))
     status: Mapped[LLMBatchStatus] = mapped_column(
         Enum(LLMBatchStatus, name="llm_batch_status", values_callable=_values),
-        default=LLMBatchStatus.IN_PROGRESS,
-        server_default=LLMBatchStatus.IN_PROGRESS.value,
+        default=LLMBatchStatus.SUBMITTING,
+        server_default=LLMBatchStatus.SUBMITTING.value,
     )
     request_count: Mapped[int] = mapped_column(Integer)
     succeeded: Mapped[int] = mapped_column(Integer, default=0, server_default="0")

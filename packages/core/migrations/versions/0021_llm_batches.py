@@ -22,7 +22,13 @@ branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
 STATUS = postgresql.ENUM(
-    "in_progress", "canceling", "ended", name="llm_batch_status", create_type=False
+    "submitting",
+    "failed",
+    "in_progress",
+    "canceling",
+    "ended",
+    name="llm_batch_status",
+    create_type=False,
 )
 
 
@@ -32,9 +38,9 @@ def upgrade() -> None:
         "llm_batches",
         sa.Column("kind", sa.String(length=50), nullable=False),
         sa.Column("provider", sa.String(length=50), nullable=False),
-        sa.Column("provider_batch_id", sa.String(length=100), nullable=False),
+        sa.Column("provider_batch_id", sa.String(length=100), nullable=True),
         sa.Column("model", sa.String(length=100), nullable=False),
-        sa.Column("status", STATUS, server_default="in_progress", nullable=False),
+        sa.Column("status", STATUS, server_default="submitting", nullable=False),
         sa.Column("request_count", sa.Integer(), nullable=False),
         sa.Column("succeeded", sa.Integer(), server_default="0", nullable=False),
         sa.Column("errored", sa.Integer(), server_default="0", nullable=False),

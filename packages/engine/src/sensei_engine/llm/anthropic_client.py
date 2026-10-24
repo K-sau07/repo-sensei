@@ -2,7 +2,8 @@
 and the Message Batches API (half price, results within 24 hours) for bulk work like summaries.
 
 * **Models by tier** (:class:`Tier`), from settings: ``fast`` (Haiku) for bulk work, ``standard``
-  (Sonnet), ``deep`` (Opus).
+  (Sonnet), ``deep`` (Opus). Callers ask by :class:`Role` (router, summary, agent, escalate),
+  mapped to a tier by :func:`tier_for`.
 * **Effort** (``low`` … ``max``) sets how much the model thinks; the newest models think by
   default, and thinking counts toward ``max_tokens``.
 * **Structured output**: a request with a JSON schema gets JSON matching it back
@@ -15,14 +16,21 @@ and the Message Batches API (half price, results within 24 hours) for bulk work 
 * **Cost**: each response's usage goes to ``on_usage``, once per model that ran (a fallback bills
   the declined attempt and the model that answered), and batch usage is marked as such (half
   price).
+* **Nothing from the environment**: the key is passed explicitly, so the SDK reads no
+  ``ANTHROPIC_API_KEY``, token or local profile; ``ANTHROPIC_CUSTOM_HEADERS`` (which the SDK would
+  add to every request) is refused, and ``ANTHROPIC_LOG`` can't turn on the SDK's debug logs
+  (they would print prompts, which hold customers' code).
 """
 
 from __future__ import annotations
 
 import enum
 import json
+import logging
+import os
 import re
 from collections.abc import (
+    AsyncGenerator,
     AsyncIterator,
     Awaitable,
     Callable,
@@ -33,6 +41,7 @@ from collections.abc import (
 )
 from contextlib import contextmanager
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any, Literal
 
 import anthropic
@@ -44,14 +53,18 @@ from anthropic.types.beta import (
     BetaMessageIterationUsage,
 )
 from anthropic.types.message_create_params import MessageCreateParamsNonStreaming
-from anthropic.types.messages import MessageBatch
+from anthropic.types.messages import MessageBatch, MessageBatchIndividualResponse
 from anthropic.types.messages.batch_create_params import Request
 
 from sensei_core.config import AnthropicSettings
 
 PROVIDER = "anthropic"
 FALLBACK_BETA = "server-side-fallback-2026-07-01"
-CUSTOM_ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")  # the Batches API's rule for request ids
+CUSTOM_ID = re.compile(r"[A-Za-z0-9_-]{1,64}")  # the Batches API's rule for request ids (whole)
+
+# The SDK sets these from ANTHROPIC_LOG at import; its debug output includes request bodies.
+for _name in ("anthropic", "httpx2"):
+    logging.getLogger(_name).setLevel(logging.WARNING)
 
 Effort = Literal["low", "medium", "high", "xhigh", "max"]
 
@@ -60,6 +73,27 @@ class Tier(enum.StrEnum):
     FAST = "fast"
     STANDARD = "standard"
     DEEP = "deep"
+
+
+class Role(enum.StrEnum):
+    """What a call is for; each role runs on a tier (:func:`tier_for`)."""
+
+    ROUTER = "router"  # query routing
+    SUMMARY = "summary"  # file and symbol summaries, rollups
+    AGENT = "agent"  # the answering agent
+    ESCALATE = "escalate"  # the hardest questions
+
+
+ROLE_TIERS: Mapping[Role, Tier] = {
+    Role.ROUTER: Tier.FAST,
+    Role.SUMMARY: Tier.FAST,
+    Role.AGENT: Tier.STANDARD,
+    Role.ESCALATE: Tier.DEEP,
+}
+
+
+def tier_for(role: Role) -> Tier:
+    return ROLE_TIERS[role]
 
 
 class LLMError(Exception):
@@ -151,10 +185,15 @@ class BatchState:
     errored: int
     canceled: int
     expired: int
+    created_at: datetime
+    request_count: int  # every request, whatever its state
 
     @classmethod
     def of(cls, batch: MessageBatch) -> BatchState:
         counts = batch.request_counts
+        total = (
+            counts.processing + counts.succeeded + counts.errored + counts.canceled + counts.expired
+        )
         return cls(
             batch.id,
             batch.processing_status,
@@ -162,6 +201,8 @@ class BatchState:
             counts.errored,
             counts.canceled,
             counts.expired,
+            batch.created_at,
+            total,
         )
 
 
@@ -217,7 +258,7 @@ class AnthropicClient:
                 betas=[FALLBACK_BETA] if fallback else anthropic.omit,
                 fallbacks="default" if fallback else anthropic.omit,
             )
-        usage = _beta_usage(message)
+        usage = _beta_usage(message, self.model_for(request.tier))
         if on_usage is not None:
             for item in usage:
                 await on_usage(item)
@@ -238,6 +279,8 @@ class AnthropicClient:
                 model=self.model_for(request.tier),
                 messages=[{"role": "user", "content": request.prompt}],
                 system=_system(request),
+                # The schema is part of the prompt the model reads: count it too.
+                output_config=_output_config(request),
             )
         return counted.input_tokens
 
@@ -248,7 +291,7 @@ class AnthropicClient:
         if not ids:
             msg = "a batch needs at least one request"
             raise ValueError(msg)
-        if len(set(ids)) != len(ids) or not all(CUSTOM_ID.match(i) for i in ids):
+        if len(set(ids)) != len(ids) or not all(CUSTOM_ID.fullmatch(i) for i in ids):
             msg = "batch request ids must be unique and match [A-Za-z0-9_-]{1,64}"
             raise ValueError(msg)
         batch_requests = [
@@ -264,42 +307,40 @@ class AnthropicClient:
             batch = await self._sdk().messages.batches.retrieve(batch_id)
         return BatchState.of(batch)
 
+    async def recent_batches(self, since: datetime) -> list[BatchState]:
+        """The account's batches created at or after ``since``, newest first."""
+        found: list[BatchState] = []
+        with _sdk_errors():
+            async for batch in self._sdk().messages.batches.list(limit=100):
+                if batch.created_at < since:
+                    break  # the list is newest first
+                found.append(BatchState.of(batch))
+        return found
+
     async def batch_results(
         self, batch_id: str, *, json_output: bool = False
-    ) -> AsyncIterator[BatchItem]:
+    ) -> AsyncGenerator[BatchItem]:
         """The results of an ended batch, in any order (match them by ``custom_id``). With
-        ``json_output`` each answer is parsed as JSON (a batch of schema requests)."""
+        ``json_output`` each answer is parsed as JSON (a batch of schema requests). The stream is
+        closed however the iteration ends; a failure reading it raises :class:`LLMError`."""
         with _sdk_errors():
             results = await self._sdk().messages.batches.results(batch_id)
-        async for item in _guarded(results):
-            outcome = item.result
-            if outcome.type == "errored":
-                error = outcome.error.error
-                # A request the API rejects stays rejected; anything else may succeed if sent again.
-                status = 400 if error.type == "invalid_request_error" else 500
-                failure = LLMError(status, f"{error.type}: {error.message}")
-                yield BatchItem(item.custom_id, "errored", error=failure)
-            elif outcome.type != "succeeded":
-                yield BatchItem(item.custom_id, outcome.type)
-            else:
-                message = outcome.message
-                usage = (_usage(message, batch=True),)
-                category = message.stop_details.category if message.stop_details else None
-                text = _text(block.text for block in message.content if block.type == "text")
-                answer = _Answer(text, message.model, message.stop_reason, category, usage)
-                try:
-                    result = _result(answer, json_output=json_output)
-                except LLMError as error:
-                    yield BatchItem(item.custom_id, "succeeded", error=error, usage=usage)
-                else:
-                    yield BatchItem(item.custom_id, "succeeded", result=result, usage=usage)
+        try:
+            async for item in _guarded(results):
+                yield _batch_item(item, json_output=json_output)
+        finally:
+            await results.close()
 
     def _sdk(self) -> anthropic.AsyncAnthropic:
         if self._client is None:
             key = self._settings.api_key
             if key is None:
                 raise LLMNotConfigured
-            # An explicit key: the SDK reads no ANTHROPIC_* variables or local profiles.
+            if "ANTHROPIC_CUSTOM_HEADERS" in os.environ:
+                raise LLMError(
+                    0, "ANTHROPIC_CUSTOM_HEADERS is set: unset it (the SDK would send it)"
+                )
+            # An explicit key: the SDK reads no ANTHROPIC_API_KEY, token or local profile.
             self._client = anthropic.AsyncAnthropic(
                 api_key=key.get_secret_value(),
                 base_url=self._settings.base_url,
@@ -325,13 +366,19 @@ class AnthropicClient:
 
 @contextmanager
 def _sdk_errors() -> Generator[None]:
-    """The SDK's errors (after its retries) as ours."""
+    """The SDK's errors (after its retries), and failures reading a streamed answer, as ours."""
     try:
         yield
     except anthropic.APIConnectionError as exc:  # timeouts included
         raise LLMUnavailable(exc) from exc
     except anthropic.APIStatusError as exc:
         raise LLMError(exc.status_code, exc.message) from exc
+    except anthropic.APIResponseValidationError as exc:
+        raise LLMError(502, f"an answer the SDK couldn't read ({exc.message})") from exc
+    except httpx2.TransportError as exc:  # the connection broke mid-stream
+        raise LLMUnavailable(exc) from exc
+    except ValueError as exc:  # a streamed line that isn't JSON
+        raise LLMError(502, f"an unreadable answer ({type(exc).__name__})") from exc
 
 
 async def _guarded[T](items: AsyncIterator[T]) -> AsyncIterator[T]:
@@ -343,6 +390,29 @@ async def _guarded[T](items: AsyncIterator[T]) -> AsyncIterator[T]:
             except StopAsyncIteration:
                 return
         yield item
+
+
+def _batch_item(item: MessageBatchIndividualResponse, *, json_output: bool) -> BatchItem:
+    outcome = item.result
+    if outcome.type == "errored":
+        error = outcome.error.error
+        # A request the API rejects stays rejected; anything else may succeed if sent again.
+        status = 400 if error.type == "invalid_request_error" else 500
+        return BatchItem(
+            item.custom_id, "errored", error=LLMError(status, f"{error.type}: {error.message}")
+        )
+    if outcome.type != "succeeded":
+        return BatchItem(item.custom_id, outcome.type)
+    message = outcome.message
+    usage = (_usage(message, batch=True),)
+    category = message.stop_details.category if message.stop_details else None
+    text = _text(block.text for block in message.content if block.type == "text")
+    answer = _Answer(text, message.model, message.stop_reason, category, usage)
+    try:
+        result = _result(answer, json_output=json_output)
+    except LLMError as error:
+        return BatchItem(item.custom_id, "succeeded", error=error, usage=usage)
+    return BatchItem(item.custom_id, "succeeded", result=result, usage=usage)
 
 
 def _system(request: LLMRequest) -> Any:
@@ -411,14 +481,14 @@ def _usage(message: Message, *, batch: bool = False) -> LLMUsage:
     )
 
 
-def _beta_usage(message: BetaMessage) -> tuple[LLMUsage, ...]:
+def _beta_usage(message: BetaMessage, requested: str) -> tuple[LLMUsage, ...]:
     """One entry per model that ran: with a fallback, the declined attempt and the answer each
-    bill at their own model's rates."""
+    bill at their own model's rates (an attempt that names no model was the one requested)."""
     usage = message.usage
     runs = [
         LLMUsage(
             PROVIDER,
-            run.model or message.model,
+            run.model or requested,
             run.input_tokens,
             run.output_tokens,
             run.cache_read_input_tokens,

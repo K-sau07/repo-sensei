@@ -52,12 +52,17 @@ EXTERNAL_SERVICES: tuple[type[BaseSettings], ...] = (
 )
 
 
+# Variables provider SDKs read on their own (keys, extra headers, logging): never in a test.
+SDK_ENV_PREFIXES = ("ANTHROPIC_",)
+
+
 def pytest_configure() -> None:
+    prefixes: list[str] = list(SDK_ENV_PREFIXES)
     for service in EXTERNAL_SERVICES:
         service.model_config["env_file"] = None
-        prefix = service.model_config.get("env_prefix", "").upper()
-        for key in [k for k in os.environ if k.upper().startswith(prefix)]:
-            del os.environ[key]
+        prefixes.append(service.model_config.get("env_prefix", "").upper())
+    for key in [k for k in os.environ if k.upper().startswith(tuple(prefixes))]:
+        del os.environ[key]
 
 
 def settings_for_tests() -> Settings:
