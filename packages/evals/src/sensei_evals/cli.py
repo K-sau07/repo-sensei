@@ -7,6 +7,8 @@
     sensei-eval rename --suite fastapi-template --repo fastapi-template
     sensei-eval prepare-db && sensei-eval run --suite fastapi-template --retriever symbols \\
         --class symbol
+    sensei-eval route --suite fastapi-template --suite langflow \\
+        --extra evals/private/router/queries.yaml
 
 Runs are written to ``evals/private/reports/<id>.json`` and ``.md`` (private) and stored in
 ``eval_runs`` unless ``--no-store``. A run is named by its id (looked up in the reports folder,
@@ -26,7 +28,10 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from sensei_core.config import get_settings
 from sensei_core.db import make_system_database
-from sensei_evals import paths
+from sensei_core.usage import CostCalculator
+from sensei_engine.llm.anthropic_client import AnthropicClient
+from sensei_engine.search.route import QueryRouter
+from sensei_evals import paths, routing
 from sensei_evals import rename as rename_mod
 from sensei_evals.reports import compare, read_run, render_comparison, render_run, write_run
 from sensei_evals.repos import mapping_path, valid_repo_id
@@ -260,6 +265,46 @@ def prepare_db(
     except (OSError, SQLAlchemyError) as error:
         raise _fail(f"recreating {name} failed: {_db_error(error)}") from None
     typer.echo(f"{name}: ready")
+
+
+@app.command("route")
+def route_queries(
+    suite: Annotated[
+        list[str], typer.Option(help="Suite name or path (repeatable): its items' class labels.")
+    ],
+    extra: Annotated[
+        list[Path] | None, typer.Option(help="YAML list of {class, query} (repeatable).")
+    ] = None,
+    llm: Annotated[bool, typer.Option(help="Ask the model (else rules only, free).")] = True,
+    reports_dir: Annotated[Path | None, typer.Option(help="Where reports go.")] = None,
+) -> None:
+    """How often the query router picks each item's labelled class (2.10)."""
+    root = paths.repo_root()
+    queries: list[routing.LabelledQuery] = []
+    try:
+        for name in suite:
+            queries += routing.suite_queries(load_suite(paths.suite_path(root, name)))
+        for path in extra or []:
+            queries += routing.extra_queries(path)
+    except (SuiteError, ValueError, KeyError, OSError) as exc:
+        raise _fail(str(exc)) from exc
+    settings = get_settings()
+    anthropic = (
+        settings.anthropic if llm else settings.anthropic.model_copy(update={"api_key": None})
+    )
+    if llm and not anthropic.configured:
+        raise _fail("--llm needs SENSEI_ANTHROPIC_API_KEY (or pass --no-llm)")
+    router = QueryRouter(AnthropicClient(anthropic))
+    calculator = CostCalculator.from_settings(settings.pricing)
+    mode = "llm" if llm else "rules"
+    report = asyncio.run(routing.evaluate(router, queries, calculator, mode=mode))
+    markdown = routing.render(report)
+    reports = reports_dir or paths.reports_dir(root)
+    reports.mkdir(parents=True, exist_ok=True)
+    out = reports / f"route-{mode}.md"
+    out.write_text(markdown, encoding="utf-8")
+    typer.echo(markdown)
+    typer.echo(f"written to {out}")
 
 
 @app.command("compare")

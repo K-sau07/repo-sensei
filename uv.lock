@@ -2696,18 +2696,22 @@ source = { editable = "packages/testing" }
 dependencies = [
     { name = "fakeredis" },
     { name = "httpx" },
+    { name = "httpx2" },
     { name = "pytest" },
     { name = "sensei-api" },
     { name = "sensei-core" },
+    { name = "sensei-engine" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "fakeredis", specifier = ">=2.31" },
     { name = "httpx", specifier = ">=0.28" },
+    { name = "httpx2", specifier = ">=2.0" },
     { name = "pytest", specifier = ">=8.4" },
     { name = "sensei-api", editable = "apps/api" },
     { name = "sensei-core", editable = "packages/core" },
+    { name = "sensei-engine", editable = "packages/engine" },
 ]
 
 [[package]]

@@ -1,0 +1,590 @@
+"""Query routing: what kind of question a search query is, and what in it must be kept.
+
+Two steps:
+
+1. :func:`classify` reads the query with rules: pure, instant, deterministic. It collects the
+   **literals** (backticked or quoted text, code fragments, regex patterns, CONSTANT_NAMES,
+   ``/routes``, file paths), the identifiers, the path filters and the layers a query rules
+   out ("(not tests)"). Two classes it decides alone, with no model call:
+
+   * ``symbol``: the query names one definition ("``useFlowStore``", "Vertex class",
+     "where is the Graph class defined?");
+   * ``regex``: the query looks for a literal or pattern rather than asking how something
+     works ("every use of the "refresh_token" cookie", "``TODO\\(auth\\)``").
+
+   For anything else it also guesses a class from cue words (flow, architecture, impact,
+   else conceptual), used when the model can't be asked.
+
+2. :class:`QueryRouter` asks Claude (the fast tier, low effort, structured output) for the
+   class, the layers involved, likely identifiers and routes, and two rewrites: a structural
+   one (which component, route or layer) and a behavioural one (what it does). Answers are
+   cached per normalized query. The rules' literals always survive: the model may add
+   literals only if they are in the query verbatim. If the model fails, refuses or is too
+   slow, the rules' answer is used.
+
+Rewrites are additive (the original query always runs as its own leg); running them is for
+the retriever (2.9), not this module.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import enum
+import hashlib
+import json
+import re
+import unicodedata
+from collections.abc import Iterable
+from dataclasses import dataclass, field, replace
+from functools import cache
+from importlib import resources
+from typing import Any, Literal
+
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from redis.asyncio import Redis
+from redis.exceptions import RedisError
+
+from sensei_core.logging import get_logger
+from sensei_engine.llm.anthropic_client import (
+    AnthropicClient,
+    LLMError,
+    LLMRequest,
+    LLMUsageSink,
+    Role,
+    tier_for,
+)
+
+log = get_logger(__name__)
+
+PROMPT_VERSION = "route_query.v1"
+CACHE_PREFIX = "route:v1:"
+CACHE_TTL_SECONDS = 7 * 24 * 3600
+TIMEOUT_SECONDS = 8.0
+MAX_TOKENS = 2_000  # the answer is ~150 tokens; the rest is room for the model's thinking
+MAX_GUESSES = 8  # per list in the model's answer
+
+
+class QueryClass(enum.StrEnum):
+    SYMBOL = "symbol"  # one definition, by name
+    REGEX = "regex"  # a literal or pattern to find
+    CONCEPTUAL = "conceptual"  # behaviour described in words
+    FLOW = "flow"  # a path across layers: UI -> API -> DB
+    ARCHITECTURE = "architecture"  # how a part is structured
+    IMPACT = "impact"  # what depends on something, what a change breaks
+
+
+class Layer(enum.StrEnum):
+    UI = "ui"
+    STATE = "state"
+    CLIENT = "client"
+    ROUTE = "route"
+    HANDLER = "handler"
+    SERVICE = "service"
+    DB = "db"
+    WORKER = "worker"
+    CONFIG = "config"
+    TEST = "test"
+    DOCS = "docs"
+
+
+Source = Literal["rules", "llm", "cache", "fallback"]
+
+
+@dataclass(frozen=True, slots=True)
+class Route:
+    query: str
+    query_class: QueryClass
+    source: Source  # who decided: rules alone, the model (now or cached), or rules after a failure
+    literals: tuple[str, ...] = ()  # verbatim text from the query, kept in every sub-query
+    identifiers: tuple[str, ...] = ()  # names in the query, then the model's guesses
+    routes: tuple[str, ...] = ()  # /routes in the query, then the model's guesses
+    paths: tuple[str, ...] = ()  # path filters: directories or files the query names
+    layers: tuple[Layer, ...] = ()
+    excluded_layers: tuple[Layer, ...] = ()  # "(not tests)", "not docs or tests"
+    regex: str | None = None  # the pattern of a regex query
+    symbol: str | None = None  # the name of a symbol query
+    structural_rewrite: str | None = None
+    behavioural_rewrite: str | None = None
+
+
+# ---------------------------------------------------------------- rules
+
+_BACKTICKED = re.compile(r"`([^`]+)`")
+# "double quotes", or a word opening a quote it never closes: `uses of "pk_live in the ...`
+# (a quote inside a token, `startswith("pk_live`, leaves the token whole: code).
+_DOUBLE_QUOTED = re.compile(r'"([^"\s][^"]*?)"|(?:^|(?<=\s))"([^"\s]+)')
+# 'single quotes' only around a token (so "flow's" is not a quote).
+_SINGLE_QUOTED = re.compile(r"(?<![\w])'([^'\s][^']*?)'(?![\w])")
+_REGEX_SIGNS = re.compile(r"\\[\\()\[\]{}.*+?|^$dwsbDWSB]|\.\*|\.\+|\[[^\]]+\][*+?]?|\(\?|\|\w")
+_CODE_SIGNS = re.compile(r"""[()=<>{}\[\]"';]|::|->|=>""")
+_CONSTANT = re.compile(r"^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+$")
+_ROUTE = re.compile(r"^/[\w{}:.\-]+(?:/[\w{}:.\-]*)*$")
+_FILE = re.compile(
+    r"^(?:[\w.\-]+/)*[\w\-]+\.(?:py|pyi|ts|tsx|js|jsx|mjs|cjs|json|ya?ml|toml|md|sql|ini|cfg"
+    r"|html|css|scss|sh|txt|lock|env)$"
+)
+_DIRECTORY = re.compile(r"^(?:[\w.\-]+/)+[\w.\-]*$")
+_CAMEL = re.compile(r"^[a-z][a-z0-9]*(?:[A-Z][a-z0-9]*)+$")  # useFlowStore
+_PASCAL_COMPOUND = re.compile(r"^[A-Z][a-z0-9]+(?:[A-Z][a-z0-9]*)+$")  # JobQueueService
+_SNAKE = re.compile(r"^_*[a-z][a-z0-9]*(?:_[a-z0-9]+)+$")  # build_custom_component_template
+_DOTTED = re.compile(r"^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)+$")  # CompanyService.search
+_WORD = re.compile(r"^[A-Za-z_$][\w$]*$")
+_TRIM = "?!.,:;"
+_CONTRACTION = re.compile(r"^[A-Za-z]+['\u2019][A-Za-z]{1,3}$")
+
+# "where is the X class defined", "go to X", "X function": a definition asked for by name.
+_DEFINITION_WORDS = frozenset(
+    {
+        "where",
+        "is",
+        "are",
+        "the",
+        "a",
+        "an",
+        "of",
+        "find",
+        "show",
+        "me",
+        "go",
+        "jump",
+        "to",
+        "open",
+        "locate",
+        "definition",
+        "defined",
+        "declared",
+        "implemented",
+        "located",
+        "lives",
+        "live",
+        "does",
+        "do",
+    }
+)
+_KIND_WORDS = frozenset(
+    {
+        "class",
+        "function",
+        "method",
+        "hook",
+        "component",
+        "type",
+        "interface",
+        "enum",
+        "variable",
+        "constant",
+        "module",
+        "struct",
+        "decorator",
+        "def",
+        "model",
+        "schema",
+        "table",
+        "view",
+        "store",
+        "dataclass",
+        "protocol",
+        "mixin",
+        "field",
+        "property",
+        "attribute",
+        "prop",
+        "props",
+    }
+)
+# Words that ask how or why, so a quoted string in the question is context, not the target.
+_EXPLAIN = re.compile(
+    r"\b(how|why|explain|describe|walk me through|what happens|what does|what do|what is the "
+    r"(?:purpose|role|reason)|trace|what (?:would )?breaks?|should|could)\b",
+    re.IGNORECASE,
+)
+_EXCLUDED = re.compile(
+    r"\b(?:not|excluding|except|outside(?: of)?|without|no)\s+((?:docs?|tests?|documentation)"
+    r"(?:\s*(?:,|or|and|/)\s*(?:docs?|tests?|documentation))*)",
+    re.IGNORECASE,
+)
+_IMPACT = re.compile(
+    r"\b(what (?:would |will )?breaks?|impact of|blast radius|if (?:i|we|you) (?:change|rename|"
+    r"remove|delete|drop)|what depends on|who (?:calls|uses)|what calls|which .{0,40}"
+    r"\b(?:depends? on|calls?|uses?|breaks?)\b|affected (?:by|if)|"
+    r"safe to (?:change|remove|delete|rename))",
+    re.IGNORECASE,
+)
+_ARCHITECTURE = re.compile(
+    r"\b(architecture|high[- ]level|overview|how is .{0,60}(?:structured|organi[sz]ed|laid out"
+    r"|split|designed)|structure of|(?:main|major) (?:parts|pieces|components|modules|layers)|"
+    r"explain the .{0,40}(?:module|package|subsystem|system|layer|service)|what are the "
+    r"(?:parts|layers|modules)|how .{0,30}fit together)\b",
+    re.IGNORECASE,
+)
+_FLOW = re.compile(
+    r"\b(trace|end[- ]to[- ]end|what happens (?:between|after|when)|from the .{1,60} to the|"
+    r"which (?:endpoint|request|api|route|handler)|what request|request (?:goes out|is sent|"
+    r"carries)|goes out|down to the (?:table|database|db)|ends up in the (?:database|db|table)|"
+    r"what ends up|(?:is|gets) (?:saved|stored|written) (?:to|in) the (?:database|db)|"
+    r"after (?:someone|a user|the user)|when (?:someone|a user|the user) .{0,80}"
+    r"(?:what|which|where))",
+    re.IGNORECASE,
+)
+_LAYER_WORDS: tuple[tuple[re.Pattern[str], Layer], ...] = tuple(
+    (re.compile(pattern, re.IGNORECASE), layer)
+    for pattern, layer in (
+        (
+            r"\b(ui|frontend|front-end|page|screen|dialog|modal|button|form|component|canvas|"
+            r"sidebar|side bar|panel|editor|view)s?\b",
+            Layer.UI,
+        ),
+        (r"\b(hook|store|state|cache[sd]?)\b", Layer.STATE),
+        (r"\b(api client|fetch|axios|request goes out|client)\b", Layer.CLIENT),
+        (r"\b(route|endpoint|url|path)s?\b", Layer.ROUTE),
+        (r"\b(handler|controller|server|backend|back-end)s?\b", Layer.HANDLER),
+        (r"\b(service|logic)s?\b", Layer.SERVICE),
+        (
+            r"\b(database|db|table|row|column|migration|schema|model|sql|query|queries)s?\b",
+            Layer.DB,
+        ),
+        (r"\b(worker|background|job|queue|task|celery|cron)s?\b", Layer.WORKER),
+        (r"\b(config|configuration|setting|env|environment variable|deploy)s?\b", Layer.CONFIG),
+    )
+)
+
+
+@dataclass(slots=True)
+class _Found:
+    literals: list[str] = field(default_factory=list[str])
+    quoted: list[str] = field(default_factory=list[str])  # "double" or 'single' quoted strings
+    identifiers: list[str] = field(default_factory=list[str])
+    routes: list[str] = field(default_factory=list[str])
+    paths: list[str] = field(default_factory=list[str])
+    regex: str | None = None
+
+
+def _add(items: list[str], value: str) -> None:
+    if value and value not in items:
+        items.append(value)
+
+
+def _identifier(token: str, *, plain_words: bool = False) -> bool:
+    """A code name: camelCase, CompoundPascal, snake_case, dotted, CONSTANT_CASE; with
+    ``plain_words``, any single word that could name something (``Graph``, ``Vertex``)."""
+    if any(p.match(token) for p in (_CAMEL, _PASCAL_COMPOUND, _SNAKE, _DOTTED, _CONSTANT)):
+        return True
+    return plain_words and bool(_WORD.match(token))
+
+
+def _scan_token(token: str, found: _Found) -> None:
+    """Sort one whitespace-separated token (outside quotes) into what it is."""
+    if _CONTRACTION.match(token):  # editor's, don't
+        return
+    if _REGEX_SIGNS.search(token) and not _ROUTE.match(token):
+        _add(found.literals, token)
+        found.regex = found.regex or token
+    elif _ROUTE.match(token) and token.count("/") >= 1 and len(token) > 1:
+        _add(found.literals, token)
+        _add(found.routes, token)
+    elif _FILE.match(token) or (_DIRECTORY.match(token) and "/" in token):
+        _add(found.literals, token)
+        _add(found.paths, token)
+    elif _CODE_SIGNS.search(token):
+        _add(found.literals, token)
+    elif _CONSTANT.match(token) or _identifier(token):
+        _add(found.literals, token)
+        _add(found.identifiers, token)
+
+
+def _scan(query: str) -> tuple[_Found, str]:
+    """The literals, identifiers, routes and paths in ``query``; and the query with its quoted
+    parts taken out (for the word rules)."""
+    found = _Found()
+    rest = query
+    for pattern in (_BACKTICKED, _DOUBLE_QUOTED, _SINGLE_QUOTED):
+        for match in pattern.finditer(rest):
+            text = next(group for group in match.groups() if group)
+            _add(found.literals, text)
+            if pattern is not _BACKTICKED:
+                _add(found.quoted, text)
+            token = text.strip()
+            if _REGEX_SIGNS.search(token) and pattern is _BACKTICKED:
+                found.regex = found.regex or token
+            elif _ROUTE.match(token):
+                _add(found.routes, token)
+            elif _FILE.match(token) or _DIRECTORY.match(token):
+                _add(found.paths, token)
+            elif _identifier(token, plain_words=pattern is _BACKTICKED):
+                _add(found.identifiers, token)
+        rest = pattern.sub(" ", rest)
+    for raw in rest.split():
+        token = raw.strip(_TRIM)
+        # Brackets of the sentence, not of code: "(not tests)", "(see above".
+        if token.startswith("(") and ")" not in token:
+            token = token[1:]
+        if token.endswith(")") and "(" not in token:
+            token = token[:-1]
+        if token.startswith("(") and token.endswith(")"):
+            token = token[1:-1]
+        if token:
+            _scan_token(token, found)
+    return found, rest
+
+
+def _definition_name(query: str, found: _Found) -> str | None:
+    """The one name a "where is X defined" query asks for, if that is all it asks."""
+    words = [w.strip(_TRIM).strip("`") for w in query.replace("`", " ` ").split()]
+    words = [w for w in words if w and w != "`"]
+    kind = any(w.lower() in _KIND_WORDS for w in words)
+    names = [
+        w for w in words if w.lower() not in _DEFINITION_WORDS and w.lower() not in _KIND_WORDS
+    ]
+    if len(names) != 1:
+        return None
+    [name] = names
+    backticked = name in found.identifiers and f"`{name}`" in query
+    asks_where = bool(re.match(r"^\s*(where|find|show|go to|jump to|open|locate)\b", query, re.I))
+    capitalized = bool(_WORD.match(name)) and name[:1].isupper()
+    if _identifier(name) or backticked or (capitalized and (kind or asks_where)):
+        return name
+    return None
+
+
+def _excluded(query: str) -> tuple[Layer, ...]:
+    layers: list[Layer] = []
+    for match in _EXCLUDED.finditer(query):
+        for word in re.findall(r"docs?|tests?|documentation", match.group(1), re.IGNORECASE):
+            layer = Layer.TEST if word.lower().startswith("test") else Layer.DOCS
+            if layer not in layers:
+                layers.append(layer)
+    return tuple(layers)
+
+
+def _layers(text: str, excluded: Iterable[Layer]) -> tuple[Layer, ...]:
+    skip = set(excluded)
+    return tuple(
+        layer for pattern, layer in _LAYER_WORDS if pattern.search(text) and layer not in skip
+    )
+
+
+_SERVER_SIDE = frozenset({Layer.ROUTE, Layer.HANDLER, Layer.DB})
+
+
+def _guess_class(text: str, layers: tuple[Layer, ...]) -> QueryClass:
+    """A class from cue words, for when the model can't be asked: a question that names both
+    the UI and the server or database follows a flow."""
+    if _IMPACT.search(text):
+        return QueryClass.IMPACT
+    if _ARCHITECTURE.search(text):
+        return QueryClass.ARCHITECTURE
+    if _FLOW.search(text) or (Layer.UI in layers and _SERVER_SIDE.intersection(layers)):
+        return QueryClass.FLOW
+    return QueryClass.CONCEPTUAL
+
+
+@dataclass(frozen=True, slots=True)
+class Classified:
+    """What the rules make of a query: ``route`` (``source`` is ``"rules"`` when the rules
+    decided its class; ``"fallback"`` when the class is only a guess) and whether the model
+    is worth asking."""
+
+    route: Route
+    decided: bool
+
+
+def classify(query: str) -> Classified:
+    """Read ``query`` with rules (pure and deterministic)."""
+    text = " ".join(query.split())
+    found, unquoted = _scan(text)
+    excluded = _excluded(text)
+    base = Route(
+        query=text,
+        query_class=QueryClass.CONCEPTUAL,
+        source="fallback",
+        literals=tuple(found.literals),
+        identifiers=tuple(found.identifiers),
+        routes=tuple(found.routes),
+        paths=tuple(found.paths),
+        layers=_layers(unquoted, excluded),
+        excluded_layers=excluded,
+        regex=found.regex,
+    )
+    if found.regex is not None and not _EXPLAIN.search(unquoted):
+        return Classified(replace(base, query_class=QueryClass.REGEX, source="rules"), True)
+    name = _definition_name(text, found)
+    if name is not None:
+        route = replace(
+            base,
+            query_class=QueryClass.SYMBOL,
+            source="rules",
+            symbol=name,
+            literals=tuple(dict.fromkeys([*found.literals, name])),
+            identifiers=tuple(dict.fromkeys([name, *found.identifiers])),
+            layers=(),
+        )
+        return Classified(route, True)
+    # A literal to find, with nothing asking how or why: "every use of "x" in the backend".
+    findable = [
+        literal
+        for literal in found.literals
+        if literal in found.quoted or literal not in found.identifiers or _CONSTANT.match(literal)
+    ]
+    if findable and not _EXPLAIN.search(unquoted) and not _FLOW.search(unquoted):
+        return Classified(replace(base, query_class=QueryClass.REGEX, source="rules"), True)
+    return Classified(replace(base, query_class=_guess_class(unquoted, base.layers)), False)
+
+
+# ---------------------------------------------------------------- the model
+
+
+class _Answer(BaseModel):
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
+
+    query_class: QueryClass = Field(alias="class")
+    layers: list[Layer] = Field(default_factory=list[Layer])
+    literals: list[str] = Field(default_factory=list[str])
+    identifiers_guess: list[str] = Field(default_factory=list[str])
+    routes_guess: list[str] = Field(default_factory=list[str])
+    structural_rewrite: str = ""
+    behavioural_rewrite: str = ""
+
+
+def answer_schema() -> dict[str, Any]:
+    """The JSON schema the model answers in."""
+    strings: dict[str, Any] = {"type": "array", "items": {"type": "string"}}
+    return {
+        "type": "object",
+        "properties": {
+            "class": {"type": "string", "enum": [c.value for c in QueryClass]},
+            "layers": {
+                "type": "array",
+                "items": {"type": "string", "enum": [layer.value for layer in Layer]},
+            },
+            "literals": strings,
+            "identifiers_guess": strings,
+            "routes_guess": strings,
+            "structural_rewrite": {"type": "string"},
+            "behavioural_rewrite": {"type": "string"},
+        },
+        "required": [
+            "class",
+            "layers",
+            "literals",
+            "identifiers_guess",
+            "routes_guess",
+            "structural_rewrite",
+            "behavioural_rewrite",
+        ],
+        "additionalProperties": False,
+    }
+
+
+@cache
+def system_prompt() -> str:
+    path = resources.files("sensei_engine.search").joinpath("prompts", f"{PROMPT_VERSION}.md")
+    return path.read_text(encoding="utf-8")
+
+
+def normalize(query: str) -> str:
+    """The cache's view of a query: Unicode-normalized, case-folded, whitespace collapsed, a
+    trailing question mark or full stop dropped."""
+    text = unicodedata.normalize("NFKC", query).casefold()
+    return " ".join(text.split()).rstrip(" ?.!")
+
+
+def cache_key(query: str, model: str) -> str:
+    digest = hashlib.sha256(f"{PROMPT_VERSION}\0{model}\0{normalize(query)}".encode()).hexdigest()
+    return CACHE_PREFIX + digest
+
+
+def _clean(values: Iterable[str]) -> list[str]:
+    return [v.strip() for v in values if v.strip()][:MAX_GUESSES]
+
+
+def _merge(rules: Route, answer: _Answer, source: Source) -> Route:
+    """The model's answer on top of the rules': the rules' literals and names come first and
+    always stay; the model's literals count only if they are in the query verbatim."""
+    query = rules.query
+    literals = [*rules.literals, *(lit for lit in _clean(answer.literals) if lit in query)]
+    excluded = set(rules.excluded_layers)
+    layers = [layer for layer in answer.layers if layer not in excluded] or list(rules.layers)
+    return replace(
+        rules,
+        query_class=answer.query_class,
+        source=source,
+        literals=tuple(dict.fromkeys(literals)),
+        identifiers=tuple(dict.fromkeys([*rules.identifiers, *_clean(answer.identifiers_guess)])),
+        routes=tuple(dict.fromkeys([*rules.routes, *_clean(answer.routes_guess)])),
+        layers=tuple(dict.fromkeys(layers)),
+        structural_rewrite=answer.structural_rewrite.strip() or None,
+        behavioural_rewrite=answer.behavioural_rewrite.strip() or None,
+    )
+
+
+class QueryRouter:
+    """Routes queries: rules first, the model for what they can't decide, answers cached.
+
+    ``redis`` may be None (no cache); ``client`` may be unconfigured (rules only)."""
+
+    def __init__(
+        self,
+        client: AnthropicClient,
+        redis: Redis | None = None,
+        *,
+        timeout_seconds: float = TIMEOUT_SECONDS,
+        cache_ttl_seconds: int = CACHE_TTL_SECONDS,
+    ) -> None:
+        self._client = client
+        self._redis = redis
+        self._timeout = timeout_seconds
+        self._ttl = cache_ttl_seconds
+
+    async def route(self, query: str, *, on_usage: LLMUsageSink | None = None) -> Route:
+        classified = classify(query)
+        if classified.decided or not self._client.configured:
+            return classified.route
+        rules = classified.route
+        tier = tier_for(Role.ROUTER)
+        model = self._client.model_for(tier)
+        key = cache_key(rules.query, model)
+        cached = await self._cached(key)
+        if cached is not None:
+            return _merge(rules, cached, "cache")
+        request = LLMRequest(
+            rules.query,
+            system=system_prompt(),
+            tier=tier,
+            max_tokens=MAX_TOKENS,
+            effort="low",
+            schema=answer_schema(),
+            cache_system=True,
+        )
+        try:
+            async with asyncio.timeout(self._timeout):
+                result = await self._client.complete(request, on_usage=on_usage)
+            answer = _Answer.model_validate(result.data)
+        except (LLMError, TimeoutError, ValidationError) as exc:
+            log.warning("query router fell back to rules", error=type(exc).__name__)
+            return rules
+        await self._store(key, answer)
+        return _merge(rules, answer, "llm")
+
+    async def _cached(self, key: str) -> _Answer | None:
+        if self._redis is None:
+            return None
+        try:
+            raw: str | bytes | None = await self._redis.get(key)
+        except RedisError as exc:
+            log.warning("query router cache unavailable", error=type(exc).__name__)
+            return None
+        if raw is None:
+            return None
+        try:
+            return _Answer.model_validate_json(raw)
+        except ValidationError:
+            return None
+
+    async def _store(self, key: str, answer: _Answer) -> None:
+        if self._redis is None:
+            return
+        payload = json.dumps(answer.model_dump(mode="json", by_alias=True))
+        try:
+            await self._redis.set(key, payload, ex=self._ttl)
+        except RedisError as exc:
+            log.warning("query router cache unavailable", error=type(exc).__name__)
