@@ -165,9 +165,26 @@ async def test_symbol_retriever_finds_the_definition(
 def test_the_eval_index_never_goes_into_the_apps_database() -> None:
     url = "postgresql+asyncpg://sensei_system:pw@localhost:55432/sensei"
     assert eval_database_url(url).endswith("@localhost:55432/sensei_eval")
-    assert eval_database_url(url, "scratch").endswith("/scratch")
-    with pytest.raises(ValueError, match="needs its own database, not 'sensei'"):
-        eval_database_url(url, "sensei")
+    assert eval_database_url(url, "sensei_eval_2").endswith("/sensei_eval_2")
+    # Only names that say they are eval databases: it gets dropped and recreated.
+    for name in (
+        "sensei",
+        "scratch",
+        "sensei_test",
+        "postgres",
+        'sensei_eval"; DROP',
+        "SENSEI_EVAL",
+    ):
+        with pytest.raises(ValueError, match="starts with 'sensei_eval'"):
+            eval_database_url(url, name)
+    # Not the app's database, nor the test database, even under an eval-looking name.
+    with pytest.raises(ValueError, match="needs its own database"):
+        eval_database_url(url.replace("/sensei", "/sensei_eval"), "sensei_eval")
+    with pytest.raises(ValueError, match="needs its own database"):
+        eval_database_url(url, "sensei_eval_t", reserved=["sensei_eval_t"])
+    # A URL with no database can't say which one is the app's.
+    with pytest.raises(ValueError, match="names no database"):
+        eval_database_url("postgresql+asyncpg://sensei_system:pw@localhost:55432", "sensei_eval")
 
 
 def test_symbol_retriever_needs_a_snapshot_or_checkout() -> None:

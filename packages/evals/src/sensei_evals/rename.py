@@ -21,9 +21,12 @@ Paths are not code: every directory and file name is renamed word by word throug
 kebab-case and protected words included (``items/list.py`` → ``zorvat/kinoru.py``,
 ``recover-password.tsx`` → ``dabe-kinoru.tsx``); extensions, conventional names (``index``,
 ``__init__``, ``src``, dotfiles) stay. The words the indexer reads a file's role from
-(``routes``, ``tests``, ``test_``, ``models``, ``alembic``: :data:`ROLE_WORDS`) and a hook's
-``use`` are never replaced, in names or paths (``user_settings`` → ``bemi_settings``,
-``useAuth`` → ``useVipe``), so each file keeps its role and each definition its kind.
+(``routes``, ``tests``, ``test_``, ``models``, ``alembic``: :data:`ROLE_WORDS`) are never
+replaced in paths, nor in code names that are also a module, file or directory name (``crud``,
+``user_settings`` → ``bemi_settings``): an import names its module as its file does. Every other
+code name is renamed whole, role words included (``Settings`` → ``Fadu``, ``api_router`` →
+``vope_kuta``), except a hook's leading ``use`` (``useAuth`` → ``useVipe``), which gives a
+definition its kind. So each file keeps its role and each definition its kind.
 Dependency manifests are copied unchanged (:func:`is_verbatim`), so the same frameworks are
 detected.
 
@@ -156,10 +159,11 @@ ROLE_WORDS = frozenset(
     conduct security support release notes releasing
     """.split()  # noqa: SIM905
 )
-# Words never replaced, in names and paths alike (one word map keeps a module's code name and
-# its file name the same): the role words, and ``use``, which makes a name a React hook
-# (``useAuth`` → ``useVipe``) for React and the symbol extractor alike.
+# Words never replaced in paths, nor in code names that are also module, file or directory names
+# (an import and its file must keep the same name): the role words, and ``use`` (hook files).
 KEPT_WORDS = ROLE_WORDS | {"use"}
+# A React hook's name: its leading ``use`` stays (React and the symbol extractor read the kind).
+_HOOK = re.compile(r"use(?=[A-Z0-9])")
 KEPT_PROTECTED = (
     "kept in code: also a language, standard library or framework name, so renaming it would "
     "rename those uses too (file and directory names are still renamed)"
@@ -300,6 +304,19 @@ def _why_kept(name: str) -> str | None:
     return None
 
 
+def _stems(paths: Iterable[str]) -> frozenset[str]:
+    """Every directory name and file stem in ``paths`` (``app/api/routes/items.py``: ``app``,
+    ``api``, ``routes``, ``items``), and each kebab-case part (``changes-filter.yaml``:
+    ``changes``, ``filter``): the names imports use, and the parts paths are renamed by."""
+    return frozenset(
+        part
+        for path in paths
+        for segment in PurePosixPath(path).parts
+        for stem in [segment.partition(".")[0]]
+        for part in {stem, *re.split(r"-+", stem)}
+    )
+
+
 def _path_parts(paths: Iterable[str], tokens: Mapping[str, str]) -> Iterator[str]:
     """The parts of directory and file names that :meth:`RenamePlan.segment` renames word by
     word (those that aren't mapped names or conventional)."""
@@ -319,6 +336,56 @@ def _path_parts(paths: Iterable[str], tokens: Mapping[str, str]) -> Iterator[str
                 )
 
 
+class _WordMap:
+    """One pseudo word per word, never one already in the repository. Paths, and code names that
+    are also a path's (``stems``), keep :data:`KEPT_WORDS`; other code names rename those too,
+    except a hook's leading ``use``."""
+
+    def __init__(self, seed: int, taken_lower: set[str], *, stems: frozenset[str]) -> None:
+        self.seed = seed
+        self.taken_lower = taken_lower
+        self.stems = stems
+        self.words: dict[str, str] = {}  # every word of paths and stems (kept words to themselves)
+        self.role_words: dict[str, str] = {}  # kept words inside other code names
+
+    def _pseudo(self, key: str) -> str:
+        attempt = 0
+        candidate = key
+        while not key.isdigit() and (
+            (candidate := _pseudo_word(key, self.seed, attempt)) in self.taken_lower
+            or candidate in self.words.values()
+            or candidate in self.role_words.values()
+            or candidate in KEPT_WORDS
+        ):
+            attempt += 1
+        return candidate
+
+    def path_word(self, word: str) -> str:
+        key = word.lower()
+        if key in KEPT_WORDS:
+            self.words[key] = key
+        if key not in self.words:
+            self.words[key] = self._pseudo(key)
+        return self.words[key]
+
+    def name_word(self, word: str) -> str:
+        key = word.lower()
+        if key not in KEPT_WORDS:
+            return self.path_word(word)
+        if key not in self.role_words:
+            self.role_words[key] = self._pseudo(key)
+        return self.role_words[key]
+
+    def rename(self, name: str) -> str | None:
+        """``name`` in its style with every word replaced (None if it has no words)."""
+        if name in self.stems:
+            return _restyle(name, self.path_word)
+        if _HOOK.match(name):
+            rest = _restyle(name[3:], self.name_word)
+            return None if rest is None else "use" + rest
+        return _restyle(name, self.name_word)
+
+
 def make_plan(
     names: Names,
     existing: Iterable[str],
@@ -332,29 +399,16 @@ def make_plan(
     identifiers in the repository) or with each other. A name in ``external`` (language → names
     imported from libraries) isn't renamed in that language's code. Every word of the
     directory and file names in ``paths`` gets a pseudo word too, so paths are renamed whole."""
+    paths = sorted(set(paths))
     taken = set(existing)
     taken_lower = {token.lower() for token in taken}
     imported = {language: set(found) for language, found in (external or {}).items()}
-    words: dict[str, str] = {}
     tokens: dict[str, str] = {}
     scopes: dict[str, frozenset[str]] = {}
     kept: dict[str, str] = {}
 
-    def word_for(word: str) -> str:
-        key = word.lower()
-        if key in KEPT_WORDS:
-            words[key] = key
-        if key not in words:
-            attempt = 0
-            pseudo = key
-            while not key.isdigit() and (
-                (pseudo := _pseudo_word(key, seed, attempt)) in taken_lower
-                or pseudo in words.values()
-                or pseudo in KEPT_WORDS
-            ):
-                attempt += 1
-            words[key] = pseudo
-        return words[key]
+    vocabulary = _WordMap(seed, taken_lower, stems=_stems(paths))
+    words = vocabulary.words
 
     for name, languages in sorted(_scoped(names).items()):
         if reason := _why_kept(name):
@@ -368,10 +422,11 @@ def make_plan(
             continue
         if blocked:
             kept[name] = f"not renamed in {where} code: imported from a library there"
-        renamed = _restyle(name, word_for) or name
+        renamed = vocabulary.rename(name) or name
         if renamed == name:
             kept[name] = (
-                "kept: made only of words the indexer reads a file's role or a name's kind from"
+                "kept: a module, file or directory name made only of words the indexer reads a "
+                "file's role from"
             )
             continue
         candidate, n = renamed, 2
@@ -383,7 +438,7 @@ def make_plan(
             scopes[name] = frozenset(defined - set(blocked))
     for part in _path_parts(paths, tokens):
         for word in split_words(part):
-            word_for(word)
+            vocabulary.path_word(word)
     return RenamePlan(seed=seed, tokens=tokens, words=words, scopes=scopes, kept=kept)
 
 

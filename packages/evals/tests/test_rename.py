@@ -178,7 +178,7 @@ def test_paths_are_renamed_word_by_word() -> None:
     plan = make_plan(["items", "routes"], set(), paths=files)
     w = plan.words
     # The words the indexer reads roles from stay: api, routes (and route in routeTree).
-    assert plan.kept["routes"].startswith("kept: made only of words the indexer reads")
+    assert plan.kept["routes"].startswith("kept: a module, file or directory name made only")
     assert (w["api"], w["route"]) == ("api", "route")
     assert plan.path(files[0]) == f"{w['frontend']}/src/routes/" + (
         f"{w['recover']}-{w['password']}.tsx"
@@ -193,6 +193,14 @@ def test_paths_are_renamed_word_by_word() -> None:
     assert plan.specifier("../routes/recover-password?raw") == (
         f"../routes/{w['recover']}-{w['password']}?raw"
     )
+
+
+def test_a_role_word_in_a_kebab_case_file_name_stays_when_code_uses_it_too() -> None:
+    # ``changes`` is also a variable; the file is still a docs file (CHANGES*) after renaming.
+    plan = make_plan(["changes"], set(), paths=[".github/changes-filter.yaml"])
+    assert plan.tokens.get("changes", "changes") == "changes"
+    filter_word = plan.words["filter"]
+    assert plan.path(".github/changes-filter.yaml") == f".github/changes-{filter_word}.yaml"
 
 
 def _write(root: Path, files: dict[str, str]) -> Path:
@@ -492,9 +500,11 @@ def test_library_names_are_kept_at_their_call_sites(template: Path, renamed: Cop
     )
     sonner = copied("frontend/src/components/ui/sonner.tsx")
     assert 'import { Toaster as Sonner, type ToasterProps } from "sonner"' in sonner
-    # The repository's own Python Settings class keeps its name: settings is a role word.
-    assert "class Settings(" in copied("backend/app/core/config.py")
-    assert plan.kept["Settings"].startswith("kept: made only of words the indexer reads")
+    # The repository's own Python Settings class is renamed (only path names keep role words);
+    # it is renamed in Python code only, so lucide's Settings icon in TypeScript keeps its name.
+    renamed_settings = plan.tokens["Settings"]
+    assert f"class {renamed_settings}(" in copied("backend/app/core/config.py")
+    assert plan.scopes["Settings"] == frozenset({PYTHON})
     # Names defined in TypeScript (the generated client's ValidationError type) stay there.
     assert plan.scopes["ValidationError"] == frozenset({JS})
     assert plan.tokens["ValidationError"] in copied("frontend/src/client/types.gen.ts")

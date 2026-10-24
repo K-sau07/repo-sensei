@@ -302,3 +302,10 @@ def test_store_command_stores_written_runs(
     code, output = _run("store", tmp_path / "missing.json")
     assert code == 1
     assert "no report" in output
+
+
+def test_prepare_db_never_drops_a_database_that_isnt_an_eval_one() -> None:
+    for name in ("sensei", "sensei_test", "postgres"):
+        result = runner.invoke(app, ["prepare-db", "--name", name])
+        assert result.exit_code == 1
+        assert "starts with 'sensei_eval'" in result.output

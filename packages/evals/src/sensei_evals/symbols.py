@@ -22,7 +22,7 @@ import re
 import subprocess
 import sys
 import uuid
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterable
 from contextlib import AbstractAsyncContextManager
 from pathlib import Path
 
@@ -41,6 +41,7 @@ from sensei_engine.symbols.store import FileSymbols, save_symbols
 from sensei_evals.retrieval import MAX_CORPUS_FILES, Hit, RepoRef, RetrieverContext
 
 EVAL_DATABASE = "sensei_eval"
+_EVAL_NAME = re.compile(rf"{EVAL_DATABASE}[a-z0-9_]*")
 EVAL_ORG = "sensei-evals"
 EVAL_REF = "eval"
 # Files whose content was never read as text, as the parse stage skips them.
@@ -200,12 +201,23 @@ class SymbolRetriever:
             await self._close()
 
 
-def eval_database_url(url: str, name: str = EVAL_DATABASE) -> str:
-    """``url`` (a server's) pointed at the eval database ``name``, which must not be the
-    database ``url`` names (the one the app serves from)."""
+def eval_database_url(url: str, name: str = EVAL_DATABASE, *, reserved: Iterable[str] = ()) -> str:
+    """``url`` (a server's, naming the app's database) pointed at the eval database ``name``.
+
+    The eval database is dropped and recreated at will, so the name must say what it is (start
+    with :data:`EVAL_DATABASE`, letters, digits and ``_`` only) and be neither the database
+    ``url`` names nor any of ``reserved`` (the test database)."""
     current = make_url(url).database
-    if name == current:
-        msg = f"the eval index needs its own database, not {name!r} (the app's)"
+    if not current:
+        msg = "the database URL names no database: can't tell which one is the app's"
+        raise ValueError(msg)
+    if not _EVAL_NAME.fullmatch(name):
+        msg = (
+            f"an eval database's name starts with {EVAL_DATABASE!r} (letters, digits, _): {name!r}"
+        )
+        raise ValueError(msg)
+    if name == current or name in set(reserved):
+        msg = f"the eval index needs its own database, not {name!r}"
         raise ValueError(msg)
     return with_database(url, name)
 
@@ -218,9 +230,10 @@ def checkout_symbols(context: RetrieverContext) -> SymbolRetriever:
         raise ValueError(msg)
     settings = get_settings().database
     name = context.options.get("db", EVAL_DATABASE)
-    url = eval_database_url(settings.system_url.get_secret_value(), name)
+    reserved = [settings.test_name]
+    url = eval_database_url(settings.system_url.get_secret_value(), name, reserved=reserved)
     database = make_database(settings, url=url)
-    owner_url = eval_database_url(settings.migrate_url.get_secret_value(), name)
+    owner_url = eval_database_url(settings.migrate_url.get_secret_value(), name, reserved=reserved)
     return SymbolRetriever(
         database.session,
         checkout=context.repo.checkout,
@@ -245,8 +258,9 @@ async def analyze_tables(url: str) -> None:
 async def recreate_database(name: str = EVAL_DATABASE) -> str:
     """Drop and create the eval database ``name`` on the settings' server (through the schema
     owner's role); returns its URL, for :func:`migrate_database`."""
-    migrate_url = get_settings().database.migrate_url.get_secret_value()
-    url = eval_database_url(migrate_url, name)
+    database = get_settings().database
+    migrate_url = database.migrate_url.get_secret_value()
+    url = eval_database_url(migrate_url, name, reserved=[database.test_name])
     engine = create_async_engine(migrate_url, isolation_level="AUTOCOMMIT")
     try:
         async with engine.connect() as connection:
