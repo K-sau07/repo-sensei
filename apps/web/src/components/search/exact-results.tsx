@@ -32,6 +32,17 @@ function preview(hit: GrepHit, ref: string | null): CodePreview {
   };
 }
 
+/** A line around the match, cut to the same length as the match's. */
+function ContextLine({ text }: { text: string }) {
+  const shown = windowLine(text, [], LINE_CHARS);
+  return (
+    <span className="text-fg-faint">
+      {shown.text}
+      {shown.cutEnd && "…"}
+    </span>
+  );
+}
+
 function ExactCard({
   hit,
   target,
@@ -91,9 +102,7 @@ function ExactCard({
           className="mt-1.5 rounded-md bg-bg px-2 py-1.5 text-fg-muted"
           lines={[
             ...hit.before.map((text, index) => (
-              <span key={`b${String(index)}`} className="text-fg-faint">
-                {text}
-              </span>
+              <ContextLine key={`b${String(index)}`} text={text} />
             )),
             <span key="hit" className="text-fg">
               {(shown.cutStart || hit.offset > 0) && <span className="text-fg-faint">…</span>}
@@ -101,9 +110,7 @@ function ExactCard({
               {shown.cutEnd && <span className="text-fg-faint">…</span>}
             </span>,
             ...hit.after.map((text, index) => (
-              <span key={`a${String(index)}`} className="text-fg-faint">
-                {text}
-              </span>
+              <ContextLine key={`a${String(index)}`} text={text} />
             )),
           ]}
         />

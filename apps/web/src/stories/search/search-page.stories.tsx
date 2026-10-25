@@ -1,10 +1,11 @@
 import type { Meta, StoryObj } from "@storybook/nextjs-vite";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { http } from "msw";
+import { http, HttpResponse } from "msw";
 import { NuqsTestingAdapter } from "nuqs/adapters/testing";
 import { expect, userEvent, waitFor, within } from "storybook/test";
 
 import { SearchPage } from "@/components/search/search-page";
+import type { GrepResult } from "@/lib/api/types";
 import { apiError, handlers } from "@/mocks/handlers";
 import { SEARCH_SCENARIO_KEY } from "@/mocks/handlers/search";
 
@@ -203,10 +204,52 @@ export const Narrow: Story = {
     });
     await expect(canvasElement.querySelector('[data-lane="api"]')).not.toBeVisible();
     await userEvent.click(within(picker).getByRole("button", { name: /API/ }));
-    await expect(await lane(canvasElement, "API")).toBeVisible();
-    await expect(within(picker).getByRole("button", { name: /API/ })).toHaveAttribute(
-      "aria-pressed",
-      "true",
-    );
+    const api = await lane(canvasElement, "API");
+    await expect(api).toBeVisible();
+    const button = within(picker).getByRole("button", { name: /API/ });
+    await expect(button).toHaveAttribute("aria-pressed", "true");
+    // The button controls the lane itself, not its heading.
+    await expect(button).toHaveAttribute("aria-controls", api.id);
+  },
+};
+
+const LONG = "x".repeat(2000);
+
+/** An exact match between minified lines: the lines around it are cut like the match's. */
+export const ExactLongContext: Story = {
+  decorators: [withQuery("?q=token&mode=regex")],
+  parameters: {
+    msw: [
+      http.post("*/api/v1/orgs/:org/repos/:repo/grep", () =>
+        HttpResponse.json<GrepResult>({
+          commit_sha: "c0ffee",
+          hits: [
+            {
+              path: "frontend/dist/app.min.js",
+              line: 2,
+              col: 1,
+              text: `token ${LONG}`,
+              offset: 0,
+              ranges: [[1, 6]],
+              before: [LONG],
+              after: [LONG],
+            },
+          ],
+          truncated: false,
+          timed_out: false,
+          long_lines: 0,
+        }),
+      ),
+      ...handlers,
+    ],
+  },
+  play: async ({ canvas }) => {
+    const exact = await canvas.findByRole("region", { name: /^Exact matches/ });
+    const lines = [...exact.querySelectorAll("code")];
+    await expect(lines).toHaveLength(3);
+    for (const line of lines) {
+      await expect(line.textContent.length).toBeLessThanOrEqual(202);
+      await expect(line.textContent).toMatch(/…$/);
+    }
   },
 };

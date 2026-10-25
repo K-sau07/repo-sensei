@@ -91,7 +91,8 @@ function Lane({
     ...result.lanes[layer],
     ...(pages.data?.pages.flatMap((page) => page.lanes[layer]) ?? []),
   ];
-  const headerId = laneId(base, layer);
+  const id = laneId(base, layer);
+  const headerId = `${id}-heading`;
   const collapsed = count === 0;
   const more = requested ? pages.hasNextPage : result.next[layer] !== null;
   const left = Math.max(0, count - hits.length);
@@ -100,6 +101,7 @@ function Lane({
 
   return (
     <section
+      id={id}
       aria-labelledby={headerId}
       {...{ [LANE_ATTR]: layer }}
       className={cn(
