@@ -362,6 +362,10 @@ def test_configuration_is_chunked_by_key_path() -> None:
     toml = '[tool.ruff]\nline-length = 100\n\n[tool.ruff.lint]\nselect = ["E"]\n'
     (chunk,) = chunk_file("pyproject.toml", "toml", toml)
     assert chunk.header.splitlines()[2] == "# keys: tool.ruff, tool.ruff.lint"
+    # The last row of an array over several lines is no table.
+    rows = '[tool.a]\nmatrix = [\n  [1, 2],\n  [3, 4]\n]\nafter = "[x]"\n\n[tool.b]\nx = 1\n'
+    (chunk,) = chunk_file("pyproject.toml", "toml", rows)
+    assert chunk.header.splitlines()[2] == "# keys: tool.a, tool.b"
 
 
 def test_other_files_are_chunked_in_overlapping_windows() -> None:

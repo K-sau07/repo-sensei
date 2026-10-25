@@ -58,6 +58,7 @@ _JSON_TOKEN = re.compile(r'"(?:\\.|[^"\\\n])*"|//[^\n]*|/\*.*?\*/|[{}\[\]:,\n]',
 _TOML_TABLE = re.compile(r"^\s*\[\[?\s*(.+?)\s*\]\]?\s*(?:#.*)?$")
 _TOML_NAME = r"""(?:"(?:[^"\\]|\\.)*"|'[^']*'|[\w-]+)"""
 _TOML_KEY = re.compile(rf"^\s*({_TOML_NAME})(?:\s*\.\s*{_TOML_NAME})*\s*=")
+_TOML_QUOTED = re.compile(r""""(?:[^"\\]|\\.)*"|'[^']*'|#.*""")  # strings and comments
 
 
 @dataclass(slots=True)
@@ -370,11 +371,15 @@ def _toml_keys(lines: Lines) -> list[_Key]:
     keys: list[_Key] = []
     table: tuple[str, ...] = ()
     quote: str | None = None  # inside a multi-line string
+    depth = 0  # inside a value over several lines: brackets open
     for number in range(1, len(lines) + 1):
         line = lines.line(number)
         if quote is not None:
             if line.count(quote) % 2:
                 quote = None
+            continue
+        if depth > 0:  # an array's rows ([3, 4] is no table)
+            depth = max(0, depth + _brackets(line))
             continue
         header = _TOML_TABLE.match(line)
         if header and not _TOML_KEY.match(line):
@@ -387,7 +392,15 @@ def _toml_keys(lines: Lines) -> list[_Key]:
             for delimiter in ('"""', "'''"):
                 if line.count(delimiter) % 2:
                     quote = delimiter
+            if quote is None:
+                depth = max(0, _brackets(line[key.end() :]))
     return keys
+
+
+def _brackets(text: str) -> int:
+    """How many more brackets ``text`` opens than it closes, outside strings and comments."""
+    bare = _TOML_QUOTED.sub("", text)
+    return bare.count("[") + bare.count("{") - bare.count("]") - bare.count("}")
 
 
 def _json_keys(text: str) -> list[_Key]:
