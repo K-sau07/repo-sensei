@@ -2,13 +2,16 @@
 
 ``chunk_files`` runs after the symbols stage (a definition's chunks link to its node), on the
 same working copy. Files are chunked in a pool of processes (:mod:`sensei_engine.chunk.stage`),
-code parsed again there. Chunks are saved as they come, :data:`BATCH_ROWS` rows per
-transaction, so a large repository's never sit in memory at once.
+code parsed again there. Chunks are saved as they come, ``BATCH_ROWS`` rows at a time
+(:class:`~sensei_engine.chunk.store.ChunkWriter`), so a large repository's never sit in memory
+at once.
 
-The stage starts by deleting the snapshot's chunks and clearing ``chunk_count``, so a run that
-stopped part way starts over; keyword search serves a snapshot only once ``chunk_count`` is set,
-at the end (which unlocks it). Then the new rows are ANALYZEd. Progress is reported in files, at
-most once a second.
+All of it is one transaction: the snapshot's old chunks are deleted, the new ones written and
+``chunk_count`` set together. Keyword search serves a snapshot only once ``chunk_count`` is set;
+a snapshot chunked again (the same commit reindexed) keeps serving its old chunks until the
+new ones commit, and a run that stops part way leaves them as they were. Then the new rows are
+ANALYZEd. Progress is reported in files, at most once a second, each report in its own
+transaction (which also stops the stage if the job was cancelled).
 """
 
 from __future__ import annotations
@@ -16,14 +19,15 @@ from __future__ import annotations
 import time
 import uuid
 from dataclasses import dataclass
+from pathlib import Path
 
-from sqlalchemy import delete, select
+from sqlalchemy import select
 
 from sensei_core.jobs import TaskName
 from sensei_core.logging import get_logger
-from sensei_core.models import ACTIVE_JOB_STATUSES, CodeChunk, Repo, RepoFile, Snapshot, Stage
+from sensei_core.models import ACTIVE_JOB_STATUSES, Repo, RepoFile, Snapshot, Stage
 from sensei_engine.chunk.stage import ChunkReport, chunk_files, chunkable
-from sensei_engine.chunk.store import BATCH_ROWS, FileChunks, save_chunks
+from sensei_engine.chunk.store import ChunkWriter, FileChunks
 from sensei_engine.snapshots import ArchiveTooLargeError
 from sensei_workers.app import celery_app
 from sensei_workers.base import NotYetError, SenseiTask
@@ -40,6 +44,9 @@ PROGRESS_EVERY_SECONDS = 1.0
 STAGE_ORDER = list(Stage)
 
 
+Files = dict[str, tuple[uuid.UUID, str | None]]  # path -> (file id, language)
+
+
 @dataclass(frozen=True, slots=True)
 class Target:
     org_id: uuid.UUID
@@ -49,8 +56,7 @@ class Target:
 
 
 async def _begin(task: SenseiTask, org_id: str, job_id: uuid.UUID) -> Target | None:
-    """Start (or restart) the job's chunks stage, with the snapshot's old chunks gone; None if
-    there is nothing to do."""
+    """Start (or restart) the job's chunks stage; None if there is nothing to do."""
     async with job_scope(task, org_id, job_id) as scope:
         db, job = scope.db, scope.job
         if job is None or job.status not in ACTIVE_JOB_STATUSES:
@@ -75,12 +81,10 @@ async def _begin(task: SenseiTask, org_id: str, job_id: uuid.UUID) -> Target | N
             raise NotYetError("the job has no snapshot yet")
         if symbols_done:
             scope.machine.advance(Stage.CHUNKS)
-        snapshot.chunk_count = None  # not searchable while its chunks are rebuilt
-        await db.execute(delete(CodeChunk).where(CodeChunk.snapshot_id == snapshot.id))
         return Target(repo.org_id, repo.id, snapshot.id, snapshot.commit_sha)
 
 
-async def _files(task: SenseiTask, target: Target) -> dict[str, tuple[uuid.UUID, str | None]]:
+async def _files(task: SenseiTask, target: Target) -> Files:
     """Path to ``(file id, language)`` for the snapshot's files we chunk, in path order."""
     async with task.org_session(target.org_id) as db:
         rows = await db.execute(
@@ -95,32 +99,41 @@ async def _files(task: SenseiTask, target: Target) -> dict[str, tuple[uuid.UUID,
         }
 
 
-async def _save(
-    task: SenseiTask,
-    target: Target,
-    job_id: uuid.UUID,
-    file_ids: dict[str, uuid.UUID],
-    batch: list[FileChunks],
-    *,
-    progress: tuple[int, int],
-) -> int:
-    """Save a batch of files' chunks (its own transaction) and report how far the stage is."""
-    async with job_scope(task, target.org_id, job_id) as scope:
-        scope.require(Stage.CHUNKS)
-        snapshot = await scope.db.get(Snapshot, target.snapshot_id)
-        if snapshot is None:
-            raise JobGoneError("the snapshot is gone")
-        written = await save_chunks(scope.db, snapshot, file_ids, batch, replace_all=False)
-        scope.machine.update_progress(Stage.CHUNKS, *progress)
-        return written
-
-
 async def _progress(
     task: SenseiTask, target: Target, job_id: uuid.UUID, done: int, total: int
 ) -> None:
     async with job_scope(task, target.org_id, job_id) as scope:
         scope.require(Stage.CHUNKS)
         scope.machine.update_progress(Stage.CHUNKS, done, total)
+
+
+async def _rewrite(
+    task: SenseiTask, target: Target, job_id: uuid.UUID, root: Path, files: Files
+) -> tuple[ChunkReport, int]:
+    """Chunk the files and replace the snapshot's chunks with theirs, in one transaction (see
+    above); returns the report and how many chunks were written."""
+    report = ChunkReport()
+    async with task.org_session(target.org_id) as db:
+        snapshot = await db.get(Snapshot, target.snapshot_id)
+        if snapshot is None:
+            raise JobGoneError("the snapshot is gone")
+        file_ids = {path: file_id for path, (file_id, _) in files.items()}
+        writer = ChunkWriter(db, snapshot, file_ids)
+        pairs = [(path, language) for path, (_, language) in files.items()]
+        last = time.monotonic()
+        # The pool's results are read on the event loop: nothing else runs on it meanwhile.
+        for chunked in chunk_files(root, pairs):
+            report.add(chunked)
+            flushed = writer.written
+            if chunked.chunks:
+                await writer.add(FileChunks(chunked.path, chunked.language, chunked.chunks))
+            now = time.monotonic()
+            if writer.written != flushed or now - last >= PROGRESS_EVERY_SECONDS:
+                last = now
+                await _progress(task, target, job_id, report.files, len(files))
+        written = await writer.finish()
+        snapshot.chunk_count = written
+    return report, written
 
 
 async def _finish(
@@ -134,10 +147,6 @@ async def _finish(
 ) -> None:
     async with job_scope(task, target.org_id, job_id) as scope:
         scope.require(Stage.CHUNKS)
-        snapshot = await scope.db.get(Snapshot, target.snapshot_id)
-        if snapshot is None:
-            raise JobGoneError("the snapshot is gone")
-        snapshot.chunk_count = written
         machine = scope.machine
         total = max(report.files, 1)
         machine.update_progress(Stage.CHUNKS, total, total)
@@ -165,29 +174,11 @@ def chunk_snapshot(self: IngestTask, *, job_id: str, org_id: str, repo_id: str) 
     if target is None:
         return None
     files = runtime.run(_files(self, target))
-    file_ids = {path: file_id for path, (file_id, _) in files.items()}
-    report = ChunkReport()
-    batch: list[FileChunks] = []
-    rows = written = 0
-    started = last = time.monotonic()
+    started = time.monotonic()
     try:
         with repo_lock(runtime.settings.ingest.cache_dir, str(target.repo_id)):
             root = local_worktree(target)
-            pairs = [(path, language) for path, (_, language) in files.items()]
-            for chunked in chunk_files(root, pairs):
-                report.add(chunked)
-                if chunked.chunks:
-                    batch.append(FileChunks(chunked.path, chunked.language, chunked.chunks))
-                    rows += len(chunked.chunks)
-                now = time.monotonic()
-                if rows >= BATCH_ROWS:
-                    progress = (report.files, len(files))
-                    saving = _save(self, target, job, file_ids, batch, progress=progress)
-                    written += runtime.run(saving)
-                    batch, rows, last = [], 0, now
-                elif now - last >= PROGRESS_EVERY_SECONDS:
-                    last = now
-                    runtime.run(_progress(self, target, job, report.files, len(files)))
+            report, written = runtime.run(_rewrite(self, target, job, root, files))
     except SnapshotUnavailableError:
         message = "The snapshot of this commit is missing. Reindex the repository."
         runtime.run(fail_job(self, org_id, job, "snapshot_unavailable", message))
@@ -196,9 +187,6 @@ def chunk_snapshot(self: IngestTask, *, job_id: str, org_id: str, repo_id: str) 
         message = "The snapshot of this commit is larger than the size limit."
         runtime.run(fail_job(self, org_id, job, "snapshot_too_large", message))
         return None
-    if batch:
-        progress = (report.files, len(files))
-        written += runtime.run(_save(self, target, job, file_ids, batch, progress=progress))
     seconds = time.monotonic() - started
     runtime.run(_finish(self, target, job, report, written=written, seconds=seconds))
     runtime.run(analyze("chunks"))

@@ -36,12 +36,15 @@ from sensei_core.models import (
     RepoSource,
     RepoStatus,
     Snapshot,
+    Stage,
     UsageEvent,
 )
 from sensei_core.storage import Bucket, artifact_key, repo_prefix
+from sensei_engine.chunk.store import ChunkWriter, FileChunks
 from sensei_testing.anthropic import FakeAnthropic, batch, jsonl, message
 from sensei_workers.ingest.git import GitRunner
 from sensei_workers.runtime import Runtime, set_runtime
+from sensei_workers.tasks import chunk as chunk_task
 from sensei_workers.tasks.merkle import build_merkle
 from sensei_workers.tasks.orchestrate import run_index_job
 
@@ -373,6 +376,67 @@ def test_the_chunks_stage_saves_the_snapshots_chunks(
     events = runtime.run(_events(runtime, job_stream(job_id)))
     logs = [e["message"] for e in events if e["type"] == "log"]
     assert "Cut 4 files into 5 chunks. Keyword search is ready." in logs
+
+
+async def _chunks_stage_again(database: Database, job_id: uuid.UUID) -> None:
+    """Put a finished job back at a running chunks stage (a retry of that stage)."""
+    async with database.session() as db:
+        job = await db.get(IndexJob, job_id)
+        assert job is not None
+        job.status, job.stage = JobStatus.RUNNING, Stage.CHUNKS
+        job.stages = {**job.stages, "chunks": {**job.stages["chunks"], "status": "running"}}
+
+
+async def _seen(database: Database, snapshot_id: uuid.UUID) -> tuple[int | None, int]:
+    """What search sees of the snapshot: its chunk count and its chunks."""
+    async with database.session() as db:
+        snapshot = await db.get(Snapshot, snapshot_id)
+        assert snapshot is not None
+        rows = await db.scalar(
+            select(func.count()).select_from(CodeChunk).where(CodeChunk.snapshot_id == snapshot_id)
+        )
+        return snapshot.chunk_count, int(rows or 0)
+
+
+@pytest.mark.parametrize("fails", [False, True])
+def test_chunking_a_snapshot_again_serves_its_chunks_until_the_new_ones_commit(
+    runtime: Runtime,
+    ids: tuple[uuid.UUID, uuid.UUID, uuid.UUID],
+    github: respx.MockRouter,
+    monkeypatch: pytest.MonkeyPatch,
+    fails: bool,
+) -> None:
+    org_id, repo_id, job_id = ids
+    _run(org_id, repo_id, job_id)
+    _, job = runtime.run(_state(runtime.system_database, repo_id, job_id))
+    snapshot_id = job.snapshot_id
+    assert snapshot_id is not None
+    before = runtime.run(_seen(runtime.system_database, snapshot_id))
+    assert before == (5, 5)
+
+    seen: list[tuple[int | None, int]] = []
+
+    class Watched(ChunkWriter):
+        async def add(self, file: FileChunks) -> None:
+            await super().add(file)
+            seen.append(await _seen(runtime.system_database, snapshot_id))
+            if fails:
+                raise RuntimeError("the worker went away")
+
+    monkeypatch.setattr(chunk_task, "ChunkWriter", Watched)
+    runtime.run(_chunks_stage_again(runtime.system_database, job_id))
+    kwargs = {"job_id": str(job_id), "org_id": str(org_id), "repo_id": str(repo_id)}
+    if fails:
+        with pytest.raises(RuntimeError):
+            chunk_task.chunk_snapshot.run(**kwargs)
+    else:
+        assert chunk_task.chunk_snapshot.run(**kwargs) == 5
+
+    # Mid-run, the old chunks were still there to search; after, the new ones (or, if the run
+    # failed, still the old ones).
+    assert seen
+    assert set(seen) == {before}
+    assert runtime.run(_seen(runtime.system_database, snapshot_id)) == before
 
 
 # ---------------------------------------------------------------- summaries

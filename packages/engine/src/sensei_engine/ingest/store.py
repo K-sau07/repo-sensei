@@ -38,8 +38,12 @@ STAGING_TABLE = "files_staging"
 
 async def save_discovery(db: AsyncSession, snapshot: Snapshot, discovery: Discovery) -> int:
     """Replace the snapshot's files with ``discovery``'s; returns the rows written. Runs in the
-    caller's transaction, which must have the snapshot's org set."""
+    caller's transaction, which must have the snapshot's org set.
+
+    The old files' chunks go with them (on delete cascade): the snapshot is no longer
+    searchable until it is chunked again."""
     await db.execute(delete(RepoFile).where(RepoFile.snapshot_id == snapshot.id))
+    snapshot.chunk_count = None
     records = [
         (
             file.id,

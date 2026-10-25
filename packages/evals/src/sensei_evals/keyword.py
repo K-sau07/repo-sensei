@@ -58,7 +58,8 @@ async def index_chunks(sessions: Sessions, snapshot_id: uuid.UUID, checkout: Pat
             if chunked.chunks:
                 await writer.add(FileChunks(chunked.path, chunked.language, chunked.chunks))
         written = await writer.finish()
-        current.chunk_count = written
+        current.chunk_count = written  # searchable from now on
+        await db.flush()
         return written
 
 

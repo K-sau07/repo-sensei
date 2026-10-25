@@ -9,6 +9,9 @@ the identifier itself is a rare term that ranks its definition first, and its wo
 prose. Every term is optional (pg_textsearch queries are OR); BM25 weighs rare terms up and
 repeats down.
 
+A snapshot is searched once it is chunked (``chunk_count`` set: the chunks stage sets it in the
+transaction that writes them); before that, search finds nothing in it.
+
 Each leg takes the best ``k`` chunks of the snapshot and view that its filters (kind, language,
 path prefix, file role) keep, from the repository's partition, in the order of that partition's
 BM25 index: scoring every row instead takes seconds on a large repository (langflow: 93,341
@@ -94,6 +97,21 @@ async def chunk_partition(db: AsyncSession, repo_id: uuid.UUID) -> str | None:
     return name if name in PARTITIONS else None
 
 
+async def searchable_partition(
+    db: AsyncSession, repo_id: uuid.UUID, snapshot_id: uuid.UUID
+) -> str | None:
+    """The repository's partition, if the snapshot is chunked (None otherwise: not chunked
+    yet, being chunked for the first time, or not the session's)."""
+    ready = await db.scalar(
+        text(
+            "SELECT chunk_count IS NOT NULL FROM snapshots "
+            "WHERE id = :snapshot_id AND repo_id = :repo_id"
+        ),
+        {"snapshot_id": snapshot_id, "repo_id": repo_id},
+    )
+    return await chunk_partition(db, repo_id) if ready else None
+
+
 async def bm25_search(
     db: AsyncSession,
     *,
@@ -106,12 +124,13 @@ async def bm25_search(
     view: str = "code",
     partition: str | None = None,
 ) -> list[LexHit]:
-    """The snapshot's ``k`` best chunks for ``query`` on one leg, best first. ``partition``:
-    the repository's (see :func:`chunk_partition`), when the caller has it."""
+    """The snapshot's ``k`` best chunks for ``query`` on one leg, best first (none if the
+    snapshot isn't chunked). ``partition``: :func:`searchable_partition`'s, when the caller has
+    it."""
     terms = bm25_query(query)
     if not terms.strip():
         return []
-    partition = partition or await chunk_partition(db, repo_id)
+    partition = partition or await searchable_partition(db, repo_id, snapshot_id)
     if partition is None or partition not in PARTITIONS:
         return []
     column = COLUMNS[leg]
@@ -216,7 +235,7 @@ async def keyword_search(
     weights: Mapping[Leg, float] = DEFAULT_WEIGHTS,
 ) -> list[LexHit]:
     """Each leg's ``k`` best, fused (one leg: its own ranking)."""
-    partition = await chunk_partition(db, repo_id)
+    partition = await searchable_partition(db, repo_id, snapshot_id)
     if partition is None:
         return []
     results = {

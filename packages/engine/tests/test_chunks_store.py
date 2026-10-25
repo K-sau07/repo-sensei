@@ -28,10 +28,12 @@ from sensei_engine.parse.stage import parseable
 from sensei_engine.search.bm25 import (
     Filters,
     Leg,
+    LexHit,
     bm25_query,
     bm25_search,
     chunk_partition,
     keyword_search,
+    searchable_partition,
 )
 from sensei_engine.symbols.extract import extract_symbols
 from sensei_engine.symbols.store import FileSymbols, save_symbols
@@ -370,3 +372,29 @@ async def test_the_legs_fuse_by_reciprocal_rank(
         db, repo_id=snapshot.repo_id, snapshot_id=uuid.uuid4(), query="read_items"
     )
     assert other == []
+
+
+async def test_a_snapshot_is_searched_only_once_chunked(
+    db_session: AsyncSession, tmp_path: Path
+) -> None:
+    snapshot, _ = await _index(db_session, tmp_path, FILES)
+    repo_id, snapshot_id = snapshot.repo_id, snapshot.id
+
+    async def found() -> tuple[list[LexHit], list[LexHit]]:
+        fused = await keyword_search(
+            db_session, repo_id=repo_id, snapshot_id=snapshot_id, query="make_item"
+        )
+        leg = await bm25_search(
+            db_session, repo_id=repo_id, snapshot_id=snapshot_id, query="make_item"
+        )
+        return fused, leg
+
+    assert all(await found())
+    assert await searchable_partition(db_session, repo_id, snapshot_id) is not None
+    # Discovered again (a reindex of the commit): its files' chunks are gone with them, and
+    # it waits for the chunks stage.
+    await save_discovery(db_session, snapshot, discover(tmp_path, max_files=1000))
+    await db_session.flush()
+    assert snapshot.chunk_count is None
+    assert await searchable_partition(db_session, repo_id, snapshot_id) is None
+    assert await found() == ([], [])
