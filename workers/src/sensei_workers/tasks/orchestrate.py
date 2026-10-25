@@ -9,7 +9,9 @@ The stage task ids are kept in Redis so cancelling can revoke the ones still que
 
 ``finalize_index`` ends the run: stages this phase doesn't have yet are recorded as skipped (so
 are summaries when the server has no Anthropic key: that stage passes itself over), the
-repository becomes ``ready`` at the indexed commit, and the job succeeds.
+repository becomes ``ready`` at the indexed commit, and the job succeeds. The chunks of the
+repository's other snapshots are pruned in the same transaction (search serves the indexed
+commit), and its chunks partition is vacuumed after.
 """
 
 from __future__ import annotations
@@ -27,10 +29,12 @@ from sensei_core.indexing.state import IndexJobStateMachine
 from sensei_core.jobs import TaskName, chain_key
 from sensei_core.logging import get_logger
 from sensei_core.models import ACTIVE_JOB_STATUSES, IndexJob, JobStatus, Repo, Snapshot, Stage
+from sensei_engine.chunk.store import prune_chunks
 from sensei_workers.app import celery_app
 from sensei_workers.base import NotYetError, SenseiTask
 from sensei_workers.jobstate import job_scope
 from sensei_workers.runtime import get_runtime
+from sensei_workers.statistics import vacuum_chunks
 from sensei_workers.tasks.chunk import chunk_snapshot
 from sensei_workers.tasks.discover import discover_files
 from sensei_workers.tasks.ingest import IngestTask, clone_snapshot
@@ -63,7 +67,7 @@ GIVE_UP_AFTER_SECONDS = 24 * 3600
 def finalize_index(self: IngestTask, *, job_id: str, org_id: str, repo_id: str) -> str | None:
     """Finish the job: the repository is ready at the snapshot's commit. Returns the commit."""
 
-    async def _finalize() -> str | None:
+    async def _finalize() -> tuple[str, int] | None:
         async with job_scope(self, org_id, uuid.UUID(job_id)) as scope:
             job = scope.job
             if job is None or job.status not in ACTIVE_JOB_STATUSES:
@@ -87,17 +91,23 @@ def finalize_index(self: IngestTask, *, job_id: str, org_id: str, repo_id: str) 
             if ready:
                 machine.advance(Stage.FINALIZE)  # later phases' stages: skipped for now
             repo.last_indexed_sha = snapshot.commit_sha
+            pruned = await prune_chunks(scope.db, repo.id, keep=snapshot.id)
             settle_repo(repo, JobStatus.SUCCEEDED)
             machine.log(
                 f"Indexed {snapshot.commit_sha[:12]}: {snapshot.file_count or 0:,} files. "
                 "The code browser is ready."
             )
             machine.finish()
-            return snapshot.commit_sha
+            return snapshot.commit_sha, pruned
 
-    sha = get_runtime().run(_finalize())
-    if sha is not None:
-        log.info("index job succeeded", commit_sha=sha)
+    runtime = get_runtime()
+    finished = runtime.run(_finalize())
+    if finished is None:
+        return None
+    sha, pruned = finished
+    if pruned:
+        runtime.run(vacuum_chunks(uuid.UUID(repo_id)))
+    log.info("index job succeeded", commit_sha=sha, pruned_chunks=pruned)
     return sha
 
 

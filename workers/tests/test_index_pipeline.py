@@ -453,6 +453,42 @@ def test_chunking_a_snapshot_again_serves_its_chunks_until_the_new_ones_commit(
     assert runtime.run(_seen(runtime.system_database, snapshot_id)) == before
 
 
+async def _another_job(database: Database, org_id: uuid.UUID, repo_id: uuid.UUID) -> uuid.UUID:
+    async with database.session() as db:
+        job = IndexJob(org_id=org_id, repo_id=repo_id, kind=JobKind.FULL)
+        db.add(job)
+        await db.flush()
+        return job.id
+
+
+def test_indexing_another_commit_prunes_the_last_ones_chunks(
+    runtime: Runtime,
+    ids: tuple[uuid.UUID, uuid.UUID, uuid.UUID],
+    github: respx.MockRouter,
+    bare_repo: Any,
+) -> None:
+    org_id, repo_id, job_id = ids
+    _run(org_id, repo_id, job_id)
+    _, first_job = runtime.run(_state(runtime.system_database, repo_id, job_id))
+    old = first_job.snapshot_id
+    assert old is not None
+    assert runtime.run(_seen(runtime.system_database, old)) == (5, 5)
+
+    # The branch moves back to the first commit: a new snapshot, indexed in full.
+    github.get(COMMITS_URL).mock(return_value=httpx.Response(200, json={"sha": bare_repo.first}))
+    next_job = runtime.run(_another_job(runtime.system_database, org_id, repo_id))
+    _run(org_id, repo_id, next_job)
+    repo, job = runtime.run(_state(runtime.system_database, repo_id, next_job))
+    assert (job.status, repo.last_indexed_sha) == (JobStatus.SUCCEEDED, bare_repo.first)
+    new = job.snapshot_id
+    assert new is not None
+    assert new != old
+    count, rows = runtime.run(_seen(runtime.system_database, new))
+    assert count == rows > 0
+    # The superseded snapshot isn't searchable any more, and its chunks are gone.
+    assert runtime.run(_seen(runtime.system_database, old)) == (None, 0)
+
+
 # ---------------------------------------------------------------- summaries
 
 BATCHES = "/v1/messages/batches"

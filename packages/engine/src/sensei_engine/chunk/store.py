@@ -7,7 +7,8 @@ the snapshot's symbols are saved first. Everything happens in the caller's trans
 snapshot's chunks are swapped all at once.
 
 A full save (``replace_all``) deletes the snapshot's chunks first; an incremental one deletes
-the chunks owned by each file it saves (see :func:`delete_owned_chunks`).
+the chunks owned by each file it saves (see :func:`delete_owned_chunks`). Once a snapshot is the
+repository's indexed one, the other snapshots' chunks are pruned (:func:`prune_chunks`).
 """
 
 from __future__ import annotations
@@ -17,7 +18,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, cast
 
-from sqlalchemy import delete
+from sqlalchemy import delete, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from uuid_utils.compat import uuid7
 
@@ -60,6 +61,21 @@ class FileChunks:
 
 def _text(value: str) -> str:
     return value.replace("\x00", "�")  # Postgres text can't hold NUL
+
+
+async def prune_chunks(db: AsyncSession, repo_id: uuid.UUID, *, keep: uuid.UUID) -> int:
+    """Delete the chunks of the repository's snapshots other than ``keep`` (superseded by it),
+    which are no longer searchable; returns how many rows went. Left in place, they would also
+    weigh in the partition's BM25 statistics."""
+    await db.execute(
+        update(Snapshot)
+        .where(Snapshot.repo_id == repo_id, Snapshot.id != keep, Snapshot.chunk_count.is_not(None))
+        .values(chunk_count=None)
+    )
+    result = await db.execute(
+        delete(CodeChunk).where(CodeChunk.repo_id == repo_id, CodeChunk.snapshot_id != keep)
+    )
+    return int(cast("Any", result).rowcount or 0)
 
 
 async def delete_owned_chunks(db: AsyncSession, owner_file_ids: Sequence[uuid.UUID]) -> None:
