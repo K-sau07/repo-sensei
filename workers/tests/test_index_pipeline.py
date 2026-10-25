@@ -17,7 +17,7 @@ import httpx2
 import orjson
 import pytest
 import respx
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, text
 
 from sensei_core.config import Settings
 from sensei_core.db import Database
@@ -44,6 +44,7 @@ from sensei_engine.chunk.store import ChunkWriter, FileChunks
 from sensei_testing.anthropic import FakeAnthropic, batch, jsonl, message
 from sensei_workers.ingest.git import GitRunner
 from sensei_workers.runtime import Runtime, set_runtime
+from sensei_workers.statistics import vacuum_chunks
 from sensei_workers.tasks import chunk as chunk_task
 from sensei_workers.tasks.merkle import build_merkle
 from sensei_workers.tasks.orchestrate import run_index_job
@@ -349,6 +350,15 @@ async def _chunks(
         return snapshot, sorted((p, k, s, e, key, linked) for p, k, s, e, key, linked in rows)
 
 
+async def _partition(database: Database, repo_id: uuid.UUID) -> str:
+    async with database.session() as db:
+        found = await db.scalar(
+            text("SELECT DISTINCT tableoid::regclass::text FROM chunks WHERE repo_id = :r"),
+            {"r": repo_id},
+        )
+        return str(found)
+
+
 def test_the_chunks_stage_saves_the_snapshots_chunks(
     runtime: Runtime,
     ids: tuple[uuid.UUID, uuid.UUID, uuid.UUID],
@@ -369,6 +379,10 @@ def test_the_chunks_stage_saves_the_snapshots_chunks(
         ("src/app.py", "function", 6, 7, "py src/app.py/main().", True),
     ]
     assert snapshot.chunk_count == len(chunks)
+    # The partition the stage vacuumed afterwards is the one holding them.
+    assert runtime.run(vacuum_chunks(repo_id)) == runtime.run(
+        _partition(runtime.system_database, repo_id)
+    )
     details = job.stages["chunks"]["details"]
     assert (details["files"], details["chunked"], details["failed"]) == (4, 4, 0)
     assert details["chunks"] == len(chunks)

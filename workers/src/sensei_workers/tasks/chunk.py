@@ -8,10 +8,13 @@ at once.
 
 All of it is one transaction: the snapshot's old chunks are deleted, the new ones written and
 ``chunk_count`` set together. Keyword search serves a snapshot only once ``chunk_count`` is set;
-a snapshot chunked again (the same commit reindexed) keeps serving its old chunks until the
-new ones commit, and a run that stops part way leaves them as they were. Then the new rows are
-ANALYZEd. Progress is reported in files, at most once a second, each report in its own
-transaction (which also stops the stage if the job was cancelled).
+a stage that runs again (a retry) keeps serving the snapshot's chunks until the new ones commit,
+and a run that stops part way leaves them as they were. (A reindex of the same commit discovers
+its files again, which takes their chunks along: the snapshot waits for this stage.) Then the
+repository's partition is vacuumed and analyzed
+(:func:`~sensei_workers.statistics.vacuum_chunks`: the old rows out of its BM25 statistics, the
+new ones in the planner's). Progress is reported in files, at most once a second, each report in
+its own transaction (which also stops the stage if the job was cancelled).
 """
 
 from __future__ import annotations
@@ -34,7 +37,7 @@ from sensei_workers.base import NotYetError, SenseiTask
 from sensei_workers.ingest.cache import repo_lock
 from sensei_workers.jobstate import JobGoneError, job_scope
 from sensei_workers.runtime import get_runtime
-from sensei_workers.statistics import analyze
+from sensei_workers.statistics import vacuum_chunks
 from sensei_workers.tasks.discover import SnapshotUnavailableError, local_worktree
 from sensei_workers.tasks.ingest import IngestTask, fail_job
 
@@ -189,7 +192,7 @@ def chunk_snapshot(self: IngestTask, *, job_id: str, org_id: str, repo_id: str) 
         return None
     seconds = time.monotonic() - started
     runtime.run(_finish(self, target, job, report, written=written, seconds=seconds))
-    runtime.run(analyze("chunks"))
+    runtime.run(vacuum_chunks(target.repo_id))
     log.info(
         "files chunked",
         files=report.files,

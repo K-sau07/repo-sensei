@@ -133,11 +133,14 @@ class KeywordRetriever:
 
 
 async def analyze_index(url: str) -> None:
-    """Fresh planner statistics for everything the eval index loaded (through the owner)."""
-    engine = create_async_engine(url)
+    """Fresh planner statistics for everything the eval index loaded, and BM25 statistics
+    without the rows of the load it replaced (pg_textsearch counts deleted rows until a VACUUM:
+    runs of the same code scored differently at depth). Through the owner, outside a
+    transaction."""
+    engine = create_async_engine(url, isolation_level="AUTOCOMMIT")
     try:
-        async with engine.begin() as connection:
-            await connection.execute(text("ANALYZE files, nodes, chunks"))
+        async with engine.connect() as connection:
+            await connection.execute(text("VACUUM (ANALYZE) files, nodes, chunks"))
     finally:
         await engine.dispose()
 
