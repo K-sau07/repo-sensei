@@ -2749,7 +2749,7 @@ requires-dist = [
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "redis", specifier = ">=6.2" },
     { name = "sensei-core", editable = "packages/core" },
-    { name = "sqlglot", specifier = ">=27" },
+    { name = "sqlglot", specifier = ">=29" },
     { name = "tiktoken", specifier = ">=0.12" },
     { name = "tree-sitter", specifier = "==0.25.2" },
     { name = "tree-sitter-javascript", specifier = "==0.25.0" },
