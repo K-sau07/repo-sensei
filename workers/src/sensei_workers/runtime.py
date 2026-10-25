@@ -25,13 +25,19 @@ from sensei_core.redis import make_redis
 from sensei_core.security.crypto import TokenCipher
 from sensei_core.storage import ObjectStorage
 from sensei_core.telemetry import instrument_engine
+from sensei_core.usage import CostCalculator
+from sensei_engine.llm.anthropic_client import AnthropicClient
 
 T = TypeVar("T")
 
 
 class Runtime:
-    def __init__(self, settings: Settings) -> None:
+    def __init__(self, settings: Settings, *, anthropic: AnthropicClient | None = None) -> None:
+        """``anthropic``: the client to use instead of one from the settings (tests)."""
         self.settings = settings
+        self._anthropic = anthropic
+        self._anthropic_given = anthropic is not None
+        self._costs: CostCalculator | None = None
         self._runner: asyncio.Runner | None = None
         self._database: Database | None = None
         self._system_database: Database | None = None
@@ -120,6 +126,20 @@ class Runtime:
         return self._github_app
 
     @property
+    def anthropic(self) -> AnthropicClient:
+        """Claude (``configured`` is False when this deployment has no key)."""
+        if self._anthropic is None:
+            self._anthropic = AnthropicClient(self.settings.anthropic)
+        return self._anthropic
+
+    @property
+    def costs(self) -> CostCalculator:
+        """Prices for the usage ledger and the cost guard."""
+        if self._costs is None:
+            self._costs = CostCalculator.from_settings(self.settings.pricing)
+        return self._costs
+
+    @property
     def _cipher(self) -> TokenCipher:
         return TokenCipher.from_settings(self.settings.auth)
 
@@ -158,6 +178,8 @@ class Runtime:
         self._github_client = None
         self._github_app = None
         self._storage = None
+        if not self._anthropic_given:  # its connections belonged to the loop just closed
+            self._anthropic = None
 
 
 _runtime: Runtime | None = None

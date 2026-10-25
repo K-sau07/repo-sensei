@@ -3,6 +3,7 @@ and directory rollups, against a fake Anthropic API."""
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 import uuid
@@ -14,15 +15,17 @@ from typing import Any
 
 import httpx2
 import pytest
-from sqlalchemy import func, select
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import delete, func, insert, select
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
+from sensei_core.config import Settings
 from sensei_core.db.tenancy import set_org_context
 from sensei_core.mail import MemoryMailer
 from sensei_core.models import (
     GlossaryTerm,
     LLMBatch,
     LLMBatchStatus,
+    Org,
     Repo,
     RepoSource,
     Snapshot,
@@ -32,6 +35,7 @@ from sensei_core.models import (
 from sensei_core.orgs.service import OrgService
 from sensei_core.usage import DEFAULT_PRICE_TABLE, CostCalculator, month_start, record_usage
 from sensei_engine.llm import batches, summaries
+from sensei_engine.llm import rollups as rollup_module
 from sensei_engine.llm.anthropic_client import CUSTOM_ID, LLMResult, LLMUsage
 from sensei_engine.llm.glossary import build_glossary, normalize_term, save_glossary
 from sensei_engine.llm.rollups import summarize_directories, to_json, tree
@@ -49,12 +53,16 @@ from sensei_engine.llm.summaries import (
     check_budget,
     collect_summaries,
     estimate_cost,
+    from_json,
     parse_answer,
     render,
+    reserve_batch,
+    retry_failed,
     summarize_files,
     system_prompt,
     terms,
 )
+from sensei_engine.llm.summaries import to_json as summaries_json
 from sensei_testing import make_user
 from sensei_testing.anthropic import FakeAnthropic, batch, jsonl, message
 
@@ -309,6 +317,149 @@ async def test_the_guard_stops_a_run_that_would_pass_the_months_cap(
     assert month_start(datetime(2026, 3, 31, 23, 0, tzinfo=UTC)) == datetime(2026, 3, 1, tzinfo=UTC)
 
 
+@pytest.mark.integration
+async def test_the_guard_counts_what_uncollected_batches_will_cost(
+    db_session: AsyncSession,
+) -> None:
+    org_id = await _org(db_session)
+    client = FakeAnthropic().client()
+    requests = build_requests([_file()])
+    for status, collected, cost in (
+        (LLMBatchStatus.IN_PROGRESS, False, "2"),  # running: its cost isn't in the ledger yet
+        (LLMBatchStatus.ENDED, False, "3"),  # ended, not collected: nor is this one's
+        (LLMBatchStatus.ENDED, True, "100"),  # collected: its usage is in the ledger
+        (LLMBatchStatus.FAILED, False, "100"),  # never ran
+    ):
+        row = await batches.reserve(db_session, client, requests, org_id=org_id, kind="summaries")
+        row.status, row.estimated_cost_usd = status, Decimal(cost)
+        row.collected_at = datetime.now(UTC) if collected else None
+    await db_session.flush()
+    assert await summaries.pending_estimates(db_session, org_id) == Decimal(5)
+    assert await check_budget(db_session, org_id, _estimate("5"), Decimal(10)) == Decimal(5)
+    with pytest.raises(CostCapExceeded):
+        await check_budget(db_session, org_id, _estimate("5.01"), Decimal(10))
+
+
+@pytest.fixture
+async def committed_org(migrated_test_db: Settings) -> AsyncGenerator[uuid.UUID]:
+    """An org committed by the system role (two connections see it), removed afterwards."""
+    system = create_async_engine(migrated_test_db.database.system_url.get_secret_value())
+    org_id = uuid.uuid4()
+    async with system.begin() as conn:
+        await conn.execute(insert(Org).values(id=org_id, slug=f"cap-{org_id.hex[:8]}", name="C"))
+    try:
+        yield org_id
+    finally:
+        async with system.begin() as conn:
+            await conn.execute(delete(Org).where(Org.id == org_id))
+        await system.dispose()
+
+
+@pytest.mark.integration
+async def test_two_runs_at_the_cap_at_once_reserve_one_batch(
+    migrated_test_db: Settings, committed_org: uuid.UUID
+) -> None:
+    """Each run alone fits under the cap, both together don't: the org's lock makes the second
+    check wait for the first reservation to commit, and then see it."""
+    org_id = committed_org
+    engine = create_async_engine(migrated_test_db.database.url.get_secret_value())
+    client = FakeAnthropic().client()
+    requests = build_requests([_file()])
+    first_reserved, first_may_commit = asyncio.Event(), asyncio.Event()
+    outcomes: dict[str, str] = {}
+
+    async def run(name: str) -> None:
+        async with AsyncSession(engine, expire_on_commit=False) as db, db.begin():
+            await set_org_context(db, org_id)
+            try:
+                await reserve_batch(
+                    db, client, requests, _estimate("6"), org_id=org_id, cap_usd=Decimal(10),
+                    ref_type="index_job", ref_id=name,
+                )  # fmt: skip
+            except CostCapExceeded as exc:
+                outcomes[name] = f"over the cap (spent {exc.spent:.2f})"
+                return
+            outcomes[name] = "reserved"
+            if name == "first":
+                first_reserved.set()
+                await first_may_commit.wait()  # hold the lock while the second checks
+
+    first = asyncio.create_task(run("first"))
+    second: asyncio.Task[None] | None = None
+    try:
+        await asyncio.wait_for(first_reserved.wait(), timeout=10)
+        second = asyncio.create_task(run("second"))
+        await asyncio.sleep(0.3)
+        assert not second.done(), "the second check must wait for the first reservation"
+        first_may_commit.set()
+        await asyncio.wait_for(asyncio.gather(first, second), timeout=10)
+    finally:
+        first_may_commit.set()  # never leave a transaction open: cleanup would wait on it
+        for task in (first, second):
+            if task is not None and not task.done():
+                task.cancel()
+        await asyncio.gather(first, *([second] if second else []), return_exceptions=True)
+        await engine.dispose()
+    assert outcomes == {"first": "reserved", "second": "over the cap (spent 6.00)"}
+
+
+@pytest.mark.integration
+async def test_two_runs_at_the_cap_racing_reserve_one_batch(
+    migrated_test_db: Settings, committed_org: uuid.UUID
+) -> None:
+    org_id = committed_org
+    client = FakeAnthropic().client()
+    requests = build_requests([_file()])
+    engine = create_async_engine(migrated_test_db.database.url.get_secret_value())
+    raced: list[str] = []
+
+    async def race(name: str) -> None:
+        async with AsyncSession(engine, expire_on_commit=False) as db, db.begin():
+            await set_org_context(db, org_id)
+            try:
+                await reserve_batch(
+                    db, client, requests, _estimate("6"), org_id=org_id, cap_usd=Decimal(10),
+                    ref_type="index_job", ref_id=name,
+                )  # fmt: skip
+                raced.append("reserved")
+            except CostCapExceeded:
+                raced.append("over the cap")
+
+    try:
+        await asyncio.wait_for(asyncio.gather(race("a"), race("b")), timeout=10)
+    finally:
+        await engine.dispose()
+    assert sorted(raced) == ["over the cap", "reserved"]
+
+
+def test_the_rollups_estimate_counts_a_call_per_directory_that_needs_one() -> None:
+    paths = ["README.md", "backend/app/main.py", "backend/app/api/items.py"]
+    found = rollup_module.estimate_cost(paths, CALCULATOR, "claude-haiku-5-5")
+    # The root, backend/app and backend/app/api; backend/ only holds app/ and takes its summary.
+    assert found.calls == 3
+    assert found.output_tokens == 3 * rollup_module.ESTIMATED_OUTPUT_TOKENS
+    assert found.input_tokens > 3 * len(rollup_module.system_prompt()) // 3
+    expected = sum(
+        (
+            CALCULATOR.cost("anthropic", "claude-haiku-5-5", tokens_in=i, tokens_out=400)
+            or Decimal(0)
+            for i in _rollup_inputs(paths)
+        ),
+        Decimal(0),
+    )
+    assert found.cost_usd == expected > 0
+    with pytest.raises(ValueError, match="no price"):
+        rollup_module.estimate_cost(paths, CALCULATOR, "claude-unknown-1")
+
+
+def _rollup_inputs(paths: list[str]) -> list[int]:
+    system = len(rollup_module.system_prompt())
+    children = {".": 2, "backend/app": 2, "backend/app/api": 1}  # files and directories listed
+    return [
+        -(-(system + len(directory) + count * 440) // 3) for directory, count in children.items()
+    ]
+
+
 # ---------------------------------------------------------------- the batch run
 
 
@@ -456,6 +607,20 @@ async def test_over_the_cap_nothing_is_recorded_or_sent(db_session: AsyncSession
 
 
 @pytest.mark.integration
+async def test_retries_over_the_cap_are_not_sent(db_session: AsyncSession) -> None:
+    org_id = await _org(db_session)
+    api = _batch_api(lambda custom_id, _: _line(custom_id, "{}"), retry=lambda _: "{}")
+    run = summaries.SummaryRun(skipped={"a/one.py": "errored: boom"})
+    await retry_failed(
+        _sessions(db_session), api.client(), run, [_file("a/one.py")], calculator=CALCULATOR,
+        org_id=org_id, cap_usd=Decimal(0),
+    )  # fmt: skip
+    assert api.bodies("/v1/messages") == []
+    assert run.skipped == {"a/one.py": "not retried: over the monthly cost cap"}
+    assert run.retried == 0
+
+
+@pytest.mark.integration
 async def test_after_a_restart_results_are_matched_by_path(db_session: AsyncSession) -> None:
     org_id = await _org(db_session)
     files = [_file("x/one.py"), _file("x/two.py")]
@@ -473,6 +638,16 @@ async def test_after_a_restart_results_are_matched_by_path(db_session: AsyncSess
     )
     assert sorted(run.summaries) == ["x/one.py", "x/two.py"]
     assert run.skipped == {}
+
+
+def test_the_summaries_artifact_round_trips() -> None:
+    found = {
+        "b.py": _summary("b.py", {"b::f": ("invoice", "tax")}),
+        "a.py": FileSummary("a.py", "the a module", {}, PROMPT_VERSION, "claude-haiku-5-5", True),
+    }
+    data = summaries_json(found, {"c.py": "errored: boom"})
+    assert [f["path"] for f in json.loads(data)["files"]] == ["a.py", "b.py"]
+    assert from_json(data) == (found, {"c.py": "errored: boom"})
 
 
 # ---------------------------------------------------------------- glossary

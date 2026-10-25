@@ -5,14 +5,19 @@ the feature maps (4.9); until then they are kept as JSON (:func:`to_json`).
 A directory holding nothing but one subdirectory (``src/`` over ``src/app/``) takes that
 subdirectory's summary instead of a call of its own. A directory whose call fails is left out
 and its parent lists it by name only.
+
+What they will cost is estimated before any summary is asked for (:func:`estimate_cost`), so the
+cost guard covers them with the batch.
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
+import math
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from decimal import Decimal
 from functools import cache
 from importlib import resources
 from pathlib import PurePosixPath
@@ -21,7 +26,9 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, ValidationError
 
 from sensei_core.logging import get_logger
+from sensei_core.usage import CostCalculator
 from sensei_engine.llm.anthropic_client import (
+    PROVIDER,
     AnthropicClient,
     LLMError,
     LLMRequest,
@@ -38,6 +45,12 @@ MAX_CHILDREN = 60  # listed per directory; the rest are counted
 MAX_CHILD_CHARS = 400  # of each child's summary
 MAX_TOKENS = 1_500
 CONCURRENCY = 8
+# For the estimate: characters per token (as the file summaries' prompt budget assumes), the
+# characters around each listed child, and an answer (60 to 120 tokens of summary, its JSON and
+# some thinking at low effort), on the high side.
+CHARS_PER_TOKEN = 3
+CHILD_OVERHEAD_CHARS = 40
+ESTIMATED_OUTPUT_TOKENS = 400
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,6 +61,14 @@ class DirectorySummary:
     directories: int
     prompt_version: str = PROMPT_VERSION
     inherited_from: str | None = None  # the only subdirectory, when its summary was taken
+
+
+@dataclass(frozen=True, slots=True)
+class RollupEstimate:
+    calls: int
+    input_tokens: int
+    output_tokens: int
+    cost_usd: Decimal
 
 
 @dataclass(slots=True)
@@ -121,6 +142,45 @@ def render(
         lines.append(f"(and {len(children) - MAX_CHILDREN} more)")
     lines.append("</children>")
     return "\n".join(lines)
+
+
+def _calls(directories: Mapping[str, _Directory]) -> list[str]:
+    """The directories that get a call of their own (not the ones holding one subdirectory)."""
+    return [
+        directory
+        for directory, node in directories.items()
+        if node.files or len(node.directories) != 1
+    ]
+
+
+def estimate_cost(paths: list[str], calculator: CostCalculator, model: str) -> RollupEstimate:
+    """What the rollups above ``paths`` should cost at full price (each child's summary counted
+    at its longest), before any of them exists."""
+    directories = tree(sorted(paths))
+    system = len(system_prompt())
+    calls = _calls(directories)
+    inputs = [
+        math.ceil(
+            (
+                system
+                + len(directory)
+                + min(len(node.files) + len(node.directories), MAX_CHILDREN)
+                * (MAX_CHILD_CHARS + CHILD_OVERHEAD_CHARS)
+            )
+            / CHARS_PER_TOKEN
+        )
+        for directory in calls
+        for node in (directories[directory],)
+    ]
+    costs = [
+        calculator.cost(PROVIDER, model, tokens_in=tokens, tokens_out=ESTIMATED_OUTPUT_TOKENS)
+        for tokens in inputs
+    ]
+    if any(cost is None for cost in costs):
+        msg = f"no price for {model}: the cost guard can't estimate"
+        raise ValueError(msg)
+    total = sum((cost for cost in costs if cost is not None), Decimal(0))
+    return RollupEstimate(len(calls), sum(inputs), ESTIMATED_OUTPUT_TOKENS * len(calls), total)
 
 
 async def summarize_directories(

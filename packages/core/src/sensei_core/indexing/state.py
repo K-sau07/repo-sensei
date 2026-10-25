@@ -121,6 +121,18 @@ class IndexJobStateMachine:
         self._complete(stages, stage)
         self._save(stages)
 
+    def skip(self, stage: Stage, **details: Any) -> None:
+        """Give up the running ``stage`` without failing the job: an optional stage that can't
+        run (summaries over the org's cost cap). Recorded as skipped, with ``details``; it
+        unlocks nothing, and the next stage starts as usual."""
+        self._require_current_running(stage)
+        stages = self._stages()
+        entry = stages[stage.value]
+        entry.setdefault("details", {}).update(details)
+        entry.update(status="skipped", finished_at=self._now().isoformat())
+        self._save(stages)
+        self._emit("stage.finished", stage, unlocks=[])
+
     def note(self, stage: Stage, **details: Any) -> None:
         """Attach facts to a stage (limitations, counts) for the UI and for debugging."""
         current = self._require_running_stage()

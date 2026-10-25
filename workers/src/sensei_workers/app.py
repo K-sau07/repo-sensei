@@ -31,6 +31,7 @@ TASK_MODULES = [
     "sensei_workers.tasks.merkle",
     "sensei_workers.tasks.parse",
     "sensei_workers.tasks.chunk",
+    "sensei_workers.tasks.summaries",
     "sensei_workers.tasks.orchestrate",
 ]
 

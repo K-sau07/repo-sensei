@@ -302,3 +302,27 @@ def test_a_stage_completes_on_its_own_and_the_next_task_advances(clock: Clock) -
     machine.advance(Stage.DISCOVER)
     assert machine.job.stages["discover"]["status"] == "running"
     assert machine.features() == []  # discover isn't done yet
+
+
+def test_an_optional_stage_is_skipped_without_failing_the_job(clock: Clock) -> None:
+    machine = _machine(clock)
+    machine.start()
+    _run_to(machine, Stage.SUMMARIES)
+    machine.events.clear()
+    machine.skip(Stage.SUMMARIES, reason="cost_cap", cap_usd="50")
+    summaries = machine.job.stages["summaries"]
+    assert summaries["status"] == "skipped"
+    assert summaries["details"] == {"reason": "cost_cap", "cap_usd": "50"}
+    assert summaries["finished_at"] == clock.now.isoformat()
+    assert machine.job.status is JobStatus.RUNNING
+    [event] = machine.events
+    assert (event.type, event.stage, event.data) == (
+        "stage.finished",
+        Stage.SUMMARIES,
+        {"unlocks": []},
+    )
+    assert Feature.WIKI not in machine.features()
+    with pytest.raises(IllegalTransitionError):
+        machine.skip(Stage.SUMMARIES)  # not running any more
+    machine.advance(Stage.FINALIZE)
+    assert machine.job.stages["summaries"]["status"] == "skipped"

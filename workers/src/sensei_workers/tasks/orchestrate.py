@@ -1,13 +1,14 @@
 """Running an index job: its stages as a Celery chain, and the stage that finishes it.
 
 ``run_index_job`` turns a queued job into the chain clone → discover → merkle → parse (with
-symbols) → chunks → finalize (later phases add embeddings, summaries, graph and links in
-between). Each stage is its own task (parse and symbols share one: the symbols come out of the
-parse), so a failure retries only that stage. Every stage checks the job first: a
-cancelled or failed job makes the rest of the chain do nothing. The stage task ids are kept in
-Redis so cancelling can revoke the ones still queued.
+symbols) → chunks → summaries → finalize (later phases add embeddings between chunks and
+summaries, then graph and links after them). Each stage is its own task (parse and symbols
+share one: the symbols come out of the parse), so a failure retries only that stage. Every
+stage checks the job first: a cancelled or failed job makes the rest of the chain do nothing.
+The stage task ids are kept in Redis so cancelling can revoke the ones still queued.
 
-``finalize_index`` ends the run: stages this phase doesn't have yet are recorded as skipped, the
+``finalize_index`` ends the run: stages this phase doesn't have yet are recorded as skipped (so
+are summaries when the server has no Anthropic key: that stage passes itself over), the
 repository becomes ``ready`` at the indexed commit, and the job succeeds.
 """
 
@@ -35,6 +36,7 @@ from sensei_workers.tasks.discover import discover_files
 from sensei_workers.tasks.ingest import IngestTask, clone_snapshot
 from sensei_workers.tasks.merkle import build_merkle
 from sensei_workers.tasks.parse import parse_snapshot
+from sensei_workers.tasks.summaries import summarize_snapshot
 
 log = get_logger(__name__)
 
@@ -66,16 +68,13 @@ def finalize_index(self: IngestTask, *, job_id: str, org_id: str, repo_id: str) 
             job = scope.job
             if job is None or job.status not in ACTIVE_JOB_STATUSES:
                 return None  # finished, failed or cancelled meanwhile
-            stages = job.stages or {}
-            chunks_done = (
-                job.stage is Stage.CHUNKS and stages.get("chunks", {}).get("status") == "done"
-            )
+            ready = _ready_to_finalize(job)
             resuming = job.stage is Stage.FINALIZE
-            if not chunks_done and not resuming:
+            if not ready and not resuming:
                 if job.stage is None or STAGE_ORDER.index(job.stage) <= STAGE_ORDER.index(
-                    Stage.CHUNKS
+                    Stage.SUMMARIES
                 ):
-                    raise NotYetError("the chunks stage hasn't finished")
+                    raise NotYetError("the stages before finalize haven't finished")
                 return None
             repo = await scope.db.get(Repo, job.repo_id)
             snapshot = await scope.db.get(Snapshot, job.snapshot_id) if job.snapshot_id else None
@@ -85,7 +84,7 @@ def finalize_index(self: IngestTask, *, job_id: str, org_id: str, repo_id: str) 
                 return None
             if snapshot is None:
                 raise NotYetError("the job has no snapshot")
-            if chunks_done:
+            if ready:
                 machine.advance(Stage.FINALIZE)  # later phases' stages: skipped for now
             repo.last_indexed_sha = snapshot.commit_sha
             settle_repo(repo, JobStatus.SUCCEEDED)
@@ -102,12 +101,23 @@ def finalize_index(self: IngestTask, *, job_id: str, org_id: str, repo_id: str) 
     return sha
 
 
+def _ready_to_finalize(job: IndexJob) -> bool:
+    """The last stage before finalize is over: summaries done or skipped, or chunks done when
+    the summaries stage passed itself over (no Anthropic key)."""
+    status = (job.stages or {}).get(job.stage.value if job.stage else "", {}).get("status")
+    if job.stage is Stage.SUMMARIES:
+        return status in {"done", "skipped"}
+    return job.stage is Stage.CHUNKS and status == "done"
+
+
 STAGES = (
     clone_snapshot,
     discover_files,
     build_merkle,
     parse_snapshot,
     chunk_snapshot,
+    # Embeddings (2.7) go here; summaries follow them.
+    summarize_snapshot,
     finalize_index,
 )
 

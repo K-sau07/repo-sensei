@@ -9,23 +9,28 @@ words, written by Claude through the Message Batches API (half price).
   symbol by a short handle (``s1``, ``s2`` ...), not its key: given the keys, it rewrote them
   (``ts a.ts/f().`` came back as ``a.ts/f().``). Handles are checked against the file's symbols
   and mapped back to their keys; unknown and repeated ones are dropped. Domain terms are tidied.
-* **Cost guard** (:func:`estimate_cost`, :func:`check_budget`): before anything is sent, the
-  input is counted with ``count_tokens`` (every request, or a sample and a fit when there are
-  many) and the output estimated per symbol. The run doesn't start if the month's spend plus
-  the estimate would pass the org's cap (:class:`CostCapExceeded`). The estimate is recorded on
-  the batch.
+* **Cost guard** (:func:`estimate_cost`, :func:`check_budget`, :func:`reserve_batch`): before
+  anything is sent, the input is counted with ``count_tokens`` (every request, or a sample and a
+  fit when there are many) and the output estimated per symbol. The run doesn't start if the
+  month's spend, plus the estimates of the org's batches not collected yet, plus this estimate
+  would pass the org's cap (:class:`CostCapExceeded`). The check and the reservation hold a
+  per-org advisory lock to the end of their transaction, so two runs can't both pass on the
+  same headroom. The estimate is recorded on the batch.
 * **Batch** (:func:`summarize_files`): reserved, sent, polled and collected through
   :mod:`sensei_engine.llm.batches`; usage goes to the ledger in the collecting transaction.
   A request that failed or whose answer is unusable (not JSON, cut off, not matching the
-  schema) is sent once more on its own; if that fails too the file is skipped, with the reason.
+  schema) is sent once more on its own, after its own pass through the cost guard; if that
+  fails too (or the cap is in the way) the file is skipped, with the reason.
 
-Storing the summaries (summary-view chunks, embedded) is the summaries stage's, with 2.6.
+Storing the summaries is the summaries stage's: a JSON artifact per snapshot (:func:`to_json`,
+:func:`from_json`) and the glossary; summary-view chunks, embedded, come with 2.6 and 2.7.
 """
 
 from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import math
 import uuid
 from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
@@ -38,6 +43,7 @@ from importlib import resources
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, ValidationError
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from sensei_core.logging import get_logger
@@ -74,6 +80,9 @@ THINKING_ROOM = 2_000
 COUNT_SAMPLE = 20  # count_tokens calls at most; the rest is fitted
 POLL_SECONDS = 30.0
 RETRY_CONCURRENCY = 4
+# The advisory lock the cost guard holds per org (with the org id's hash): one namespace for every
+# check-then-reserve on an org's model spend.
+COST_LOCK = "llm_cost_guard"
 
 Sleep = Callable[[float], Awaitable[None]]
 Sessions = Callable[[], AbstractAsyncContextManager[AsyncSession]]
@@ -318,10 +327,12 @@ async def estimate_cost(
     calculator: CostCalculator,
     *,
     sample: int = COUNT_SAMPLE,
+    batch: bool = True,
 ) -> CostEstimate:
-    """What sending ``requests`` as a batch should cost. Input: ``count_tokens`` on every
-    request, or on ``sample`` of them across the sizes and a straight-line fit (tokens by
-    characters) for the rest. Output: the per-symbol budget."""
+    """What sending ``requests`` should cost: as a batch, or one call each when not ``batch``
+    (full price). Input: ``count_tokens`` on every request, or on ``sample`` of them across the
+    sizes and a straight-line fit (tokens by characters) for the rest. Output: the per-symbol
+    budget."""
     if not requests:
         return CostEstimate(0, 0, 0, Decimal(0), 0)
     sizes = [len(r.prompt) for r in requests]
@@ -340,7 +351,7 @@ async def estimate_cost(
     # Priced one request at a time: a request's size decides its rate (long-context pricing).
     # Prompt caching isn't counted, so this is on the high side.
     costs = [
-        calculator.cost(PROVIDER, model, tokens_in=i, tokens_out=o, batch=True)
+        calculator.cost(PROVIDER, model, tokens_in=i, tokens_out=o, batch=batch)
         for i, o in zip(inputs, outputs, strict=True)
     ]
     if any(cost is None for cost in costs):
@@ -364,6 +375,27 @@ def _fit(points: Sequence[tuple[int, int]]) -> Callable[[int], int]:
     return lambda size: max(1, math.ceil(intercept + slope * size))
 
 
+async def lock_spending(db: AsyncSession, org_id: uuid.UUID) -> None:
+    """Hold the org's cost-guard lock until ``db``'s transaction ends: another check-then-reserve
+    for the org waits for this one to commit (and then sees its reservation)."""
+    await db.execute(
+        select(func.pg_advisory_xact_lock(func.hashtext(COST_LOCK), func.hashtext(str(org_id))))
+    )
+
+
+async def pending_estimates(db: AsyncSession, org_id: uuid.UUID) -> Decimal:
+    """The estimates of the org's batches whose cost isn't in the ledger yet: reserved, sent or
+    ended, but not collected (and not failed)."""
+    total = await db.scalar(
+        select(func.coalesce(func.sum(LLMBatch.estimated_cost_usd), 0)).where(
+            LLMBatch.org_id == org_id,
+            LLMBatch.collected_at.is_(None),
+            LLMBatch.status != LLMBatchStatus.FAILED,
+        )
+    )
+    return Decimal(total or 0)
+
+
 async def check_budget(
     db: AsyncSession,
     org_id: uuid.UUID,
@@ -372,12 +404,38 @@ async def check_budget(
     *,
     now: datetime | None = None,
 ) -> Decimal:
-    """The org's spend this month; raises :class:`CostCapExceeded` if the estimate on top of it
-    would pass ``cap_usd``."""
-    spent = await spent_since(db, org_id, month_start(now))
+    """The org's spend this month, with what its uncollected batches are expected to cost; raises
+    :class:`CostCapExceeded` if the estimate on top of it would pass ``cap_usd``. Takes the org's
+    cost-guard lock: reserve in the same transaction (:func:`reserve_batch`)."""
+    await lock_spending(db, org_id)
+    spent = await spent_since(db, org_id, month_start(now)) + await pending_estimates(db, org_id)
     if spent + estimate.cost_usd > cap_usd:
         raise CostCapExceeded(estimate, spent, cap_usd)
     return spent
+
+
+async def reserve_batch(
+    db: AsyncSession,
+    client: AnthropicClient,
+    requests: Sequence[tuple[str, LLMRequest]],
+    estimate: CostEstimate,
+    *,
+    org_id: uuid.UUID,
+    cap_usd: Decimal,
+    batch_cost_usd: Decimal | None = None,
+    ref_type: str | None = None,
+    ref_id: str | None = None,
+) -> LLMBatch:
+    """Check ``estimate`` against the cap and reserve the batch, under the org's lock (commit,
+    then :func:`batches.send`). ``batch_cost_usd``: the batch's own share of the estimate, when
+    the estimate covers more (the rollups after it); recorded on the row."""
+    await check_budget(db, org_id, estimate, cap_usd)
+    row = await batches.reserve(
+        db, client, requests, org_id=org_id, kind=KIND, ref_type=ref_type, ref_id=ref_id
+    )
+    row.estimated_cost_usd = estimate.cost_usd if batch_cost_usd is None else batch_cost_usd
+    await db.flush()
+    return row
 
 
 # ---------------------------------------------------------------- the run
@@ -404,11 +462,10 @@ async def summarize_files(
         return SummaryRun()
     estimate = await estimate_cost(client, [request for _, request in requests], calculator)
     async with sessions() as db:
-        await check_budget(db, org_id, estimate, cap_usd)
-        row = await batches.reserve(
-            db, client, requests, org_id=org_id, kind=KIND, ref_type=ref_type, ref_id=ref_id
-        )
-        row.estimated_cost_usd = estimate.cost_usd
+        row = await reserve_batch(
+            db, client, requests, estimate, org_id=org_id, cap_usd=cap_usd,
+            ref_type=ref_type, ref_id=ref_id,
+        )  # fmt: skip
         batch_id = row.id
     async with sessions() as db:
         await batches.send(db, client, batch_id, requests)
@@ -441,6 +498,7 @@ async def summarize_files(
         [file for file in files if file.path in run.skipped],
         calculator=calculator,
         org_id=org_id,
+        cap_usd=cap_usd,
         ref_type=ref_type,
         ref_id=ref_id,
     )
@@ -507,13 +565,27 @@ async def retry_failed(
     *,
     calculator: CostCalculator,
     org_id: uuid.UUID,
+    cap_usd: Decimal,
     ref_type: str | None = None,
     ref_id: str | None = None,
     concurrency: int = RETRY_CONCURRENCY,
 ) -> None:
-    """Send each of ``files`` once more on its own (full price, at once); a file that fails
-    again stays in ``run.skipped``, with the reason logged."""
+    """Send each of ``files`` once more on its own (full price, at once), if the estimate
+    passes the cost guard; a file that fails again stays in ``run.skipped``, with the reason
+    logged. Calls made at once aren't reserved like a batch: the guard's lock is held for the
+    check only."""
     if not files:
+        return
+    estimate = await estimate_cost(
+        client, [build_request(file) for file in files], calculator, batch=False
+    )
+    try:
+        async with sessions() as db:
+            await check_budget(db, org_id, estimate, cap_usd)
+    except CostCapExceeded as exc:
+        for file in files:
+            run.skipped[file.path] = "not retried: over the monthly cost cap"
+        log.warning("summary retries over the cost cap", files=len(files), spent=str(exc.spent))
         return
     gate = asyncio.Semaphore(concurrency)
     billed: list[LLMUsage] = []
@@ -543,3 +615,50 @@ async def retry_failed(
             sink = usage_ledger(db, calculator, org_id=org_id, ref_type=ref_type, ref_id=ref_id)
             for usage in billed:
                 await sink(usage)
+
+
+# ---------------------------------------------------------------- the artifact
+
+
+def to_json(summaries: Mapping[str, FileSummary], skipped: Mapping[str, str]) -> bytes:
+    """A snapshot's summaries (and the files skipped, with why) as its JSON artifact."""
+    return json.dumps(
+        {
+            "files": [
+                {
+                    "path": summary.path,
+                    "summary": summary.summary,
+                    "prompt_version": summary.prompt_version,
+                    "model": summary.model,
+                    "truncated": summary.truncated,
+                    "symbols": [
+                        {"key": s.key, "summary": s.summary, "domain_terms": list(s.domain_terms)}
+                        for s in summary.symbols.values()
+                    ],
+                }
+                for summary in sorted(summaries.values(), key=lambda summary: summary.path)
+            ],
+            "skipped": dict(sorted(skipped.items())),
+        },
+        ensure_ascii=False,
+    ).encode()
+
+
+def from_json(data: bytes) -> tuple[dict[str, FileSummary], dict[str, str]]:
+    """What :func:`to_json` wrote: the summaries by path, and the skipped files."""
+    raw = json.loads(data)
+    summaries = {
+        file["path"]: FileSummary(
+            file["path"],
+            file["summary"],
+            {
+                s["key"]: SymbolSummary(s["key"], s["summary"], tuple(s["domain_terms"]))
+                for s in file["symbols"]
+            },
+            file["prompt_version"],
+            file["model"],
+            file["truncated"],
+        )
+        for file in raw["files"]
+    }
+    return summaries, dict(raw["skipped"])

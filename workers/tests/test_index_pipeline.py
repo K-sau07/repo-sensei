@@ -1,18 +1,23 @@
 """A whole index run through the chain (eager): stages in order, events on the job's stream,
-the repository ready at the commit; and cancelling while the clone runs."""
+the repository ready at the commit; file summaries through a fake Claude (within the cap, over
+it, and resumed after an outage); and cancelling while the clone runs."""
 
 from __future__ import annotations
 
+import json
+import re
 import uuid
 from collections.abc import Iterator
+from decimal import Decimal
 from pathlib import Path
 from typing import Any, cast
 
 import httpx
+import httpx2
 import orjson
 import pytest
 import respx
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 
 from sensei_core.config import Settings
 from sensei_core.db import Database
@@ -22,6 +27,7 @@ from sensei_core.indexing.state import IndexJobStateMachine
 from sensei_core.models import (
     CodeChunk,
     CodeNode,
+    GlossaryTerm,
     IndexJob,
     JobKind,
     JobStatus,
@@ -30,8 +36,10 @@ from sensei_core.models import (
     RepoSource,
     RepoStatus,
     Snapshot,
+    UsageEvent,
 )
-from sensei_core.storage import Bucket, repo_prefix
+from sensei_core.storage import Bucket, artifact_key, repo_prefix
+from sensei_testing.anthropic import FakeAnthropic, batch, jsonl, message
 from sensei_workers.ingest.git import GitRunner
 from sensei_workers.runtime import Runtime, set_runtime
 from sensei_workers.tasks.merkle import build_merkle
@@ -43,7 +51,11 @@ COMMITS_URL = "https://api.github.com/repos/acme-gh/demo/commits/main"
 
 
 @pytest.fixture
-def runtime(migrated_test_db: Settings, bare_repo: Any, tmp_path: Path) -> Iterator[Runtime]:
+def runtime(
+    migrated_test_db: Settings, bare_repo: Any, tmp_path: Path, request: pytest.FixtureRequest
+) -> Iterator[Runtime]:
+    """The workers' runtime; with Claude (the ``claude`` fixture, and ``cap``) when the test
+    asks for them, else without (summaries are passed over)."""
     settings = migrated_test_db.model_copy(
         update={
             "ingest": migrated_test_db.ingest.model_copy(
@@ -54,7 +66,15 @@ def runtime(migrated_test_db: Settings, bare_repo: Any, tmp_path: Path) -> Itera
             ),
         }
     )
-    current = Runtime(settings)
+    if "cap" in request.fixturenames:
+        pricing = settings.pricing.model_copy(
+            update={"org_monthly_cap_usd": request.getfixturevalue("cap")}
+        )
+        settings = settings.model_copy(update={"pricing": pricing})
+    claude: FakeAnthropic | None = (
+        request.getfixturevalue("claude") if "claude" in request.fixturenames else None
+    )
+    current = Runtime(settings, anthropic=claude.client() if claude is not None else None)
     set_runtime(current)
     yield current
     set_runtime(None)
@@ -154,8 +174,10 @@ def test_a_full_run_streams_its_stages_in_order(
     assert (job.status, job.stage, job.progress) == (JobStatus.SUCCEEDED, "finalize", 1.0)
     assert (repo.status, repo.last_indexed_sha) == (RepoStatus.READY, bare_repo.second)
     assert {job.stages[s]["status"] for s in ("parse", "symbols", "chunks")} == {"done"}
-    # The stages this phase doesn't have yet are recorded as skipped.
+    # The stages this phase doesn't have yet are recorded as skipped; so are summaries, with no
+    # Anthropic key.
     assert job.stages["embeddings"]["status"] == job.stages["links"]["status"] == "skipped"
+    assert job.stages["summaries"] == {"status": "skipped"}
 
     events = runtime.run(_events(runtime, job_stream(job_id)))
     milestones = [(e["type"], e["stage"]) for e in events if e["type"] not in ("progress", "log")]
@@ -190,6 +212,7 @@ def test_a_full_run_streams_its_stages_in_order(
     assert any(m.startswith("Found 5 files") for m in logs)
     assert "Parsed 1 of 1 source files." in logs
     assert "Found 4 definitions. Go to definition is ready." in logs
+    assert "File summaries are off: this server has no Anthropic API key." in logs
     assert logs[-1].startswith("Indexed")
     assert {e["job_id"] for e in events} == {str(job_id)}
 
@@ -350,3 +373,245 @@ def test_the_chunks_stage_saves_the_snapshots_chunks(
     events = runtime.run(_events(runtime, job_stream(job_id)))
     logs = [e["message"] for e in events if e["type"] == "log"]
     assert "Cut 4 files into 5 chunks. Keyword search is ready." in logs
+
+
+# ---------------------------------------------------------------- summaries
+
+BATCHES = "/v1/messages/batches"
+USAGE = {
+    "input_tokens": 2_000,
+    "output_tokens": 300,
+    "cache_read_input_tokens": 0,
+    "cache_creation_input_tokens": 0,
+}
+
+
+def _answer(params: dict[str, Any]) -> dict[str, Any]:
+    """A summary of the file the request shows, one for every symbol it asks about."""
+    prompt: str = params["messages"][0]["content"]
+    handles = re.findall(r"^(s\d+)\t\w+ (\w+)", prompt, flags=re.MULTILINE)
+    return {
+        "file_summary": "Greets people by name from the command line.",
+        "symbols": [
+            {"key": handle, "summary": f"{name} greets.", "domain_terms": ["greeting"]}
+            for handle, name in handles
+        ],
+    }
+
+
+def _single(request: httpx2.Request) -> httpx2.Response:
+    """A call at once: a file's summary again (a retry), or a directory's."""
+    body = json.loads(request.content)
+    if "<path>" in body["messages"][0]["content"]:
+        return httpx2.Response(200, json=message(json.dumps(_answer(body)), usage=USAGE))
+    return httpx2.Response(200, json=message(json.dumps({"summary": "The command-line greeter."})))
+
+
+@pytest.fixture
+def claude() -> FakeAnthropic:
+    """A batch API that ends on its first poll and answers every request, and directory
+    summaries one call at a time."""
+    api = FakeAnthropic()
+
+    def submitted() -> list[dict[str, Any]]:
+        return api.bodies(BATCHES)[0]["requests"]
+
+    def results(_: httpx2.Request) -> httpx2.Response:
+        lines = [
+            {
+                "custom_id": r["custom_id"],
+                "result": {
+                    "type": "succeeded",
+                    "message": message(json.dumps(_answer(r["params"])), usage=USAGE),
+                },
+            }
+            for r in submitted()
+        ]
+        return jsonl(*lines)
+
+    def state(_: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(200, json=batch("msgbatch_1", "ended", succeeded=len(submitted())))
+
+    api.routes.update(
+        {
+            BATCHES: httpx2.Response(200, json=batch("msgbatch_1")),
+            f"{BATCHES}/msgbatch_1": state,
+            f"{BATCHES}/msgbatch_1/results": results,
+            "/v1/messages": _single,
+            "/v1/messages/count_tokens": httpx2.Response(200, json={"input_tokens": 2_000}),
+        }
+    )
+    return api
+
+
+async def _summaries(
+    runtime: Runtime, org_id: uuid.UUID, repo_id: uuid.UUID, job_id: uuid.UUID, sha: str
+) -> tuple[Any, list[GlossaryTerm], list[tuple[bool, int]]]:
+    storage = await runtime.storage()
+    found = await storage.get_bytes(
+        Bucket.ARTIFACTS, artifact_key(org_id, repo_id, sha, "summaries.json"), max_bytes=1 << 20
+    )
+    async with runtime.system_database.session() as db:
+        terms = list(await db.scalars(select(GlossaryTerm).where(GlossaryTerm.repo_id == repo_id)))
+        usage = [
+            (bool(batched), int(count))
+            for batched, count in await db.execute(
+                select(UsageEvent.batch, func.count())
+                .where(UsageEvent.org_id == org_id, UsageEvent.ref_id == str(job_id))
+                .group_by(UsageEvent.batch)
+                .order_by(UsageEvent.batch)
+            )
+        ]
+    return (json.loads(found) if found is not None else None), terms, usage
+
+
+def test_files_are_summarized_and_the_wiki_unlocked(
+    claude: FakeAnthropic,
+    runtime: Runtime,
+    ids: tuple[uuid.UUID, uuid.UUID, uuid.UUID],
+    github: respx.MockRouter,
+    bare_repo: Any,
+) -> None:
+    org_id, repo_id, job_id = ids
+    _run(org_id, repo_id, job_id)
+
+    repo, job = runtime.run(_state(runtime.system_database, repo_id, job_id))
+    assert (job.status, repo.status) == (JobStatus.SUCCEEDED, RepoStatus.READY)
+    stage = job.stages["summaries"]
+    assert (stage["status"], stage["done"], stage["total"]) == ("done", 1, 1)
+    details = stage["details"]
+    assert (details["files"], details["summarized"], details["skipped"]) == (1, 1, 0)
+    assert (details["phase"], details["directories"]) == ("collected", 2)  # src/ and the root
+    assert Decimal(details["estimate_usd"]) > 0
+    # One batch of the one file with symbols, then one call: the root takes src/'s summary.
+    [sent] = claude.bodies(BATCHES)
+    assert len(sent["requests"]) == 1
+    assert len(claude.bodies("/v1/messages")) == 1
+
+    artifact, terms, usage = runtime.run(
+        _summaries(runtime, org_id, repo_id, job_id, bare_repo.second)
+    )
+    [file] = artifact["files"]
+    assert file["path"] == "src/app.py"
+    assert {s["key"] for s in file["symbols"]} == {
+        "py src/app.py/Greeter#", "py src/app.py/Greeter#greet().", "py src/app.py/main().",
+    }  # fmt: skip
+    assert [(t.term, len(t.symbol_ids)) for t in terms] == [("greeting", 3)]
+    assert usage == [(False, 1), (True, 1)]  # the rollup call, and the batch's one answer
+
+    events = runtime.run(_events(runtime, job_stream(job_id)))
+    milestones = [(e["type"], e["stage"]) for e in events if e["type"] not in ("progress", "log")]
+    start = milestones.index(("stage_started", "summaries"))
+    assert milestones[start : start + 4] == [
+        ("stage_started", "summaries"),
+        ("stage_done", "summaries"),
+        ("unlock", "summaries"),
+        ("stage_started", "finalize"),
+    ]
+    assert [e["unlocks"] for e in events if e["type"] == "unlock"][-1] == ["wiki"]
+    progress = [(e["done"], e["total"]) for e in events if e["type"] == "progress"]
+    assert (0, 1) in progress
+    assert (1, 1) in progress
+    logs = [e["message"] for e in events if e["type"] == "log"]
+    assert "Summarizing 1 files in one batch (under $0.01 with the directory summaries)." in logs
+    assert "Summarized 1 files and 2 directories." in logs
+
+
+@pytest.mark.parametrize("cap", [Decimal(0)])
+def test_over_the_cost_cap_summaries_are_skipped_and_the_index_still_finishes(
+    cap: Decimal,
+    claude: FakeAnthropic,
+    runtime: Runtime,
+    ids: tuple[uuid.UUID, uuid.UUID, uuid.UUID],
+    github: respx.MockRouter,
+) -> None:
+    org_id, repo_id, job_id = ids
+    _run(org_id, repo_id, job_id)
+
+    repo, job = runtime.run(_state(runtime.system_database, repo_id, job_id))
+    assert (job.status, repo.status) == (JobStatus.SUCCEEDED, RepoStatus.READY)
+    stage = job.stages["summaries"]
+    assert stage["status"] == "skipped"
+    assert (stage["details"]["reason"], stage["details"]["cap_usd"]) == ("cost_cap", "0")
+    assert claude.bodies(BATCHES) == []  # nothing sent, nothing reserved
+    assert claude.bodies("/v1/messages") == []
+    events = runtime.run(_events(runtime, job_stream(job_id)))
+    assert ["wiki"] not in [e.get("unlocks") for e in events if e["type"] == "unlock"]
+    warned = [e["message"] for e in events if e["type"] == "log" and e["level"] == "warn"]
+    assert (
+        "File summaries skipped: they would cost under $0.01, and the organization has"
+        " used $0.00 of its $0.00 monthly budget." in warned
+    )
+
+
+def test_a_collection_that_meets_an_outage_resumes_without_sending_or_billing_twice(
+    claude: FakeAnthropic,
+    runtime: Runtime,
+    ids: tuple[uuid.UUID, uuid.UUID, uuid.UUID],
+    github: respx.MockRouter,
+    bare_repo: Any,
+) -> None:
+    org_id, repo_id, job_id = ids
+    results = claude.routes[f"{BATCHES}/msgbatch_1/results"]
+    outages = [httpx2.Response(529, json={"type": "error", "error": {
+        "type": "overloaded_error", "message": "Overloaded"}})]  # fmt: skip
+
+    def flaky(request: httpx2.Request) -> httpx2.Response:
+        if outages:
+            return outages.pop()
+        assert callable(results)
+        answer = results(request)
+        assert isinstance(answer, httpx2.Response)
+        return answer
+
+    claude.routes[f"{BATCHES}/msgbatch_1/results"] = flaky
+    _run(org_id, repo_id, job_id)
+
+    _, job = runtime.run(_state(runtime.system_database, repo_id, job_id))
+    assert job.status is JobStatus.SUCCEEDED
+    stage = job.stages["summaries"]
+    assert (stage["status"], stage["details"]["unavailable"]) == ("done", 1)
+    assert stage["details"]["summarized"] == 1
+    assert len(claude.bodies(BATCHES)) == 1  # sent once
+    artifact, _, usage = runtime.run(_summaries(runtime, org_id, repo_id, job_id, bare_repo.second))
+    assert [f["path"] for f in artifact["files"]] == ["src/app.py"]
+    assert usage == [(False, 1), (True, 1)]  # the answer billed once
+
+
+def test_a_file_whose_answer_is_unusable_is_retried_once_at_full_price(
+    claude: FakeAnthropic,
+    runtime: Runtime,
+    ids: tuple[uuid.UUID, uuid.UUID, uuid.UUID],
+    github: respx.MockRouter,
+    bare_repo: Any,
+) -> None:
+    org_id, repo_id, job_id = ids
+
+    def garbled(_: httpx2.Request) -> httpx2.Response:
+        [request] = claude.bodies(BATCHES)[0]["requests"]
+        answer = message('{"file_summary": "cut', usage=USAGE)
+        line = {
+            "custom_id": request["custom_id"],
+            "result": {"type": "succeeded", "message": answer},
+        }
+        return jsonl(line)
+
+    claude.routes[f"{BATCHES}/msgbatch_1/results"] = garbled
+    _run(org_id, repo_id, job_id)
+
+    _, job = runtime.run(_state(runtime.system_database, repo_id, job_id))
+    stage = job.stages["summaries"]
+    assert stage["status"] == "done"
+    details = stage["details"]
+    assert (details["phase"], details["retried"], details["summarized"], details["skipped"]) == (
+        "retried", 1, 1, 0,
+    )  # fmt: skip
+    asked = [b["messages"][0]["content"] for b in claude.bodies("/v1/messages")]
+    assert sum("<path>src/app.py</path>" in prompt for prompt in asked) == 1  # one retry
+    artifact, terms, usage = runtime.run(
+        _summaries(runtime, org_id, repo_id, job_id, bare_repo.second)
+    )
+    assert artifact["skipped"] == {}
+    assert [t.term for t in terms] == ["greeting"]
+    # The batch's unusable answer (billed), then the retry and the directory call at full price.
+    assert usage == [(False, 2), (True, 1)]
