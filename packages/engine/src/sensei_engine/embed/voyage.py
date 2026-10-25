@@ -13,7 +13,8 @@
   retries included. The limits are per process: with N workers, give each 1/N of the account's.
 * **Retries**: network errors, 429 and 5xx, with exponential backoff and jitter, or after the
   ``Retry-After`` the answer gives (seconds or an HTTP date; one longer than
-  ``max_retry_wait_seconds`` gives up).
+  ``max_retry_wait_seconds`` gives up). A caller that can't wait (a search, ``wait=False``)
+  isn't held by the rate limits or a 429: it gets :class:`VoyageRateLimited` at once.
 * **Cost**: the billed tokens (``usage.total_tokens``) of every answer go to ``on_usage``, one
   call at a time, once the call's requests have all finished or the first failure has stopped
   them: requests billed before a failure are reported too, as are billed answers we reject.
@@ -126,9 +127,13 @@ class RateLimiter:
         self._tokens = 0  # in the log
         self._lock = asyncio.Lock()
 
-    async def acquire(self, tokens: int) -> None:
+    async def acquire(self, tokens: int, *, wait: bool = True) -> None:
+        """Count a request of ``tokens`` once it fits; without ``wait``, raise
+        :class:`VoyageRateLimited` instead of waiting (or queueing behind a waiter)."""
         # A request bigger than a minute's tokens waits for an empty window, then goes.
         needed = min(tokens, self._max_tokens)
+        if not wait and self._lock.locked():
+            raise VoyageRateLimited(None)
         async with self._lock:
             while True:
                 now = self._clock()
@@ -141,6 +146,8 @@ class RateLimiter:
                     self._sent.append((now, needed))
                     self._tokens += needed
                     return
+                if not wait:
+                    raise VoyageRateLimited(self._wait(now, needed))
                 await self._sleep(self._wait(now, needed))
 
     def _wait(self, now: float, needed: int) -> float:
@@ -183,8 +190,11 @@ class VoyageAPI:
         tokens: int,
         timeout_seconds: float | None = None,
         max_retries: int | None = None,
+        wait: bool = True,
     ) -> dict[str, Any]:
-        """``POST /{endpoint}`` with ``body``, an estimated ``tokens`` long, retried."""
+        """``POST /{endpoint}`` with ``body``, an estimated ``tokens`` long, retried. Without
+        ``wait``, the rate limits and a 429 raise :class:`VoyageRateLimited` at once (network
+        errors and 5xx are still retried, after the backoff)."""
         key = self.settings.api_key
         if key is None:
             raise VoyageNotConfigured
@@ -195,7 +205,8 @@ class VoyageAPI:
         attempt = 0
         while True:
             attempt += 1
-            await self._limiter.acquire(tokens)  # every attempt counts against the limits
+            # Every attempt counts against the limits.
+            await self._limiter.acquire(tokens, wait=wait)
             try:
                 response = await self._http.post(url, json=body, headers=headers, timeout=timeout)
             except httpx.TransportError as exc:
@@ -206,6 +217,8 @@ class VoyageAPI:
             status = response.status_code
             if status == 429 or status >= 500:
                 retry_after = _retry_after(response)
+                if status == 429 and not wait:
+                    raise VoyageRateLimited(retry_after)
                 if attempt > retries:
                     if status == 429:
                         raise VoyageRateLimited(retry_after)

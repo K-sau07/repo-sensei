@@ -2,7 +2,10 @@
 database here: the retriever (2.9) hands candidates in and takes the order back.
 
 1. :class:`VoyageReranker` is a cross-encoder (``rerank-3``, or ``rerank-3-lite`` for the cheap
-   tier). It scores each candidate against the query on its own: the top 150 in, 30-50 out.
+   tier). It scores each candidate against the query on its own: the top 150 in (the rest are
+   left out, :data:`MAX_CANDIDATES`), 30-50 out.
+   - A search can't wait: a rate limit (ours or Voyage's 429) fails at once, never sleeping
+     on ``Retry-After``, and the caller keeps its order.
    - Candidates go in requests of at most 1000 documents and 600K tokens (Voyage's limits; the
      query counts once per document), all sent at once.
    - A score doesn't depend on the other documents in its request, so the answers merge.
@@ -20,7 +23,8 @@ database here: the retriever (2.9) hands candidates in and takes the order back.
    - A window that fails or is too slow keeps the first stage's order.
 
 Which stages run is decided by mode (:class:`RerankPolicy`, :data:`POLICIES`, applied by
-:class:`Reranker`), so callers pick a mode, not stages:
+:class:`Reranker`), so callers pick a mode, not stages. Each mode gives the cross-encoder a time
+budget; past it, the retriever's order is kept.
 
 - ``interactive`` (the search box): the cross-encoder only. Its p95 is about 1.2 s; the model's
   is about 3 s, over the 1.5 s budget.
@@ -80,6 +84,7 @@ log = get_logger(__name__)
 MAX_CODE_LINES = 40
 MAX_LINE_CHARS = 200
 
+MAX_CANDIDATES = 150  # the cross-encoder's input, in the retriever's order
 # Voyage's limits per rerank request (with room: our token count is an estimate).
 MAX_DOCUMENTS = 1000
 MAX_REQUEST_TOKENS = 500_000
@@ -226,9 +231,11 @@ class VoyageReranker:
         top_k: int = VOYAGE_TOP_K,
         on_usage: RerankUsageSink | None = None,
     ) -> list[Ranked]:
-        """The ``top_k`` most relevant candidates, best first, each with its score. Raises
-        :class:`~sensei_engine.embed.voyage.VoyageError` (the caller keeps its own order)."""
+        """The ``top_k`` most relevant of the first :data:`MAX_CANDIDATES` candidates, best
+        first, each with its score. Raises :class:`~sensei_engine.embed.voyage.VoyageError`
+        (the caller keeps its own order), at once when rate limited."""
         _check_ids(candidates)
+        candidates = candidates[:MAX_CANDIDATES]
         if not candidates or top_k <= 0:
             return []
         if not self.configured:
@@ -288,6 +295,7 @@ class VoyageReranker:
             tokens=sum(estimates[i] for i in batch),
             timeout_seconds=self._settings.rerank_timeout_seconds,
             max_retries=self._settings.rerank_max_retries,
+            wait=False,  # a search: never held by a rate limit
         )
         tokens = billed_tokens(answer)
         scores.billed.append(RerankUsage(self.provider, self.model, len(batch), tokens))
@@ -539,18 +547,21 @@ class RerankPolicy:
     top_n: int = LLM_TOP_N  # what the model keeps
     deep: bool = False  # the standard tier (Sonnet) instead of the fast one
     reasons: bool = False  # a reason per pick (most of the model's answer time)
+    # The cross-encoder's time, all requests included; past it the retriever's order is kept.
+    budget_seconds: float = 1.5
 
 
 POLICIES: dict[RerankMode, RerankPolicy] = {
     RerankMode.INTERACTIVE: RerankPolicy(),
-    RerankMode.DEEP: RerankPolicy(listwise=True, deep=True),
-    RerankMode.AGENT: RerankPolicy(top_k=50, listwise=True, top_n=20),
+    RerankMode.DEEP: RerankPolicy(listwise=True, deep=True, budget_seconds=4.0),
+    RerankMode.AGENT: RerankPolicy(top_k=50, listwise=True, top_n=20, budget_seconds=4.0),
 }
 
 
 class Reranker:
-    """Both stages, run as a mode's policy says. The cross-encoder failing (or not configured)
-    keeps the order the candidates came in; the model failing keeps the cross-encoder's."""
+    """Both stages, run as a mode's policy says. The cross-encoder failing, rate limited, over
+    its budget or not configured keeps the order the candidates came in; the model failing
+    keeps the cross-encoder's."""
 
     def __init__(self, voyage: VoyageReranker, llm: LLMReranker) -> None:
         self._voyage = voyage
@@ -574,11 +585,12 @@ class Reranker:
         scored = False
         if candidates and self._voyage.configured:
             try:
-                first = await self._voyage.rerank(
-                    query, candidates, top_k=policy.top_k, on_usage=on_rerank_usage
-                )
+                async with asyncio.timeout(policy.budget_seconds):
+                    first = await self._voyage.rerank(
+                        query, candidates, top_k=policy.top_k, on_usage=on_rerank_usage
+                    )
                 scored = True
-            except VoyageError as exc:
+            except (VoyageError, TimeoutError) as exc:
                 log.warning("rerank kept the retriever's order", error=type(exc).__name__)
         if not policy.listwise:
             return Ranking(tuple(first), "fallback", scored=scored)

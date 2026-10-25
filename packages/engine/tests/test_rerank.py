@@ -26,7 +26,13 @@ from sensei_core.mail import MemoryMailer
 from sensei_core.models import UsageEvent, UsageKind
 from sensei_core.orgs.service import OrgService
 from sensei_core.usage import DEFAULT_PRICE_TABLE, CostCalculator
-from sensei_engine.embed.voyage import VoyageError, VoyageNotConfigured, VoyageUnreachable
+from sensei_engine.embed.voyage import (
+    RateLimiter,
+    VoyageError,
+    VoyageNotConfigured,
+    VoyageRateLimited,
+    VoyageUnreachable,
+)
 from sensei_engine.llm.anthropic_client import LLMUsage
 from sensei_engine.search import rerank
 from sensei_engine.search.rerank import (
@@ -233,6 +239,58 @@ async def test_a_search_waits_briefly_one_retry_and_its_own_timeout() -> None:
             await _voyage(http, rerank_timeout_seconds=2.5).rerank(QUERY, _candidates(2))
     assert route.call_count == 2  # the attempt and one retry (rerank_max_retries)
     assert {timeout["read"] for timeout in timeouts} == {2.5}
+
+
+@respx.mock
+async def test_at_most_150_candidates_go_to_the_cross_encoder() -> None:
+    route = respx.post(URL).mock(side_effect=_scored)
+    async with httpx.AsyncClient() as http:
+        ranked = await _voyage(http).rerank(QUERY, _candidates(200), top_k=5)
+    [body] = _bodies(route)
+    assert len(body["documents"]) == rerank.MAX_CANDIDATES == 150
+    # The retriever's first 150 only: node-199 was never scored.
+    assert ranked[0].candidate.id == "node-149"
+
+
+@respx.mock
+async def test_a_search_never_waits_on_retry_after() -> None:
+    route = respx.post(URL).mock(
+        return_value=httpx.Response(429, headers={"Retry-After": "30"}, json={"detail": "slow"})
+    )
+    slept: list[float] = []
+
+    async def sleep(seconds: float) -> None:
+        slept.append(seconds)
+
+    settings = VoyageSettings(api_key=SecretStr("pa-test"))
+    async with httpx.AsyncClient() as http:
+        voyage = VoyageReranker(settings, http, sleep=sleep)
+        with pytest.raises(VoyageRateLimited) as raised:
+            await voyage.rerank(QUERY, _candidates(3))
+    assert raised.value.retry_after == 30
+    assert route.call_count == 1  # not retried
+    assert slept == []
+
+
+@respx.mock
+async def test_a_search_over_our_own_rate_limit_fails_at_once() -> None:
+    route = respx.post(URL).mock(side_effect=_scored)
+    slept: list[float] = []
+
+    async def sleep(seconds: float) -> None:
+        slept.append(seconds)
+
+    settings = VoyageSettings(api_key=SecretStr("pa-test"))
+    limiter = RateLimiter(1, 1_000_000, sleep=sleep)
+    async with httpx.AsyncClient() as http:
+        voyage = VoyageReranker(settings, http, limiter=limiter, sleep=sleep)
+        await voyage.rerank(QUERY, _candidates(3))
+        with pytest.raises(VoyageRateLimited) as raised:
+            await voyage.rerank(QUERY, _candidates(3))
+    assert raised.value.retry_after is not None
+    assert 0 < raised.value.retry_after <= 60
+    assert route.call_count == 1
+    assert slept == []
 
 
 @respx.mock
@@ -497,9 +555,11 @@ async def test_without_being_asked_the_model_gives_no_reasons() -> None:
 
 def test_each_mode_has_its_policy() -> None:
     assert {
-        RerankMode.INTERACTIVE: RerankPolicy(top_k=40, listwise=False),
-        RerankMode.DEEP: RerankPolicy(top_k=40, listwise=True, top_n=15, deep=True),
-        RerankMode.AGENT: RerankPolicy(top_k=50, listwise=True, top_n=20),
+        RerankMode.INTERACTIVE: RerankPolicy(top_k=40, listwise=False, budget_seconds=1.5),
+        RerankMode.DEEP: RerankPolicy(
+            top_k=40, listwise=True, top_n=15, deep=True, budget_seconds=4.0
+        ),
+        RerankMode.AGENT: RerankPolicy(top_k=50, listwise=True, top_n=20, budget_seconds=4.0),
     } == POLICIES
     assert not any(policy.reasons for policy in POLICIES.values())
 
@@ -552,6 +612,41 @@ async def test_the_agent_keeps_more_and_may_ask_for_reasons() -> None:
     assert bodies[0]["output_config"]["format"]["schema"] == answer_schema(reasons=True)
     assert len(ranking.items) == 20
     assert ranking.items[0].reason is not None
+
+
+@respx.mock
+async def test_a_cross_encoder_over_its_budget_keeps_the_retrievers_order(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def slow(request: httpx.Request) -> httpx.Response:
+        await asyncio.sleep(5)
+        return _scored(request)  # pragma: no cover - the budget runs out first
+
+    respx.post(URL).mock(side_effect=slow)
+    monkeypatch.setitem(rerank.POLICIES, RerankMode.INTERACTIVE, RerankPolicy(budget_seconds=0.05))
+    candidates = _candidates(60)
+    async with httpx.AsyncClient() as http:
+        reranker = Reranker(_voyage(http), LLMReranker(_model(_picks).client()))
+        started = asyncio.get_running_loop().time()
+        ranking = await reranker.rerank(QUERY, candidates, RerankMode.INTERACTIVE)
+        elapsed = asyncio.get_running_loop().time() - started
+    assert elapsed < 1
+    assert not ranking.scored
+    assert [r.candidate for r in ranking.items] == candidates[:40]
+
+
+@respx.mock
+async def test_a_rate_limited_cross_encoder_keeps_the_retrievers_order() -> None:
+    route = respx.post(URL).mock(
+        return_value=httpx.Response(429, headers={"Retry-After": "20"}, json={"detail": "slow"})
+    )
+    candidates = _candidates(10)
+    async with httpx.AsyncClient() as http:
+        reranker = Reranker(_voyage(http), LLMReranker(_model(_picks).client()))
+        ranking = await reranker.rerank(QUERY, candidates, RerankMode.INTERACTIVE)
+    assert route.call_count == 1
+    assert not ranking.scored
+    assert [r.candidate for r in ranking.items] == candidates
 
 
 @respx.mock
