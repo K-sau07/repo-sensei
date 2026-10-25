@@ -132,6 +132,48 @@ def test_contractions_and_plain_words_are_not_literals() -> None:
     assert route.identifiers == ()
 
 
+@pytest.mark.parametrize(
+    ("query", "literals", "identifiers"),
+    [
+        ('os.environ["SECRET_KEY"]', ('os.environ["SECRET_KEY"]',), ("SECRET_KEY",)),
+        (
+            "where is settings['DATABASE_URL'] read?",
+            ("settings['DATABASE_URL']",),
+            ("DATABASE_URL",),
+        ),
+        ('call startswith("pk_live") on it', ('startswith("pk_live")',), ("pk_live",)),
+    ],
+)
+def test_a_quote_inside_a_code_token_keeps_the_token_whole(
+    query: str, literals: tuple[str, ...], identifiers: tuple[str, ...]
+) -> None:
+    route = classify(query).route
+    assert route.literals == literals
+    assert route.identifiers == identifiers
+    assert route.regex is None
+
+
+@pytest.mark.parametrize(
+    "query", ["Optional[User]", "where is Dict[str, Any] used", "items[0]", "items[i-1]"]
+)
+def test_a_subscript_or_generic_is_a_literal_not_a_pattern(query: str) -> None:
+    route = classify(query).route
+    assert route.regex is None
+    assert route.query_class is QueryClass.REGEX  # a literal to find
+    assert route.literals[0] in query
+
+
+@pytest.mark.parametrize("pattern", ["[a-z]+_id", "[^/]+\\.py", "id[0-9]+", "[A-F]"])
+def test_a_character_class_is_a_pattern(pattern: str) -> None:
+    assert classify(pattern).route.regex == pattern
+
+
+def test_abbreviations_are_not_literals() -> None:
+    route = classify("how do caches expire, e.g. the session one, i.e. redis etc.?").route
+    assert route.literals == ()
+    assert route.identifiers == ()
+
+
 def test_rules_are_deterministic() -> None:
     query = 'where do we read "X-Request-Id" in the api (not tests)?'
     assert classify(query) == classify(query)
@@ -142,7 +184,7 @@ def test_rules_are_deterministic() -> None:
 ANSWER = {
     "class": "flow",
     "layers": ["ui", "handler", "db", "test"],
-    "literals": ["/api/v2/invoices", "made-up literal"],
+    "literals": ["/api/v2/invoices", "made-up literal", "invoice", "voice"],
     "identifiers_guess": ["InvoiceForm", "create_invoice", "InvoiceCreate"],
     "routes_guess": ["/api/v2/invoices", "/invoices"],
     "structural_rewrite": "InvoiceForm component, POST /api/v2/invoices handler, invoices table",
@@ -175,8 +217,9 @@ async def test_the_model_routes_what_the_rules_cannot_and_literals_survive() -> 
     assert body["messages"][0]["content"] == QUERY
     assert route.source == "llm"
     assert route.query_class is QueryClass.FLOW
-    # The rules' literal stays; the model's made-up one is dropped (it isn't in the query).
-    assert route.literals == ("/api/v2/invoices",)
+    # The rules' literal stays; the model's are kept only if in the query as whole words:
+    # "invoice" is, "voice" (inside "invoice") and the made-up one aren't.
+    assert route.literals == ("/api/v2/invoices", "invoice")
     assert route.identifiers == ("InvoiceForm", "create_invoice", "InvoiceCreate")
     assert route.routes == ("/api/v2/invoices", "/invoices")
     assert route.layers == (Layer.UI, Layer.HANDLER, Layer.DB)  # "(not tests)" holds

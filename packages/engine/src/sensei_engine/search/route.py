@@ -141,12 +141,23 @@ class Route:
 # ---------------------------------------------------------------- rules
 
 _BACKTICKED = re.compile(r"`([^`]+)`")
-# "double quotes", or a word opening a quote it never closes: `uses of "pk_live in the ...`
-# (a quote inside a token, `startswith("pk_live`, leaves the token whole: code).
-_DOUBLE_QUOTED = re.compile(r'"([^"\s][^"]*?)"|(?:^|(?<=\s))"([^"\s]+)')
-# 'single quotes' only around a token (so "flow's" is not a quote).
-_SINGLE_QUOTED = re.compile(r"(?<![\w])'([^'\s][^']*?)'(?![\w])")
-_REGEX_SIGNS = re.compile(r"\\[\\()\[\]{}.*+?|^$dwsbDWSB]|\.\*|\.\+|\[[^\]]+\][*+?]?|\(\?|\|\w")
+# A quote of the sentence opens after a space (or a bracket of the sentence) and closes before
+# one, or before punctuation. A quote inside a token is code and leaves the token whole:
+# `os.environ["SECRET_KEY"]`, `startswith("pk_live`.
+_OPENS = r"(?:^|(?<=\s)|(?<=^\()|(?<=\s\())"
+_CLOSES = r"(?=$|[\s.,;:!?)])"
+# "double quotes", or a word opening a quote it never closes: `uses of "pk_live in the ...`.
+_DOUBLE_QUOTED = re.compile(rf'{_OPENS}"([^"\s][^"]*?)"{_CLOSES}|{_OPENS}"([^"\s]+)(?=\s|$)')
+# 'single quotes' (so "flow's" is not a quote).
+_SINGLE_QUOTED = re.compile(rf"{_OPENS}'([^'\s][^']*?)'{_CLOSES}")
+# Strings quoted inside a code token: `os.environ["SECRET_KEY"]` names SECRET_KEY.
+_INNER_QUOTED = re.compile(r"""["']([^"'\s]+)["']""")
+# Brackets are a pattern only as a character class: a range or a negation not attached to a
+# name, or a quantifier after them. `Optional[User]` and `items[0]` are code, not patterns.
+_REGEX_SIGNS = re.compile(
+    r"\\[\\()\[\]{}.*+?|^$dwsbDWSB]|\.\*|\.\+|\(\?|\|\w"
+    r"|(?<![\w\])])\[(?:\^|[^\]]*\w-\w)[^\]]*\]|\[[^\]]+\][*+?{]"
+)
 _CODE_SIGNS = re.compile(r"""[()=<>{}\[\]"';]|::|->|=>""")
 _CONSTANT = re.compile(r"^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+$")
 _ROUTE = re.compile(r"^/[\w{}:.\-]+(?:/[\w{}:.\-]*)*$")
@@ -162,6 +173,7 @@ _DOTTED = re.compile(r"^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)+$")  # CompanySer
 _WORD = re.compile(r"^[A-Za-z_$][\w$]*$")
 _TRIM = "?!.,:;"
 _CONTRACTION = re.compile(r"^[A-Za-z]+['\u2019][A-Za-z]{1,3}$")
+_ABBREVIATIONS = frozenset({"e.g", "i.e", "etc", "vs", "cf", "viz", "a.k.a"})  # trailing dot cut
 
 # "where is the X class defined", "go to X", "X function": a definition asked for by name.
 _DEFINITION_WORDS = frozenset(
@@ -305,7 +317,7 @@ def _identifier(token: str, *, plain_words: bool = False) -> bool:
 
 def _scan_token(token: str, found: _Found) -> None:
     """Sort one whitespace-separated token (outside quotes) into what it is."""
-    if _CONTRACTION.match(token):  # editor's, don't
+    if _CONTRACTION.match(token) or token.lower() in _ABBREVIATIONS:  # editor's, e.g.
         return
     if _REGEX_SIGNS.search(token) and not _ROUTE.match(token):
         _add(found.literals, token)
@@ -318,6 +330,9 @@ def _scan_token(token: str, found: _Found) -> None:
         _add(found.paths, token)
     elif _CODE_SIGNS.search(token):
         _add(found.literals, token)
+        for inner in _INNER_QUOTED.findall(token):
+            if _CONSTANT.match(inner) or _identifier(inner):
+                _add(found.identifiers, inner)
     elif _CONSTANT.match(token) or _identifier(token):
         _add(found.literals, token)
         _add(found.identifiers, token)
@@ -532,11 +547,18 @@ def _clean(values: Iterable[str]) -> list[str]:
     return [v.strip() for v in values if v.strip()][:MAX_GUESSES]
 
 
+def _verbatim(literal: str, query: str) -> bool:
+    """Whether ``literal`` is in ``query`` as it stands, not inside a longer word (``port`` is
+    not in "report")."""
+    return re.search(rf"(?<!\w){re.escape(literal)}(?!\w)", query) is not None
+
+
 def _merge(rules: Route, answer: _Answer, source: Source) -> Route:
     """The model's answer on top of the rules': the rules' literals and names come first and
-    always stay; the model's literals count only if they are in the query verbatim."""
+    always stay; the model's literals count only if they are in the query verbatim, as whole
+    words (:func:`_verbatim`)."""
     query = rules.query
-    literals = [*rules.literals, *(lit for lit in _clean(answer.literals) if lit in query)]
+    literals = [*rules.literals, *(lit for lit in _clean(answer.literals) if _verbatim(lit, query))]
     excluded = set(rules.excluded_layers)
     layers = [layer for layer in answer.layers if layer not in excluded] or list(rules.layers)
     return replace(
