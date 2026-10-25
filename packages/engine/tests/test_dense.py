@@ -5,14 +5,17 @@ partition left out."""
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import math
 import uuid
 from collections.abc import AsyncGenerator, Sequence
+from contextlib import nullcontext
 from pathlib import Path
+from typing import Any
 
 import pytest
-from sqlalchemy import delete, select, text
+from sqlalchemy import TextClause, delete, select, text, update
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, create_async_engine
 
@@ -22,7 +25,14 @@ from sensei_core.models import CodeChunk, Membership, Org, Repo, RepoSource, Sna
 from sensei_core.models.chunks import CHUNK_PARTITIONS, embedding_index
 from sensei_core.orgs.service import OrgService
 from sensei_engine.chunk.files import chunk_file
-from sensei_engine.chunk.store import FileChunks, save_chunks
+from sensei_engine.chunk.store import (
+    ChunkWriter,
+    FileChunks,
+    SnapshotKey,
+    make_live,
+    new_generation,
+    save_chunks,
+)
 from sensei_engine.embed import store
 from sensei_engine.embed.provider import EmbeddingUsage, InputType, UsageSink
 from sensei_engine.ingest.discover import discover
@@ -34,7 +44,9 @@ from sensei_engine.search.dense import (
     Leg,
     dense_search,
     fuse,
+    legs_query,
     nearest_query,
+    search_legs,
     tune,
 )
 from sensei_testing import make_user
@@ -129,15 +141,17 @@ async def test_pending_chunks_are_embedded_as_hashed_and_saved(
     snapshot = await _repo(db)
     rows = await _chunked(db, tmp_path, snapshot)
     assert await store.count_pending(db, snapshot.id) == len(rows) == 3
-    first = await store.pending(db, snapshot.id, limit=2)
-    rest = await store.pending(db, snapshot.id, after=first[-1].id, limit=2)
+    live = snapshot.chunk_generation
+    first = await store.pending(db, snapshot.id, generation=live, limit=2)
+    rest = await store.pending(db, snapshot.id, generation=live, after=first[-1].id, limit=2)
     found = [*first, *rest]
     assert sorted(p.id for p in found) == sorted(r.id for r in rows)
     for chunk in found:
         assert hashlib.sha256(chunk.text.encode()).digest() == chunk.content_hash
     await store.save(db, snapshot.repo_id, {found[0].id: axis(0)})
     assert await store.count_pending(db, snapshot.id) == 2
-    assert found[0].id not in [p.id for p in await store.pending(db, snapshot.id, limit=10)]
+    left = await store.pending(db, snapshot.id, generation=live, limit=10)
+    assert found[0].id not in [p.id for p in left]
     saved = await db.scalar(select(CodeChunk.embedding).where(CodeChunk.id == found[0].id))
     assert saved is not None
     assert saved[0] == 1.0
@@ -172,6 +186,65 @@ async def test_the_nearest_chunks_of_the_snapshot_and_view_come_first(
         await dense_search(db, repo_id=rid, snapshot_id=sid, vector=axis(2), leg=Leg.SUMMARY) == []
     )
     assert await dense_search(db, repo_id=rid, snapshot_id=sid, vector=[], k=5) == []
+
+
+async def test_only_the_live_generation_is_embedded_and_searched(
+    system_session: AsyncSession, tmp_path: Path
+) -> None:
+    db = system_session
+    snapshot, ids = await _embedded(db, tmp_path)
+    rid, sid, live = snapshot.repo_id, snapshot.id, snapshot.chunk_generation
+    rows = await db.execute(
+        select(CodeChunk.path, CodeChunk.file_id).where(CodeChunk.id.in_(ids.values()))
+    )
+    file_ids = dict(rows.tuples().all())
+    later = await new_generation(db)
+    key = SnapshotKey(snapshot.org_id, rid, sid)
+    writer = ChunkWriter(lambda: nullcontext(db), key, file_ids, generation=later)
+    for path, content in FILES.items():
+        language = "python" if path.endswith(".py") else "markdown"
+        await writer.add(FileChunks(path, language, chunk_file(path, language, content)))
+    written = await writer.finish()
+
+    # Written, not live: searched and embedded as before.
+    hits = await dense_search(db, repo_id=rid, snapshot_id=sid, vector=axis(1), k=10)
+    assert {h.chunk_id for h in hits} == set(ids.values())
+    assert await store.pending(db, sid, generation=live, limit=10) == []
+    assert await store.count_pending(db, sid) == 0
+    new = await store.pending(db, sid, generation=later, limit=10)
+    assert len(new) == written == 3
+
+    # Live: the old rows went with their vectors; the new ones are searched once embedded.
+    await make_live(db, snapshot, later, written)
+    assert await dense_search(db, repo_id=rid, snapshot_id=sid, vector=axis(1), k=10) == []
+    assert await store.count_pending(db, sid) == 3
+    await store.save(db, rid, {chunk.id: axis(1) for chunk in new})
+    hits = await dense_search(db, repo_id=rid, snapshot_id=sid, vector=axis(1), k=10)
+    assert {h.chunk_id for h in hits} == {chunk.id for chunk in new}
+
+
+async def test_the_legs_are_read_in_one_statement(
+    system_session: AsyncSession, tmp_path: Path
+) -> None:
+    db = system_session
+    snapshot, ids = await _embedded(db, tmp_path)
+    await db.execute(
+        update(CodeChunk)
+        .where(CodeChunk.repo_id == snapshot.repo_id, CodeChunk.id == ids["README.md"])
+        .values(view="summary")
+    )
+    statement, _ = legs_query(
+        "public.chunks_p00", repo_id=snapshot.repo_id, snapshot_id=snapshot.id, vector=axis(0),
+        legs=(Leg.CODE, Leg.SUMMARY),
+    )  # fmt: skip
+    assert str(statement).count("WITH ") == 1
+    found = await search_legs(
+        db, repo_id=snapshot.repo_id, snapshot_id=snapshot.id, vector=axis(2),
+        legs=(Leg.CODE, Leg.SUMMARY),
+    )  # fmt: skip
+    assert [h.path for h in found[Leg.CODE]] == ["app/users.py", "app/items.py"]
+    assert [h.legs for h in found[Leg.CODE]] == [{"sem_code": 1}, {"sem_code": 2}]
+    assert [(h.path, h.legs) for h in found[Leg.SUMMARY]] == [("README.md", {"sem_summary": 1})]
 
 
 async def test_another_repository_in_the_same_partition_stays_out(
@@ -261,6 +334,16 @@ async def committed(
         await owner.dispose()
 
 
+async def _plan(system: AsyncEngine, statement: TextClause, params: dict[str, Any]) -> str:
+    async with AsyncSession(system) as db, db.begin():
+        await tune(db)
+        # Three rows: sorting the snapshot's rows exactly is cheaper, and the planner rightly
+        # takes that. Rule sorting out to see the index's path.
+        await db.execute(text("SET LOCAL enable_sort = off"))
+        lines = await db.scalars(text(f"EXPLAIN {statement.text}"), params)
+        return "\n".join(str(line) for line in lines)
+
+
 async def test_searches_walk_the_partitions_index_once_it_is_committed(
     committed: tuple[Snapshot, AsyncEngine],
 ) -> None:
@@ -270,22 +353,24 @@ async def test_searches_walk_the_partitions_index_once_it_is_committed(
         partition = await chunk_partition(db, rid)
         assert partition is not None
         await store.build_index(db, partition)
+    statement, params = nearest_query(
+        partition, repo_id=rid, snapshot_id=sid, vector=axis(2, lean=0), k=3
+    )
+    name = partition.rpartition(".")[2]  # as EXPLAIN shows it
+    walk = f"Index Scan using {embedding_index(name)} on {name} c"
+    # Built over rows just updated, the index waits for the transactions older than it (any
+    # in the cluster: other tests', other databases') before a search may use it.
+    plan = await _plan(system, statement, params)
+    for _ in range(100):
+        if walk in plan:
+            break
+        await asyncio.sleep(0.1)
+        plan = await _plan(system, statement, params)
+    assert walk in plan
     async with AsyncSession(system) as db, db.begin():
-        statement, params = nearest_query(
-            partition, repo_id=rid, snapshot_id=sid, vector=axis(2, lean=0), k=3
-        )
-        await tune(db)
-        # Three rows: sorting the snapshot's rows exactly is cheaper, and the planner rightly
-        # takes that. Rule sorting out to see the index's path.
-        await db.execute(text("SET LOCAL enable_sort = off"))
-        plan = "\n".join(
-            str(line) for line in await db.scalars(text(f"EXPLAIN {statement.text}"), params)
-        )
-        name = partition.rpartition(".")[2]  # as EXPLAIN shows it
-        assert f"Index Scan using {embedding_index(name)} on {name} c" in plan
+        hits = await dense_search(db, repo_id=rid, snapshot_id=sid, vector=axis(2, lean=0), k=3)
         assert await db.scalar(text("SHOW hnsw.iterative_scan")) == "relaxed_order"
         assert await db.scalar(text("SHOW hnsw.ef_search")) == "120"
-        hits = await dense_search(db, repo_id=rid, snapshot_id=sid, vector=axis(2, lean=0), k=3)
     assert [h.path for h in hits] == ["app/users.py", "README.md", "app/items.py"]
 
 

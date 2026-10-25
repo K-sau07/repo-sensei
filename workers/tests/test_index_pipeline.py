@@ -8,7 +8,7 @@ import hashlib
 import json
 import re
 import uuid
-from collections.abc import Iterator, Sequence
+from collections.abc import Awaitable, Callable, Iterator, Sequence
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, cast
@@ -21,6 +21,8 @@ import respx
 from celery import chain
 from celery.signals import task_postrun
 from sqlalchemy import delete, func, select, text
+from sqlalchemy import inspect as sa_inspect
+from uuid_utils.compat import uuid7
 
 from sensei_core.config import Settings
 from sensei_core.db import Database
@@ -45,7 +47,7 @@ from sensei_core.models import (
     UsageKind,
 )
 from sensei_core.storage import Bucket, artifact_key, repo_prefix
-from sensei_engine.chunk.store import ChunkWriter, FileChunks
+from sensei_engine.chunk.store import ChunkWriter, FileChunks, make_live, new_generation
 from sensei_engine.embed.provider import EmbeddingUsage, InputType, UsageSink
 from sensei_engine.embed.voyage import VoyageError
 from sensei_engine.ingest.store import file_ids
@@ -57,6 +59,7 @@ from sensei_workers.base import NotYetError, RetryableError
 from sensei_workers.ingest.git import GitRunner
 from sensei_workers.runtime import Runtime, set_runtime
 from sensei_workers.tasks import chunk as chunk_task
+from sensei_workers.tasks import embed as embed_task
 from sensei_workers.tasks import maintenance, orchestrate
 from sensei_workers.tasks.merkle import build_merkle
 from sensei_workers.tasks.orchestrate import run_index_job
@@ -105,7 +108,7 @@ def runtime(
 
 class FakeVoyage:
     """Embeds each text as a unit vector picked by its hash, billing a token per 4 characters;
-    or refuses every request with ``refusal``."""
+    or refuses every request with ``refusal``. Runs ``before``'s hooks first, one a request."""
 
     provider = "voyage"
     model = "voyage-code-4"
@@ -114,10 +117,13 @@ class FakeVoyage:
     def __init__(self) -> None:
         self.calls: list[tuple[int, InputType]] = []  # texts per request, and what for
         self.refusal: VoyageError | None = None
+        self.before: list[Callable[[], Awaitable[None]]] = []  # one each, before a request
 
     async def embed(
         self, texts: Sequence[str], input_type: InputType, *, on_usage: UsageSink | None = None
     ) -> list[list[float]]:
+        if self.before:
+            await self.before.pop(0)()
         if self.refusal is not None:
             raise self.refusal
         self.calls.append((len(texts), input_type))
@@ -1332,6 +1338,78 @@ def test_voyage_refusing_skips_semantic_search_and_the_index_still_finishes(
     assert "keyword_search" in unlocked
     warned = [e["message"] for e in events if e["type"] == "log" and e["level"] == "warn"]
     assert "Semantic search skipped: Voyage refused (Voyage 401: invalid API key)." in warned
+
+
+async def _rechunk(database: Database, job_id: uuid.UUID) -> int:
+    """The job's snapshot chunked again, as a later run would: its live chunks copied under new
+    ids into a new generation, made live (the old rows go). Returns the new generation."""
+    async with database.session() as db:
+        job = await db.get(IndexJob, job_id)
+        assert job is not None
+        snapshot = await db.get(Snapshot, job.snapshot_id)
+        assert snapshot is not None
+        later = await new_generation(db)
+        rows = list(
+            await db.scalars(
+                select(CodeChunk).where(
+                    CodeChunk.snapshot_id == snapshot.id,
+                    CodeChunk.generation == snapshot.chunk_generation,
+                )
+            )
+        )
+        columns = [c.key for c in sa_inspect(CodeChunk).column_attrs]
+        for row in rows:
+            copy = {key: getattr(row, key) for key in columns}
+            copy.update(id=uuid7(), generation=later, embedding=None)
+            db.add(CodeChunk(**copy))
+        await db.flush()
+        await make_live(db, snapshot, later, len(rows))
+        return later
+
+
+def test_chunks_redone_mid_embedding_are_left_to_the_index_that_redid_them(
+    voyage: FakeVoyage,
+    runtime: Runtime,
+    ids: tuple[uuid.UUID, uuid.UUID, uuid.UUID],
+    github: respx.MockRouter,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A re-chunk makes a new generation live while the first group is with Voyage: the group's
+    vectors go nowhere (their rows are gone), the stage finds nothing left of its generation and
+    finishes; the next index embeds the new rows, from the cache where it can."""
+    org_id, repo_id, job_id = ids
+    monkeypatch.setattr(embed_task, "GROUP", 2)
+    generations: list[int] = []
+
+    async def rechunk() -> None:
+        generations.append(await _rechunk(runtime.system_database, job_id))
+
+    voyage.before.append(rechunk)
+    _run(org_id, repo_id, job_id)
+
+    _, job = runtime.run(_state(runtime.system_database, repo_id, job_id))
+    assert job.status is JobStatus.SUCCEEDED
+    stage = job.stages["embeddings"]
+    assert (stage["status"], stage["details"]["superseded"]) == ("done", True)
+    assert len(voyage.calls) == 1  # one group sent, then nothing left of its generation
+    chunks = job.stages["chunks"]["details"]["chunks"]
+    with_vector, without, _, _ = runtime.run(_embedding_state(runtime, org_id, repo_id, job_id))
+    assert (with_vector, without) == (0, chunks)  # the live rows: the new generation's
+    events = runtime.run(_events(runtime, job_stream(job_id)))
+    logs = [e["message"] for e in events if e["type"] == "log"]
+    assert (
+        "The chunks were redone while they were embedded: the index that redid them"
+        " embeds the new ones." in logs
+    )
+
+    later = runtime.run(_next_job(runtime.system_database, org_id, repo_id))
+    _run(org_id, repo_id, later)
+    _, job = runtime.run(_state(runtime.system_database, repo_id, later))
+    details = job.stages["embeddings"]["details"]
+    assert "superseded" not in details
+    assert details["cached"] == 2  # the group sent before the re-chunk
+    with_vector, without, _, _ = runtime.run(_embedding_state(runtime, org_id, repo_id, later))
+    assert (with_vector, without) == (chunks, 0)
 
 
 def test_summaries_follow_embeddings(

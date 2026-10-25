@@ -15,6 +15,11 @@ raised for the transaction. A partition without the index yet (its first vectors
 is scanned exactly, in the same order; so is a snapshot that is a small part of its partition,
 when the planner finds sorting its rows (through the snapshot's B-tree) cheaper than the walk.
 
+Only the snapshot's live generation of chunks is read (``snapshots.chunk_generation``, checked
+in the statement, as keyword search does): a re-chunk's rows are searched once its run makes
+them live, and all at once. The legs of one search run in one statement, so they read the same
+generation even if another goes live as they run.
+
 Scores are cosine similarities (1 - distance), higher is better. :func:`fuse` combines legs by
 reciprocal rank (k = 60), as keyword search does.
 """
@@ -22,7 +27,6 @@ reciprocal rank (k = 60), as keyword search does.
 from __future__ import annotations
 
 import enum
-import re
 import uuid
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
@@ -36,7 +40,6 @@ from sensei_engine.embed.provider import EmbeddingProvider, InputType, UsageSink
 from sensei_engine.search.bm25 import PARTITIONS, RRF_K, Filters, searchable_partition
 
 EF_SEARCH = 120
-_SCHEMA = re.compile(r"[a-z_][a-z0-9_]*")
 
 
 class Leg(enum.StrEnum):
@@ -62,9 +65,8 @@ class DenseHit:
 
 
 def _partition_name(partition: str) -> bool:
-    """``schema.chunks_pNN``: a partition of ``chunks``, schema-qualified (safe in SQL)."""
-    schema, _, name = partition.rpartition(".")
-    return _SCHEMA.fullmatch(schema) is not None and name in PARTITIONS
+    """``public.chunks_pNN``: a partition of ``chunks``, schema-qualified (safe in SQL)."""
+    return partition in PARTITIONS
 
 
 def _like_prefix(prefix: str) -> str:
@@ -84,19 +86,42 @@ def nearest_query(
 ) -> tuple[TextClause, dict[str, Any]]:
     """The statement :func:`dense_search` runs on ``partition`` (``schema.chunks_pNN``), and its
     parameters."""
+    return legs_query(
+        partition,
+        repo_id=repo_id,
+        snapshot_id=snapshot_id,
+        vector=vector,
+        legs=(leg,),
+        k=k,
+        filters=filters,
+    )
+
+
+def legs_query(
+    partition: str,
+    *,
+    repo_id: uuid.UUID,
+    snapshot_id: uuid.UUID,
+    vector: Sequence[float],
+    legs: Sequence[Leg],
+    k: int = 60,
+    filters: Filters = Filters(),  # noqa: B008 - frozen, never mutated
+) -> tuple[TextClause, dict[str, Any]]:
+    """One statement for every leg on ``partition`` (``schema.chunks_pNN``): each leg's ``k``
+    nearest chunks, tagged with the leg's position in ``legs``; and its parameters."""
     if not _partition_name(partition):
         msg = f"not a partition of chunks: {partition!r}"
         raise ValueError(msg)
     conditions = [
         "c.repo_id = :repo_id",
         "c.snapshot_id = :snapshot_id",
-        "c.view = :view",
+        "c.generation = (SELECT s.chunk_generation FROM public.snapshots s "
+        "WHERE s.id = :snapshot_id AND s.repo_id = :repo_id)",
         "c.embedding IS NOT NULL",
     ]
     params: dict[str, Any] = {
         "repo_id": repo_id,
         "snapshot_id": snapshot_id,
-        "view": VIEWS[leg],
         "query": vector_literal(vector),
         "k": k,
     }
@@ -111,18 +136,27 @@ def nearest_query(
         params["prefix"] = _like_prefix(filters.path_prefix)
     if filters.roles:
         conditions.append(
-            "c.file_id IN (SELECT f.id FROM files f "
+            "c.file_id IN (SELECT f.id FROM public.files f "
             "WHERE f.snapshot_id = :snapshot_id AND f.role = ANY(:roles))"
         )
         params["roles"] = list(filters.roles)
     where = " AND ".join(conditions)
+    nearest: list[str] = []
+    found: list[str] = []
+    for position, leg in enumerate(legs):
+        params[f"view_{position}"] = VIEWS[leg]
+        nearest.append(
+            f"leg_{position} AS MATERIALIZED ("  # noqa: S608 - a partition's name and constants
+            "SELECT c.id, c.kind, c.path, c.start_line, c.end_line, c.symbol_key, c.symbol_id, "
+            "c.embedding <=> CAST(:query AS halfvec) AS distance "
+            f"FROM {partition} c WHERE {where} AND c.view = :view_{position} "
+            "ORDER BY c.embedding <=> CAST(:query AS halfvec) LIMIT :k)"
+        )
+        found.append(f"SELECT {position} AS leg, * FROM leg_{position}")  # noqa: S608
     statement = text(
-        "WITH nearest AS MATERIALIZED ("  # noqa: S608 - the names are a partition's and constants
-        "SELECT c.id, c.kind, c.path, c.start_line, c.end_line, c.symbol_key, c.symbol_id, "
-        "c.embedding <=> CAST(:query AS halfvec) AS distance "
-        f"FROM {partition} c WHERE {where} "
-        "ORDER BY c.embedding <=> CAST(:query AS halfvec) LIMIT :k"
-        ") SELECT * FROM nearest ORDER BY distance, path, start_line"
+        f"WITH {', '.join(nearest)} "  # noqa: S608 - built above
+        f"SELECT * FROM ({' UNION ALL '.join(found)}) found "
+        "ORDER BY leg, distance, path, start_line"
     )
     return statement, params
 
@@ -131,6 +165,57 @@ async def tune(db: AsyncSession) -> None:
     """The HNSW settings searches use, for the rest of the transaction."""
     await db.execute(text(f"SET LOCAL hnsw.ef_search = {EF_SEARCH}"))
     await db.execute(text("SET LOCAL hnsw.iterative_scan = relaxed_order"))
+
+
+async def search_legs(
+    db: AsyncSession,
+    *,
+    repo_id: uuid.UUID,
+    snapshot_id: uuid.UUID,
+    vector: Sequence[float],
+    legs: Sequence[Leg] = (Leg.CODE,),
+    k: int = 60,
+    filters: Filters = Filters(),  # noqa: B008 - frozen, never mutated
+    partition: str | None = None,
+) -> dict[Leg, list[DenseHit]]:
+    """Each leg's ``k`` chunks nearest ``vector`` (a query's embedding), nearest first, read in
+    one statement (nothing while the snapshot isn't chunked). ``partition``:
+    :func:`~sensei_engine.search.bm25.searchable_partition`'s, when the caller has it. Sets
+    ``hnsw.*`` for the rest of the transaction (:func:`tune`)."""
+    legs = tuple(dict.fromkeys(legs))
+    results: dict[Leg, list[DenseHit]] = {leg: [] for leg in legs}
+    if not vector or k <= 0 or not legs:
+        return results
+    partition = partition or await searchable_partition(db, repo_id, snapshot_id)
+    if partition is None or not _partition_name(partition):
+        return results
+    statement, params = legs_query(
+        partition,
+        repo_id=repo_id,
+        snapshot_id=snapshot_id,
+        vector=vector,
+        legs=legs,
+        k=k,
+        filters=filters,
+    )
+    await tune(db)
+    for row in await db.execute(statement, params):
+        leg: Leg = legs[int(row.leg)]
+        hits = results[leg]
+        hits.append(
+            DenseHit(
+                chunk_id=row.id,
+                kind=row.kind,
+                path=row.path,
+                start_line=row.start_line,
+                end_line=row.end_line,
+                symbol_key=row.symbol_key,
+                symbol_id=row.symbol_id,
+                score=round(1.0 - float(row.distance), 6),
+                legs={leg.value: len(hits) + 1},
+            )
+        )
+    return results
 
 
 async def dense_search(
@@ -144,40 +229,19 @@ async def dense_search(
     filters: Filters = Filters(),  # noqa: B008 - frozen, never mutated
     partition: str | None = None,
 ) -> list[DenseHit]:
-    """The snapshot's ``k`` chunks nearest ``vector`` (a query's embedding) on one leg, nearest
-    first (none while the snapshot isn't chunked). ``partition``:
-    :func:`~sensei_engine.search.bm25.searchable_partition`'s, when the caller has it. Sets
-    ``hnsw.*`` for the rest of the transaction (:func:`tune`)."""
-    if not vector or k <= 0:
-        return []
-    partition = partition or await searchable_partition(db, repo_id, snapshot_id)
-    if partition is None or not _partition_name(partition):
-        return []
-    statement, params = nearest_query(
-        partition,
+    """The snapshot's ``k`` chunks nearest ``vector`` on one leg, nearest first (see
+    :func:`search_legs`)."""
+    found = await search_legs(
+        db,
         repo_id=repo_id,
         snapshot_id=snapshot_id,
         vector=vector,
-        leg=leg,
+        legs=(leg,),
         k=k,
         filters=filters,
+        partition=partition,
     )
-    await tune(db)
-    rows = await db.execute(statement, params)
-    return [
-        DenseHit(
-            chunk_id=row.id,
-            kind=row.kind,
-            path=row.path,
-            start_line=row.start_line,
-            end_line=row.end_line,
-            symbol_key=row.symbol_key,
-            symbol_id=row.symbol_id,
-            score=round(1.0 - float(row.distance), 6),
-            legs={leg.value: rank},
-        )
-        for rank, row in enumerate(rows, 1)
-    ]
+    return found[leg]
 
 
 def fuse(
@@ -217,7 +281,7 @@ def fuse(
 
 class DenseRetriever:
     """Embeds a query with ``provider`` (the one the chunks were embedded with) and searches the
-    snapshot's chunks on each leg, fused (one leg: its own ranking)."""
+    snapshot's chunks on each leg (in one statement), fused (one leg: its own ranking)."""
 
     def __init__(self, provider: EmbeddingProvider) -> None:
         self._provider = provider
@@ -245,19 +309,16 @@ class DenseRetriever:
         if partition is None:
             return []  # not chunked: nothing to embed the query for
         vector = await self.embed_query(query, on_usage=on_usage)
-        results = {
-            leg: await dense_search(
-                db,
-                repo_id=repo_id,
-                snapshot_id=snapshot_id,
-                vector=vector,
-                leg=leg,
-                k=k,
-                filters=filters,
-                partition=partition,
-            )
-            for leg in legs
-        }
+        results = await search_legs(
+            db,
+            repo_id=repo_id,
+            snapshot_id=snapshot_id,
+            vector=vector,
+            legs=legs,
+            k=k,
+            filters=filters,
+            partition=partition,
+        )
         if len(legs) == 1:
             return list(results[legs[0]])
         return fuse(results, weights=weights, k=k)

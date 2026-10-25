@@ -9,6 +9,11 @@ the chunks still without a vector: the groups it finished are cached and saved; 
 flight (at most :data:`GROUP` texts) may be sent again.
 A second index of the same code finds every vector in the cache, for nothing.
 
+The stage embeds the snapshot's live generation of chunks as it starts (the chunks stage before
+it made it live). If a re-chunk makes another generation live part way, that run deletes the rows
+being embedded, vectors and all; this stage finds nothing left of its generation and finishes,
+and the new rows are embedded by the stage that follows the re-chunk.
+
 Once every chunk has its vector, the partition's HNSW index is built if it has none yet (one
 build after the first bulk load beats inserting into the graph row by row; later loads go into
 the index as they come). The build runs as the system role (only the tables' owner may create
@@ -64,6 +69,7 @@ class Target:
     snapshot_id: uuid.UUID
     job_id: uuid.UUID
     partition: str | None  # the repository's partition of chunks (None: no chunks)
+    generation: int | None  # the snapshot's live chunks as the stage starts (None: no chunks)
 
 
 @dataclass(slots=True)
@@ -109,7 +115,8 @@ async def _begin(task: IngestTask, org_id: str, job_id: uuid.UUID) -> Target | N
             _skip(scope, "not_configured", "this server no longer has a Voyage API key")
             return None
         partition = await chunk_partition(db, repo.id)
-        return Target(repo.org_id, repo.id, snapshot.id, job_id, partition)
+        generation = snapshot.chunk_generation
+        return Target(repo.org_id, repo.id, snapshot.id, job_id, partition, generation)
 
 
 def _skip(scope: JobScope, reason: str, why: str) -> None:
@@ -166,7 +173,9 @@ async def _embed_group(
     if provider is None:
         raise VoyageNotConfigured
     async with task.org_session(target.org_id) as db:
-        chunks = await store.pending(db, target.snapshot_id, after=after, limit=GROUP)
+        chunks = await store.pending(
+            db, target.snapshot_id, generation=target.generation, after=after, limit=GROUP
+        )
         if not chunks:
             return None
         sink = usage_ledger(
@@ -216,10 +225,18 @@ async def _finish(task: IngestTask, target: Target, tally: Tally, *, built: bool
         )
         total = int((job.stages or {}).get(STAGE.value, {}).get("total") or 0)
         machine.update_progress(STAGE, total, total)
-        machine.log(
-            f"Embedded {total:,} chunks ({cached:,} texts from the cache)."
-            " Semantic search is ready."
-        )
+        snapshot = await scope.db.get(Snapshot, target.snapshot_id)
+        if snapshot is not None and snapshot.chunk_generation != target.generation:
+            machine.note(STAGE, superseded=True)
+            machine.log(
+                "The chunks were redone while they were embedded: the index that redid them"
+                " embeds the new ones."
+            )
+        else:
+            machine.log(
+                f"Embedded {total:,} chunks ({cached:,} texts from the cache)."
+                " Semantic search is ready."
+            )
         machine.complete(STAGE)
 
 

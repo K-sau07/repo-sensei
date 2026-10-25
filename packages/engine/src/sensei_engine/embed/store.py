@@ -2,6 +2,12 @@
 (:func:`pending`), their vectors written back (:func:`save`), and the HNSW index of the
 repository's partition, built once its first vectors are in (:func:`build_index`).
 
+Only one generation of a snapshot's chunks is embedded: the live one when the embedding starts
+(``snapshots.chunk_generation``; see :mod:`sensei_engine.chunk.store`). Chunk ids are never
+reused across generations, so a vector written by id lands on that generation's row; if another
+generation goes live part way, its run deletes these rows, vectors and all, and the chunks left
+pending are the new generation's, for the embeddings stage that follows that run.
+
 A chunk is embedded as it was hashed: its header, a line break, its content
 (:func:`chunk_text`), so a vector cached under a content hash is the vector of that text.
 """
@@ -15,7 +21,7 @@ from dataclasses import dataclass
 from sqlalchemy import func, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from sensei_core.models import CodeChunk
+from sensei_core.models import CodeChunk, Snapshot
 from sensei_core.models.chunks import chunk_partitions
 
 PARTITIONS = frozenset(chunk_partitions())
@@ -34,22 +40,39 @@ def chunk_text(header: str, content: str) -> str:
 
 
 async def count_pending(db: AsyncSession, snapshot_id: uuid.UUID) -> int:
-    """How many of the snapshot's chunks (every view) have no vector yet."""
+    """How many of the snapshot's live chunks (every view) have no vector yet."""
+    live = select(Snapshot.chunk_generation).where(Snapshot.id == snapshot_id).scalar_subquery()
     found = await db.scalar(
         select(func.count())
         .select_from(CodeChunk)
-        .where(CodeChunk.snapshot_id == snapshot_id, CodeChunk.embedding.is_(None))
+        .where(
+            CodeChunk.snapshot_id == snapshot_id,
+            CodeChunk.generation == live,
+            CodeChunk.embedding.is_(None),
+        )
     )
     return int(found or 0)
 
 
 async def pending(
-    db: AsyncSession, snapshot_id: uuid.UUID, *, after: uuid.UUID | None = None, limit: int
+    db: AsyncSession,
+    snapshot_id: uuid.UUID,
+    *,
+    generation: int | None,
+    after: uuid.UUID | None = None,
+    limit: int,
 ) -> list[PendingChunk]:
-    """Up to ``limit`` of the snapshot's chunks without a vector, in id order after ``after``."""
+    """Up to ``limit`` of the snapshot's chunks of ``generation`` without a vector, in id order
+    after ``after`` (none for no generation: the snapshot isn't chunked)."""
+    if generation is None:
+        return []
     query = (
         select(CodeChunk.id, CodeChunk.content_hash, CodeChunk.header, CodeChunk.content)
-        .where(CodeChunk.snapshot_id == snapshot_id, CodeChunk.embedding.is_(None))
+        .where(
+            CodeChunk.snapshot_id == snapshot_id,
+            CodeChunk.generation == generation,
+            CodeChunk.embedding.is_(None),
+        )
         .order_by(CodeChunk.id)
         .limit(limit)
     )

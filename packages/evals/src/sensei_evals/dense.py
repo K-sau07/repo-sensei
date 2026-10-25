@@ -8,7 +8,8 @@ then the partition's HNSW index. A second run on the same code finds every vecto
 Each question is embedded as a query.
 
 ``hybrid`` fuses the dense code leg with both BM25 legs by reciprocal rank (k = 60), each leg
-asked for :data:`POOL` chunks: what 2.9's retriever starts from, before routing and reranking.
+asked for :data:`POOL` chunks, all read in one repeatable-read transaction: what 2.9's retriever
+starts from, before routing and reranking.
 What Voyage was paid is counted (:attr:`SemanticRetriever.tokens`).
 """
 
@@ -56,7 +57,9 @@ async def embed_snapshot(
             if snapshot is None:  # pragma: no cover - indexed just before
                 msg = "the eval snapshot is gone"
                 raise RuntimeError(msg)
-            chunks = await store.pending(db, snapshot_id, after=after, limit=GROUP)
+            chunks = await store.pending(
+                db, snapshot_id, generation=snapshot.chunk_generation, after=after, limit=GROUP
+            )
             if not chunks:
                 partition = await chunk_partition(db, snapshot.repo_id)
                 break
@@ -168,6 +171,9 @@ class SemanticRetriever:
         repo_id, snapshot_id = found
         pool = max(k, POOL)
         async with self._sessions() as db:
+            if not db.in_transaction():  # a session of its own (a test's may be one already)
+                # The legs read one snapshot of the database, so one generation of the chunks.
+                await db.connection(execution_options={"isolation_level": "REPEATABLE READ"})
             dense = await self._dense.search(
                 db, repo_id=repo_id, snapshot_id=snapshot_id, query=query, k=pool,
                 legs=(DenseLeg.CODE,), on_usage=self._bill,
