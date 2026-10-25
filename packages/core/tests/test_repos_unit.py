@@ -6,9 +6,11 @@ from decimal import Decimal
 
 import pytest
 from pydantic import ValidationError
+from structlog.testing import capture_logs
 
+from sensei_core.config import Settings
 from sensei_core.errors import InvalidError
-from sensei_core.repos.estimate import TreeStats, estimate_index, tree_stats
+from sensei_core.repos.estimate import EstimateModels, TreeStats, estimate_index, tree_stats
 from sensei_core.repos.service import RepoSettings
 from sensei_core.repos.urls import parse_github_url
 from sensei_core.usage import DEFAULT_PRICE_TABLE, CostCalculator
@@ -143,6 +145,32 @@ def test_time_and_cost_follow_the_measured_stages() -> None:
     template = estimate_index(size_kb, languages, CALC, tree)
     assert Decimal("0.05") < template.cost_usd < Decimal("0.15")
     assert template.index_minutes < langflow.index_minutes
+
+
+def test_embedding_time_respects_the_accounts_tokens_a_minute() -> None:
+    size_kb, languages, tree, _ = MEASURED["langflow"]
+    paid = estimate_index(size_kb, languages, CALC, tree)
+    # ~59K chunks of 330 tokens at 3M a minute: ~6.5 minutes of sending, not ~2.5 at full speed.
+    slower = estimate_index(
+        size_kb, languages, CALC, tree, EstimateModels(embed_tokens_per_minute=1_500_000)
+    )
+    assert 6 < slower.index_minutes - paid.index_minutes < 7.5
+
+
+def test_the_deployments_models_are_priced_and_one_without_a_price_is_left_out() -> None:
+    settings = Settings.model_validate({"anthropic": {"fast_model": "claude-sonnet-5-5"}})
+    models = EstimateModels.from_settings(settings)
+    assert models == EstimateModels(summary_model="claude-sonnet-5-5")
+    size_kb, languages, tree, _ = MEASURED["full-stack-fastapi-template"]
+    haiku = estimate_index(size_kb, languages, CALC, tree)
+    assert estimate_index(size_kb, languages, CALC, tree, models).cost_usd > haiku.cost_usd
+    with capture_logs() as logs:
+        unpriced = estimate_index(
+            size_kb, languages, CALC, tree, EstimateModels(summary_model="claude-unknown-1")
+        )
+    assert unpriced.cost_usd < haiku.cost_usd
+    assert {"event": "estimate leaves out a model without a price", "model": "claude-unknown-1",
+            "log_level": "warning"}.items() <= logs[0].items()  # fmt: skip
 
 
 def test_with_nothing_known_a_share_of_the_size_is_used() -> None:

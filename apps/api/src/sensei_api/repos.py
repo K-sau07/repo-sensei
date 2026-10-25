@@ -22,6 +22,7 @@ from sensei_core.github.etags import RedisETagCache
 from sensei_core.github.oauth import GitHubOAuth, OAuthError
 from sensei_core.models import Repo, User
 from sensei_core.repos.access import RepoAccess
+from sensei_core.repos.estimate import EstimateModels
 from sensei_core.repos.service import (
     GitHubReauthRequiredError,
     GitHubUnavailableError,
@@ -51,7 +52,9 @@ def get_repo_service(request: Request, app: GitHubAppDep) -> RepoService:
     if calc is None:
         calc = CostCalculator.from_settings(_settings(request).pricing)
         state.cost_calculator = calc
-    return RepoService(app, _client(request), calc)
+    return RepoService(
+        app, _client(request), calc, EstimateModels.from_settings(_settings(request))
+    )
 
 
 RepoServiceDep = Annotated[RepoService, Depends(get_repo_service)]

@@ -26,7 +26,13 @@ from sensei_core.github.client import Credential, GitHubClient, GitHubError, Rat
 from sensei_core.logging import get_logger
 from sensei_core.models import GitHubInstallation, Repo, RepoSource, RepoStatus, Role
 from sensei_core.orgs.service import OrgAccess, require_role
-from sensei_core.repos.estimate import IndexEstimate, TreeStats, estimate_index, tree_stats
+from sensei_core.repos.estimate import (
+    EstimateModels,
+    IndexEstimate,
+    TreeStats,
+    estimate_index,
+    tree_stats,
+)
 from sensei_core.repos.urls import parse_github_url
 from sensei_core.usage import CostCalculator
 
@@ -146,10 +152,17 @@ def _languages(body: object) -> dict[str, int]:
 
 
 class RepoService:
-    def __init__(self, app: GitHubApp | None, client: GitHubClient, calc: CostCalculator) -> None:
+    def __init__(
+        self,
+        app: GitHubApp | None,
+        client: GitHubClient,
+        calc: CostCalculator,
+        models: EstimateModels | None = None,
+    ) -> None:
         self._app = app
         self._client = client  # anonymous calls (public repositories)
         self._calc = calc
+        self._models = models or EstimateModels()
 
     # ------------------------------------------------------------------ GitHub side
 
@@ -322,7 +335,8 @@ class RepoService:
             else await self._facts_via_installation(db, access, github_repo_id or 0, viewer)
         )
         tree = await self._tree(facts, viewer if url is not None else None)
-        return facts, estimate_index(facts.size_kb, facts.languages, self._calc, tree)
+        estimate = estimate_index(facts.size_kb, facts.languages, self._calc, tree, self._models)
+        return facts, estimate
 
     async def _tree(self, facts: RepoFacts, viewer: Credential | None) -> TreeStats | None:
         """File counts from the default branch's git tree, asked the way the facts were (the

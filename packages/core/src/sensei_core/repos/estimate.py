@@ -15,9 +15,14 @@ history included) is the last resort.
 - parse and symbols: ~0.8 ms a code file (langflow, 8,197: 4.3 s on 10 cores; doubled for a worker)
   and ~0.07 ms a symbol saved;
 - embeddings: ~7 chunks a code file (the symbols that get summaries, ~6 a file, plus the file), at
-  ~330 tokens a chunk with voyage-code-4: about $0.04 per thousand chunks;
+  ~330 tokens a chunk with voyage-code-4: about $0.04 per thousand chunks, sent at ~400 chunks a
+  second or as fast as Voyage's tokens a minute allow, whichever is slower (3M by default, about
+  150 chunks a second);
 - summaries (Haiku, batch): ~2,600 input and ~540 output tokens a code file (fastapi-template:
   152 files for $0.035, the batch done in 3.6 minutes).
+
+The models priced are the deployment's (:class:`EstimateModels`); one without a price adds
+nothing to the cost, with a warning.
 
 Rounded and labelled estimates in the UI.
 """
@@ -30,7 +35,11 @@ from decimal import Decimal
 from pathlib import PurePosixPath
 from typing import Any, cast
 
+from sensei_core.config import Settings
+from sensei_core.logging import get_logger
 from sensei_core.usage import CostCalculator
+
+log = get_logger(__name__)
 
 SOURCE_SHARE = 0.1  # of the on-disk size, when GitHub reports no languages
 CODE_BYTES_PER_FILE = 4_000  # of language bytes, without a tree
@@ -87,8 +96,24 @@ SUMMARY_INPUT_TOKENS_PER_FILE = 2_600
 SUMMARY_OUTPUT_TOKENS_PER_FILE = 540
 SUMMARY_BATCH_SECONDS = 200  # a small batch's wait; most end within the hour
 SUMMARY_SECONDS_PER_FILE = 0.1
-EMBED_MODEL = "voyage-code-4"
-SUMMARY_MODEL = "claude-haiku-5-5"
+
+
+@dataclass(frozen=True, slots=True)
+class EstimateModels:
+    """The models an index uses, and the embedding rate limit (the defaults: the settings')."""
+
+    embed_model: str = "voyage-code-4"
+    summary_model: str = "claude-haiku-5-5"
+    embed_tokens_per_minute: int = 3_000_000
+
+    @classmethod
+    def from_settings(cls, settings: Settings) -> EstimateModels:
+        return cls(
+            embed_model=settings.voyage.model,
+            # Summaries run on the fast tier (sensei_engine.llm.anthropic_client.ROLE_TIERS).
+            summary_model=settings.anthropic.fast_model,
+            embed_tokens_per_minute=settings.voyage.tokens_per_minute,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -139,7 +164,9 @@ def estimate_index(
     languages: dict[str, int],
     calc: CostCalculator,
     tree: TreeStats | None = None,
+    models: EstimateModels | None = None,
 ) -> IndexEstimate:
+    models = models or EstimateModels()
     language_bytes = sum(size for size in languages.values() if size > 0)
     disk_bytes = max(0, size_kb) * 1024
     source_bytes = language_bytes or disk_bytes * SOURCE_SHARE
@@ -165,23 +192,43 @@ def estimate_index(
         + PARSE_SECONDS
         + PARSE_SECONDS_PER_CODE_FILE * code_files
         + SAVE_SECONDS_PER_SYMBOL * SYMBOLS_PER_CODE_FILE * code_files
-        + chunks / EMBED_CHUNKS_PER_SECOND
+        + _embed_seconds(chunks, models.embed_tokens_per_minute)
         + (SUMMARY_BATCH_SECONDS + SUMMARY_SECONDS_PER_FILE * code_files if code_files else 0)
     )
     minutes = round(seconds / 60, 1)
-    embed = calc.cost("voyage", EMBED_MODEL, tokens_in=chunks * TOKENS_PER_CHUNK) or Decimal(0)
+    embed = _priced(
+        calc.cost("voyage", models.embed_model, tokens_in=chunks * TOKENS_PER_CHUNK),
+        models.embed_model,
+    )
     # Priced a file at a time (each request is short; the total isn't one long prompt).
-    per_file = calc.cost(
-        "anthropic",
-        SUMMARY_MODEL,
-        tokens_in=SUMMARY_INPUT_TOKENS_PER_FILE,
-        tokens_out=SUMMARY_OUTPUT_TOKENS_PER_FILE,
-        batch=True,
-    ) or Decimal(0)
-    compute = calc.cost("sensei", "index-worker", units=Decimal(str(minutes))) or Decimal(0)
+    per_file = _priced(
+        calc.cost(
+            "anthropic",
+            models.summary_model,
+            tokens_in=SUMMARY_INPUT_TOKENS_PER_FILE,
+            tokens_out=SUMMARY_OUTPUT_TOKENS_PER_FILE,
+            batch=True,
+        ),
+        models.summary_model,
+    )
+    compute = _priced(
+        calc.cost("sensei", "index-worker", units=Decimal(str(minutes))), "index-worker"
+    )
     return IndexEstimate(
         files=files,
         tokens=tokens,
         index_minutes=minutes,
         cost_usd=embed + per_file * code_files + compute,
     )
+
+
+def _embed_seconds(chunks: int, tokens_per_minute: int) -> float:
+    """Sending ``chunks`` to be embedded: at our concurrency, or the account's tokens a minute."""
+    return max(chunks / EMBED_CHUNKS_PER_SECOND, chunks * TOKENS_PER_CHUNK * 60 / tokens_per_minute)
+
+
+def _priced(cost: Decimal | None, model: str) -> Decimal:
+    if cost is None:
+        log.warning("estimate leaves out a model without a price", model=model)
+        return Decimal(0)
+    return cost
