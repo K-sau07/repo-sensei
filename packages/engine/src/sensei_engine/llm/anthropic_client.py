@@ -24,9 +24,11 @@ and the Message Batches API (half price, results within 24 hours) for bulk work 
 
 from __future__ import annotations
 
+import asyncio
 import enum
 import json
 import logging
+import math
 import os
 import re
 from collections.abc import (
@@ -281,6 +283,32 @@ class AnthropicClient:
             request_id=message._request_id,  # pyright: ignore[reportPrivateUsage]
         )
 
+    async def complete_within(
+        self,
+        request: LLMRequest,
+        *,
+        timeout_seconds: float,
+        on_usage: LLMUsageSink | None = None,
+    ) -> LLMResult:
+        """:meth:`complete`, given up after ``timeout_seconds`` (``TimeoutError``). A call given
+        up on may still be billed, and its answer never says how much: ``on_usage`` gets the
+        most it can cost (:func:`ceiling_usage`) instead."""
+        reported = False
+
+        async def report(usage: LLMUsage) -> None:
+            nonlocal reported
+            reported = True
+            if on_usage is not None:
+                await on_usage(usage)
+
+        try:
+            async with asyncio.timeout(timeout_seconds):
+                return await self.complete(request, on_usage=report)
+        except TimeoutError:
+            if on_usage is not None and not reported:
+                await on_usage(ceiling_usage(request, self.model_for(request.tier)))
+            raise
+
     async def count_tokens(self, request: LLMRequest) -> int:
         """The input tokens ``request`` would use (free; rate limited separately)."""
         with _sdk_errors():
@@ -422,6 +450,24 @@ def _batch_item(item: MessageBatchIndividualResponse, *, json_output: bool) -> B
     except LLMError as error:
         return BatchItem(item.custom_id, "succeeded", error=error, usage=usage)
     return BatchItem(item.custom_id, "succeeded", result=result, usage=usage)
+
+
+# For :func:`ceiling_usage`: characters per token, on the high side for code and English.
+CEILING_CHARS_PER_TOKEN = 3
+
+
+def ceiling_usage(request: LLMRequest, model: str) -> LLMUsage:
+    """The most ``request`` can be billed, for a call whose answer never came: its prompt,
+    system prompt and schema at :data:`CEILING_CHARS_PER_TOKEN` (no cache discount), and
+    ``max_tokens`` of output."""
+    schema = json.dumps(request.schema) if request.schema is not None else ""
+    chars = len(request.prompt) + len(request.system or "") + len(schema)
+    return LLMUsage(
+        PROVIDER,
+        model,
+        input_tokens=math.ceil(chars / CEILING_CHARS_PER_TOKEN),
+        output_tokens=request.max_tokens,
+    )
 
 
 def _system(request: LLMRequest) -> Any:

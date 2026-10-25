@@ -511,9 +511,17 @@ async def test_a_model_that_errs_or_is_too_slow_keeps_the_first_stage_order() ->
         return httpx2.Response(200, json=message(json.dumps({"ranking": []})))
 
     api = FakeAnthropic({"/v1/messages": slow})
-    ranking = await LLMReranker(api.client(), timeout_seconds=0.05).rerank(QUERY, first_stage)
+    billed: list[LLMUsage] = []
+
+    async def sink(usage: LLMUsage) -> None:
+        billed.append(usage)
+
+    ranking = await LLMReranker(api.client(), timeout_seconds=0.05).rerank(
+        QUERY, first_stage, on_usage=sink
+    )
     assert ranking.source == "fallback"
     assert list(ranking.items) == first_stage
+    assert len(billed) == 1  # the window given up on, at the most it can cost
 
 
 async def test_no_call_without_a_key_or_with_one_candidate() -> None:

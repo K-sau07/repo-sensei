@@ -293,10 +293,17 @@ async def test_a_slow_model_is_not_waited_for() -> None:
     api = FakeAnthropic({"/v1/messages": slow})
     redis = FakeAsyncRedis(decode_responses=True)
     router = QueryRouter(api.client(), redis, timeout_seconds=0.05)
+    billed: list[LLMUsage] = []
 
-    route = await router.route(QUERY, scope=ORG)
+    async def sink(usage: LLMUsage) -> None:
+        billed.append(usage)
+
+    route = await router.route(QUERY, scope=ORG, on_usage=sink)
 
     assert route.source == "fallback"
+    # It may still be billed: the ledger gets the most it can cost.
+    [usage] = billed
+    assert usage.output_tokens > 0
     assert (
         await redis.ttl(cache_key(QUERY, "claude-haiku-5-5", ORG)) == -2
     )  # a fallback isn't cached

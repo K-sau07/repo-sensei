@@ -38,6 +38,7 @@ from sensei_engine.llm.anthropic_client import (
     LLMUsage,
     Role,
     Tier,
+    ceiling_usage,
     tier_for,
 )
 from sensei_engine.llm.ledger import usage_ledger
@@ -704,3 +705,30 @@ async def test_two_collectors_at_once_collect_and_bill_once(
         )
     await system.dispose()
     assert billed == 1
+
+
+async def test_a_call_given_up_on_is_billed_at_the_most_it_can_cost() -> None:
+    async def slow(_: httpx2.Request) -> httpx2.Response:
+        await asyncio.sleep(5)
+        return httpx2.Response(200, json=message("late"))  # pragma: no cover - given up on
+
+    billed: list[LLMUsage] = []
+
+    async def sink(usage: LLMUsage) -> None:
+        billed.append(usage)
+
+    request = LLMRequest("x" * 300, system="s" * 30, tier=Tier.FAST, max_tokens=500)
+    with pytest.raises(TimeoutError):
+        await (
+            FakeAnthropic({"/v1/messages": slow})
+            .client()
+            .complete_within(request, timeout_seconds=0.05, on_usage=sink)
+        )
+    assert billed == [LLMUsage("anthropic", "claude-haiku-5-5", 110, 500)]
+    assert ceiling_usage(request, "m").input_tokens == 110  # (300 + 30) / 3
+
+    # Answered in time: what it was billed, once.
+    billed.clear()
+    api = FakeAnthropic({"/v1/messages": httpx2.Response(200, json=message("ok"))})
+    await api.client().complete_within(request, timeout_seconds=5, on_usage=sink)
+    assert [(u.input_tokens, u.output_tokens) for u in billed] == [(100, 20)]

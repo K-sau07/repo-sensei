@@ -669,10 +669,12 @@ async def retry_failed(
         log.warning("summary retries over the cost cap", files=len(files), spent=str(exc.spent))
         return
     gate = asyncio.Semaphore(concurrency)
-    billed: list[LLMUsage] = []
 
     async def bill(usage: LLMUsage) -> None:
-        billed.append(usage)
+        # Recorded as each call is answered: a run that stops part way has billed these.
+        async with sessions() as db:
+            sink = usage_ledger(db, calculator, org_id=org_id, ref_type=ref_type, ref_id=ref_id)
+            await sink(usage)
 
     async def retry(file: FileInput) -> None:
         async with gate:
@@ -689,13 +691,7 @@ async def retry_failed(
         run.dropped_keys += dropped
 
     run.retried += len(files)
-    try:
-        await asyncio.gather(*(retry(file) for file in files))
-    finally:
-        async with sessions() as db:
-            sink = usage_ledger(db, calculator, org_id=org_id, ref_type=ref_type, ref_id=ref_id)
-            for usage in billed:
-                await sink(usage)
+    await asyncio.gather(*(retry(file) for file in files))
 
 
 # ---------------------------------------------------------------- the artifact

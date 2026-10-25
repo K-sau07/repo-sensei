@@ -464,11 +464,13 @@ def _rollup_inputs(paths: list[str]) -> list[int]:
 
 
 def _sessions(db: AsyncSession) -> Callable[[], Any]:
-    """Each "transaction" a savepoint of the test's session (rolled back at the end)."""
+    """Each "transaction" a savepoint of the test's session (rolled back at the end), one at a
+    time: concurrent callers, each with a session of its own in a worker, take turns here."""
+    turn = asyncio.Lock()
 
     @asynccontextmanager
     async def opened() -> AsyncGenerator[AsyncSession]:
-        async with db.begin_nested():
+        async with turn, db.begin_nested():
             yield db
 
     return opened
@@ -719,6 +721,49 @@ async def test_a_store_that_fails_leaves_the_batch_to_collect_again(
         db_session, client, row, files, calculator=CALCULATOR, org_id=org_id
     )
     assert list(run.summaries) == ["s/one.py"]
+
+
+@pytest.mark.integration
+async def test_each_retry_is_billed_as_soon_as_it_is_answered(db_session: AsyncSession) -> None:
+    org_id = await _org(db_session)
+    files = [_file("q/one.py"), _file("q/two.py")]
+    by_path = {file.path: file for file in files}
+    second_asked, second_may_answer = asyncio.Event(), asyncio.Event()
+
+    async def single(request: httpx2.Request) -> httpx2.Response:
+        path = _path_of(json.loads(request.content))
+        if path == "q/two.py":
+            second_asked.set()
+            await second_may_answer.wait()
+        return httpx2.Response(200, json=message(json.dumps(_answer(by_path[path]))))
+
+    api = _batch_api(lambda custom_id, _: _line(custom_id, "{}"))
+    api.routes["/v1/messages"] = single
+    run = summaries.SummaryRun(skipped={file.path: "errored: boom" for file in files})
+    retrying = asyncio.create_task(
+        retry_failed(
+            _sessions(db_session),
+            api.client(),
+            run,
+            files,
+            calculator=CALCULATOR,
+            org_id=org_id,
+            cap_usd=Decimal(5),
+            ref_id="job-q",
+            concurrency=1,
+        )
+    )
+    try:
+        await asyncio.wait_for(second_asked.wait(), timeout=10)
+        # The first answer is in the ledger while the second is still out.
+        billed = await db_session.scalar(
+            select(func.count()).select_from(UsageEvent).where(UsageEvent.ref_id == "job-q")
+        )
+        assert billed == 1
+    finally:
+        second_may_answer.set()
+        await asyncio.wait_for(retrying, timeout=10)
+    assert sorted(run.summaries) == ["q/one.py", "q/two.py"]
 
 
 @pytest.mark.integration

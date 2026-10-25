@@ -29,7 +29,6 @@ the retriever (2.9), not this module.
 
 from __future__ import annotations
 
-import asyncio
 import enum
 import hashlib
 import json
@@ -593,8 +592,9 @@ class QueryRouter:
             cache_system=True,
         )
         try:
-            async with asyncio.timeout(self._timeout):
-                result = await self._client.complete(request, on_usage=on_usage)
+            result = await self._client.complete_within(
+                request, timeout_seconds=self._timeout, on_usage=on_usage
+            )
             answer = _Answer.model_validate(result.data)
         except (LLMError, TimeoutError, ValidationError) as exc:
             log.warning("query router fell back to rules", error=type(exc).__name__)

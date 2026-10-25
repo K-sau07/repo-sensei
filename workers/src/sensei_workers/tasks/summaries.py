@@ -515,10 +515,15 @@ async def _rollups(task: IngestTask, target: Target, summaries: Mapping[str, Fil
     """Summarize the directories (within the cap), keep them as an artifact and complete the
     stage."""
     runtime = get_runtime()
-    billed: list[LLMUsage] = []
 
     async def bill(usage: LLMUsage) -> None:
-        billed.append(usage)
+        # Recorded as each call is answered: rollups done again after a stop were paid twice.
+        async with task.org_session(target.org_id) as db:
+            sink = usage_ledger(
+                db, runtime.costs, org_id=target.org_id, ref_type=REF_TYPE,
+                ref_id=str(target.job_id),
+            )  # fmt: skip
+            await sink(usage)
 
     found: dict[str, rollups.DirectorySummary] = {}
     if await _within_cap(task, target, list(summaries)):
@@ -530,12 +535,6 @@ async def _rollups(task: IngestTask, target: Target, summaries: Mapping[str, Fil
         data = rollups.to_json(found).encode()
         await storage.put_bytes(Bucket.ARTIFACTS, key, data, content_type="application/json")
     async with _stage(task, target) as scope:
-        sink = usage_ledger(
-            scope.db, runtime.costs, org_id=target.org_id, ref_type=REF_TYPE,
-            ref_id=str(target.job_id),
-        )  # fmt: skip
-        for usage in billed:
-            await sink(usage)
         machine = scope.machine
         details = (scope.require(STAGE).stages or {}).get(STAGE.value, {}).get("details", {})
         machine.note(STAGE, directories=len(found))
