@@ -11,7 +11,8 @@ The stage task ids are kept in Redis so cancelling can revoke the ones still que
 are summaries when the server has no Anthropic key: that stage passes itself over), the
 repository becomes ``ready`` at the indexed commit, and the job succeeds. The chunks of the
 repository's other snapshots are pruned in the same transaction (search serves the indexed
-commit), and its chunks partition is vacuumed after.
+commit), and its chunks partition is vacuumed after. A job that reaches finalize straight from
+symbols (its chain was sent before the chunks stage existed) gets the rest of the chain sent.
 """
 
 from __future__ import annotations
@@ -57,6 +58,16 @@ RESEND_AFTER_SECONDS = 6 * 3600
 GIVE_UP_AFTER_SECONDS = 24 * 3600
 
 
+class _NoChunksStageError(Exception):
+    """The job went from symbols to finalize without a chunks stage."""
+
+
+def _send_once(job_id: str, what: str) -> bool:
+    """True the first time for this job and ``what`` (until the chain's keys expire)."""
+    key = f"{chain_key(job_id)}:sent-{what}"
+    return bool(get_runtime().sync_redis.set(key, "1", nx=True, ex=CHAIN_TTL_SECONDS))
+
+
 @celery_app.task(
     bind=True,
     base=IngestTask,
@@ -75,6 +86,9 @@ def finalize_index(self: IngestTask, *, job_id: str, org_id: str, repo_id: str) 
             ready = _ready_to_finalize(job)
             resuming = job.stage is Stage.FINALIZE
             if not ready and not resuming:
+                stages = job.stages or {}
+                if job.stage is Stage.SYMBOLS and stages["symbols"].get("status") == "done":
+                    raise _NoChunksStageError  # its chain has none (see below)
                 if job.stage is None or STAGE_ORDER.index(job.stage) <= STAGE_ORDER.index(
                     Stage.SUMMARIES
                 ):
@@ -101,7 +115,21 @@ def finalize_index(self: IngestTask, *, job_id: str, org_id: str, repo_id: str) 
             return snapshot.commit_sha, pruned
 
     runtime = get_runtime()
-    finished = runtime.run(_finalize())
+    try:
+        finished = runtime.run(_finalize())
+    except _NoChunksStageError:
+        # A chain sent before the chunks stage existed goes from symbols straight here: the
+        # stages from chunks on are sent, once.
+        if not _send_once(job_id, "chunks"):
+            raise NotYetError("the chunks stage hasn't run") from None
+        log.warning("index job without a chunks stage: sending it", job_id=job_id)
+        eager = bool(self.request.is_eager)
+        send_stages(job_id, org_id, repo_id, eager=eager, first=STAGES.index(chunk_snapshot))
+        if not eager:
+            raise NotYetError("the chunks stage was sent") from None  # its finalize finishes
+        # Run in place, that chain's finalize found this one holding the lock and skipped: the
+        # chunks are done now, so this one finishes.
+        finished = runtime.run(_finalize())
     if finished is None:
         return None
     sha, pruned = finished
@@ -150,17 +178,21 @@ def _sent_key(job_id: str) -> str:
     return f"{chain_key(job_id)}:sent-at"
 
 
-def send_stages(job_id: str, org_id: str, repo_id: str, *, eager: bool = False) -> list[str]:
-    """Send the stage chain (run it in place when ``eager``: tests, eager dev setups).
+def send_stages(
+    job_id: str, org_id: str, repo_id: str, *, eager: bool = False, first: int = 0
+) -> list[str]:
+    """Send the stage chain from stage ``first`` (run it in place when ``eager``: tests, eager
+    dev setups).
 
     Sending it again is safe: every stage checks the job first, so stages already done do
     nothing and the run carries on where it stopped. The task ids of every send are kept, so
     cancelling revokes all of them."""
     kwargs: dict[str, Any] = {"job_id": job_id, "org_id": org_id, "repo_id": repo_id}
-    task_ids = [str(uuid.uuid4()) for _ in STAGES]
+    stages = STAGES[first:]
+    task_ids = [str(uuid.uuid4()) for _ in stages]
     signatures = [
         stage.si(**kwargs).set(task_id=task_id)
-        for stage, task_id in zip(STAGES, task_ids, strict=True)
+        for stage, task_id in zip(stages, task_ids, strict=True)
     ]
     redis = get_runtime().sync_redis
     key = chain_key(job_id)

@@ -17,6 +17,7 @@ import httpx2
 import orjson
 import pytest
 import respx
+from celery import chain
 from sqlalchemy import delete, func, select, text
 
 from sensei_core.config import Settings
@@ -46,8 +47,10 @@ from sensei_workers.ingest.git import GitRunner
 from sensei_workers.runtime import Runtime, set_runtime
 from sensei_workers.statistics import vacuum_chunks
 from sensei_workers.tasks import chunk as chunk_task
+from sensei_workers.tasks import orchestrate
 from sensei_workers.tasks.merkle import build_merkle
 from sensei_workers.tasks.orchestrate import run_index_job
+from sensei_workers.tasks.summaries import summarize_snapshot
 
 pytestmark = pytest.mark.integration
 
@@ -487,6 +490,26 @@ def test_indexing_another_commit_prunes_the_last_ones_chunks(
     assert count == rows > 0
     # The superseded snapshot isn't searchable any more, and its chunks are gone.
     assert runtime.run(_seen(runtime.system_database, old)) == (None, 0)
+
+
+def test_a_chain_sent_without_the_chunks_stage_gets_it_from_finalize(
+    runtime: Runtime,
+    ids: tuple[uuid.UUID, uuid.UUID, uuid.UUID],
+    github: respx.MockRouter,
+) -> None:
+    """A job whose chain was sent before the deploy that added the chunks (and summaries)
+    stages."""
+    org_id, repo_id, job_id = ids
+    kwargs = {"job_id": str(job_id), "org_id": str(org_id), "repo_id": str(repo_id)}
+    later = {chunk_task.chunk_snapshot, summarize_snapshot}
+    old = [stage for stage in orchestrate.STAGES if stage not in later]
+    chain(*(stage.si(**kwargs) for stage in old)).apply().get()
+
+    repo, job = runtime.run(_state(runtime.system_database, repo_id, job_id))
+    assert (job.status, repo.status) == (JobStatus.SUCCEEDED, RepoStatus.READY)
+    assert job.stages["chunks"]["status"] == "done"
+    assert job.snapshot_id is not None
+    assert runtime.run(_seen(runtime.system_database, job.snapshot_id)) == (5, 5)
 
 
 # ---------------------------------------------------------------- summaries
