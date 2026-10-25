@@ -314,8 +314,9 @@ class PricingSettings(BaseSettings):
 
     # A JSON price table (see sensei_core.usage.PriceTable); the built-in table when unset.
     table_path: Path | None = None
-    # What one org may spend on models in a calendar month (UTC). Work that would take it over
-    # (a summaries batch, by its estimate) isn't started. Plans set their own caps later.
+    # What one org may spend in a calendar month (UTC), every kind of metered usage counted
+    # (models, embeddings, reranking, compute). Model work that would take it over (a summaries
+    # batch, by its estimate) isn't started. Plans set their own caps later.
     org_monthly_cap_usd: Decimal = Field(default=Decimal(25), ge=0)
 
 
