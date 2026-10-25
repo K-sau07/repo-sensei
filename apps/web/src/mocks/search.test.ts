@@ -9,6 +9,7 @@ import {
   type SearchRequest,
   type SearchResponse,
 } from "@/lib/api/search";
+import { pathGlobs } from "@/lib/search/url-state";
 
 import { BROWSE_COMMIT, contentFiles } from "./browse";
 import { db, resetMockDb } from "./db";
@@ -325,6 +326,19 @@ describe("the mock grep", () => {
     expect(globTest("!x")("!x")).toBe(true);
     expect(globTest("src/**")("src/a/b.ts")).toBe(true);
     expect(globTest("*.ts")("src/a/b.tsx")).toBe(false);
+    expect(globTest("/b.ts")("src/b.ts")).toBe(false);
+    expect(globTest("/src/\\[org\\]/*")("src/[org]/a.ts")).toBe(true);
+    expect(globTest("/src/\\[org\\]/*")("src/o/a.ts")).toBe(false);
+  });
+
+  it("takes in the paths a search's prefix does, in regex mode too", () => {
+    const paths = files.map(({ file }) => file.path);
+    for (const prefix of ["backend/app/ap", "backend/app/api/", "frontend/src/", "back"]) {
+      const tests = pathGlobs(prefix).map(globTest);
+      const globbed = paths.filter((path) => tests.some((test) => test(path)));
+      expect(globbed.length).toBeGreaterThan(0);
+      expect(globbed).toEqual(paths.filter((path) => path.startsWith(prefix)));
+    }
   });
 });
 

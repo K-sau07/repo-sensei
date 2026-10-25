@@ -8,7 +8,7 @@ import { api } from "@/lib/api/client";
 import { searchApi, type Layer, type SearchRequest, type SearchResponse } from "@/lib/api/search";
 import type { GrepRequest, GrepResult } from "@/lib/api/types";
 import { queryKeys } from "@/lib/query/keys";
-import { requestOf, searchParsers, type SearchState } from "@/lib/search/url-state";
+import { pathGlobs, requestOf, searchParsers, type SearchState } from "@/lib/search/url-state";
 
 /** Marked when a search is sent and measured when its results are on screen (the budget is
  * 500 ms, the workspace's "data" budget). */
@@ -83,15 +83,14 @@ export function useLanePages(
 }
 
 /** The query as an exact regular expression over the files (`mode=regex`), with the path
- * prefix as a glob. */
+ * prefix as globs. */
 export function useGrep(state: SearchState, enabled: boolean) {
   const { org, repo } = useRepoSlug();
-  const path = state.path.trim().replace(/^\/+/, "");
   const body: GrepRequest = {
     pattern: state.q.trim(),
     regex: true,
     case: "smart",
-    path_globs: path ? [`${path.replace(/\/+$/, "")}/**`] : [],
+    path_globs: pathGlobs(state.path),
     limit: GREP_LIMIT,
     context: GREP_CONTEXT,
     ref: state.ref,

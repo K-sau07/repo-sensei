@@ -9,7 +9,14 @@ import {
   segments,
   windowLine,
 } from "./highlight";
-import { EMPTY_SEARCH, filterCount, requestOf, searchParsers, searchPath } from "./url-state";
+import {
+  EMPTY_SEARCH,
+  filterCount,
+  pathGlobs,
+  requestOf,
+  searchParsers,
+  searchPath,
+} from "./url-state";
 
 const marked = (text: string, ranges: { start: number; end: number }[]) =>
   segments(text, ranges)
@@ -167,5 +174,16 @@ describe("the search URL", () => {
     });
     expect(requestOf({ ...EMPTY_SEARCH, q: "a+", mode: "regex" })).toEqual({ q: "a+" });
     expect(filterCount({ ...EMPTY_SEARCH, layer: ["ui", "api"], ref: "main" })).toBe(2);
+  });
+
+  it("gives an exact search the path prefix as literal, anchored globs", () => {
+    expect(pathGlobs("  ")).toEqual([]);
+    expect(pathGlobs("src/ap")).toEqual(["/src/ap*", "/src/ap*/**"]);
+    expect(pathGlobs("/backend/app/")).toEqual(["/backend/app/*", "/backend/app/*/**"]);
+    expect(pathGlobs("apps/web/src/app/(app)/[org]")).toEqual([
+      "/apps/web/src/app/(app)/\\[org\\]*",
+      "/apps/web/src/app/(app)/\\[org\\]*/**",
+    ]);
+    expect(pathGlobs("a*b?{c}\\")).toEqual(["/a\\*b\\?\\{c\\}\\\\*", "/a\\*b\\?\\{c\\}\\\\*/**"]);
   });
 });

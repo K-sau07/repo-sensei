@@ -57,6 +57,17 @@ export function requestOf(state: SearchState): SearchRequest {
   };
 }
 
+/** The path prefix as ripgrep globs, so an exact search takes in the paths a search does: every
+ * one that starts with it ("src/ap" takes in src/app/ and src/api.ts). It's literal (`[org]`
+ * isn't a character class) and anchored at the root (`/`). */
+export function pathGlobs(path: string): string[] {
+  const prefix = path.trim().replace(/^\/+/, "");
+  if (!prefix) return [];
+  const literal = prefix.replace(/[\\*?[\]{}]/g, "\\$&");
+  // `*` stops at a slash: the first is a file or folder name that goes on, the second inside it.
+  return [`/${literal}*`, `/${literal}*/**`];
+}
+
 /** The filters set, for the filter button's count. */
 export function filterCount(state: SearchState): number {
   return (

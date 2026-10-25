@@ -679,16 +679,21 @@ const GREP_CONTEXT_MAX = 10;
 const MAX_LINE_CHARS = 500;
 const MAX_RANGES = 50;
 
-/** A ripgrep glob as a test on a path: `**` spans directories, `*` and `?` don't, and a glob
- * with no slash matches a file name anywhere. */
+/** A ripgrep glob as a test on a path: `**` spans directories, `*` and `?` don't, `\` makes the
+ * next character literal, a leading `/` is the root, and a glob with no slash matches a file name
+ * anywhere. */
 export function globTest(glob: string): (path: string) => boolean {
+  const source = glob.replace(/^\//, "");
   let body = "";
-  for (let i = 0; i < glob.length; i += 1) {
-    const char = glob.charAt(i);
-    if (char === "*" && glob.charAt(i + 1) === "*") {
+  for (let i = 0; i < source.length; i += 1) {
+    const char = source.charAt(i);
+    if (char === "\\" && i + 1 < source.length) {
+      i += 1;
+      body += escapeRegex(source.charAt(i));
+    } else if (char === "*" && source.charAt(i + 1) === "*") {
       body += ".*";
       i += 1;
-      if (glob.charAt(i + 1) === "/") i += 1;
+      if (source.charAt(i + 1) === "/") i += 1;
     } else if (char === "*") body += "[^/]*";
     else if (char === "?") body += "[^/]";
     else body += escapeRegex(char);
