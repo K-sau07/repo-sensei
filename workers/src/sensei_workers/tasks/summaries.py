@@ -51,7 +51,7 @@ from sensei_core.models import (
 )
 from sensei_core.storage import Bucket, artifact_key
 from sensei_engine.llm import batches, rollups
-from sensei_engine.llm.anthropic_client import LLMError, LLMUnavailable, LLMUsage, Role, tier_for
+from sensei_engine.llm.anthropic_client import LLMError, LLMUsage, Role, tier_for
 from sensei_engine.llm.glossary import build_glossary, save_glossary
 from sensei_engine.llm.ledger import usage_ledger
 from sensei_engine.llm.summaries import (
@@ -205,13 +205,8 @@ async def _give_up(task: IngestTask, target: Target, reason: str, why: str) -> N
         _skip(scope, reason, why)
 
 
-def _transient(exc: LLMError) -> bool:
-    """Worth trying again later: no answer, rate limited, overloaded or a server error."""
-    return isinstance(exc, LLMUnavailable) or exc.status == 429 or exc.status >= 500
-
-
 async def _unavailable(task: IngestTask, target: Target, exc: LLMError) -> Wait | None:
-    """An Anthropic outage (:func:`_transient`): try again later, or give the stage up after
+    """An Anthropic outage (:attr:`LLMError.transient`): try again later, or give the stage up after
     :data:`MAX_UNAVAILABLE` attempts that met one."""
     async with _stage(task, target) as scope:
         job = scope.require(STAGE)
@@ -346,7 +341,7 @@ async def _send(task: IngestTask, target: Target, files: Sequence[FileInput]) ->
         async with task.org_session(target.org_id) as db:
             await batches.send(db, client, batch_id, requests)
     except LLMError as exc:
-        if _transient(exc):
+        if exc.transient:
             raise  # it may have gone out: the row stays to be settled
         async with task.org_session(target.org_id) as db:
             sent = await db.get(LLMBatch, batch_id)
@@ -619,7 +614,7 @@ def summarize_snapshot(self: IngestTask, *, job_id: str, org_id: str, repo_id: s
             files = _inputs(target, runtime.run(_file_rows(self, target)))
         written = runtime.run(_after_collect(self, target, run, files))
     except LLMError as exc:
-        if not _transient(exc):
+        if not exc.transient:
             runtime.run(_give_up(self, target, "llm_error", f"Claude refused ({exc.message})"))
             return None
         wait = runtime.run(_unavailable(self, target, exc))

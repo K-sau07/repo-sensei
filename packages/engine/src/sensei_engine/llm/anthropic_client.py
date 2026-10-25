@@ -106,6 +106,11 @@ class LLMError(Exception):
         self.status = status
         self.message = message
 
+    @property
+    def transient(self) -> bool:
+        """Worth trying again later: no answer, rate limited, overloaded or a server error."""
+        return self.status == 429 or self.status >= 500
+
 
 class LLMNotConfigured(LLMError):
     def __init__(self) -> None:

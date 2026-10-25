@@ -114,7 +114,8 @@ class FakeAnthropic:
         return AnthropicClient(settings(**overrides), http_client=http)
 
     def bodies(self, path: str) -> list[dict[str, Any]]:
-        return [json.loads(r.content) for r in self.requests if r.url.path == path]
+        """The JSON bodies sent to ``path`` (requests without one, such as a GET, left out)."""
+        return [json.loads(r.content) for r in self.requests if r.url.path == path and r.content]
 
 
 def jsonl(*lines: dict[str, Any]) -> httpx2.Response:

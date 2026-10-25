@@ -607,6 +607,121 @@ async def test_over_the_cap_nothing_is_recorded_or_sent(db_session: AsyncSession
 
 
 @pytest.mark.integration
+async def test_a_run_restarted_mid_batch_takes_up_its_batch_and_bills_once(
+    db_session: AsyncSession,
+) -> None:
+    """Spec 2.8.8: the worker dies while the batch runs; the redelivered run finds the batch
+    open for its reference, waits for it and collects it, without sending another."""
+    org_id = await _org(db_session)
+    files = [_file("r/one.py"), _file("r/two.py")]
+    by_id = {file.custom_id: file for file in files}
+    api = _batch_api(lambda custom_id, _: _line(custom_id, json.dumps(_answer(by_id[custom_id]))))
+    stored: list[list[str]] = []
+
+    async def store(db: AsyncSession, run: summaries.SummaryRun) -> None:
+        claimed = await db.scalar(select(LLMBatch.collected_at).where(LLMBatch.id == run.batch_id))
+        assert claimed is not None  # in the claiming transaction
+        stored.append(sorted(run.summaries))
+
+    async def die(_: float) -> None:
+        raise RuntimeError("the worker went away")
+
+    async def sleep(_: float) -> None:
+        return None
+
+    common: dict[str, Any] = {
+        "org_id": org_id, "calculator": CALCULATOR, "cap_usd": Decimal(5), "store": store,
+        "ref_type": "index_job", "ref_id": "job-r",
+    }  # fmt: skip
+    with pytest.raises(RuntimeError):
+        await summarize_files(_sessions(db_session), api.client(), files, sleep=die, **common)
+    assert len(api.bodies(BATCHES)) == 1  # sent, still running
+    run = await summarize_files(_sessions(db_session), api.client(), files, sleep=sleep, **common)
+
+    assert len(api.bodies(BATCHES)) == 1  # not sent again
+    assert sorted(run.summaries) == ["r/one.py", "r/two.py"]
+    assert run.estimate is None  # nothing estimated: nothing new was sent
+    assert stored == [["r/one.py", "r/two.py"]]
+    billed = await db_session.scalar(
+        select(func.count()).select_from(UsageEvent).where(UsageEvent.ref_id == "job-r")
+    )
+    assert billed == 2
+    assert await db_session.scalar(select(func.count()).select_from(LLMBatch)) == 1
+
+
+@pytest.mark.integration
+async def test_a_send_that_never_went_out_is_settled_then_sent_again(
+    db_session: AsyncSession,
+) -> None:
+    org_id = await _org(db_session)
+    files = [_file("u/one.py")]
+    by_id = {file.custom_id: file for file in files}
+    api = _batch_api(lambda custom_id, _: _line(custom_id, json.dumps(_answer(by_id[custom_id]))))
+    created = api.routes[BATCHES]
+
+    def batches_route(request: httpx2.Request) -> httpx2.Response:
+        if request.method == "GET":  # the provider has no batch from the stopped run
+            return httpx2.Response(200, json={"data": [], "has_more": False})
+        assert isinstance(created, httpx2.Response)
+        return created
+
+    api.routes[BATCHES] = batches_route
+    client = api.client()
+    stuck = await batches.reserve(
+        db_session, client, build_requests(files), org_id=org_id, kind="summaries",
+        ref_type="index_job", ref_id="job-u",
+    )  # fmt: skip
+    stuck.created_at = datetime.now(UTC) - timedelta(hours=1)
+    await db_session.flush()
+
+    async def sleep(_: float) -> None:
+        return None
+
+    run = await summarize_files(
+        _sessions(db_session), client, files, org_id=org_id, calculator=CALCULATOR,
+        cap_usd=Decimal(5), ref_type="index_job", ref_id="job-u", sleep=sleep,
+    )  # fmt: skip
+    assert list(run.summaries) == ["u/one.py"]
+    await db_session.refresh(stuck)
+    assert stuck.status is LLMBatchStatus.FAILED
+    assert run.batch_id != stuck.id
+    assert len(api.bodies(BATCHES)) == 1
+
+
+@pytest.mark.integration
+async def test_a_store_that_fails_leaves_the_batch_to_collect_again(
+    db_session: AsyncSession,
+) -> None:
+    org_id = await _org(db_session)
+    files = [_file("s/one.py")]
+    by_id = {file.custom_id: file for file in files}
+    api = _batch_api(lambda custom_id, _: _line(custom_id, json.dumps(_answer(by_id[custom_id]))))
+    client = api.client()
+    requests = build_requests(files)
+    row = await batches.reserve(db_session, client, requests, org_id=org_id, kind="summaries")
+    await batches.send(db_session, client, row.id, requests)
+    await batches.refresh(db_session, client, row)
+    await batches.refresh(db_session, client, row)
+
+    async def broken(_: AsyncSession, __: summaries.SummaryRun) -> None:
+        raise OSError("the artifact store is down")
+
+    with pytest.raises(OSError, match="down"):
+        async with db_session.begin_nested():
+            await collect_summaries(
+                db_session, client, row, files, calculator=CALCULATOR, org_id=org_id,
+                store=broken,
+            )  # fmt: skip
+    await db_session.refresh(row)
+    assert row.collected_at is None  # the claim went with the store
+    assert await db_session.scalar(select(func.count()).select_from(UsageEvent)) == 0
+    run = await collect_summaries(
+        db_session, client, row, files, calculator=CALCULATOR, org_id=org_id
+    )
+    assert list(run.summaries) == ["s/one.py"]
+
+
+@pytest.mark.integration
 async def test_retries_over_the_cap_are_not_sent(db_session: AsyncSession) -> None:
     org_id = await _org(db_session)
     api = _batch_api(lambda custom_id, _: _line(custom_id, "{}"), retry=lambda _: "{}")

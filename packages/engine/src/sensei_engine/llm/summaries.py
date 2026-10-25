@@ -17,7 +17,10 @@ words, written by Claude through the Message Batches API (half price).
   per-org advisory lock to the end of their transaction, so two runs can't both pass on the
   same headroom. The estimate is recorded on the batch.
 * **Batch** (:func:`summarize_files`): reserved, sent, polled and collected through
-  :mod:`sensei_engine.llm.batches`; usage goes to the ledger in the collecting transaction.
+  :mod:`sensei_engine.llm.batches`; usage goes to the ledger, and the summaries to the
+  caller's ``store``, in the transaction that claims the batch. Run again for the same
+  reference (a redelivered task), it takes up the batch still open for it instead of sending
+  (and paying for) another.
   A request that failed or whose answer is unusable (not JSON, cut off, not matching the
   schema) is sent once more on its own, after its own pass through the cost guard; if that
   fails too (or the cap is in the way) the file is skipped, with the reason.
@@ -86,6 +89,8 @@ COST_LOCK = "llm_cost_guard"
 
 Sleep = Callable[[float], Awaitable[None]]
 Sessions = Callable[[], AbstractAsyncContextManager[AsyncSession]]
+# Stores what a collection produced, in the transaction that claims the batch.
+Store = Callable[[AsyncSession, "SummaryRun"], Awaitable[None]]
 
 
 @dataclass(frozen=True, slots=True)
@@ -449,6 +454,7 @@ async def summarize_files(
     org_id: uuid.UUID,
     calculator: CostCalculator,
     cap_usd: Decimal,
+    store: Store | None = None,
     ref_type: str | None = None,
     ref_id: str | None = None,
     poll_seconds: float = POLL_SECONDS,
@@ -456,20 +462,27 @@ async def summarize_files(
 ) -> SummaryRun:
     """Summarize ``files`` in one batch: estimate, check the cap, send, wait, collect, retry
     what failed once. ``sessions`` opens a transaction scoped to ``org_id`` (committed when the
-    block ends): the batch row is committed before the batch is sent."""
+    block ends): the batch row is committed before the batch is sent. ``store`` keeps the
+    summaries in the collecting transaction, and again after the retries.
+
+    With ``ref_id``, a batch still open for ``ref_type``/``ref_id`` (sent by a run that
+    stopped) is waited for and collected instead of a new one; one still being sent is first
+    settled (:func:`batches.reconcile`), and only a send that failed is sent again."""
     requests = build_requests(files)
     if not requests:
         return SummaryRun()
-    estimate = await estimate_cost(client, [request for _, request in requests], calculator)
-    async with sessions() as db:
-        row = await reserve_batch(
-            db, client, requests, estimate, org_id=org_id, cap_usd=cap_usd,
+    estimate: CostEstimate | None = None
+    batch_id = await _open_batch(
+        sessions, client, ref_type, ref_id, poll_seconds=poll_seconds, sleep=sleep
+    )
+    if batch_id is None:
+        estimate = await estimate_cost(client, [request for _, request in requests], calculator)
+        batch_id = await _send(
+            sessions, client, requests, estimate, org_id=org_id, cap_usd=cap_usd,
             ref_type=ref_type, ref_id=ref_id,
         )  # fmt: skip
-        batch_id = row.id
-    async with sessions() as db:
-        await batches.send(db, client, batch_id, requests)
-    log.info("summaries batch sent", files=len(requests), estimate_usd=str(estimate.cost_usd))
+    else:
+        log.info("summaries batch resumed", batch_id=str(batch_id))
     while True:
         async with sessions() as db:
             row = await _batch(db, batch_id)
@@ -486,23 +499,88 @@ async def summarize_files(
             files,
             calculator=calculator,
             org_id=org_id,
+            store=store,
             ref_type=ref_type,
             ref_id=ref_id,
         )
     run.estimate = estimate
     run.batch_id = batch_id
+    retried = [file for file in files if file.path in run.skipped]
     await retry_failed(
         sessions,
         client,
         run,
-        [file for file in files if file.path in run.skipped],
+        retried,
         calculator=calculator,
         org_id=org_id,
         cap_usd=cap_usd,
         ref_type=ref_type,
         ref_id=ref_id,
     )
+    if retried and store is not None:
+        async with sessions() as db:
+            await store(db, run)
     return run
+
+
+async def _open_batch(
+    sessions: Sessions,
+    client: AnthropicClient,
+    ref_type: str | None,
+    ref_id: str | None,
+    *,
+    poll_seconds: float,
+    sleep: Sleep,
+) -> uuid.UUID | None:
+    """The batch still open for the reference (its id), or None when a new one must be sent.
+    A row still ``submitting`` is settled first: it may have reached the provider."""
+    if ref_id is None:
+        return None
+    async with sessions() as db:
+        found = await batches.uncollected(db, kind=KIND, ref_type=ref_type, ref_id=ref_id)
+    if not found:
+        return None
+    batch_id = found[-1].id
+    while True:
+        async with sessions() as db:
+            await batches.reconcile(db, client)
+            status = (await _batch(db, batch_id)).status
+        if status is LLMBatchStatus.FAILED:
+            return None  # it never went out
+        if status is not LLMBatchStatus.SUBMITTING:
+            return batch_id
+        await sleep(poll_seconds)
+
+
+async def _send(
+    sessions: Sessions,
+    client: AnthropicClient,
+    requests: Sequence[tuple[str, LLMRequest]],
+    estimate: CostEstimate,
+    *,
+    org_id: uuid.UUID,
+    cap_usd: Decimal,
+    ref_type: str | None,
+    ref_id: str | None,
+) -> uuid.UUID:
+    """Reserve within the cap, then send. A send the provider refused marks the row failed;
+    one that may have gone out (no answer, overloaded) leaves it to be settled."""
+    async with sessions() as db:
+        row = await reserve_batch(
+            db, client, requests, estimate, org_id=org_id, cap_usd=cap_usd,
+            ref_type=ref_type, ref_id=ref_id,
+        )  # fmt: skip
+        batch_id = row.id
+    try:
+        async with sessions() as db:
+            await batches.send(db, client, batch_id, requests)
+    except LLMError as exc:
+        if not exc.transient:
+            async with sessions() as db:
+                (await _batch(db, batch_id)).status = LLMBatchStatus.FAILED
+        raise
+    log.info("summaries batch sent", files=len(requests), estimate_usd=str(estimate.cost_usd))
+    return batch_id
 
 
 async def _batch(db: AsyncSession, batch_id: uuid.UUID) -> LLMBatch:
@@ -521,13 +599,14 @@ async def collect_summaries(
     *,
     calculator: CostCalculator,
     org_id: uuid.UUID,
+    store: Store | None = None,
     ref_type: str | None = None,
     ref_id: str | None = None,
 ) -> SummaryRun:
-    """Collect an ended summaries batch in ``db``'s transaction (usage recorded there; a stage
-    stores the summaries in the same transaction). Files without a usable answer are in
-    ``skipped``, ready for :func:`retry_failed`. Works after a restart: ``files`` are matched
-    by path."""
+    """Collect an ended summaries batch in ``db``'s transaction: the claim, the usage and what
+    ``store`` keeps commit together, or none of them does (and the batch can be collected
+    again). Files without a usable answer are in ``skipped``, ready for :func:`retry_failed`.
+    Works after a restart: ``files`` are matched by path."""
     by_id = {file.custom_id: file for file in files}
     sink = usage_ledger(db, calculator, org_id=org_id, ref_type=ref_type, ref_id=ref_id)
     items = await batches.collect(db, client, batch, json_output=True, on_usage=sink)
@@ -540,6 +619,8 @@ async def collect_summaries(
         _take(run, file, item)
     for file in by_id.values():
         run.skipped[file.path] = "no result in the batch"
+    if store is not None:
+        await store(db, run)
     return run
 
 
