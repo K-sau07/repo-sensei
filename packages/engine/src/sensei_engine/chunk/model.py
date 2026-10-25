@@ -4,7 +4,8 @@ Sizes are tokens (:mod:`sensei_engine.chunk.tokens`). A unit (a function, a sect
 smaller than :data:`MIN_TOKENS` merges with its small neighbours up to :data:`TARGET_TOKENS`; one
 whose header and content would pass :data:`MAX_TOKENS` is split into pieces of about
 :data:`TARGET_TOKENS` at the boundaries its chunker allows (statements, paragraphs, keys), each
-marked ``part k/n``. No chunk's header and content together are larger than :data:`MAX_TOKENS`.
+marked ``part k/n``. No chunk's header and content together are larger than :data:`MAX_TOKENS`
+(the header's fields are cut short; one still longer leaves the content :data:`MIN_TOKENS`).
 
 A chunk's ``content`` is its lines of the file, exactly (line endings normalized, blank lines at
 either end dropped); its ``header`` says where it is and what it is. ``search_text`` (keyword
@@ -216,7 +217,8 @@ def build(
         return []
     start, end = trimmed
     whole = spec.header(lines.text(start, end), None)
-    cap = MAX_TOKENS - count_tokens(whole) - 8  # room for the header, and its part line
+    # Room for the header and its part line; the content keeps some whatever the header.
+    cap = max(MIN_TOKENS, MAX_TOKENS - count_tokens(whole) - 8)
     budget = max(MIN_TOKENS, min(TARGET_TOKENS, cap))
     texts = [
         (s, e, text)

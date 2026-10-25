@@ -4,6 +4,7 @@ fixture, sizes within the cap, every function covered, the same chunks every tim
 
 from __future__ import annotations
 
+import hashlib
 import itertools
 import json
 import re
@@ -384,6 +385,26 @@ def test_a_line_too_long_for_one_chunk_is_cut() -> None:
     assert all(c.tokens <= MAX_TOKENS for c in chunks)
     assert {(c.start_line, c.end_line) for c in chunks} == {(1, 1)}
     assert "".join(c.content for c in chunks) == source.rstrip("\n")
+
+
+def test_a_very_long_path_leaves_the_content_room() -> None:
+    folders = "/".join(hashlib.sha256(str(i).encode()).hexdigest() for i in range(32))
+    path = f"{folders}/module.py"
+    assert len(path) > 2000
+    assert count_tokens(path) > MAX_TOKENS  # alone, more than a chunk may hold
+    source = "def run(value):\n" + _body("    ", 80) + "\n    return value\n"
+    chunks = chunk_file(path, "python", source)
+    assert len(chunks) > 1
+    assert all(c.tokens <= MAX_TOKENS for c in chunks)
+    assert chunks[0].start_line == 1
+    assert chunks[-1].end_line == len(source.splitlines())
+    assert chunks[0].header.startswith("# path: …")  # its end
+    assert "/module.py\n" in chunks[0].header
+    # A line too long for one chunk, cut under the same header.
+    data = "const data = '" + "ab12 " * 3000 + "';\n"
+    cut = chunk_file(f"{folders}/data.js", "javascript", data)
+    assert "".join(c.content for c in cut) == data.rstrip("\n")
+    assert all(c.tokens <= MAX_TOKENS for c in cut)
 
 
 # ---------------------------------------------------------------------- the fixture

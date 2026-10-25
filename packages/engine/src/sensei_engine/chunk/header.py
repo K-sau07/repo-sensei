@@ -11,7 +11,7 @@
 ```
 
 ``uses`` lists the file's imported names that the chunk's own content mentions. Every field is
-cut short, so a header stays well under a hundred tokens.
+cut short (a long path to its end), so a header stays well under a hundred tokens.
 """
 
 from __future__ import annotations
@@ -21,6 +21,8 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 MAX_FIELD = 200  # characters
+MAX_PATH = 300
+MAX_NAME = 60
 MAX_DOC = 160
 MAX_NAMES = 12
 MAX_DECORATORS = 3
@@ -35,8 +37,12 @@ def _short(text: str, limit: int = MAX_FIELD) -> str:
     return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
 
 
+def _tail(path: str) -> str:
+    return path if len(path) <= MAX_PATH else "…" + path[-(MAX_PATH - 1) :]
+
+
 def _names(names: Sequence[str]) -> str:
-    shown = ", ".join(names[:MAX_NAMES])
+    shown = ", ".join(_short(name, MAX_NAME) for name in names[:MAX_NAMES])
     return shown + (f" (+{len(names) - MAX_NAMES})" if len(names) > MAX_NAMES else "")
 
 
@@ -55,7 +61,7 @@ class Header:
     extra: Sequence[tuple[str, str]] = ()  # more fields, as they are
 
     def render(self, content: str, part: tuple[int, int] | None = None) -> str:
-        lines = [f"# path: {self.path}"]
+        lines = [f"# path: {_tail(self.path)}"]
         about = [f"lang: {self.language}"]
         if self.what is not None:
             about.append(f"{self.what[0]}: {_short(self.what[1])}")
