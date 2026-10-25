@@ -1,8 +1,8 @@
 "use client";
 
 /**
- * Keyboard moves over result lanes, through the shortcut registry: j/k within a lane, ←/→ to
- * the lane beside, ↵ to open, t to trace (not yet built), / to the search field. The results
+ * Keyboard moves over result lanes, through the shortcut registry: j/k within a lane, ←/→ from a
+ * result to the lane beside, ↵ to open, t to trace (not yet built), / to the search field. The results
  * are found in the DOM (`[data-lane]` holding `[data-card]` links), so lanes that page in more
  * results need no bookkeeping here.
  */
@@ -92,19 +92,20 @@ export function useResultKeys({ root, input, onLane, enabled = true }: ResultKey
     },
     { enabled },
   );
+  // Arrows only from a result: elsewhere they're left alone, to scroll the lanes and the page.
   useShortcut(
     "lane-next",
     () => {
       switchLane(1);
     },
-    { enabled },
+    { enabled: enabled && cardFocused },
   );
   useShortcut(
     "lane-prev",
     () => {
       switchLane(-1);
     },
-    { enabled },
+    { enabled: enabled && cardFocused },
   );
   useShortcut(
     "focus-search",

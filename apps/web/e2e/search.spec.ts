@@ -111,6 +111,15 @@ test.describe("search", () => {
     await openSearch(page, "user email");
     await expect(lane(page, "API").locator("[data-card]").first()).toBeVisible();
     await page.locator("main").click({ position: { x: 5, y: 5 } });
+    // Away from the results, ←/→ are the browser's (they scroll the lanes).
+    await page.evaluate(() => {
+      window.addEventListener("keydown", (event) => {
+        Reflect.set(window, "__arrowTaken", event.defaultPrevented);
+      });
+    });
+    await page.keyboard.press("ArrowRight");
+    await expect(focusedCard(page)).toHaveCount(0);
+    expect(await page.evaluate(() => Reflect.get(window, "__arrowTaken") as boolean)).toBe(false);
     await page.keyboard.press("j");
     const ui = lane(page, "UI").locator("[data-card]");
     await expect(ui.first()).toBeFocused();

@@ -5,7 +5,7 @@
  * Tests/Config), how it was read, and the exact queries behind it. Everything the page shows is
  * in its URL (`lib/search/url-state.ts`), so Back, Forward and a shared link restore it.
  */
-import { Clock, Hourglass, Lock, SearchX } from "lucide-react";
+import { Hourglass, Lock, SearchX } from "lucide-react";
 import type { Route } from "next";
 import Link from "next/link";
 import { useEffect, useRef, useState, type ReactNode } from "react";
@@ -16,7 +16,6 @@ import { ErrorState } from "@/components/feedback/error-state";
 import { formatEta, LockedState } from "@/components/feedback/locked-state";
 import { askHref } from "@/components/palette/items";
 import { useRepoFeatures, useRepoSlug } from "@/components/repo/use-repo";
-import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { ApiError } from "@/lib/api/errors";
@@ -28,6 +27,7 @@ import { searchPath, type SearchState } from "@/lib/search/url-state";
 import { ExactResults } from "./exact-results";
 import { plural } from "./meta";
 import { FiltersPopover, PivotToExact, QueryClassChip, SearchInput } from "./query-bar";
+import { RateLimited } from "./rate-limited";
 import { Swimlanes, SwimlanesSkeleton } from "./swimlanes";
 import { useResultKeys } from "./use-result-keys";
 import { measureResultsPainted, useGrep, useSearch, useSearchState } from "./use-search";
@@ -80,47 +80,9 @@ function NotSearchable({ title }: { title?: string }) {
   );
 }
 
-/** 429: when to try again, counted down; Retry waits for it. */
-function RateLimited({ seconds, onRetry }: { seconds: number | null; onRetry: () => void }) {
-  const [left, setLeft] = useState(seconds ?? 0);
-  useEffect(() => {
-    if (left <= 0) return;
-    const timer = setTimeout(() => {
-      setLeft((value) => value - 1);
-    }, 1000);
-    return () => {
-      clearTimeout(timer);
-    };
-  }, [left]);
-  return (
-    <section
-      role="alert"
-      className="flex flex-col items-start gap-3 rounded-xl border border-warn/30 bg-warn/8 p-6"
-    >
-      <div className="flex items-center gap-2 text-warn">
-        <Clock aria-hidden className="size-4" />
-        <h3 className="text-sm font-semibold">Too many searches for now</h3>
-      </div>
-      <p className="text-sm text-fg-muted">
-        {left > 0 ? (
-          <>
-            You can search again in <span className="tabular-nums">{left}</span>{" "}
-            {left === 1 ? "second" : "seconds"}.
-          </>
-        ) : (
-          "You can search again now."
-        )}
-      </p>
-      <Button variant="outline" size="sm" disabled={left > 0} onClick={onRetry}>
-        Try again
-      </Button>
-    </section>
-  );
-}
-
 function SearchFailed({ error, onRetry }: { error: Error; onRetry: () => void }) {
   const api = error instanceof ApiError ? error : null;
-  if (api?.status === 429) return <RateLimited seconds={api.retryAfter} onRetry={onRetry} />;
+  if (api?.status === 429) return <RateLimited error={api} onRetry={onRetry} />;
   if (api?.status === 422) {
     return (
       <EmptyState icon={<SearchX />} title="That query can't be run" description={api.message} />
