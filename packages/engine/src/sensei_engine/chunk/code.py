@@ -296,4 +296,6 @@ class _CodeChunker:
             defines=[s.name for s in held],
             imported=self.imported,
         )
-        return Spec(kind=ChunkKind.CODE, header=header.render)
+        # Its definitions' names go in the path text, as a single definition's name does.
+        names = " ".join(s.name for s in held) or None
+        return Spec(kind=ChunkKind.CODE, header=header.render, name=names)

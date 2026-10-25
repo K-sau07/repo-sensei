@@ -207,7 +207,8 @@ def test_search_and_path_text() -> None:
     assert {"value0", "value", "0", "option11", "transform", "cached"} <= set(terms)
     assert terms[:3] == ["path", "pkg", "helpers"]  # the header first
     assert load.path_text == "pkg helpers py def load self key load"
-    assert chunks[0].path_text == "pkg helpers py"
+    # Several small definitions: their names.
+    assert chunks[0].path_text == "pkg helpers py limit smallone small one smalltwo small two"
 
 
 def test_chunks_are_deterministic() -> None:
