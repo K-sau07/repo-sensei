@@ -207,7 +207,9 @@ class _CodeChunker:
         if span is None:
             return
         if entries and not _WORD.search(self.lines.text(*span)):
-            entries[-1].unit.end = end  # closing brackets: the end of the definition before
+            # Closing brackets: the end of the definition before (its size counted again).
+            before = entries[-1]
+            entries[-1] = self._entry(before.unit.start, end, before.symbols)
             return
         entries.append(self._entry(start, end, []))
 
