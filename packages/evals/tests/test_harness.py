@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+from sensei_evals.reports import render_run
 from sensei_evals.retrieval import Hit, OracleRetriever, RandomRetriever, RepoRef, file_corpus
 from sensei_evals.runner import aggregate, run_suite
 from sensei_evals.schema import GoldenItem, GoldTarget, Layer, QueryClass, Suite
@@ -86,6 +87,22 @@ def _random_world(files: int, items: int, gold_per_item: int) -> tuple[list[Hit]
         for n in range(items)
     ]
     return corpus, Suite(name="random-world", version=0, items=suite_items)
+
+
+class ReportingOracle(OracleRetriever):
+    """The oracle, saying what it cost."""
+
+    def report(self) -> dict[str, object]:
+        return {"tokens": 1234, "cached": 5}
+
+
+async def test_a_retrievers_report_is_kept_with_the_run() -> None:
+    suite = _mixed_suite()
+    run = await run_suite(suite, suite.items, ReportingOracle(suite.items), REPO, ks=[10])
+    assert run.config["retriever_report"] == {"tokens": 1234, "cached": 5}
+    assert "- **Retriever report:** tokens 1234, cached 5" in render_run(run)
+    plain = await run_suite(suite, suite.items, OracleRetriever(suite.items), REPO, ks=[10])
+    assert "retriever_report" not in plain.config
 
 
 @pytest.mark.parametrize("k", [10, 20, 50, 100])

@@ -56,6 +56,13 @@ def _missed_items(per_item: Sequence[ItemResult]) -> list[ItemResult]:
     return [item for item in per_item if item.answerable and item.missed]
 
 
+def _retriever_report(run: RunRecord) -> list[str]:
+    found: dict[str, Any] = run.config.get("retriever_report") or {}
+    if not found:
+        return []
+    return ["- **Retriever report:** " + ", ".join(f"{k} {_fmt(v)}" for k, v in found.items())]
+
+
 def render_run(run: RunRecord) -> str:
     k = _headline_k(run)
     overall: dict[str, Any] = run.metrics.get("overall", {})
@@ -72,6 +79,7 @@ def render_run(run: RunRecord) -> str:
         + (" (uncommitted changes)" if run.config.get("dirty") else ""),
         f"- **Created:** {run.created_at.isoformat()}",
         f"- **Latency:** p50 {_fmt(latency.get('p50'))} ms, p95 {_fmt(latency.get('p95'))} ms",
+        *_retriever_report(run),
         "",
         "## Overall",
         "",

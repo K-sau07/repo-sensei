@@ -44,7 +44,8 @@ class RepoRef:
 
 class Retriever(Protocol):
     """Optionally also ``async prepare(repo)``, awaited before the first search (and outside
-    its timing: building an index), and ``async aclose()``, awaited after the last."""
+    its timing: building an index), ``report()``, a mapping kept with the run (what it cost,
+    say) after the last search, and ``async aclose()``, awaited after that."""
 
     name: str
 

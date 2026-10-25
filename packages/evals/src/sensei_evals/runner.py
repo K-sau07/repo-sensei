@@ -146,6 +146,7 @@ async def run_suite(
         raise ValueError(msg)
     depth = max([*ks, RANK_K])
     results: list[ItemResult] = []
+    notes: dict[str, Any] = {}
     try:
         prepare = getattr(retriever, "prepare", None)
         if prepare is not None:
@@ -169,6 +170,9 @@ async def run_suite(
                     missed=[t.model_dump(mode="json", exclude_none=True) for t in missed],
                 )
             )
+        report = getattr(retriever, "report", None)
+        if report is not None:
+            notes["retriever_report"] = dict(report())
     finally:
         close = getattr(retriever, "aclose", None)
         if close is not None:
@@ -178,7 +182,7 @@ async def run_suite(
         suite=suite.name,
         suite_version=suite.version,
         retriever=retriever.name,
-        config={"repo": repo.id, "ks": ks, "depth": depth, **(config or {})},
+        config={"repo": repo.id, "ks": ks, "depth": depth, **(config or {}), **notes},
         repo_sha=repo.sha,
         metrics=aggregate(results),
         per_item=results,
