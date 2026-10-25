@@ -133,6 +133,7 @@ export function jobAt(
     status: "queued",
     stage: null,
     stages,
+    partial: {},
     progress: 0,
     eta_s: null,
     error: null,

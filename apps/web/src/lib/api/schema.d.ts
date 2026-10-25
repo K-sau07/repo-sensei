@@ -1446,12 +1446,10 @@ export interface components {
             kind: components["schemas"]["JobKind"];
             /**
              * Partial
-             * @description Stages done with work left for the next index, by stage: what was cut short (summaries: "files" without a summary, "directories" not summarized). A feature they unlock works on what was written.
+             * @description Stages done with work left for the next index, by stage: what was cut short. A feature they unlock works on what was written.
              */
-            partial?: {
-                [key: string]: {
-                    [key: string]: unknown;
-                };
+            partial: {
+                [key: string]: components["schemas"]["PartialOut"];
             };
             /**
              * Progress
@@ -1696,6 +1694,22 @@ export interface components {
             name?: string | null;
             /** Slug */
             slug?: string | null;
+        };
+        /**
+         * PartialOut
+         * @description What a stage done with work left for the next index cut short.
+         */
+        PartialOut: {
+            /**
+             * Directories
+             * @description Whether the directory summaries were cut short.
+             */
+            directories?: boolean | null;
+            /**
+             * Files
+             * @description Files whose summary retries were cut short: still none.
+             */
+            files?: number | null;
         };
         /** ReadinessResponse */
         ReadinessResponse: {

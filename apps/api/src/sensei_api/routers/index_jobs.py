@@ -10,7 +10,7 @@ from datetime import datetime
 from typing import Annotated, Any, cast
 
 from fastapi import APIRouter, BackgroundTasks, Path, Request, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 from redis.asyncio import Redis
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -49,6 +49,17 @@ ACCESS_RECHECK_SECONDS = 300.0  # how long an org stream trusts its answer about
 MEMBERSHIP_RECHECK_SECONDS = 60.0  # how often an org stream checks its session and membership
 
 
+class PartialOut(BaseModel):
+    """What a stage done with work left for the next index cut short."""
+
+    files: int | None = Field(
+        default=None, description="Files whose summary retries were cut short: still none."
+    )
+    directories: bool | None = Field(
+        default=None, description="Whether the directory summaries were cut short."
+    )
+
+
 class IndexJobOut(BaseModel):
     id: uuid.UUID
     repo_id: uuid.UUID
@@ -63,11 +74,9 @@ class IndexJobOut(BaseModel):
     eta_s: int | None = Field(description="Seconds left, when there is a rate to go by.")
     error: dict[str, Any] | None
     features: list[Feature] = Field(description="What the repository can do after this run.")
-    partial: dict[str, dict[str, Any]] = Field(
-        default_factory=dict[str, dict[str, Any]],
-        description="Stages done with work left for the next index, by stage: what was cut short"
-        ' (summaries: "files" without a summary, "directories" not summarized). A feature they'
-        " unlock works on what was written.",
+    partial: dict[str, PartialOut] = Field(
+        description="Stages done with work left for the next index, by stage: what was cut"
+        " short. A feature they unlock works on what was written."
     )
     created_at: datetime
     started_at: datetime | None
@@ -96,13 +105,22 @@ class IndexJobOut(BaseModel):
         )
 
 
-def _partial(stages: dict[str, Any]) -> dict[str, dict[str, Any]]:
-    """What each stage done with work left for the next index cut short (its details')."""
-    found: dict[str, dict[str, Any]] = {}
-    for name, entry in stages.items():
-        details: dict[str, Any] = entry.get("details") or {}
-        if entry.get("status") == "done" and details.get("partial"):
-            found[name] = dict(details["partial"])
+def _partial(stages: dict[str, Any]) -> dict[str, PartialOut]:
+    """What each stage done with work left for the next index cut short (its details'); a
+    malformed entry is left out."""
+    found: dict[str, PartialOut] = {}
+    for name, raw in stages.items():
+        entry = cast("dict[str, Any]", raw) if isinstance(raw, dict) else {}
+        details = entry.get("details")
+        partial = (
+            cast("dict[str, Any]", details).get("partial") if isinstance(details, dict) else None
+        )
+        if entry.get("status") != "done" or not isinstance(partial, dict) or not partial:
+            continue
+        try:
+            found[name] = PartialOut.model_validate(partial)
+        except ValidationError:
+            continue
     return found
 
 

@@ -1236,10 +1236,9 @@
           },
           "partial": {
             "additionalProperties": {
-              "additionalProperties": true,
-              "type": "object"
+              "$ref": "#/components/schemas/PartialOut"
             },
-            "description": "Stages done with work left for the next index, by stage: what was cut short (summaries: \"files\" without a summary, \"directories\" not summarized). A feature they unlock works on what was written.",
+            "description": "Stages done with work left for the next index, by stage: what was cut short. A feature they unlock works on what was written.",
             "title": "Partial",
             "type": "object"
           },
@@ -1309,6 +1308,7 @@
           "eta_s",
           "error",
           "features",
+          "partial",
           "created_at",
           "started_at",
           "finished_at"
@@ -1871,6 +1871,37 @@
           }
         },
         "title": "OrgUpdate",
+        "type": "object"
+      },
+      "PartialOut": {
+        "description": "What a stage done with work left for the next index cut short.",
+        "properties": {
+          "directories": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Whether the directory summaries were cut short.",
+            "title": "Directories"
+          },
+          "files": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Files whose summary retries were cut short: still none.",
+            "title": "Files"
+          }
+        },
+        "title": "PartialOut",
         "type": "object"
       },
       "ReadinessResponse": {

@@ -855,8 +855,11 @@ def test_a_stage_done_with_work_left_is_reported_partial() -> None:
         created_at=datetime.now(UTC),
     )
     out = index_jobs.IndexJobOut.build(job)
-    assert out.partial == {"summaries": {"directories": True}}
+    assert out.partial == {"summaries": index_jobs.PartialOut(directories=True)}
     assert "wiki" in out.features
+    # A malformed entry is left out, not a 500.
+    job.stages = {"summaries": {"status": "done", "details": {"partial": "oops"}}, "x": 3}
+    assert index_jobs.IndexJobOut.build(job).partial == {}
 
 
 async def test_connecting_queues_the_first_index_run(
