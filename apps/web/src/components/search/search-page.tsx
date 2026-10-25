@@ -23,7 +23,7 @@ import { ApiError } from "@/lib/api/errors";
 import { LAYERS, type Layer } from "@/lib/api/search";
 import { STAGE_LABELS } from "@/lib/indexing";
 import { repoPath } from "@/lib/routes";
-import { requestOf, searchPath, type SearchState } from "@/lib/search/url-state";
+import { searchPath, type SearchState } from "@/lib/search/url-state";
 
 import { ExactResults } from "./exact-results";
 import { plural } from "./meta";
@@ -347,7 +347,6 @@ export function SearchPage() {
     body = (
       <Swimlanes
         result={data}
-        body={requestOf(state)}
         target={target}
         layers={state.layer}
         visible={visible && data.counts[visible] > 0 ? visible : null}

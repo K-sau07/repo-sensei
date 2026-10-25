@@ -26,7 +26,9 @@ export function useSearchState() {
   return useQueryStates(searchParsers, { history: "push", scroll: false });
 }
 
-export type SearchResult = SearchResponse & { commit: string | null };
+/** A response, with the request it answers: a lane pages on from that, not from the query being
+ * typed (the last results stay on screen while the next ones load). */
+export type SearchResult = SearchResponse & { commit: string | null; request: SearchRequest };
 
 async function post(
   org: string,
@@ -40,7 +42,7 @@ async function post(
     signal,
   });
   if (!data) throw new Error("empty search response");
-  return { ...data, commit: response.headers.get("X-Commit-Sha") };
+  return { ...data, commit: response.headers.get("X-Commit-Sha"), request: body };
 }
 
 /** The first page of every lane. While a new query runs, the last results stay on screen. */
@@ -70,7 +72,7 @@ export function useLanePages(
 ) {
   const { org, repo } = useRepoSlug();
   return useInfiniteQuery({
-    queryKey: queryKeys.searchLane(org, repo, body, lane),
+    queryKey: queryKeys.searchLane(org, repo, body, lane, first),
     queryFn: ({ pageParam, signal }) =>
       post(org, repo, { ...body, layers: [lane], cursor: pageParam }, signal),
     initialPageParam: first ?? "",

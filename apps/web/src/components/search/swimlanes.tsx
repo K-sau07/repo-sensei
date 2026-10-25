@@ -9,7 +9,7 @@ import { CodeHoverCard, type CodePreview } from "@/components/code/code-hover-ca
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ApiError } from "@/lib/api/errors";
-import { LAYERS, type Layer, type SearchHit, type SearchRequest } from "@/lib/api/search";
+import { LAYERS, type Layer, type SearchHit } from "@/lib/api/search";
 
 import { LANES, plural } from "./meta";
 import { ResultCard, type CardTarget } from "./result-card";
@@ -64,7 +64,6 @@ interface LaneProps {
   layer: Layer;
   base: string;
   result: SearchResult;
-  body: SearchRequest;
   target: CardTarget;
   preview: PreviewCard.Handle<CodePreview>;
   filtered: boolean;
@@ -78,7 +77,6 @@ function Lane({
   layer,
   base,
   result,
-  body,
   target,
   preview,
   filtered,
@@ -87,7 +85,7 @@ function Lane({
   onActive,
 }: LaneProps) {
   const [requested, setRequested] = useState(false);
-  const pages = useLanePages(body, layer, result.next[layer], requested);
+  const pages = useLanePages(result.request, layer, result.next[layer], requested);
   const count = result.counts[layer];
   const hits: SearchHit[] = [
     ...result.lanes[layer],
@@ -207,7 +205,6 @@ function LanePicker({
 
 export interface SwimlanesProps {
   result: SearchResult;
-  body: SearchRequest;
   target: CardTarget;
   /** Lanes the filter leaves out. */
   layers: readonly Layer[];
@@ -221,7 +218,6 @@ export interface SwimlanesProps {
 /** The results in layer lanes: UI | API | Service | DB | Tests/Config. */
 export function Swimlanes({
   result,
-  body,
   target,
   layers,
   visible,
@@ -233,6 +229,8 @@ export function Swimlanes({
   const [active, setActive] = useState<string | null>(null);
   const shown = visible ?? LAYERS.find((layer) => result.counts[layer] > 0) ?? "ui";
   const columns = LAYERS.map((layer) => (result.counts[layer] > 0 ? OPEN : COLLAPSED)).join(" ");
+  // A lane's further pages are its query's: the next query starts every lane afresh.
+  const query = JSON.stringify(result.request);
   return (
     <div className={cn("flex min-h-0 flex-col gap-3", stale && "opacity-60")} aria-busy={stale}>
       <LanePicker result={result} base={base} visible={shown} onPick={onVisible} />
@@ -242,11 +240,10 @@ export function Swimlanes({
       >
         {LAYERS.map((layer) => (
           <Lane
-            key={layer}
+            key={`${layer} ${query}`}
             layer={layer}
             base={base}
             result={result}
-            body={body}
             target={target}
             preview={preview}
             filtered={layers.length > 0 && !layers.includes(layer)}

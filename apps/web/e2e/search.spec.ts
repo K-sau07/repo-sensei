@@ -159,6 +159,32 @@ test.describe("search", () => {
     await expect(ui.locator("[data-card]")).toHaveCount(16);
   });
 
+  test("a new query pages its lanes from its own cursors, only when asked", async ({ page }) => {
+    // The query of every request for a further page.
+    const paged: string[] = [];
+    page.on("request", (request) => {
+      if (request.method() !== "POST" || !request.url().endsWith("/search")) return;
+      const body = request.postDataJSON() as { q: string; cursor?: string | null };
+      if (body.cursor) paged.push(body.q);
+    });
+    await openSearch(page, "user");
+    const ui = lane(page, "UI");
+    await ui.getByRole("button", { name: /^More UI results/ }).click();
+    await expect(ui.locator("[data-card]")).toHaveCount(16);
+    expect(paged).toEqual(["user"]);
+
+    await field(page).fill("email");
+    await field(page).press("Enter");
+    await expect(page).toHaveURL(/\?q=email$/);
+    await expect(page.locator('[aria-busy="true"]')).toHaveCount(0);
+    await expect(ui.locator("[data-card]")).toHaveCount(8);
+    expect(paged).toEqual(["user"]);
+    await ui.getByRole("button", { name: /^More UI results/ }).click();
+    await expect(ui.locator("[data-card]")).toHaveCount(16);
+    await expect(ui.getByRole("alert")).toHaveCount(0);
+    expect(paged).toEqual(["user", "email"]);
+  });
+
   test("pivot to exact: a literal runs as a keyword search, a regex over the files", async ({
     page,
   }) => {
