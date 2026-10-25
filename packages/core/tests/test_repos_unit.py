@@ -160,7 +160,11 @@ def test_embedding_time_respects_the_accounts_tokens_a_minute() -> None:
 def test_the_deployments_models_are_priced_and_one_without_a_price_is_named() -> None:
     settings = Settings.model_validate({"anthropic": {"fast_model": "claude-sonnet-5-5"}})
     models = EstimateModels.from_settings(settings)
-    assert models == EstimateModels(summary_model="claude-sonnet-5-5")
+    # Tests have no keys: neither stage would run.
+    assert models == EstimateModels(
+        summary_model="claude-sonnet-5-5", embeddings=False, summaries=False
+    )
+    models = EstimateModels(summary_model="claude-sonnet-5-5")
     size_kb, languages, tree, _ = MEASURED["full-stack-fastapi-template"]
     haiku = estimate_index(size_kb, languages, CALC, tree)
     assert estimate_index(size_kb, languages, CALC, tree, models).cost_usd > haiku.cost_usd
@@ -173,6 +177,21 @@ def test_the_deployments_models_are_priced_and_one_without_a_price_is_named() ->
     assert haiku.unpriced == ()
     assert {"event": "estimate leaves out a model without a price", "model": "claude-unknown-1",
             "log_level": "warning"}.items() <= logs[0].items()  # fmt: skip
+
+
+def test_only_the_stages_that_run_are_priced() -> None:
+    size_kb, languages, tree, _ = MEASURED["full-stack-fastapi-template"]
+    unknown = EstimateModels(summary_model="claude-unknown-1", summaries=False)
+    off = estimate_index(size_kb, languages, CALC, tree, unknown)
+    assert off.unpriced == ()  # summaries don't run: their model isn't needed
+    full = estimate_index(size_kb, languages, CALC, tree)
+    bare = estimate_index(size_kb, languages, CALC, tree, EstimateModels(embeddings=False))
+    assert bare.cost_usd < full.cost_usd
+    assert bare.index_minutes < full.index_minutes
+    # No code files: nothing to summarize, no summary model needed.
+    docs = TreeStats(files=12, code_files=0, code_bytes=0, bytes=40_000, truncated=False)
+    only_docs = estimate_index(40, {}, CALC, docs, EstimateModels(summary_model="claude-unknown-1"))
+    assert only_docs.unpriced == ()
 
 
 def test_with_nothing_known_a_share_of_the_size_is_used() -> None:

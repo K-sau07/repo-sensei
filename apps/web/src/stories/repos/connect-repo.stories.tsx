@@ -4,6 +4,7 @@ import { expect, userEvent } from "storybook/test";
 
 import { ConnectRepo } from "@/components/repos/connect-repo";
 import { apiError, handlers } from "@/mocks/handlers";
+import { estimateFor } from "@/mocks/handlers/repos";
 
 const meta = {
   title: "Repos/Connect a repository",
@@ -56,6 +57,29 @@ export const PublicEstimate: Story = {
     const card = await canvas.findByRole("region", { name: "Estimate for langflow-ai/langflow" });
     await expect(card).toHaveTextContent("Indexing time");
     await expect(canvas.getByRole("button", { name: "Connect and index" })).toBeEnabled();
+  },
+};
+
+export const UnpricedEstimate: Story = {
+  parameters: {
+    msw: [
+      http.post("*/api/v1/orgs/:org/repos/estimate", () =>
+        HttpResponse.json({
+          ...estimateFor("langflow-ai/langflow", false, { Python: 900_000 }),
+          unpriced: ["claude-unknown-1"],
+        }),
+      ),
+      ...handlers,
+    ],
+  },
+  play: async ({ canvas }) => {
+    await paste(canvas, "https://github.com/langflow-ai/langflow");
+    const card = await canvas.findByRole("region", { name: "Estimate for langflow-ai/langflow" });
+    const cost = await canvas.findByText("Unknown");
+    await expect(card).toContainElement(cost);
+    await expect(cost).toHaveAccessibleDescription(
+      "No price for claude-unknown-1 on this server, so the cost is unknown.",
+    );
   },
 };
 

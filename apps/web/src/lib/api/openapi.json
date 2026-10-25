@@ -640,7 +640,7 @@
             "type": "integer"
           },
           "unpriced": {
-            "description": "Models this server has no price for: when any, the cost is unknown.",
+            "description": "What this server has no price for (a model, or the index worker's compute): when anything, the cost is unknown.",
             "items": {
               "type": "string"
             },
@@ -656,7 +656,8 @@
           "files",
           "tokens",
           "index_minutes",
-          "cost_usd"
+          "cost_usd",
+          "unpriced"
         ],
         "title": "EstimateOut",
         "type": "object"

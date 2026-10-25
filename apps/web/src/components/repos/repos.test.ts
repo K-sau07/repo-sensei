@@ -18,7 +18,7 @@ describe("repository sizes", () => {
 describe("an index's cost", () => {
   it("is shown when every model is priced", () => {
     expect(formatCost({ cost_usd: "0.124", unpriced: [] })).toBe("~$0.12");
-    expect(formatCost({ cost_usd: "3" })).toBe("~$3.00");
+    expect(formatCost({ cost_usd: "3", unpriced: [] })).toBe("~$3.00");
   });
 
   it("is unknown when a model has no price", () => {

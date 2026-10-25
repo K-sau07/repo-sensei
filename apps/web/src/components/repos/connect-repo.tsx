@@ -79,15 +79,16 @@ export function formatSize(sizeKb: number): string {
   return `${(mb / 1024).toFixed(1)} GB`;
 }
 
-/** The first index's cost: unknown when the server has no price for a model it uses. */
+/** The first index's cost: unknown when the server has no price for something it uses. */
 export function formatCost(estimate: Pick<Estimate, "cost_usd" | "unpriced">): string {
-  if (estimate.unpriced?.length) return "Unknown";
+  if (estimate.unpriced.length) return "Unknown";
   return `~$${Number(estimate.cost_usd).toFixed(2)}`;
 }
 
 /** Stars, size, time and cost before connecting. */
 export function EstimateCard({ estimate }: { estimate: Estimate }) {
-  const unpriced = estimate.unpriced ?? [];
+  const { unpriced } = estimate;
+  const unpricedNote = useId();
   return (
     <section
       aria-label={`Estimate for ${estimate.full_name}`}
@@ -106,21 +107,25 @@ export function EstimateCard({ estimate }: { estimate: Estimate }) {
       </header>
       <LanguageBar languages={estimate.languages} legend />
       <dl className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-5">
-        {[
-          ["Size", formatSize(estimate.size_kb)],
-          ["Files", `~${compact.format(estimate.files)}`],
-          ["Tokens", `~${compact.format(estimate.tokens)}`],
-          ["Indexing time", minutes(estimate.index_minutes)],
-          ["First index", formatCost(estimate)],
-        ].map(([term, value]) => (
+        {(
+          [
+            ["Size", formatSize(estimate.size_kb)],
+            ["Files", `~${compact.format(estimate.files)}`],
+            ["Tokens", `~${compact.format(estimate.tokens)}`],
+            ["Indexing time", minutes(estimate.index_minutes)],
+            ["First index", formatCost(estimate), unpriced.length ? unpricedNote : undefined],
+          ] as const
+        ).map(([term, value, describedBy]) => (
           <div key={term} className="flex flex-col gap-0.5">
             <dt className="text-xs text-fg-muted">{term}</dt>
-            <dd className="tabular-nums">{value}</dd>
+            <dd className="tabular-nums" aria-describedby={describedBy}>
+              {value}
+            </dd>
           </div>
         ))}
       </dl>
       {unpriced.length > 0 && (
-        <p className="text-xs text-fg-muted">
+        <p id={unpricedNote} className="text-xs text-fg-muted">
           No price for {unpriced.join(", ")} on this server, so the cost is unknown.
         </p>
       )}

@@ -1170,9 +1170,9 @@ export interface components {
             tokens: number;
             /**
              * Unpriced
-             * @description Models this server has no price for: when any, the cost is unknown.
+             * @description What this server has no price for (a model, or the index worker's compute): when anything, the cost is unknown.
              */
-            unpriced?: string[];
+            unpriced: string[];
         };
         /** EstimateRequest */
         EstimateRequest: {

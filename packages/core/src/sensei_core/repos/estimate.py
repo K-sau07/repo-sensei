@@ -21,8 +21,10 @@ history included) is the last resort.
 - summaries (Haiku, batch): ~2,600 input and ~540 output tokens a code file (fastapi-template:
   152 files for $0.035, the batch done in 3.6 minutes).
 
-The models priced are the deployment's (:class:`EstimateModels`); one without a price is named in
-``unpriced`` (with a warning), and the cost is only what the others add: not a total.
+The models priced are the deployment's (:class:`EstimateModels`), for the stages it runs
+(embeddings and summaries need their keys; a code-free repository has nothing to summarize). What
+has no price (a model, or the index worker's compute) is named in ``unpriced`` (with a warning),
+and the cost is only what the rest adds: not a total.
 
 Rounded and labelled estimates in the UI.
 """
@@ -100,11 +102,14 @@ SUMMARY_SECONDS_PER_FILE = 0.1
 
 @dataclass(frozen=True, slots=True)
 class EstimateModels:
-    """The models an index uses, and the embedding rate limit (the defaults: the settings')."""
+    """The models an index uses, whether it runs the stages that use them (a key each), and the
+    embedding rate limit (the defaults: the settings')."""
 
     embed_model: str = "voyage-code-4"
     summary_model: str = "claude-haiku-5-5"
     embed_tokens_per_minute: int = 3_000_000
+    embeddings: bool = True
+    summaries: bool = True
 
     @classmethod
     def from_settings(cls, settings: Settings) -> EstimateModels:
@@ -113,6 +118,8 @@ class EstimateModels:
             # Summaries run on the fast tier (sensei_engine.llm.anthropic_client.ROLE_TIERS).
             summary_model=settings.anthropic.fast_model,
             embed_tokens_per_minute=settings.voyage.tokens_per_minute,
+            embeddings=settings.voyage.configured,
+            summaries=settings.anthropic.configured,
         )
 
 
@@ -184,7 +191,8 @@ def estimate_index(
         files, code_files, code_bytes = guessed_files, guessed_code, round(source_bytes)
         repo_bytes = disk_bytes
     tokens = round(code_bytes / CHARS_PER_TOKEN)
-    chunks = code_files * CHUNKS_PER_CODE_FILE
+    chunks = code_files * CHUNKS_PER_CODE_FILE if models.embeddings else 0
+    summarized = code_files if models.summaries else 0
     seconds = (
         CLONE_SECONDS
         + CLONE_SECONDS_PER_MB * repo_bytes / 1_000_000
@@ -194,27 +202,31 @@ def estimate_index(
         + PARSE_SECONDS_PER_CODE_FILE * code_files
         + SAVE_SECONDS_PER_SYMBOL * SYMBOLS_PER_CODE_FILE * code_files
         + _embed_seconds(chunks, models.embed_tokens_per_minute)
-        + (SUMMARY_BATCH_SECONDS + SUMMARY_SECONDS_PER_FILE * code_files if code_files else 0)
+        + (SUMMARY_BATCH_SECONDS + SUMMARY_SECONDS_PER_FILE * summarized if summarized else 0)
     )
     minutes = round(seconds / 60, 1)
     unpriced: list[str] = []
-    embed = _priced(
-        calc.cost("voyage", models.embed_model, tokens_in=chunks * TOKENS_PER_CHUNK),
-        models.embed_model,
-        unpriced,
-    )
-    # Priced a file at a time (each request is short; the total isn't one long prompt).
-    per_file = _priced(
-        calc.cost(
-            "anthropic",
+    embed = Decimal(0)
+    if chunks:
+        embed = _priced(
+            calc.cost("voyage", models.embed_model, tokens_in=chunks * TOKENS_PER_CHUNK),
+            models.embed_model,
+            unpriced,
+        )
+    per_file = Decimal(0)
+    if summarized:
+        # Priced a file at a time (each request is short; the total isn't one long prompt).
+        per_file = _priced(
+            calc.cost(
+                "anthropic",
+                models.summary_model,
+                tokens_in=SUMMARY_INPUT_TOKENS_PER_FILE,
+                tokens_out=SUMMARY_OUTPUT_TOKENS_PER_FILE,
+                batch=True,
+            ),
             models.summary_model,
-            tokens_in=SUMMARY_INPUT_TOKENS_PER_FILE,
-            tokens_out=SUMMARY_OUTPUT_TOKENS_PER_FILE,
-            batch=True,
-        ),
-        models.summary_model,
-        unpriced,
-    )
+            unpriced,
+        )
     compute = _priced(
         calc.cost("sensei", "index-worker", units=Decimal(str(minutes))), "index-worker", unpriced
     )
@@ -222,7 +234,7 @@ def estimate_index(
         files=files,
         tokens=tokens,
         index_minutes=minutes,
-        cost_usd=embed + per_file * code_files + compute,
+        cost_usd=embed + per_file * summarized + compute,
         unpriced=tuple(unpriced),
     )
 

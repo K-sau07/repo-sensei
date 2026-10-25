@@ -54,7 +54,7 @@ function parseUrl(raw: string): string | null {
   return match ? `${match[1]}/${match[2]}`.toLowerCase() : null;
 }
 
-function estimateFor(
+export function estimateFor(
   fullName: string,
   isPrivate: boolean,
   languages: Record<string, number>,
@@ -72,6 +72,7 @@ function estimateFor(
     tokens: Math.round(bytes / 3.5),
     index_minutes: Math.round((0.5 + files / 2500) * 10) / 10,
     cost_usd: (Math.round((bytes / 3.5 / 1_000_000) * 0.12 * 100) / 100).toFixed(2),
+    unpriced: [],
     heuristic: true,
   } satisfies Estimate;
 }

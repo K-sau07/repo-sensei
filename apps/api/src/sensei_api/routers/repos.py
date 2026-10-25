@@ -154,8 +154,8 @@ class EstimateOut(BaseModel):
         " models' share."
     )
     unpriced: list[str] = Field(
-        default_factory=list[str],
-        description="Models this server has no price for: when any, the cost is unknown.",
+        description="What this server has no price for (a model, or the index worker's"
+        " compute): when anything, the cost is unknown."
     )
     heuristic: bool = Field(default=True, description="Estimates, not measurements.")
 
