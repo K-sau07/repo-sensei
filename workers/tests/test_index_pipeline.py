@@ -18,6 +18,7 @@ import orjson
 import pytest
 import respx
 from celery import chain
+from celery.signals import task_postrun
 from sqlalchemy import delete, func, select, text
 
 from sensei_core.config import Settings
@@ -25,6 +26,7 @@ from sensei_core.db import Database
 from sensei_core.indexing.events import JobOutbox, job_stream, org_stream
 from sensei_core.indexing.jobs import settle_repo
 from sensei_core.indexing.state import IndexJobStateMachine
+from sensei_core.jobs import TaskName
 from sensei_core.models import (
     CodeChunk,
     CodeNode,
@@ -42,7 +44,9 @@ from sensei_core.models import (
 )
 from sensei_core.storage import Bucket, artifact_key, repo_prefix
 from sensei_engine.chunk.store import ChunkWriter, FileChunks
+from sensei_engine.ingest.store import file_ids
 from sensei_engine.llm import rollups, summaries
+from sensei_engine.search.bm25 import keyword_search
 from sensei_testing.anthropic import FakeAnthropic, batch, jsonl, message
 from sensei_workers.base import RetryableError
 from sensei_workers.ingest.git import GitRunner
@@ -492,6 +496,49 @@ def test_indexing_another_commit_prunes_the_last_ones_chunks(
     assert count == rows > 0
     # The superseded snapshot isn't searchable any more, and its chunks are gone.
     assert runtime.run(_seen(runtime.system_database, old)) == (None, 0)
+
+
+async def _searched(
+    database: Database, repo_id: uuid.UUID, snapshot_id: uuid.UUID
+) -> tuple[dict[str, uuid.UUID], list[str | None]]:
+    """The snapshot's file ids, and what keyword search finds in it for the greeter."""
+    async with database.session() as db:
+        files = await file_ids(db, snapshot_id)
+        hits = await keyword_search(db, repo_id=repo_id, snapshot_id=snapshot_id, query="greet")
+        return files, [hit.symbol_key for hit in hits]
+
+
+def test_reindexing_the_same_commit_keeps_serving_its_search(
+    runtime: Runtime,
+    ids: tuple[uuid.UUID, uuid.UUID, uuid.UUID],
+    github: respx.MockRouter,
+) -> None:
+    org_id, repo_id, job_id = ids
+    _run(org_id, repo_id, job_id)
+    _, first = runtime.run(_state(runtime.system_database, repo_id, job_id))
+    snapshot_id = first.snapshot_id
+    assert snapshot_id is not None
+    files, found = runtime.run(_searched(runtime.system_database, repo_id, snapshot_id))
+    assert found
+
+    # Search after every stage of a reindex of the same commit (the same snapshot).
+    seen: list[tuple[str, tuple[dict[str, uuid.UUID], list[str | None]]]] = []
+
+    def after(sender: Any = None, **_: Any) -> None:
+        name = getattr(sender, "name", "")
+        seen.append((name, runtime.run(_searched(runtime.system_database, repo_id, snapshot_id))))
+
+    task_postrun.connect(after)
+    try:
+        again = runtime.run(_another_job(runtime.system_database, org_id, repo_id))
+        _run(org_id, repo_id, again)
+    finally:
+        task_postrun.disconnect(after)
+    _, job = runtime.run(_state(runtime.system_database, repo_id, again))
+    assert (job.status, job.snapshot_id) == (JobStatus.SUCCEEDED, snapshot_id)
+    stages = {TaskName(name) for name, _ in seen if name in set(TaskName)}
+    assert {TaskName.DISCOVER_FILES, TaskName.PARSE_FILES, TaskName.CHUNK_FILES} <= stages
+    assert [state for _, state in seen] == [(files, found)] * len(seen)
 
 
 def test_a_chain_sent_without_the_chunks_stage_gets_it_from_finalize(

@@ -5,13 +5,20 @@ doesn't allow ``COPY FROM`` into a table with row-level security, so they are co
 temporary table first and moved over with ``INSERT … SELECT``, which the ``files`` policy still
 checks: the rows can only land in the session's org. Row ids come from discovery (see
 :class:`~sensei_engine.ingest.discover.DiscoveredFile`).
+
+Saving a snapshot's files again (a reindex of the same commit) updates them in place: a path the
+snapshot already had keeps its row and id (discover with :func:`file_ids` so the discovery's ids
+are those too), so what hangs off it (its symbols and chunks) stays, and search keeps serving the
+snapshot while the later stages rebuild. Only the files that are gone are deleted, their symbols
+and chunks with them (on delete cascade).
 """
 
 from __future__ import annotations
 
+import uuid
 from typing import Any, cast
 
-from sqlalchemy import delete
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from sensei_core.models import Repo, RepoFile, Snapshot
@@ -33,17 +40,23 @@ COLUMNS = (
     "flags",
     "framework_root",
 )
+# What a rediscovery may change about a path the snapshot has (not its id, owner or path).
+UPDATED = tuple(c for c in COLUMNS if c not in ("id", "org_id", "repo_id", "snapshot_id", "path"))
 STAGING_TABLE = "files_staging"
 
 
-async def save_discovery(db: AsyncSession, snapshot: Snapshot, discovery: Discovery) -> int:
-    """Replace the snapshot's files with ``discovery``'s; returns the rows written. Runs in the
-    caller's transaction, which must have the snapshot's org set.
+async def file_ids(db: AsyncSession, snapshot_id: uuid.UUID) -> dict[str, uuid.UUID]:
+    """The ids of the snapshot's files, by path."""
+    rows = await db.execute(
+        select(RepoFile.path, RepoFile.id).where(RepoFile.snapshot_id == snapshot_id)
+    )
+    return dict(rows.tuples().all())
 
-    The old files' chunks go with them (on delete cascade): the snapshot is no longer
-    searchable until it is chunked again."""
-    await db.execute(delete(RepoFile).where(RepoFile.snapshot_id == snapshot.id))
-    snapshot.chunk_count = None
+
+async def save_discovery(db: AsyncSession, snapshot: Snapshot, discovery: Discovery) -> int:
+    """Make the snapshot's files ``discovery``'s; returns the rows written. Paths it already
+    had keep their rows (see the module); the others are deleted. Runs in the caller's
+    transaction, which must have the snapshot's org set."""
     records = [
         (
             file.id,
@@ -73,8 +86,15 @@ async def save_discovery(db: AsyncSession, snapshot: Snapshot, discovery: Discov
         f"CREATE TEMPORARY TABLE {STAGING_TABLE} (LIKE files INCLUDING DEFAULTS) ON COMMIT DROP"
     )
     await driver.copy_records_to_table(STAGING_TABLE, records=records, columns=list(COLUMNS))
+    updates = ", ".join(f"{c} = EXCLUDED.{c}" for c in UPDATED)
     await driver.execute(
-        f"INSERT INTO files ({columns}) SELECT {columns} FROM {STAGING_TABLE}"  # noqa: S608 - constant names
+        f"INSERT INTO files ({columns}) SELECT {columns} FROM {STAGING_TABLE} "  # noqa: S608 - constant names
+        f"ON CONFLICT (snapshot_id, path) DO UPDATE SET {updates}"
+    )
+    await driver.execute(
+        f"DELETE FROM files f WHERE f.snapshot_id = $1 AND NOT EXISTS "  # noqa: S608 - constant names
+        f"(SELECT FROM {STAGING_TABLE} s WHERE s.path = f.path)",
+        snapshot.id,
     )
     await driver.execute(f"DROP TABLE {STAGING_TABLE}")
 

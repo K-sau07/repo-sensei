@@ -2,9 +2,11 @@
 
 Rows go in with ``COPY`` into a temporary table, then ``INSERT … SELECT … ON CONFLICT`` (the
 ``nodes`` row-level security policy checks every row: they can only land in the session's org;
-``COPY`` itself isn't allowed into a table with a policy). The files whose symbols are saved
-lose their old rows first, so saving again replaces rather than adds: for a full index that is
-every file of the snapshot; an incremental run passes only the files it re-extracted.
+``COPY`` itself isn't allowed into a table with a policy). Saving again replaces rather than adds.
+For a full index, a symbol the snapshot already had (by its key) is updated in place and keeps
+its id, so what points at it (chunks, the glossary) still does while a reindex of the same
+commit runs; the snapshot's other symbols are deleted. An incremental run passes only the files
+it re-extracted, whose old rows go first.
 """
 
 from __future__ import annotations
@@ -103,10 +105,10 @@ async def save_symbols(
                     file_id,
                 )
 
-    if replace_all:
-        await db.execute(delete(CodeNode).where(CodeNode.snapshot_id == snapshot.id))
-    elif owners:
+    if not replace_all and owners:
         await db.execute(delete(CodeNode).where(CodeNode.owner_file_id.in_(owners)))
+    if replace_all and not written:
+        await db.execute(delete(CodeNode).where(CodeNode.snapshot_id == snapshot.id))
     if written:
         connection = await db.connection()
         raw = await connection.get_raw_connection()
@@ -121,5 +123,11 @@ async def save_symbols(
             f"INSERT INTO nodes ({columns}) SELECT {columns} FROM {STAGING_TABLE} "  # noqa: S608 - constant names
             f"ON CONFLICT (snapshot_id, symbol_key) DO UPDATE SET {updates}"
         )
+        if replace_all:
+            await driver.execute(
+                f"DELETE FROM nodes n WHERE n.snapshot_id = $1 AND NOT EXISTS "  # noqa: S608 - constant names
+                f"(SELECT FROM {STAGING_TABLE} s WHERE s.symbol_key = n.symbol_key)",
+                snapshot.id,
+            )
         await driver.execute(f"DROP TABLE {STAGING_TABLE}")
     return written

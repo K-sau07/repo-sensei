@@ -22,7 +22,7 @@ from sensei_core.orgs.service import OrgService
 from sensei_engine.chunk.files import chunk_file
 from sensei_engine.chunk.store import ChunkWriter, FileChunks, save_chunks
 from sensei_engine.ingest.discover import discover
-from sensei_engine.ingest.store import save_discovery
+from sensei_engine.ingest.store import file_ids, save_discovery
 from sensei_engine.parse.parser import parse_file
 from sensei_engine.parse.stage import parseable
 from sensei_engine.search.bm25 import (
@@ -413,13 +413,87 @@ async def test_a_snapshot_is_searched_only_once_chunked(
 
     assert all(await found())
     assert await searchable_partition(db_session, repo_id, snapshot_id) is not None
-    # Discovered again (a reindex of the commit): its files' chunks are gone with them, and
-    # it waits for the chunks stage.
-    await save_discovery(db_session, snapshot, discover(tmp_path, max_files=1000))
+    snapshot.chunk_count = None  # being chunked again, say
     await db_session.flush()
-    assert snapshot.chunk_count is None
     assert await searchable_partition(db_session, repo_id, snapshot_id) is None
     assert await found() == ([], [])
+
+
+async def _rows(db: AsyncSession, snapshot_id: uuid.UUID) -> tuple[dict[str, uuid.UUID], ...]:
+    """The snapshot's file, node and chunk ids (by path, symbol key, and path and line)."""
+    files = await file_ids(db, snapshot_id)
+    nodes = await db.execute(
+        select(CodeNode.symbol_key, CodeNode.id).where(CodeNode.snapshot_id == snapshot_id)
+    )
+    chunks = await db.execute(
+        select(CodeChunk.path, CodeChunk.start_line, CodeChunk.id).where(
+            CodeChunk.snapshot_id == snapshot_id
+        )
+    )
+    return (
+        files,
+        dict(nodes.tuples().all()),
+        {f"{path}:{line}": chunk_id for path, line, chunk_id in chunks},
+    )
+
+
+async def test_discovering_a_snapshot_again_keeps_its_rows_and_its_search(
+    db_session: AsyncSession, tmp_path: Path
+) -> None:
+    snapshot, _ = await _index(db_session, tmp_path, FILES)
+    repo_id, snapshot_id = snapshot.repo_id, snapshot.id
+    before = await _rows(db_session, snapshot_id)
+
+    # A reindex of the commit: its files are discovered again, with the ids they have.
+    known = await file_ids(db_session, snapshot_id)
+    again = discover(tmp_path, max_files=1000, ids=known)
+    assert {f.path: f.id for f in again.files} == known
+    await save_discovery(db_session, snapshot, again)
+    await db_session.flush()
+    assert await _rows(db_session, snapshot_id) == before
+    await db_session.refresh(snapshot)
+    assert snapshot.chunk_count == len(before[2])
+    hits = await keyword_search(
+        db_session, repo_id=repo_id, snapshot_id=snapshot_id, query="make_item"
+    )
+    assert hits[0].symbol_key == "py app/models.py/make_item()."
+
+    # Rows stay put even when the discovery brings new ids (a caller that didn't pass them).
+    await save_discovery(db_session, snapshot, discover(tmp_path, max_files=1000))
+    assert await _rows(db_session, snapshot_id) == before
+
+    # A file that's gone takes its symbols and chunks along; the rest still serve.
+    (tmp_path / "README.md").unlink()
+    await save_discovery(db_session, snapshot, discover(tmp_path, max_files=1000, ids=known))
+    files, nodes, chunks = await _rows(db_session, snapshot_id)
+    assert files == {"app/models.py": known["app/models.py"]}
+    assert nodes == before[1]
+    assert chunks == {k: v for k, v in before[2].items() if k.startswith("app/")}
+    assert await keyword_search(
+        db_session, repo_id=repo_id, snapshot_id=snapshot_id, query="make_item"
+    )
+
+
+async def test_saving_symbols_again_keeps_their_ids(
+    db_session: AsyncSession, tmp_path: Path
+) -> None:
+    snapshot, ids = await _index(db_session, tmp_path, FILES)
+    _, nodes, _ = await _rows(db_session, snapshot.id)
+    data = (tmp_path / "app/models.py").read_bytes()
+    parsed = parse_file("app/models.py", data, language="python")
+    found = [s for s in extract_symbols(parsed, "python") if s.name != "save"]
+    await save_symbols(db_session, snapshot, ids, [FileSymbols("app/models.py", "python", found)])
+    _, after, _ = await _rows(db_session, snapshot.id)
+    # Kept where they're still there, gone where they aren't (and the chunks still point).
+    assert after == {k: v for k, v in nodes.items() if not k.endswith("#save().")}
+    linked = set(
+        await db_session.scalars(
+            select(CodeChunk.symbol_id).where(
+                CodeChunk.snapshot_id == snapshot.id, CodeChunk.symbol_key.is_not(None)
+            )
+        )
+    )
+    assert linked <= set(after.values())
 
 
 async def test_a_table_of_the_partitions_name_doesnt_stand_in_for_it(

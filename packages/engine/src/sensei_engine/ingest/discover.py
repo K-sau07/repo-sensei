@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import uuid
 from collections import Counter, defaultdict
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -109,11 +109,14 @@ def discover(
     max_files: int,
     walked: Callable[[Sequence[str]], None] | None = None,
     progress: Callable[[int, int, Sequence[DiscoveredFile]], None] | None = None,
+    ids: Mapping[str, uuid.UUID] | None = None,
 ) -> Discovery:
     """Discover the files under ``root``. ``walked(paths)`` is called once the walk has listed
     every file (in order), before any is read; ``progress(done, total, batch)`` as files are
-    read, with the files read since the last call. Raises
+    read, with the files read since the last call. ``ids``: the row ids the snapshot's files
+    already have, by path (a rediscovery keeps them; other files get new ones). Raises
     :class:`~sensei_engine.ingest.walk.TooManyFilesError` past ``max_files``."""
+    known = ids or {}
     listed, stats = walk(root, IgnoreRules(ignore_globs), max_files=max_files)
     if walked is not None:
         walked([entry.path for entry in listed])
@@ -145,6 +148,7 @@ def discover(
                 role=role,
                 flags=tuple(sorted(flag.value for flag in facts.flags)),
                 framework_root=package,
+                id=known.get(facts.path) or uuid7(),
             )
         )
         if progress is not None and (done % PROGRESS_EVERY == 0 or done == total):

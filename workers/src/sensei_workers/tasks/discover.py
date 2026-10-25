@@ -4,6 +4,8 @@
 A worker that doesn't have it (another machine took the clone) unpacks the snapshot archive from
 object storage instead. The file list, the snapshot summary and the repository's languages are
 written in one transaction (see :mod:`sensei_engine.ingest.store`), which completes the stage.
+Discovering a snapshot again (a reindex of the same commit) keeps its files' ids: what the later
+stages built on them keeps serving until they rebuild it.
 
 The constellation forms as files are found: once the walk has listed them, their layout is
 known (:class:`~sensei_engine.ingest.constellation.DirectoryLayout`); each batch of files read
@@ -42,7 +44,7 @@ from sensei_engine.ingest.constellation import (
     Point,
 )
 from sensei_engine.ingest.discover import DiscoveredFile, Discovery, discover
-from sensei_engine.ingest.store import save_discovery
+from sensei_engine.ingest.store import file_ids, save_discovery
 from sensei_engine.ingest.walk import TooManyFilesError
 from sensei_engine.snapshots import ArchiveTooLargeError, extract_archive
 from sensei_workers.app import celery_app
@@ -111,6 +113,12 @@ async def _begin(task: SenseiTask, org_id: str, job_id: uuid.UUID) -> Target | N
             commit_sha=snapshot.commit_sha,
             ignore_globs=tuple(settings.ignore_globs),
         )
+
+
+async def _known_ids(task: SenseiTask, target: Target) -> dict[str, uuid.UUID]:
+    """The ids the snapshot's files already have (a rediscovery), by path."""
+    async with task.org_session(target.org_id) as db:
+        return await file_ids(db, target.snapshot_id)
 
 
 def _checked_out(worktree: Path) -> str | None:
@@ -305,6 +313,7 @@ def discover_files(self: IngestTask, *, job_id: str, org_id: str, repo_id: str) 
     if target is None:
         return None
     settings = runtime.settings.ingest
+    known = runtime.run(_known_ids(self, target))
     sky = Sky(job)
 
     def walked(paths: Sequence[str]) -> None:
@@ -322,6 +331,7 @@ def discover_files(self: IngestTask, *, job_id: str, org_id: str, repo_id: str) 
                 max_files=settings.max_files,
                 walked=walked,
                 progress=progress,
+                ids=known,
             )
     except TooManyFilesError as exc:
         message = (
