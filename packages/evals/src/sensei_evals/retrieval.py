@@ -127,10 +127,17 @@ def _symbols(context: RetrieverContext) -> Retriever:
     return checkout_symbols(context)
 
 
+def _bm25(context: RetrieverContext) -> Retriever:
+    from sensei_evals.keyword import checkout_keyword  # noqa: PLC0415 - imports this module
+
+    return checkout_keyword(context)
+
+
 RetrieverFactory = Callable[[RetrieverContext], Retriever]
 
 RETRIEVERS: dict[str, RetrieverFactory] = {
     "oracle": _oracle,
     "random": _random,
     "symbols": _symbols,
+    "bm25": _bm25,
 }

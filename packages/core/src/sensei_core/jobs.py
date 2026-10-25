@@ -41,6 +41,7 @@ class TaskName(enum.StrEnum):
     DISCOVER_FILES = "sensei.ingest.discover_files"
     BUILD_MERKLE = "sensei.ingest.build_merkle"
     PARSE_FILES = "sensei.parse.parse_files"
+    CHUNK_FILES = "sensei.parse.chunk_files"
     FINALIZE_INDEX = "sensei.ingest.finalize_index"
     RUN_INDEX_JOB = "sensei.ingest.run_index_job"
     EVICT_REPO_CACHE = "sensei.maintenance.evict_repo_cache"

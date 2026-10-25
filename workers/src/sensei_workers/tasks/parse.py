@@ -32,6 +32,7 @@ from sensei_workers.base import NotYetError, SenseiTask
 from sensei_workers.ingest.cache import repo_lock
 from sensei_workers.jobstate import JobGoneError, job_scope
 from sensei_workers.runtime import get_runtime
+from sensei_workers.statistics import analyze
 from sensei_workers.tasks.discover import SnapshotUnavailableError, local_worktree
 from sensei_workers.tasks.ingest import IngestTask, fail_job
 
@@ -204,6 +205,7 @@ def parse_snapshot(self: IngestTask, *, job_id: str, org_id: str, repo_id: str) 
         return None
     runtime.run(_finish_parse(self, target, job, report, time.monotonic() - started))
     written = runtime.run(_save(self, target, job, files, found))
+    runtime.run(analyze("nodes"))  # the lookups' plans need the new rows' statistics
     log.info(
         "files parsed",
         files=report.files,

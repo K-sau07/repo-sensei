@@ -16,8 +16,15 @@ from sqlalchemy.ext.asyncio import create_async_engine
 import sensei_core.models  # noqa: F401  # pyright: ignore[reportUnusedImport] - registers every model on Base.metadata
 from sensei_core.config import get_settings
 from sensei_core.db.base import Base
+from sensei_core.models.chunks import chunk_partitions
 
 target_metadata = Base.metadata
+# Partitions are made by migrations, not models: comparing the schema leaves them out.
+PARTITIONS = frozenset(chunk_partitions())
+
+
+def _include_name(name: str | None, type_: str, _parents: object) -> bool:
+    return not (type_ == "table" and name in PARTITIONS)
 
 
 def _database_url() -> str:
@@ -31,6 +38,7 @@ def _run(connection: Connection) -> None:
         target_metadata=target_metadata,
         compare_type=True,
         compare_server_default=True,
+        include_name=_include_name,
     )
     with context.begin_transaction():
         context.run_migrations()

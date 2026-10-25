@@ -32,6 +32,7 @@ class CodeNode(IdMixin, OrgScopedMixin, Base):
     __tablename__ = "nodes"
     __table_args__ = (
         UniqueConstraint("snapshot_id", "symbol_key"),
+        UniqueConstraint("id", "org_id"),  # for chunks' (symbol_id, org_id) foreign key
         Index("ix_nodes_repo_id", "repo_id"),  # deleting a repository cascades here
         # Lookup by name, each within a snapshot: exact and prefix on the lowered name
         # (text_pattern_ops serves LIKE 'abc%' whatever the collation); a qualified name's

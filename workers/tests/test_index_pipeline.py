@@ -20,6 +20,7 @@ from sensei_core.indexing.events import JobOutbox, job_stream, org_stream
 from sensei_core.indexing.jobs import settle_repo
 from sensei_core.indexing.state import IndexJobStateMachine
 from sensei_core.models import (
+    CodeChunk,
     CodeNode,
     IndexJob,
     JobKind,
@@ -152,9 +153,9 @@ def test_a_full_run_streams_its_stages_in_order(
     repo, job = runtime.run(_state(runtime.system_database, repo_id, job_id))
     assert (job.status, job.stage, job.progress) == (JobStatus.SUCCEEDED, "finalize", 1.0)
     assert (repo.status, repo.last_indexed_sha) == (RepoStatus.READY, bare_repo.second)
-    assert job.stages["parse"]["status"] == job.stages["symbols"]["status"] == "done"
+    assert {job.stages[s]["status"] for s in ("parse", "symbols", "chunks")} == {"done"}
     # The stages this phase doesn't have yet are recorded as skipped.
-    assert job.stages["chunks"]["status"] == job.stages["links"]["status"] == "skipped"
+    assert job.stages["embeddings"]["status"] == job.stages["links"]["status"] == "skipped"
 
     events = runtime.run(_events(runtime, job_stream(job_id)))
     milestones = [(e["type"], e["stage"]) for e in events if e["type"] not in ("progress", "log")]
@@ -172,12 +173,15 @@ def test_a_full_run_streams_its_stages_in_order(
         ("stage_started", "symbols"),
         ("stage_done", "symbols"),
         ("unlock", "symbols"),
+        ("stage_started", "chunks"),
+        ("stage_done", "chunks"),
+        ("unlock", "chunks"),
         ("stage_started", "finalize"),
         ("stage_done", "finalize"),
         ("done", "finalize"),
     ]
     unlocks = [e["unlocks"] for e in events if e["type"] == "unlock"]
-    assert unlocks == [["code_browser"], ["goto_definition"]]
+    assert unlocks == [["code_browser"], ["goto_definition"], ["keyword_search"]]
     progress = [e for e in events if e["type"] == "progress"]
     assert progress
     assert all(e["done"] <= e["total"] for e in progress)
@@ -298,3 +302,51 @@ def test_the_parse_and_symbols_stages_save_the_snapshots_definitions(
     ]
     assert {n.org_id for n in nodes} == {org_id}
     assert {n.lang for n in nodes} == {"python"}
+
+
+async def _chunks(
+    database: Database, snapshot_id: uuid.UUID
+) -> tuple[Snapshot, list[tuple[str, str, int, int, str | None, bool]]]:
+    async with database.session() as db:
+        snapshot = await db.get(Snapshot, snapshot_id)
+        assert snapshot is not None
+        rows = await db.execute(
+            select(
+                CodeChunk.path,
+                CodeChunk.kind,
+                CodeChunk.start_line,
+                CodeChunk.end_line,
+                CodeChunk.symbol_key,
+                CodeChunk.symbol_id.is_not(None),
+            ).where(CodeChunk.snapshot_id == snapshot_id)
+        )
+        return snapshot, sorted((p, k, s, e, key, linked) for p, k, s, e, key, linked in rows)
+
+
+def test_the_chunks_stage_saves_the_snapshots_chunks(
+    runtime: Runtime,
+    ids: tuple[uuid.UUID, uuid.UUID, uuid.UUID],
+    github: respx.MockRouter,
+) -> None:
+    org_id, repo_id, job_id = ids
+    _run(org_id, repo_id, job_id)
+
+    _, job = runtime.run(_state(runtime.system_database, repo_id, job_id))
+    assert job.snapshot_id is not None
+    snapshot, chunks = runtime.run(_chunks(runtime.system_database, job.snapshot_id))
+    # model.bin is an LFS pointer: never read, so not chunked.
+    assert chunks == [
+        (".gitattributes", "text", 1, 1, None, False),
+        ("README.md", "doc", 1, 1, None, False),
+        ("run.sh", "text", 1, 2, None, False),
+        ("src/app.py", "class", 1, 3, "py src/app.py/Greeter#", True),
+        ("src/app.py", "function", 6, 7, "py src/app.py/main().", True),
+    ]
+    assert snapshot.chunk_count == len(chunks)
+    details = job.stages["chunks"]["details"]
+    assert (details["files"], details["chunked"], details["failed"]) == (4, 4, 0)
+    assert details["chunks"] == len(chunks)
+    assert details["kinds"] == {"class": 1, "doc": 1, "function": 1, "text": 2}
+    events = runtime.run(_events(runtime, job_stream(job_id)))
+    logs = [e["message"] for e in events if e["type"] == "log"]
+    assert "Cut 4 files into 5 chunks. Keyword search is ready." in logs

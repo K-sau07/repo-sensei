@@ -18,7 +18,7 @@ from sensei_core.db.tenancy import append_only_sql, disable_org_rls_sql, enable_
 from sensei_core.db.types import HalfVector
 
 revision: str = "0020"
-# 0019 is the chunks table (2.6); this is re-pointed at it when both are merged.
+# 0019 was held for the chunks table (2.6), which landed after 0022 as 0023; 0019 stays unused.
 down_revision: str | None = "0018"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
