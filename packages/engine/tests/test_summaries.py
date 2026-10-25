@@ -329,12 +329,37 @@ async def test_the_guard_counts_what_uncollected_batches_will_cost(
         (LLMBatchStatus.ENDED, False, "3"),  # ended, not collected: nor is this one's
         (LLMBatchStatus.ENDED, True, "100"),  # collected: its usage is in the ledger
         (LLMBatchStatus.FAILED, False, "100"),  # never ran
+        (LLMBatchStatus.ENDED, False, "1000"),  # its results are gone: it can't be collected
     ):
         row = await batches.reserve(db_session, client, requests, org_id=org_id, kind="summaries")
         row.status, row.estimated_cost_usd = status, Decimal(cost)
         row.collected_at = datetime.now(UTC) if collected else None
+        if cost == "1000":
+            row.created_at = datetime.now(UTC) - batches.RESULTS_KEPT - timedelta(hours=1)
     await db_session.flush()
     assert await summaries.pending_estimates(db_session, org_id) == Decimal(5)
+    await record_usage(
+        db_session, CALCULATOR, org_id=org_id, kind=UsageKind.LLM, provider="anthropic",
+        model="claude-sonnet-5-5", tokens_in=500_000,
+    )  # fmt: skip
+    # The month's spend and the estimates, read together.
+    assert await summaries.committed_spend(db_session, org_id) == Decimal(6)
+    assert await check_budget(db_session, org_id, _estimate("4"), Decimal(10)) == Decimal(6)
+    with pytest.raises(CostCapExceeded):
+        await check_budget(db_session, org_id, _estimate("4.01"), Decimal(10))
+
+
+@pytest.mark.integration
+async def test_the_guard_without_spend_counts_the_estimates_alone(
+    db_session: AsyncSession,
+) -> None:
+    org_id = await _org(db_session)
+    client = FakeAnthropic().client()
+    row = await batches.reserve(
+        db_session, client, build_requests([_file()]), org_id=org_id, kind="summaries"
+    )
+    row.status, row.estimated_cost_usd = LLMBatchStatus.ENDED, Decimal(5)
+    await db_session.flush()
     assert await check_budget(db_session, org_id, _estimate("5"), Decimal(10)) == Decimal(5)
     with pytest.raises(CostCapExceeded):
         await check_budget(db_session, org_id, _estimate("5.01"), Decimal(10))
@@ -649,6 +674,46 @@ async def test_a_run_restarted_mid_batch_takes_up_its_batch_and_bills_once(
     )
     assert billed == 2
     assert await db_session.scalar(select(func.count()).select_from(LLMBatch)) == 1
+
+
+@pytest.mark.integration
+async def test_a_run_restarted_after_collecting_reads_the_batch_again_and_sends_nothing(
+    db_session: AsyncSession,
+) -> None:
+    """The run stopped after its collect committed: run again, it reads the batch's results
+    again, bills nothing more, sends nothing and retries nothing (the first run may have)."""
+    org_id = await _org(db_session)
+    files = [_file("c/one.py"), _file("c/two.py")]
+    by_id = {file.custom_id: file for file in files}
+
+    def answer(custom_id: str, _: dict[str, Any]) -> dict[str, Any]:
+        if by_id[custom_id].path == "c/two.py":
+            return _line(custom_id, "not json")
+        return _line(custom_id, json.dumps(_answer(by_id[custom_id])))
+
+    api = _batch_api(answer, retry=lambda body: "still not json")
+
+    async def sleep(_: float) -> None:
+        return None
+
+    common: dict[str, Any] = {
+        "org_id": org_id, "calculator": CALCULATOR, "cap_usd": Decimal(5),
+        "ref_type": "index_job", "ref_id": "job-c", "sleep": sleep,
+    }  # fmt: skip
+    first = await summarize_files(_sessions(db_session), api.client(), files, **common)
+    assert list(first.summaries) == ["c/one.py"]
+    billed = await db_session.scalar(select(func.count()).select_from(UsageEvent))
+    messages = len(api.bodies("/v1/messages"))
+
+    again = await summarize_files(_sessions(db_session), api.client(), files, **common)
+    assert list(again.summaries) == ["c/one.py"]
+    assert again.batch_id == first.batch_id
+    assert again.skipped["c/two.py"].endswith(
+        "(not retried: the run was restarted after collecting)"
+    )
+    assert len(api.bodies(BATCHES)) == 1
+    assert len(api.bodies("/v1/messages")) == messages
+    assert await db_session.scalar(select(func.count()).select_from(UsageEvent)) == billed
 
 
 @pytest.mark.integration

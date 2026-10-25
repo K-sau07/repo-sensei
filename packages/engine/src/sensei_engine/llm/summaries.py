@@ -12,15 +12,18 @@ words, written by Claude through the Message Batches API (half price).
 * **Cost guard** (:func:`estimate_cost`, :func:`check_budget`, :func:`reserve_batch`): before
   anything is sent, the input is counted with ``count_tokens`` (every request, or a sample and a
   fit when there are many) and the output estimated per symbol. The run doesn't start if the
-  month's spend, plus the estimates of the org's batches not collected yet, plus this estimate
-  would pass the org's cap (:class:`CostCapExceeded`). The check and the reservation hold a
-  per-org advisory lock to the end of their transaction, so two runs can't both pass on the
-  same headroom. The estimate is recorded on the batch.
+  month's spend, plus the estimates of the org's batches not collected yet (that still can be:
+  :data:`~sensei_engine.llm.batches.RESULTS_KEPT`), plus this estimate would pass the org's cap
+  (:class:`CostCapExceeded`). Both are read in one statement, so a batch collected meanwhile is
+  counted once, as an estimate or as its usage. The check and the reservation hold a per-org
+  advisory lock to the end of their transaction, so two runs can't both pass on the same
+  headroom. The estimate is recorded on the batch.
 * **Batch** (:func:`summarize_files`): reserved, sent, polled and collected through
   :mod:`sensei_engine.llm.batches`; usage goes to the ledger, and the summaries to the
   caller's ``store``, in the transaction that claims the batch. Run again for the same
   reference (a redelivered task), it takes up the batch still open for it instead of sending
-  (and paying for) another.
+  (and paying for) another; or, if that batch was collected, reads its results again (without
+  billing them twice) and doesn't retry: a run that stopped after collecting may have retried.
   A request that failed or whose answer is unusable (not JSON, cut off, not matching the
   schema) is sent once more on its own, after its own pass through the cost guard; if that
   fails too (or the cap is in the way) the file is skipped, with the reason.
@@ -39,19 +42,19 @@ import uuid
 from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from decimal import Decimal
 from functools import cache
 from importlib import resources
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, ValidationError
-from sqlalchemy import func, select
+from sqlalchemy import Select, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from sensei_core.logging import get_logger
-from sensei_core.models import LLMBatch, LLMBatchStatus
-from sensei_core.usage import CostCalculator, month_start, spent_since
+from sensei_core.models import LLMBatch, LLMBatchStatus, UsageEvent
+from sensei_core.usage import CostCalculator, month_start
 from sensei_engine.llm import batches
 from sensei_engine.llm.anthropic_client import (
     PROVIDER,
@@ -388,15 +391,36 @@ async def lock_spending(db: AsyncSession, org_id: uuid.UUID) -> None:
     )
 
 
-async def pending_estimates(db: AsyncSession, org_id: uuid.UUID) -> Decimal:
+def _pending(org_id: uuid.UUID, now: datetime) -> Select[tuple[Any]]:
+    return select(func.coalesce(func.sum(LLMBatch.estimated_cost_usd), 0)).where(
+        LLMBatch.org_id == org_id,
+        LLMBatch.collected_at.is_(None),
+        LLMBatch.status != LLMBatchStatus.FAILED,
+        LLMBatch.created_at >= now - batches.RESULTS_KEPT,
+    )
+
+
+async def pending_estimates(
+    db: AsyncSession, org_id: uuid.UUID, *, now: datetime | None = None
+) -> Decimal:
     """The estimates of the org's batches whose cost isn't in the ledger yet: reserved, sent or
-    ended, but not collected (and not failed)."""
+    ended, but not collected (and not failed). One older than the provider keeps results
+    (:data:`~sensei_engine.llm.batches.RESULTS_KEPT`) can't be collected: it doesn't count."""
+    total = await db.scalar(_pending(org_id, now or datetime.now(UTC)))
+    return Decimal(total or 0)
+
+
+async def committed_spend(
+    db: AsyncSession, org_id: uuid.UUID, *, now: datetime | None = None
+) -> Decimal:
+    """The org's spend this month and its uncollected batches' estimates, read in one statement:
+    a batch collected meanwhile is counted once, as its estimate or as its usage."""
+    now = now or datetime.now(UTC)
+    spent = select(func.coalesce(func.sum(UsageEvent.cost_usd), 0)).where(
+        UsageEvent.org_id == org_id, UsageEvent.created_at >= month_start(now)
+    )
     total = await db.scalar(
-        select(func.coalesce(func.sum(LLMBatch.estimated_cost_usd), 0)).where(
-            LLMBatch.org_id == org_id,
-            LLMBatch.collected_at.is_(None),
-            LLMBatch.status != LLMBatchStatus.FAILED,
-        )
+        select(spent.scalar_subquery() + _pending(org_id, now).scalar_subquery())
     )
     return Decimal(total or 0)
 
@@ -413,7 +437,7 @@ async def check_budget(
     :class:`CostCapExceeded` if the estimate on top of it would pass ``cap_usd``. Takes the org's
     cost-guard lock: reserve in the same transaction (:func:`reserve_batch`)."""
     await lock_spending(db, org_id)
-    spent = await spent_since(db, org_id, month_start(now)) + await pending_estimates(db, org_id)
+    spent = await committed_spend(db, org_id, now=now)
     if spent + estimate.cost_usd > cap_usd:
         raise CostCapExceeded(estimate, spent, cap_usd)
     return spent
@@ -471,6 +495,13 @@ async def summarize_files(
     requests = build_requests(files)
     if not requests:
         return SummaryRun()
+    collected = await _collected_batch(sessions, ref_type, ref_id)
+    if collected is not None:
+        log.info("summaries batch collected already: read again", batch_id=str(collected.id))
+        run = _run(collected.id, await batches.results(client, collected, json_output=True), files)
+        for path in run.skipped:
+            run.skipped[path] += " (not retried: the run was restarted after collecting)"
+        return run
     estimate: CostEstimate | None = None
     batch_id = await _open_batch(
         sessions, client, ref_type, ref_id, poll_seconds=poll_seconds, sleep=sleep
@@ -521,6 +552,26 @@ async def summarize_files(
         async with sessions() as db:
             await store(db, run)
     return run
+
+
+async def _collected_batch(
+    sessions: Sessions, ref_type: str | None, ref_id: str | None
+) -> LLMBatch | None:
+    """The reference's latest batch, if it was collected (its summaries stored)."""
+    if ref_id is None:
+        return None
+    query = select(LLMBatch).where(
+        LLMBatch.kind == KIND,
+        LLMBatch.ref_id == ref_id,
+        LLMBatch.status != LLMBatchStatus.FAILED,
+    )
+    if ref_type is not None:
+        query = query.where(LLMBatch.ref_type == ref_type)
+    async with sessions() as db:
+        latest = await db.scalar(
+            query.order_by(LLMBatch.created_at.desc(), LLMBatch.id.desc()).limit(1)
+        )
+    return latest if latest is not None and latest.collected_at is not None else None
 
 
 async def _open_batch(
@@ -607,10 +658,18 @@ async def collect_summaries(
     ``store`` keeps commit together, or none of them does (and the batch can be collected
     again). Files without a usable answer are in ``skipped``, ready for :func:`retry_failed`.
     Works after a restart: ``files`` are matched by path."""
-    by_id = {file.custom_id: file for file in files}
     sink = usage_ledger(db, calculator, org_id=org_id, ref_type=ref_type, ref_id=ref_id)
     items = await batches.collect(db, client, batch, json_output=True, on_usage=sink)
-    run = SummaryRun(batch_id=batch.id)
+    run = _run(batch.id, items, files)
+    if store is not None:
+        await store(db, run)
+    return run
+
+
+def _run(batch_id: uuid.UUID, items: Iterable[BatchItem], files: Iterable[FileInput]) -> SummaryRun:
+    """What a batch's results give: the summaries, and the files without one (and why)."""
+    by_id = {file.custom_id: file for file in files}
+    run = SummaryRun(batch_id=batch_id)
     for item in items:
         file = by_id.pop(item.custom_id, None)
         if file is None:
@@ -619,8 +678,6 @@ async def collect_summaries(
         _take(run, file, item)
     for file in by_id.values():
         run.skipped[file.path] = "no result in the batch"
-    if store is not None:
-        await store(db, run)
     return run
 
 
