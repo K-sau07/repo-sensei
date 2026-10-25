@@ -133,6 +133,12 @@ def _bm25(context: RetrieverContext) -> Retriever:
     return checkout_keyword(context)
 
 
+def _hybrid(context: RetrieverContext) -> Retriever:
+    from sensei_evals.hybrid import checkout_hybrid  # noqa: PLC0415 - imports this module
+
+    return checkout_hybrid(context)
+
+
 RetrieverFactory = Callable[[RetrieverContext], Retriever]
 
 RETRIEVERS: dict[str, RetrieverFactory] = {
@@ -140,4 +146,5 @@ RETRIEVERS: dict[str, RetrieverFactory] = {
     "random": _random,
     "symbols": _symbols,
     "bm25": _bm25,
+    "hybrid": _hybrid,
 }

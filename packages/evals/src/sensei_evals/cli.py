@@ -231,6 +231,49 @@ def run(
     typer.echo(f"run {record.id}: {json_path} and {md_path}" + (" (stored)" if store else ""))
 
 
+@app.command("sweep")
+def sweep_weights(
+    *,
+    suite: Annotated[list[str], typer.Option(help="Suites to weigh on (repeatable).")],
+    checkouts: Annotated[
+        Path | None,
+        typer.Option(help="Directory of the checkouts (default .cache/eval-repos)."),
+    ] = None,
+    opt: Annotated[
+        list[str] | None, typer.Option(help="Hybrid retriever option key=value (repeatable).")
+    ] = None,
+    reports_dir: Annotated[Path | None, typer.Option(help="Where the report goes.")] = None,
+    top: Annotated[int, typer.Option(help="Grid points listed.")] = 15,
+) -> None:
+    """Weigh the hybrid retriever's legs (step 2.9.4) and compare it with each leg (2.9.5): the
+    rankings are read once per question, then every grid point is fused in memory and scored."""
+    from sensei_evals import sweep as sweep_mod  # noqa: PLC0415 - heavy, only for this command
+    from sensei_evals.hybrid import checkout_hybrid, weights_from  # noqa: PLC0415
+
+    root = paths.repo_root()
+    options = _options(opt or [])
+    base = weights_from(options)
+    collected: dict[str, list[sweep_mod.Collected]] = {}
+    for name in suite:
+        loaded = load_suite(paths.suite_path(root, name))
+        repo_id, sha, items = select_items(loaded, None)
+        folder = (checkouts or paths.checkouts_dir(root)) / repo_id
+        ref = RepoRef(id=repo_id, sha=sha, checkout=_checkout(root, repo_id, sha, folder))
+        built = checkout_hybrid(RetrieverContext(suite=loaded, repo=ref, options=options))
+
+        collected[loaded.name] = asyncio.run(sweep_mod.collect(built, items, ref))
+        typer.echo(f"{loaded.name}: {len(collected[loaded.name])} questions read")
+    points = sweep_mod.sweep(collected, base)
+    chosen = points[0].weights
+    report = sweep_mod.render(sweep_mod.compare(collected, chosen), points[:top], chosen)
+    folder = reports_dir or paths.reports_dir(root)
+    folder.mkdir(parents=True, exist_ok=True)
+    path = folder / f"sweep-{uuid.uuid4().hex[:8]}.md"
+    path.write_text(report)
+    typer.echo(report)
+    typer.echo(f"report: {path}")
+
+
 @app.command("store")
 def store_runs(
     runs: Annotated[list[Path], typer.Argument(help="JSON reports of runs made with --no-store.")],

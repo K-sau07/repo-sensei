@@ -320,6 +320,33 @@ class PricingSettings(BaseSettings):
     org_monthly_cap_usd: Decimal = Field(default=Decimal(25), ge=0)
 
 
+class SearchSettings(BaseSettings):
+    """Hybrid search's fusion (2.9): a ranking weighs its leg's weight times its origin's, and 0
+    leaves it out. The defaults are the 2.9 sweep's, on the golden suites."""
+
+    model_config = _config("SENSEI_SEARCH_")
+
+    sem_code: float = Field(default=1.0, ge=0)
+    sem_summary: float = Field(default=0.7, ge=0)
+    lex_code: float = Field(default=1.0, ge=0)
+    lex_path: float = Field(default=0.4, ge=0)
+    lex_summary: float = Field(default=0.4, ge=0)
+    sym: float = Field(default=1.2, ge=0)
+    grep: float = Field(default=1.0, ge=0)
+    # The query as asked, and what the plan made of it.
+    origin_original: float = Field(default=1.0, ge=0)
+    origin_structural: float = Field(default=0.7, ge=0)
+    origin_behavioural: float = Field(default=0.7, ge=0)
+    origin_identifier: float = Field(default=0.8, ge=0)
+    origin_route: float = Field(default=0.8, ge=0)
+    origin_path: float = Field(default=0.8, ge=0)
+    rrf_k: int = Field(default=60, gt=0)
+    # Each further chunk of a definition found adds this share of a first place's score.
+    multi_hit: float = Field(default=0.3, ge=0)
+    # Results in a layer the query names ("the endpoint", "the model") are lifted by this.
+    layer_boost: float = Field(default=1.2, ge=1)
+
+
 class Settings(BaseSettings):
     """Root settings object. Use :func:`get_settings` instead of constructing directly."""
 
@@ -345,6 +372,7 @@ class Settings(BaseSettings):
     pricing: PricingSettings = Field(default_factory=PricingSettings)
     worker: WorkerSettings = Field(default_factory=WorkerSettings)
     ingest: IngestSettings = Field(default_factory=IngestSettings)
+    search: SearchSettings = Field(default_factory=SearchSettings)
 
     @model_validator(mode="after")
     def _refuse_dev_secrets_outside_dev(self) -> Settings:

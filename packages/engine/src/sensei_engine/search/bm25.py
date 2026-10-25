@@ -24,6 +24,8 @@ the first partition's statistics (row-level security holds on every partition).
 Scores are pg_textsearch's: negative, lower is better; a chunk matching no term scores 0 and is
 left out. Hits carry the score negated (higher is better).
 
+:func:`lexical_search` reads several rankings in one statement, each its own ``MATERIALIZED``
+subquery on the index (the hybrid retriever's lexical legs: :mod:`sensei_engine.search.hybrid`).
 :func:`fuse` combines legs by reciprocal rank (k = 60), weighted per leg, as the design's hybrid
 query does.
 """
@@ -112,19 +114,156 @@ async def chunk_partition(db: AsyncSession, repo_id: uuid.UUID) -> str | None:
     return name if name is not None and _partition_name(name) else None
 
 
-async def searchable_partition(
+@dataclass(frozen=True, slots=True)
+class LiveChunks:
+    """Where a chunked snapshot's chunks are: the repository's partition, and the snapshot's live
+    generation."""
+
+    partition: str
+    generation: int
+
+
+async def live_chunks(
     db: AsyncSession, repo_id: uuid.UUID, snapshot_id: uuid.UUID
-) -> str | None:
-    """The repository's partition, if the snapshot is chunked (None otherwise: not chunked
-    yet, being chunked for the first time, or not the session's)."""
-    ready = await db.scalar(
+) -> LiveChunks | None:
+    """The snapshot's live chunks, if it is chunked (None otherwise: not chunked yet, being
+    chunked for the first time, or not the session's). A search of several statements reads
+    this generation in each, so a run made live meanwhile can't mix its chunks with these."""
+    generation = await db.scalar(
         text(
-            "SELECT chunk_generation IS NOT NULL FROM public.snapshots "
+            "SELECT chunk_generation FROM public.snapshots "
             "WHERE id = :snapshot_id AND repo_id = :repo_id"
         ),
         {"snapshot_id": snapshot_id, "repo_id": repo_id},
     )
-    return await chunk_partition(db, repo_id) if ready else None
+    if generation is None:
+        return None
+    partition = await chunk_partition(db, repo_id)
+    return LiveChunks(partition, int(generation)) if partition is not None else None
+
+
+async def searchable_partition(
+    db: AsyncSession, repo_id: uuid.UUID, snapshot_id: uuid.UUID
+) -> str | None:
+    """The repository's partition, if the snapshot is chunked (see :func:`live_chunks`)."""
+    live = await live_chunks(db, repo_id, snapshot_id)
+    return live.partition if live is not None else None
+
+
+@dataclass(frozen=True, slots=True)
+class LexQuery:
+    """One ranking to read: ``text`` on a leg's column, over the chunks of a view."""
+
+    text: str
+    leg: Leg = Leg.CODE
+    view: str = "code"
+
+
+def _conditions(filters: Filters, params: dict[str, Any], generation: int | None) -> str:
+    conditions = [
+        "c.repo_id = :repo_id",
+        "c.snapshot_id = :snapshot_id",
+        # The snapshot's live generation: the caller's, or read in the same statement.
+        "c.generation = :generation"
+        if generation is not None
+        else "c.generation = (SELECT s.chunk_generation FROM public.snapshots s "
+        "WHERE s.id = :snapshot_id AND s.repo_id = :repo_id)",
+    ]
+    if generation is not None:
+        params["generation"] = generation
+    if filters.kinds:
+        conditions.append("c.kind = ANY(:kinds)")
+        params["kinds"] = list(filters.kinds)
+    if filters.languages:
+        conditions.append("c.lang = ANY(:languages)")
+        params["languages"] = list(filters.languages)
+    if filters.path_prefix:
+        conditions.append("c.path LIKE :prefix ESCAPE '\\'")
+        params["prefix"] = _like_prefix(filters.path_prefix)
+    if filters.roles:
+        conditions.append(
+            "c.file_id IN (SELECT f.id FROM public.files f "
+            "WHERE f.snapshot_id = :snapshot_id AND f.role = ANY(:roles))"
+        )
+        params["roles"] = list(filters.roles)
+    return " AND ".join(conditions)
+
+
+def _ranking(partition: str, number: int, query: LexQuery, where: str) -> str:
+    """The ``k`` best chunks for one query, ranked: an ``ORDER BY … LIMIT`` on the partition's
+    BM25 index (which walks the rows in score order, the filters checked as it goes;
+    pg_textsearch widens its top-k by their selectivity). A few rows past ``k`` are taken, so
+    that ties at the cut sort by path and line, the same on every run."""
+    column = COLUMNS[query.leg]
+    index = bm25_index(partition, column)
+    score = f"c.{column} <@> to_bm25query(:query_{number}, '{index}')"
+    return (
+        f"SELECT {number} AS ranking, s.*, "  # noqa: S608 - the names are a partition's and constants
+        "row_number() OVER (ORDER BY s.score, s.path, s.start_line) AS rank FROM ("
+        "SELECT c.id, c.kind, c.path, c.start_line, c.end_line, c.symbol_key, c.symbol_id, "
+        f"{score} AS score FROM {partition} c WHERE {where} AND c.view = :view_{number} "
+        f"ORDER BY {score} LIMIT :pool"
+        ") s WHERE s.score < 0 "  # 0: no query term in the chunk
+        "ORDER BY s.score, s.path, s.start_line LIMIT :k"
+    )
+
+
+async def lexical_search(
+    db: AsyncSession,
+    *,
+    repo_id: uuid.UUID,
+    snapshot_id: uuid.UUID,
+    queries: Sequence[LexQuery],
+    k: int = 60,
+    filters: Filters = Filters(),  # noqa: B008 - frozen, never mutated
+    partition: str | None = None,
+    generation: int | None = None,
+) -> list[list[LexHit]]:
+    """Each query's ``k`` best chunks, best first, in one statement: every ranking is its own
+    ``MATERIALIZED`` subquery on the index (none if the snapshot isn't chunked).
+    ``partition`` and ``generation``: :func:`live_chunks`', when the caller has them (without
+    a generation, the live one as the statement reads it)."""
+    results: list[list[LexHit]] = [[] for _ in queries]
+    terms = [bm25_query(query.text) for query in queries]
+    wanted = [number for number, term in enumerate(terms) if term.strip()]
+    if not wanted:
+        return results
+    partition = partition or await searchable_partition(db, repo_id, snapshot_id)
+    if partition is None or not _partition_name(partition):
+        return results
+    params: dict[str, Any] = {
+        "repo_id": repo_id,
+        "snapshot_id": snapshot_id,
+        "k": k,
+        "pool": k + POOL_SLACK,
+    }
+    where = _conditions(filters, params, generation)
+    ctes: list[str] = []
+    for number in wanted:
+        params[f"query_{number}"] = terms[number]
+        params[f"view_{number}"] = queries[number].view
+        ctes.append(
+            f"r{number} AS MATERIALIZED ({_ranking(partition, number, queries[number], where)})"
+        )
+    union = " UNION ALL ".join(f"SELECT * FROM r{number}" for number in wanted)  # noqa: S608
+    statement = text(f"WITH {', '.join(ctes)} {union} ORDER BY ranking, rank")
+    for row in await db.execute(statement, params):
+        number = int(row.ranking)
+        query = queries[number]
+        results[number].append(
+            LexHit(
+                chunk_id=row.id,
+                kind=row.kind,
+                path=row.path,
+                start_line=row.start_line,
+                end_line=row.end_line,
+                symbol_key=row.symbol_key,
+                symbol_id=row.symbol_id,
+                score=round(-float(row.score), 6),
+                legs={query.leg.value: int(row.rank)},
+            )
+        )
+    return results
 
 
 async def bm25_search(
@@ -142,71 +281,16 @@ async def bm25_search(
     """The snapshot's ``k`` best chunks for ``query`` on one leg, best first (none if the
     snapshot isn't chunked). ``partition``: :func:`searchable_partition`'s, when the caller has
     it."""
-    terms = bm25_query(query)
-    if not terms.strip():
-        return []
-    partition = partition or await searchable_partition(db, repo_id, snapshot_id)
-    if partition is None or not _partition_name(partition):
-        return []
-    column = COLUMNS[leg]
-    index = bm25_index(partition, column)
-    conditions = [
-        "c.repo_id = :repo_id",
-        "c.snapshot_id = :snapshot_id",
-        "c.generation = (SELECT s.chunk_generation FROM public.snapshots s "
-        "WHERE s.id = :snapshot_id AND s.repo_id = :repo_id)",
-        "c.view = :view",
-    ]
-    params: dict[str, Any] = {
-        "repo_id": repo_id,
-        "snapshot_id": snapshot_id,
-        "view": view,
-        "query": terms,
-        "k": k,
-        "pool": k + POOL_SLACK,
-    }
-    if filters.kinds:
-        conditions.append("c.kind = ANY(:kinds)")
-        params["kinds"] = list(filters.kinds)
-    if filters.languages:
-        conditions.append("c.lang = ANY(:languages)")
-        params["languages"] = list(filters.languages)
-    if filters.path_prefix:
-        conditions.append("c.path LIKE :prefix ESCAPE '\\'")
-        params["prefix"] = _like_prefix(filters.path_prefix)
-    if filters.roles:
-        conditions.append(
-            "c.file_id IN (SELECT f.id FROM files f "
-            "WHERE f.snapshot_id = :snapshot_id AND f.role = ANY(:roles))"
-        )
-        params["roles"] = list(filters.roles)
-    where = " AND ".join(conditions)
-    # The partition's BM25 index walks the rows in score order, the filters checked as it goes
-    # (pg_textsearch widens its top-k by the filters' selectivity); a few rows past ``k`` are
-    # taken, so that ties at the cut sort by path and line, the same on every run.
-    score = f"c.{column} <@> to_bm25query(:query, '{index}')"
-    statement = text(
-        "SELECT * FROM ("  # noqa: S608 - the names are a partition's and constants
-        "SELECT c.id, c.kind, c.path, c.start_line, c.end_line, c.symbol_key, c.symbol_id, "
-        f"{score} AS score FROM {partition} c WHERE {where} ORDER BY {score} LIMIT :pool"
-        ") scored WHERE score < 0 "  # 0: no query term in the chunk
-        "ORDER BY score, path, start_line LIMIT :k"
+    [hits] = await lexical_search(
+        db,
+        repo_id=repo_id,
+        snapshot_id=snapshot_id,
+        queries=[LexQuery(query, leg, view)],
+        k=k,
+        filters=filters,
+        partition=partition,
     )
-    rows = await db.execute(statement, params)
-    return [
-        LexHit(
-            chunk_id=row.id,
-            kind=row.kind,
-            path=row.path,
-            start_line=row.start_line,
-            end_line=row.end_line,
-            symbol_key=row.symbol_key,
-            symbol_id=row.symbol_id,
-            score=round(-float(row.score), 6),
-            legs={leg.value: rank},
-        )
-        for rank, row in enumerate(rows, 1)
-    ]
+    return hits
 
 
 def fuse(
@@ -259,19 +343,16 @@ async def keyword_search(
     partition = await searchable_partition(db, repo_id, snapshot_id)
     if partition is None:
         return []
-    results = {
-        leg: await bm25_search(
-            db,
-            repo_id=repo_id,
-            snapshot_id=snapshot_id,
-            query=query,
-            leg=leg,
-            k=k,
-            filters=filters,
-            partition=partition,
-        )
-        for leg in legs
-    }
+    rankings = await lexical_search(
+        db,
+        repo_id=repo_id,
+        snapshot_id=snapshot_id,
+        queries=[LexQuery(query, leg) for leg in legs],
+        k=k,
+        filters=filters,
+        partition=partition,
+    )
+    results = dict(zip(legs, rankings, strict=True))
     if len(legs) == 1:
         return list(results[legs[0]])
     return fuse(results, weights=weights, k=k)

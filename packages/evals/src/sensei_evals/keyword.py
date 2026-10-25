@@ -102,6 +102,15 @@ class KeywordRetriever:
         self.chunk_count: int | None = None
         self.index_seconds: float | None = None
 
+    @property
+    def snapshot(self) -> tuple[uuid.UUID, uuid.UUID] | None:
+        """(repo id, snapshot id) of the index, once there is one."""
+        return self._snapshot
+
+    @property
+    def sessions(self) -> Sessions:
+        return self._sessions
+
     async def prepare(self, repo: RepoRef) -> None:
         """Index the checkout, once (the runner calls this before timing any search)."""
         if self._snapshot is not None or self._checkout is None:
