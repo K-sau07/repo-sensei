@@ -66,6 +66,7 @@ from sensei_engine.embed.voyage import (
     VoyageAPI,
     VoyageError,
     VoyageNotConfigured,
+    VoyageUnreachable,
     billed_tokens,
     estimate_tokens,
     plan_batches,
@@ -306,8 +307,14 @@ class VoyageReranker:
             )
         except asyncio.CancelledError:
             raise  # stays in flight
+        except VoyageUnreachable as exc:
+            # Never connected: not billed. Sent and then no answer (a read timeout): Voyage may
+            # have done the work, so it stays in flight, billed at its estimate.
+            if isinstance(exc.__cause__, httpx.ConnectError | httpx.ConnectTimeout):
+                del scores.in_flight[batch.start]
+            raise
         except BaseException:
-            del scores.in_flight[batch.start]  # refused or unreachable: not billed
+            del scores.in_flight[batch.start]  # refused: not billed
             raise
         del scores.in_flight[batch.start]
         tokens = billed_tokens(answer)
@@ -597,15 +604,25 @@ class Reranker:
         _check_ids(candidates)
         first: list[Ranked] = [Ranked(candidate) for candidate in candidates[: policy.top_k]]
         scored = False
+        billed: list[RerankUsage] = []
+
+        async def keep(usage: RerankUsage) -> None:
+            billed.append(usage)  # no await: a cancel can't stop it part way
+
         if candidates and self._voyage.configured:
             try:
                 async with asyncio.timeout(policy.budget_seconds):
                     first = await self._voyage.rerank(
-                        query, candidates, top_k=policy.top_k, on_usage=on_rerank_usage
+                        query, candidates, top_k=policy.top_k, on_usage=keep
                     )
                 scored = True
             except (VoyageError, TimeoutError) as exc:
                 log.warning("rerank kept the retriever's order", error=type(exc).__name__)
+            finally:
+                # Outside the budget: the usage is recorded whole, however the requests ended.
+                if on_rerank_usage is not None:
+                    for usage in billed:
+                        await on_rerank_usage(usage)
         if not policy.listwise:
             return Ranking(tuple(first), "fallback", scored=scored)
         ranking = await self._llm.rerank(

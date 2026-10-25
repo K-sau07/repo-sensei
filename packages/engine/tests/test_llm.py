@@ -26,6 +26,7 @@ from sensei_core.orgs.service import OrgService
 from sensei_core.usage import DEFAULT_PRICE_TABLE, CostCalculator
 from sensei_engine.llm import batches
 from sensei_engine.llm.anthropic_client import (
+    CEILING_OVERHEAD_TOKENS,
     FALLBACK_BETA,
     AnthropicClient,
     LLMBadOutput,
@@ -724,11 +725,29 @@ async def test_a_call_given_up_on_is_billed_at_the_most_it_can_cost() -> None:
             .client()
             .complete_within(request, timeout_seconds=0.05, on_usage=sink)
         )
-    assert billed == [LLMUsage("anthropic", "claude-haiku-5-5", 330, 500)]
-    assert ceiling_usage(request, "m").input_tokens == 330  # a token a byte
+    overhead = CEILING_OVERHEAD_TOKENS
+    assert billed == [LLMUsage("anthropic", "claude-haiku-5-5", 330 + overhead, 500)]
+    assert ceiling_usage(request, "m").input_tokens == 330 + overhead  # a token a byte
     # Not fewer tokens than any script can take: a CJK character is a token or more, 3 bytes.
     cjk = LLMRequest("漢" * 100, tier=Tier.FAST, max_tokens=10)
-    assert ceiling_usage(cjk, "m").input_tokens == 300
+    assert ceiling_usage(cjk, "m").input_tokens == 300 + overhead
+    # A cached system prompt is billed as a cache write (the dearer rate).
+    cached = LLMRequest("x" * 300, system="s" * 30, tier=Tier.FAST, max_tokens=5, cache_system=True)
+    usage = ceiling_usage(cached, "m")
+    assert (usage.input_tokens, usage.cache_write_tokens) == (300 + overhead, 30)
+
+    # Cancelled from outside (the client went away): billed the same way.
+    billed.clear()
+    call = asyncio.create_task(
+        FakeAnthropic({"/v1/messages": slow})
+        .client()
+        .complete_within(request, timeout_seconds=5, on_usage=sink)
+    )
+    await asyncio.sleep(0.05)
+    call.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await call
+    assert billed == [LLMUsage("anthropic", "claude-haiku-5-5", 330 + overhead, 500)]
 
     # Answered in time: what it was billed, once.
     billed.clear()

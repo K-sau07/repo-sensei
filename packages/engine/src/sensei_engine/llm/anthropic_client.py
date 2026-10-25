@@ -290,8 +290,9 @@ class AnthropicClient:
         on_usage: LLMUsageSink | None = None,
     ) -> LLMResult:
         """:meth:`complete`, given up after ``timeout_seconds`` (``TimeoutError``). A call given
-        up on may still be billed, and its answer never says how much: ``on_usage`` gets the
-        most it can cost (:func:`ceiling_usage`) instead."""
+        up on, or cancelled from outside (a client that went away), may still be billed, and its
+        answer never says how much: ``on_usage`` gets the most it can cost (:func:`ceiling_usage`)
+        instead."""
         reported = False
 
         async def report(usage: LLMUsage) -> None:
@@ -303,7 +304,7 @@ class AnthropicClient:
         try:
             async with asyncio.timeout(timeout_seconds):
                 return await self.complete(request, on_usage=report)
-        except TimeoutError:
+        except (TimeoutError, asyncio.CancelledError):
             if on_usage is not None and not reported:
                 await on_usage(ceiling_usage(request, self.model_for(request.tier)))
             raise
@@ -451,17 +452,25 @@ def _batch_item(item: MessageBatchIndividualResponse, *, json_output: bool) -> B
     return BatchItem(item.custom_id, "succeeded", result=result, usage=usage)
 
 
+# For ceiling_usage: the message framing and the structured-output instructions the API adds.
+CEILING_OVERHEAD_TOKENS = 512
+
+
 def ceiling_usage(request: LLMRequest, model: str) -> LLMUsage:
     """The most ``request`` can be billed, for a call whose answer never came: a token a byte
-    (UTF-8) of its prompt, system prompt and schema (a token is never less than a byte, in any
-    script; no cache discount), and ``max_tokens`` of output."""
+    (UTF-8) of its prompt and schema (a token is never less than a byte, in any script) and
+    :data:`CEILING_OVERHEAD_TOKENS`, no cache discount; its system prompt likewise, as a cache
+    write when it is cached (the dearer rate); and ``max_tokens`` of output."""
     schema = json.dumps(request.schema) if request.schema is not None else ""
-    text = request.prompt + (request.system or "") + schema
+    system = len((request.system or "").encode())
+    prompt = len((request.prompt + schema).encode()) + CEILING_OVERHEAD_TOKENS
+    cached = request.cache_system and system > 0
     return LLMUsage(
         PROVIDER,
         model,
-        input_tokens=len(text.encode()),
+        input_tokens=prompt + (0 if cached else system),
         output_tokens=request.max_tokens,
+        cache_write_tokens=system if cached else 0,
     )
 
 

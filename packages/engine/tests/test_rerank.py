@@ -652,6 +652,56 @@ async def test_a_cross_encoder_over_its_budget_keeps_the_retrievers_order(
     assert usage.tokens == sum(query + estimate_tokens(c.document()) for c in candidates)
 
 
+@pytest.mark.parametrize(
+    ("error", "billed_documents"),
+    [
+        (httpx.ReadTimeout("no answer"), [3]),  # sent: Voyage may have done the work
+        (httpx.ConnectError("refused"), []),  # never sent
+    ],
+)
+@respx.mock
+async def test_a_request_without_an_answer_is_billed_only_if_it_went_out(
+    error: httpx.TransportError, billed_documents: list[int]
+) -> None:
+    respx.post(URL).mock(side_effect=error)
+    billed, sink = _sink()
+    async with httpx.AsyncClient() as http:
+        reranker = Reranker(
+            _voyage(http, rerank_max_retries=0), LLMReranker(_model(_picks).client())
+        )
+        ranking = await reranker.rerank(
+            QUERY, _candidates(3), RerankMode.INTERACTIVE, on_rerank_usage=sink
+        )
+    assert not ranking.scored
+    assert [usage.documents for usage in billed] == billed_documents
+
+
+@respx.mock
+async def test_usage_is_recorded_whole_after_the_budget_runs_out(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The sink runs outside the budget: a slow ledger write isn't cut off with the requests."""
+
+    async def slow(request: httpx.Request) -> httpx.Response:
+        await asyncio.sleep(5)
+        return _scored(request)  # pragma: no cover - the budget runs out first
+
+    respx.post(URL).mock(side_effect=slow)
+    monkeypatch.setitem(rerank.POLICIES, RerankMode.INTERACTIVE, RerankPolicy(budget_seconds=0.05))
+    recorded: list[RerankUsage] = []
+
+    async def slow_sink(usage: RerankUsage) -> None:
+        await asyncio.sleep(0.1)  # longer than the budget
+        recorded.append(usage)
+
+    async with httpx.AsyncClient() as http:
+        reranker = Reranker(_voyage(http), LLMReranker(_model(_picks).client()))
+        await reranker.rerank(
+            QUERY, _candidates(60), RerankMode.INTERACTIVE, on_rerank_usage=slow_sink
+        )
+    assert [usage.documents for usage in recorded] == [60]
+
+
 @respx.mock
 async def test_a_rate_limited_cross_encoder_keeps_the_retrievers_order() -> None:
     route = respx.post(URL).mock(
