@@ -2,8 +2,9 @@
 completes exactly once; one that keeps killing its process, or hits the hard time limit, is
 dead-lettered.
 
-Each test runs a Celery worker subprocess against its own Redis databases (broker 11, results 12,
-task state 13) and the test database, so it never touches dev data.
+Each test runs a Celery worker subprocess against its own Redis databases (broker, results, task
+state: one of :data:`SLOTS`, leased for the test so two test sessions on one Redis never share
+them) and the test database, so it never touches dev data. With every slot leased, it skips.
 """
 
 from __future__ import annotations
@@ -33,7 +34,10 @@ from sensei_core.models import JobFailure
 pytestmark = [pytest.mark.integration, pytest.mark.slow]
 
 SUPPORT = Path(__file__).parent / "support"
-BROKER_DB, RESULTS_DB, STATE_DB = 11, 12, 13
+# Broker, results and task state databases; dev uses 0 to 2, and 3 holds the slots' leases.
+SLOTS = ((4, 5, 6), (7, 8, 9), (10, 11, 12), (13, 14, 15))
+LEASE_DB = 3
+LEASE_SECONDS = 900  # longer than a test takes
 
 
 @dataclass
@@ -58,9 +62,32 @@ StartWorker = Callable[..., Stack]
 
 
 @pytest.fixture
-def start_worker(tmp_path: Path, migrated_test_db: Settings) -> Iterator[StartWorker]:
+def slot(migrated_test_db: Settings) -> Iterator[tuple[int, int, int]]:
+    """A free slot of Redis databases, leased for the test (skipped when every one is taken)."""
     base = migrated_test_db.redis.url.get_secret_value()
-    urls = {db: with_redis_db(base, db) for db in (BROKER_DB, RESULTS_DB, STATE_DB)}
+    leases = redis.Redis.from_url(with_redis_db(base, LEASE_DB), decode_responses=True)  # pyright: ignore[reportUnknownMemberType]
+    owner = uuid.uuid4().hex
+    for index, found in enumerate(SLOTS):
+        key = f"sensei-test:redelivery-slot:{index}"
+        if leases.set(key, owner, nx=True, ex=LEASE_SECONDS):
+            try:
+                yield found
+            finally:
+                if leases.get(key) == owner:
+                    leases.delete(key)
+                leases.close()
+            return
+    leases.close()
+    pytest.skip("every Redis slot for worker tests is leased by another test session")
+
+
+@pytest.fixture
+def start_worker(
+    tmp_path: Path, migrated_test_db: Settings, slot: tuple[int, int, int]
+) -> Iterator[StartWorker]:
+    base = migrated_test_db.redis.url.get_secret_value()
+    broker_db, results_db, state_db = slot
+    urls = {db: with_redis_db(base, db) for db in slot}
     clients = [redis.Redis.from_url(url, decode_responses=True) for url in urls.values()]  # pyright: ignore[reportUnknownMemberType]
     for client in clients:
         client.flushdb()  # pyright: ignore[reportUnknownMemberType]
@@ -71,9 +98,9 @@ def start_worker(tmp_path: Path, migrated_test_db: Settings) -> Iterator[StartWo
         env = {
             **os.environ,
             "SENSEI_ENV": "test",
-            "SENSEI_REDIS_URL": urls[STATE_DB],
-            "SENSEI_WORKER_BROKER_URL": urls[BROKER_DB],
-            "SENSEI_WORKER_RESULT_BACKEND": urls[RESULTS_DB],
+            "SENSEI_REDIS_URL": urls[state_db],
+            "SENSEI_WORKER_BROKER_URL": urls[broker_db],
+            "SENSEI_WORKER_RESULT_BACKEND": urls[results_db],
             "SENSEI_DATABASE_URL": database.url.get_secret_value(),
             "SENSEI_DATABASE_SYSTEM_URL": database.system_url.get_secret_value(),
             "PYTHONPATH": os.pathsep.join(
@@ -107,10 +134,10 @@ def start_worker(tmp_path: Path, migrated_test_db: Settings) -> Iterator[StartWo
         producer = make_celery(
             Settings(
                 env="test",
-                redis=RedisSettings(url=SecretStr(urls[STATE_DB])),
+                redis=RedisSettings(url=SecretStr(urls[state_db])),
                 worker=WorkerSettings(
-                    broker_url=SecretStr(urls[BROKER_DB]),
-                    result_backend=SecretStr(urls[RESULTS_DB]),
+                    broker_url=SecretStr(urls[broker_db]),
+                    result_backend=SecretStr(urls[results_db]),
                 ),
             ),
             main="redelivery-test",
