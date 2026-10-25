@@ -1112,7 +1112,7 @@ export interface components {
         EstimateOut: {
             /**
              * Cost Usd
-             * @description Estimated one-time cost of the first full index.
+             * @description Estimated one-time cost of the first full index, without the unpriced models' share.
              */
             cost_usd: string;
             /**
@@ -1148,6 +1148,11 @@ export interface components {
              * @description Estimated tokens to embed.
              */
             tokens: number;
+            /**
+             * Unpriced
+             * @description Models this server has no price for: when any, the cost is unknown.
+             */
+            unpriced?: string[];
         };
         /** EstimateRequest */
         EstimateRequest: {

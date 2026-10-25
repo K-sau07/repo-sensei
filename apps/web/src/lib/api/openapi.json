@@ -584,7 +584,7 @@
       "EstimateOut": {
         "properties": {
           "cost_usd": {
-            "description": "Estimated one-time cost of the first full index.",
+            "description": "Estimated one-time cost of the first full index, without the unpriced models' share.",
             "title": "Cost Usd",
             "type": "string"
           },
@@ -638,6 +638,14 @@
             "description": "Estimated tokens to embed.",
             "title": "Tokens",
             "type": "integer"
+          },
+          "unpriced": {
+            "description": "Models this server has no price for: when any, the cost is unknown.",
+            "items": {
+              "type": "string"
+            },
+            "title": "Unpriced",
+            "type": "array"
           }
         },
         "required": [

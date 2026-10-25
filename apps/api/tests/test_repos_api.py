@@ -533,6 +533,7 @@ async def test_estimate_before_connecting(
     assert estimate["index_minutes"] > 0
     assert float(estimate["cost_usd"]) > 0
     assert estimate["heuristic"] is True
+    assert estimate["unpriced"] == []
     assert (estimate["size_kb"], estimate["stars"]) == (150_000, 120)
 
     by_id = await client.post(

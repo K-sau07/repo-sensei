@@ -149,7 +149,14 @@ class EstimateOut(BaseModel):
     files: int = Field(description="Estimated number of source files.")
     tokens: int = Field(description="Estimated tokens to embed.")
     index_minutes: float
-    cost_usd: Decimal = Field(description="Estimated one-time cost of the first full index.")
+    cost_usd: Decimal = Field(
+        description="Estimated one-time cost of the first full index, without the unpriced"
+        " models' share."
+    )
+    unpriced: list[str] = Field(
+        default_factory=list[str],
+        description="Models this server has no price for: when any, the cost is unknown.",
+    )
     heuristic: bool = Field(default=True, description="Estimates, not measurements.")
 
 
@@ -281,6 +288,7 @@ async def estimate_repo(
         tokens=estimate.tokens,
         index_minutes=estimate.index_minutes,
         cost_usd=estimate.cost_usd,
+        unpriced=list(estimate.unpriced),
     )
 
 

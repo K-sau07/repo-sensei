@@ -79,8 +79,15 @@ export function formatSize(sizeKb: number): string {
   return `${(mb / 1024).toFixed(1)} GB`;
 }
 
+/** The first index's cost: unknown when the server has no price for a model it uses. */
+export function formatCost(estimate: Pick<Estimate, "cost_usd" | "unpriced">): string {
+  if (estimate.unpriced?.length) return "Unknown";
+  return `~$${Number(estimate.cost_usd).toFixed(2)}`;
+}
+
 /** Stars, size, time and cost before connecting. */
 export function EstimateCard({ estimate }: { estimate: Estimate }) {
+  const unpriced = estimate.unpriced ?? [];
   return (
     <section
       aria-label={`Estimate for ${estimate.full_name}`}
@@ -104,7 +111,7 @@ export function EstimateCard({ estimate }: { estimate: Estimate }) {
           ["Files", `~${compact.format(estimate.files)}`],
           ["Tokens", `~${compact.format(estimate.tokens)}`],
           ["Indexing time", minutes(estimate.index_minutes)],
-          ["First index", `~$${Number(estimate.cost_usd).toFixed(2)}`],
+          ["First index", formatCost(estimate)],
         ].map(([term, value]) => (
           <div key={term} className="flex flex-col gap-0.5">
             <dt className="text-xs text-fg-muted">{term}</dt>
@@ -112,6 +119,11 @@ export function EstimateCard({ estimate }: { estimate: Estimate }) {
           </div>
         ))}
       </dl>
+      {unpriced.length > 0 && (
+        <p className="text-xs text-fg-muted">
+          No price for {unpriced.join(", ")} on this server, so the cost is unknown.
+        </p>
+      )}
       {estimate.heuristic && (
         <p className="text-xs text-fg-faint">
           Estimates from GitHub&apos;s numbers, not a measurement.

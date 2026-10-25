@@ -21,8 +21,8 @@ history included) is the last resort.
 - summaries (Haiku, batch): ~2,600 input and ~540 output tokens a code file (fastapi-template:
   152 files for $0.035, the batch done in 3.6 minutes).
 
-The models priced are the deployment's (:class:`EstimateModels`); one without a price adds
-nothing to the cost, with a warning.
+The models priced are the deployment's (:class:`EstimateModels`); one without a price is named in
+``unpriced`` (with a warning), and the cost is only what the others add: not a total.
 
 Rounded and labelled estimates in the UI.
 """
@@ -132,7 +132,8 @@ class IndexEstimate:
     files: int
     tokens: int
     index_minutes: float
-    cost_usd: Decimal
+    cost_usd: Decimal  # without the unpriced models' share
+    unpriced: tuple[str, ...] = ()  # models without a price: the cost is incomplete
 
 
 def tree_stats(body: Mapping[str, Any]) -> TreeStats | None:
@@ -196,9 +197,11 @@ def estimate_index(
         + (SUMMARY_BATCH_SECONDS + SUMMARY_SECONDS_PER_FILE * code_files if code_files else 0)
     )
     minutes = round(seconds / 60, 1)
+    unpriced: list[str] = []
     embed = _priced(
         calc.cost("voyage", models.embed_model, tokens_in=chunks * TOKENS_PER_CHUNK),
         models.embed_model,
+        unpriced,
     )
     # Priced a file at a time (each request is short; the total isn't one long prompt).
     per_file = _priced(
@@ -210,15 +213,17 @@ def estimate_index(
             batch=True,
         ),
         models.summary_model,
+        unpriced,
     )
     compute = _priced(
-        calc.cost("sensei", "index-worker", units=Decimal(str(minutes))), "index-worker"
+        calc.cost("sensei", "index-worker", units=Decimal(str(minutes))), "index-worker", unpriced
     )
     return IndexEstimate(
         files=files,
         tokens=tokens,
         index_minutes=minutes,
         cost_usd=embed + per_file * code_files + compute,
+        unpriced=tuple(unpriced),
     )
 
 
@@ -227,8 +232,9 @@ def _embed_seconds(chunks: int, tokens_per_minute: int) -> float:
     return max(chunks / EMBED_CHUNKS_PER_SECOND, chunks * TOKENS_PER_CHUNK * 60 / tokens_per_minute)
 
 
-def _priced(cost: Decimal | None, model: str) -> Decimal:
+def _priced(cost: Decimal | None, model: str, unpriced: list[str]) -> Decimal:
     if cost is None:
         log.warning("estimate leaves out a model without a price", model=model)
+        unpriced.append(model)
         return Decimal(0)
     return cost

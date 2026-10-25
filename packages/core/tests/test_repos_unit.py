@@ -157,7 +157,7 @@ def test_embedding_time_respects_the_accounts_tokens_a_minute() -> None:
     assert 6 < slower.index_minutes - paid.index_minutes < 7.5
 
 
-def test_the_deployments_models_are_priced_and_one_without_a_price_is_left_out() -> None:
+def test_the_deployments_models_are_priced_and_one_without_a_price_is_named() -> None:
     settings = Settings.model_validate({"anthropic": {"fast_model": "claude-sonnet-5-5"}})
     models = EstimateModels.from_settings(settings)
     assert models == EstimateModels(summary_model="claude-sonnet-5-5")
@@ -169,6 +169,8 @@ def test_the_deployments_models_are_priced_and_one_without_a_price_is_left_out()
             size_kb, languages, CALC, tree, EstimateModels(summary_model="claude-unknown-1")
         )
     assert unpriced.cost_usd < haiku.cost_usd
+    assert unpriced.unpriced == ("claude-unknown-1",)
+    assert haiku.unpriced == ()
     assert {"event": "estimate leaves out a model without a price", "model": "claude-unknown-1",
             "log_level": "warning"}.items() <= logs[0].items()  # fmt: skip
 
