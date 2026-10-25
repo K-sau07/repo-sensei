@@ -7,6 +7,7 @@ from __future__ import annotations
 import tarfile
 import uuid
 from collections.abc import AsyncGenerator
+from contextlib import nullcontext
 from pathlib import Path
 
 import pytest
@@ -20,7 +21,16 @@ from sensei_core.models import CodeChunk, CodeNode, Repo, RepoSource, Snapshot
 from sensei_core.models.chunks import CHUNK_PARTITIONS, bm25_index, chunk_partitions
 from sensei_core.orgs.service import OrgService
 from sensei_engine.chunk.files import chunk_file
-from sensei_engine.chunk.store import ChunkWriter, FileChunks, save_chunks
+from sensei_engine.chunk.store import (
+    ChunkWriter,
+    FileChunks,
+    SnapshotKey,
+    discard_generation,
+    make_live,
+    new_generation,
+    prune_chunks,
+    save_chunks,
+)
 from sensei_engine.ingest.discover import discover
 from sensei_engine.ingest.store import file_ids, save_discovery
 from sensei_engine.parse.parser import parse_file
@@ -195,6 +205,78 @@ async def test_chunks_are_written_in_batches(db_session: AsyncSession, tmp_path:
         await writer.add(FileChunks("app/models.py", "python", chunks))
     assert writer.written == 3 * len(chunks)
     assert await writer.finish() == 3 * len(chunks)
+
+
+async def _keys(db: AsyncSession, snapshot: Snapshot) -> set[uuid.UUID]:
+    """The chunks search finds for ``make_item``."""
+    hits = await keyword_search(
+        db, repo_id=snapshot.repo_id, snapshot_id=snapshot.id, query="make_item item"
+    )
+    return {hit.chunk_id for hit in hits}
+
+
+async def _generation_rows(db: AsyncSession, snapshot: Snapshot) -> dict[int, int]:
+    rows = await db.execute(
+        select(CodeChunk.generation, func.count())
+        .where(CodeChunk.snapshot_id == snapshot.id)
+        .group_by(CodeChunk.generation)
+    )
+    return {int(generation): int(count) for generation, count in rows}
+
+
+async def _write_generation(
+    db: AsyncSession, snapshot: Snapshot, file_ids: dict[str, uuid.UUID], generation: int
+) -> int:
+    """A run's rows under ``generation``, not made live (batches in this one session)."""
+    key = SnapshotKey(snapshot.org_id, snapshot.repo_id, snapshot.id)
+    writer = ChunkWriter(lambda: nullcontext(db), key, file_ids, generation=generation)
+    for path, content in FILES.items():
+        language = "python" if path.endswith(".py") else "markdown"
+        await writer.add(FileChunks(path, language, chunk_file(path, language, content)))
+    return await writer.finish()
+
+
+async def test_search_reads_the_live_generation_until_another_is_made_live(
+    db_session: AsyncSession, tmp_path: Path
+) -> None:
+    snapshot, file_ids = await _index(db_session, tmp_path, FILES)
+    live = snapshot.chunk_generation
+    assert live is not None
+    first = await _keys(db_session, snapshot)
+    assert first
+
+    later = await new_generation(db_session)
+    assert later > live
+    written = await _write_generation(db_session, snapshot, file_ids, later)
+    assert await _generation_rows(db_session, snapshot) == {live: written, later: written}
+    assert await _keys(db_session, snapshot) == first  # the new rows aren't searched yet
+
+    assert await make_live(db_session, snapshot, later, written) == written  # the old ones go
+    assert (snapshot.chunk_generation, snapshot.chunk_count) == (later, written)
+    now = await _keys(db_session, snapshot)
+    assert now
+    assert now.isdisjoint(first)
+    assert await _generation_rows(db_session, snapshot) == {later: written}
+
+
+async def test_a_run_that_stopped_is_discarded_and_swept(
+    db_session: AsyncSession, tmp_path: Path
+) -> None:
+    snapshot, file_ids = await _index(db_session, tmp_path, FILES)
+    live = snapshot.chunk_generation
+    assert live is not None
+    rows = snapshot.chunk_count
+    stopped = await new_generation(db_session)
+    written = await _write_generation(db_session, snapshot, file_ids, stopped)
+    # The live generation is never discarded; the stopped run's rows are.
+    assert await discard_generation(db_session, snapshot.repo_id, snapshot.id, live) == 0
+    assert await discard_generation(db_session, snapshot.repo_id, snapshot.id, stopped) == written
+    assert await _generation_rows(db_session, snapshot) == {live: rows}
+    # Finalize's prune sweeps what a run left (one still writing for a cancelled job, say).
+    another = await new_generation(db_session)
+    await _write_generation(db_session, snapshot, file_ids, another)
+    assert await prune_chunks(db_session, snapshot.repo_id, keep=snapshot.id) == written
+    assert await _generation_rows(db_session, snapshot) == {live: rows}
 
 
 async def test_chunks_are_org_scoped(db_session: AsyncSession, tmp_path: Path) -> None:
@@ -413,7 +495,7 @@ async def test_a_snapshot_is_searched_only_once_chunked(
 
     assert all(await found())
     assert await searchable_partition(db_session, repo_id, snapshot_id) is not None
-    snapshot.chunk_count = None  # being chunked again, say
+    snapshot.chunk_generation = None  # never chunked, say
     await db_session.flush()
     assert await searchable_partition(db_session, repo_id, snapshot_id) is None
     assert await found() == ([], [])

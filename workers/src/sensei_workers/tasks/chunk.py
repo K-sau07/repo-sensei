@@ -6,15 +6,17 @@ code parsed again there. Chunks are saved as they come, ``BATCH_ROWS`` rows at a
 (:class:`~sensei_engine.chunk.store.ChunkWriter`), so a large repository's never sit in memory
 at once.
 
-All of it is one transaction: the snapshot's old chunks are deleted, the new ones written and
-``chunk_count`` set together. Keyword search serves a snapshot only once ``chunk_count`` is set;
-a stage that runs again (a retry) keeps serving the snapshot's chunks until the new ones commit,
-and a run that stops part way leaves them as they were; so does a reindex of the same commit
-(its files keep their ids when discovered again: only the chunks of files that are gone go before
-this stage). Then the repository's partition is vacuumed and analyzed
-(:func:`~sensei_workers.statistics.vacuum_chunks`: the old rows out of its BM25 statistics, the
-new ones in the planner's). Progress is reported in files, at most once a second, each report in
-its own transaction (which also stops the stage if the job was cancelled).
+A run writes the snapshot's chunks under a new generation, each batch committed on its own (no
+transaction lasts the stage: VACUUM, DDL and the rest of the database never wait on it). Search
+keeps reading the live generation meanwhile; once every file is written, one short transaction
+makes the new one live (with ``chunk_count``), deletes the old one's rows and completes the
+stage (see :mod:`sensei_engine.chunk.store`). A run that fails or is cancelled deletes what it
+wrote and leaves the live generation as it was; so does a reindex of the same commit (its files
+keep their ids when discovered again: only the chunks of files that are gone go before this
+stage). Afterwards the repository's partition is analyzed, or vacuumed when rows were deleted
+(:mod:`sensei_workers.statistics`: deleted rows count in its BM25 statistics until a VACUUM).
+Progress is reported in files, at most once a second, each report in its own transaction (which
+also stops the stage if the job was cancelled).
 """
 
 from __future__ import annotations
@@ -30,16 +32,24 @@ from sensei_core.jobs import TaskName
 from sensei_core.logging import get_logger
 from sensei_core.models import ACTIVE_JOB_STATUSES, Repo, RepoFile, Snapshot, Stage
 from sensei_engine.chunk.stage import ChunkReport, chunk_files, chunkable
-from sensei_engine.chunk.store import ChunkWriter, FileChunks
+from sensei_engine.chunk.store import (
+    ChunkWriter,
+    FileChunks,
+    SnapshotKey,
+    discard_generation,
+    make_live,
+    new_generation,
+)
 from sensei_engine.snapshots import ArchiveTooLargeError
 from sensei_workers.app import celery_app
 from sensei_workers.base import NotYetError, SenseiTask
 from sensei_workers.ingest.cache import repo_lock
 from sensei_workers.jobstate import JobGoneError, job_scope
 from sensei_workers.runtime import get_runtime
-from sensei_workers.statistics import vacuum_chunks
+from sensei_workers.statistics import analyze_chunks
 from sensei_workers.tasks.discover import SnapshotUnavailableError, local_worktree
 from sensei_workers.tasks.ingest import IngestTask, fail_job
+from sensei_workers.tasks.maintenance import request_vacuum
 
 log = get_logger(__name__)
 
@@ -106,37 +116,47 @@ async def _progress(
     task: SenseiTask, target: Target, job_id: uuid.UUID, done: int, total: int
 ) -> None:
     async with job_scope(task, target.org_id, job_id) as scope:
-        scope.require(Stage.CHUNKS)
-        scope.machine.update_progress(Stage.CHUNKS, done, total)
+        job = scope.require(Stage.CHUNKS)
+        # A retry starts over: its count stays at the last attempt's until it gets past it.
+        previous = int((job.stages or {}).get("chunks", {}).get("done") or 0)
+        scope.machine.update_progress(Stage.CHUNKS, max(done, previous), total)
 
 
-async def _rewrite(
-    task: SenseiTask, target: Target, job_id: uuid.UUID, root: Path, files: Files
-) -> tuple[ChunkReport, int]:
-    """Chunk the files and replace the snapshot's chunks with theirs, in one transaction (see
-    above); returns the report and how many chunks were written."""
-    report = ChunkReport()
+async def _generation(task: SenseiTask, target: Target) -> int:
     async with task.org_session(target.org_id) as db:
-        snapshot = await db.get(Snapshot, target.snapshot_id)
-        if snapshot is None:
-            raise JobGoneError("the snapshot is gone")
-        file_ids = {path: file_id for path, (file_id, _) in files.items()}
-        writer = ChunkWriter(db, snapshot, file_ids)
-        pairs = [(path, language) for path, (_, language) in files.items()]
-        last = time.monotonic()
-        # The pool's results are read on the event loop: nothing else runs on it meanwhile.
-        for chunked in chunk_files(root, pairs):
-            report.add(chunked)
-            flushed = writer.written
-            if chunked.chunks:
-                await writer.add(FileChunks(chunked.path, chunked.language, chunked.chunks))
-            now = time.monotonic()
-            if writer.written != flushed or now - last >= PROGRESS_EVERY_SECONDS:
-                last = now
-                await _progress(task, target, job_id, report.files, len(files))
-        written = await writer.finish()
-        snapshot.chunk_count = written
-    return report, written
+        return await new_generation(db)
+
+
+async def _write(
+    task: SenseiTask,
+    target: Target,
+    job_id: uuid.UUID,
+    root: Path,
+    files: Files,
+    *,
+    generation: int,
+) -> tuple[ChunkReport, int]:
+    """Chunk the files under ``generation``, a batch a transaction; returns the report and how
+    many chunks were written."""
+    report = ChunkReport()
+    snapshot = SnapshotKey(target.org_id, target.repo_id, target.snapshot_id)
+    file_ids = {path: file_id for path, (file_id, _) in files.items()}
+    writer = ChunkWriter(
+        lambda: task.org_session(target.org_id), snapshot, file_ids, generation=generation
+    )
+    pairs = [(path, language) for path, (_, language) in files.items()]
+    last = time.monotonic()
+    # The pool's results are read on the event loop: nothing else runs on it meanwhile.
+    for chunked in chunk_files(root, pairs):
+        report.add(chunked)
+        flushed = writer.written
+        if chunked.chunks:
+            await writer.add(FileChunks(chunked.path, chunked.language, chunked.chunks))
+        now = time.monotonic()
+        if writer.written != flushed or now - last >= PROGRESS_EVERY_SECONDS:
+            last = now
+            await _progress(task, target, job_id, report.files, len(files))
+    return report, await writer.finish()
 
 
 async def _finish(
@@ -145,11 +165,17 @@ async def _finish(
     job_id: uuid.UUID,
     report: ChunkReport,
     *,
+    generation: int,
     written: int,
     seconds: float,
-) -> None:
+) -> int:
+    """Make the generation live and complete the stage; returns the old rows deleted."""
     async with job_scope(task, target.org_id, job_id) as scope:
         scope.require(Stage.CHUNKS)
+        snapshot = await scope.db.get(Snapshot, target.snapshot_id)
+        if snapshot is None:
+            raise JobGoneError("the snapshot is gone")
+        deleted = await make_live(scope.db, snapshot, generation, written)
         machine = scope.machine
         total = max(report.files, 1)
         machine.update_progress(Stage.CHUNKS, total, total)
@@ -160,6 +186,22 @@ async def _finish(
         if report.failed:
             machine.log(f"{report.failed:,} files couldn't be chunked.", level="warn")
         machine.complete(Stage.CHUNKS)
+        return deleted
+
+
+async def _discard(task: SenseiTask, target: Target, generation: int) -> int:
+    async with task.org_session(target.org_id) as db:
+        return await discard_generation(db, target.repo_id, target.snapshot_id, generation)
+
+
+def _discard_quietly(task: SenseiTask, target: Target, generation: int) -> None:
+    """Delete what a run that stopped wrote (finalize's prune sweeps it if this fails too)."""
+    runtime = get_runtime()
+    try:
+        if runtime.run(_discard(task, target, generation)):
+            request_vacuum(target.repo_id, eager=bool(task.request.is_eager))
+    except Exception:
+        log.warning("couldn't discard a chunk generation", generation=generation, exc_info=True)
 
 
 @celery_app.task(
@@ -177,22 +219,36 @@ def chunk_snapshot(self: IngestTask, *, job_id: str, org_id: str, repo_id: str) 
     if target is None:
         return None
     files = runtime.run(_files(self, target))
+    generation = runtime.run(_generation(self, target))
     started = time.monotonic()
     try:
         with repo_lock(runtime.settings.ingest.cache_dir, str(target.repo_id)):
             root = local_worktree(target)
-            report, written = runtime.run(_rewrite(self, target, job, root, files))
+            written_by = _write(self, target, job, root, files, generation=generation)
+            report, written = runtime.run(written_by)
+        seconds = time.monotonic() - started
+        deleted = runtime.run(
+            _finish(
+                self, target, job, report, generation=generation, written=written, seconds=seconds
+            )
+        )
     except SnapshotUnavailableError:
+        _discard_quietly(self, target, generation)
         message = "The snapshot of this commit is missing. Reindex the repository."
         runtime.run(fail_job(self, org_id, job, "snapshot_unavailable", message))
         return None
     except ArchiveTooLargeError:
+        _discard_quietly(self, target, generation)
         message = "The snapshot of this commit is larger than the size limit."
         runtime.run(fail_job(self, org_id, job, "snapshot_too_large", message))
         return None
-    seconds = time.monotonic() - started
-    runtime.run(_finish(self, target, job, report, written=written, seconds=seconds))
-    runtime.run(vacuum_chunks(target.repo_id))
+    except BaseException:
+        _discard_quietly(self, target, generation)
+        raise
+    if deleted:
+        request_vacuum(target.repo_id, eager=bool(self.request.is_eager))
+    else:
+        runtime.run(analyze_chunks(target.repo_id))
     log.info(
         "files chunked",
         files=report.files,

@@ -48,12 +48,12 @@ from sensei_engine.ingest.store import file_ids
 from sensei_engine.llm import rollups, summaries
 from sensei_engine.search.bm25 import keyword_search
 from sensei_testing.anthropic import FakeAnthropic, batch, jsonl, message
+from sensei_workers import statistics
 from sensei_workers.base import RetryableError
 from sensei_workers.ingest.git import GitRunner
 from sensei_workers.runtime import Runtime, set_runtime
-from sensei_workers.statistics import vacuum_chunks
 from sensei_workers.tasks import chunk as chunk_task
-from sensei_workers.tasks import orchestrate
+from sensei_workers.tasks import maintenance, orchestrate
 from sensei_workers.tasks.merkle import build_merkle
 from sensei_workers.tasks.orchestrate import run_index_job
 from sensei_workers.tasks.summaries import summarize_snapshot
@@ -359,19 +359,31 @@ async def _chunks(
         return snapshot, sorted((p, k, s, e, key, linked) for p, k, s, e, key, linked in rows)
 
 
-async def _partition(database: Database, repo_id: uuid.UUID) -> str:
-    async with database.session() as db:
-        found = await db.scalar(
-            text("SELECT DISTINCT tableoid::regclass::text FROM chunks WHERE repo_id = :r"),
-            {"r": repo_id},
-        )
-        return str(found)
+@pytest.fixture
+def upkeep(monkeypatch: pytest.MonkeyPatch) -> dict[str, list[uuid.UUID]]:
+    """The repositories the stages asked to analyze, and to vacuum (still done)."""
+    calls: dict[str, list[uuid.UUID]] = {"analyze": [], "vacuum": []}
+    analyze, vacuum = statistics.analyze_chunks, maintenance.request_vacuum
+
+    async def analyzed(repo_id: uuid.UUID) -> None:
+        calls["analyze"].append(repo_id)
+        await analyze(repo_id)
+
+    def vacuumed(repo_id: uuid.UUID, *, eager: bool = False) -> bool:
+        calls["vacuum"].append(repo_id)
+        return vacuum(repo_id, eager=eager)
+
+    monkeypatch.setattr(chunk_task, "analyze_chunks", analyzed)
+    monkeypatch.setattr(chunk_task, "request_vacuum", vacuumed)
+    monkeypatch.setattr(orchestrate, "request_vacuum", vacuumed)
+    return calls
 
 
 def test_the_chunks_stage_saves_the_snapshots_chunks(
     runtime: Runtime,
     ids: tuple[uuid.UUID, uuid.UUID, uuid.UUID],
     github: respx.MockRouter,
+    upkeep: dict[str, list[uuid.UUID]],
 ) -> None:
     org_id, repo_id, job_id = ids
     _run(org_id, repo_id, job_id)
@@ -388,10 +400,9 @@ def test_the_chunks_stage_saves_the_snapshots_chunks(
         ("src/app.py", "function", 6, 7, "py src/app.py/main().", True),
     ]
     assert snapshot.chunk_count == len(chunks)
-    # The partition the stage vacuumed afterwards is the one holding them.
-    assert runtime.run(vacuum_chunks(repo_id)) == runtime.run(
-        _partition(runtime.system_database, repo_id)
-    )
+    assert snapshot.chunk_generation is not None
+    # Rows written, none deleted: the repository's partition analyzed, not vacuumed.
+    assert upkeep == {"analyze": [repo_id], "vacuum": []}
     details = job.stages["chunks"]["details"]
     assert (details["files"], details["chunked"], details["failed"]) == (4, 4, 0)
     assert details["chunks"] == len(chunks)
@@ -411,22 +422,42 @@ async def _chunks_stage_again(database: Database, job_id: uuid.UUID) -> None:
 
 
 async def _seen(database: Database, snapshot_id: uuid.UUID) -> tuple[int | None, int]:
-    """What search sees of the snapshot: its chunk count and its chunks."""
+    """What search sees of the snapshot: its chunk count and its live generation's chunks."""
     async with database.session() as db:
         snapshot = await db.get(Snapshot, snapshot_id)
         assert snapshot is not None
         rows = await db.scalar(
-            select(func.count()).select_from(CodeChunk).where(CodeChunk.snapshot_id == snapshot_id)
+            select(func.count())
+            .select_from(CodeChunk)
+            .where(
+                CodeChunk.snapshot_id == snapshot_id,
+                CodeChunk.generation == snapshot.chunk_generation,
+            )
         )
         return snapshot.chunk_count, int(rows or 0)
 
 
+async def _chunk_ids(database: Database, snapshot_id: uuid.UUID) -> set[uuid.UUID]:
+    """Every chunk row of the snapshot, of any generation."""
+    async with database.session() as db:
+        found = await db.scalars(select(CodeChunk.id).where(CodeChunk.snapshot_id == snapshot_id))
+        return set(found)
+
+
+async def _lock_chunks(database: Database) -> None:
+    """Take the lock DDL on ``chunks`` takes, without waiting (raises if it's held)."""
+    async with database.session() as db:
+        await db.execute(text("LOCK TABLE chunks IN ACCESS EXCLUSIVE MODE NOWAIT"))
+        await db.rollback()
+
+
 @pytest.mark.parametrize("fails", [False, True])
-def test_chunking_a_snapshot_again_serves_its_chunks_until_the_new_ones_commit(
+def test_chunking_a_snapshot_again_serves_its_chunks_until_the_new_ones_are_live(
     runtime: Runtime,
     ids: tuple[uuid.UUID, uuid.UUID, uuid.UUID],
     github: respx.MockRouter,
     monkeypatch: pytest.MonkeyPatch,
+    upkeep: dict[str, list[uuid.UUID]],
     fails: bool,
 ) -> None:
     org_id, repo_id, job_id = ids
@@ -436,18 +467,27 @@ def test_chunking_a_snapshot_again_serves_its_chunks_until_the_new_ones_commit(
     assert snapshot_id is not None
     before = runtime.run(_seen(runtime.system_database, snapshot_id))
     assert before == (5, 5)
+    old = runtime.run(_chunk_ids(runtime.system_database, snapshot_id))
 
     seen: list[tuple[int | None, int]] = []
+    written: list[int] = []
 
     class Watched(ChunkWriter):
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            super().__init__(*args, **{**kwargs, "batch_rows": 1})  # every chunk committed
+
         async def add(self, file: FileChunks) -> None:
             await super().add(file)
+            written.append(self.written)
             seen.append(await _seen(runtime.system_database, snapshot_id))
-            if fails:
+            # Between batches no transaction is open: DDL on chunks doesn't wait on the stage.
+            await _lock_chunks(runtime.system_database)
+            if fails and self.written >= 3:
                 raise RuntimeError("the worker went away")
 
     monkeypatch.setattr(chunk_task, "ChunkWriter", Watched)
     runtime.run(_chunks_stage_again(runtime.system_database, job_id))
+    upkeep["analyze"].clear()
     kwargs = {"job_id": str(job_id), "org_id": str(org_id), "repo_id": str(repo_id)}
     if fails:
         with pytest.raises(RuntimeError):
@@ -455,11 +495,19 @@ def test_chunking_a_snapshot_again_serves_its_chunks_until_the_new_ones_commit(
     else:
         assert chunk_task.chunk_snapshot.run(**kwargs) == 5
 
-    # Mid-run, the old chunks were still there to search; after, the new ones (or, if the run
-    # failed, still the old ones).
+    # Mid-run, new rows were committed, and search still saw the old ones only.
+    assert written[-1] >= 3
     assert seen
     assert set(seen) == {before}
     assert runtime.run(_seen(runtime.system_database, snapshot_id)) == before
+    rows = runtime.run(_chunk_ids(runtime.system_database, snapshot_id))
+    if fails:
+        # The live generation as it was, and nothing of the stopped run's left.
+        assert rows == old
+    else:
+        assert rows.isdisjoint(old)  # the new generation's, the old one's deleted
+    # Rows were deleted either way: the partition is vacuumed.
+    assert upkeep == {"analyze": [], "vacuum": [repo_id]}
 
 
 async def _another_job(database: Database, org_id: uuid.UUID, repo_id: uuid.UUID) -> uuid.UUID:

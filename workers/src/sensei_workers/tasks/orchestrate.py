@@ -11,8 +11,9 @@ The stage task ids are kept in Redis so cancelling can revoke the ones still que
 are summaries when the server has no Anthropic key: that stage passes itself over), the
 repository becomes ``ready`` at the indexed commit, and the job succeeds. The chunks of the
 repository's other snapshots are pruned in the same transaction (search serves the indexed
-commit), and its chunks partition is vacuumed after. A job that reaches finalize straight from
-symbols (its chain was sent before the chunks stage existed) gets the rest of the chain sent.
+commit), with its own rows outside the live generation; its chunks partition is vacuumed after
+(a task of its own). A job that reaches finalize straight from symbols (its chain was sent
+before the chunks stage existed) gets the rest of the chain sent.
 """
 
 from __future__ import annotations
@@ -35,10 +36,10 @@ from sensei_workers.app import celery_app
 from sensei_workers.base import NotYetError, SenseiTask
 from sensei_workers.jobstate import job_scope
 from sensei_workers.runtime import get_runtime
-from sensei_workers.statistics import vacuum_chunks
 from sensei_workers.tasks.chunk import chunk_snapshot
 from sensei_workers.tasks.discover import discover_files
 from sensei_workers.tasks.ingest import IngestTask, clone_snapshot
+from sensei_workers.tasks.maintenance import request_vacuum
 from sensei_workers.tasks.merkle import build_merkle
 from sensei_workers.tasks.parse import parse_snapshot
 from sensei_workers.tasks.summaries import summarize_snapshot
@@ -134,7 +135,7 @@ def finalize_index(self: IngestTask, *, job_id: str, org_id: str, repo_id: str) 
         return None
     sha, pruned = finished
     if pruned:
-        runtime.run(vacuum_chunks(uuid.UUID(repo_id)))
+        request_vacuum(uuid.UUID(repo_id), eager=bool(self.request.is_eager))
     log.info("index job succeeded", commit_sha=sha, pruned_chunks=pruned)
     return sha
 

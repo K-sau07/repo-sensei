@@ -9,8 +9,10 @@ the identifier itself is a rare term that ranks its definition first, and its wo
 prose. Every term is optional (pg_textsearch queries are OR); BM25 weighs rare terms up and
 repeats down.
 
-A snapshot is searched once it is chunked (``chunk_count`` set: the chunks stage sets it in the
-transaction that writes them); before that, search finds nothing in it.
+A snapshot is searched once it is chunked, and only its live generation of chunks (the chunks
+stage makes a run's generation live with ``chunk_count`` once it has written them all; see
+:mod:`sensei_engine.chunk.store`): the gate is part of each query, so a search sees one
+generation whole, never a run still writing.
 
 Each leg takes the best ``k`` chunks of the snapshot and view that its filters (kind, language,
 path prefix, file role) keep, from the repository's partition, in the order of that partition's
@@ -119,7 +121,7 @@ async def searchable_partition(
     yet, being chunked for the first time, or not the session's)."""
     ready = await db.scalar(
         text(
-            "SELECT chunk_count IS NOT NULL FROM snapshots "
+            "SELECT chunk_generation IS NOT NULL FROM snapshots "
             "WHERE id = :snapshot_id AND repo_id = :repo_id"
         ),
         {"snapshot_id": snapshot_id, "repo_id": repo_id},
@@ -150,7 +152,13 @@ async def bm25_search(
         return []
     column = COLUMNS[leg]
     index = bm25_index(partition, column)
-    conditions = ["c.repo_id = :repo_id", "c.snapshot_id = :snapshot_id", "c.view = :view"]
+    conditions = [
+        "c.repo_id = :repo_id",
+        "c.snapshot_id = :snapshot_id",
+        "c.generation = (SELECT s.chunk_generation FROM snapshots s "
+        "WHERE s.id = :snapshot_id AND s.repo_id = :repo_id)",
+        "c.view = :view",
+    ]
     params: dict[str, Any] = {
         "repo_id": repo_id,
         "snapshot_id": snapshot_id,

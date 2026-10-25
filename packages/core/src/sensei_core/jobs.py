@@ -46,6 +46,7 @@ class TaskName(enum.StrEnum):
     FINALIZE_INDEX = "sensei.ingest.finalize_index"
     RUN_INDEX_JOB = "sensei.ingest.run_index_job"
     EVICT_REPO_CACHE = "sensei.maintenance.evict_repo_cache"
+    VACUUM_CHUNKS = "sensei.maintenance.vacuum_chunks"
     SWEEP_STALLED_JOBS = "sensei.maintenance.sweep_stalled_jobs"
 
 

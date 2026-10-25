@@ -10,6 +10,8 @@ index with the first partition's statistics. BM25 statistics are thus a partitio
 repository hashed there). Every partition has the org isolation policy too.
 
 ``view`` is ``code`` (the chunk itself); 2.8 adds ``summary`` rows for the same symbols.
+``generation`` is the run of the chunks stage that wrote the row: search reads a snapshot's live
+generation only (``snapshots.chunk_generation``; see :mod:`sensei_engine.chunk.store`).
 ``symbol_id`` links a definition's chunks to its node (set to null if that node goes; the
 ``symbol_key`` stays). ``embedding`` is filled by 2.7.
 """
@@ -19,6 +21,7 @@ from __future__ import annotations
 import uuid
 
 from sqlalchemy import (
+    BigInteger,
     ForeignKeyConstraint,
     Index,
     Integer,
@@ -83,6 +86,7 @@ class CodeChunk(OrgScopedMixin, Base):
         primary_key=True, default=new_id, server_default=text("uuidv7()")
     )
     snapshot_id: Mapped[uuid.UUID] = mapped_column()
+    generation: Mapped[int] = mapped_column(BigInteger, server_default="0")
     file_id: Mapped[uuid.UUID] = mapped_column()
     owner_file_id: Mapped[uuid.UUID] = mapped_column()  # deleted and rebuilt with this file
     symbol_id: Mapped[uuid.UUID | None] = mapped_column()

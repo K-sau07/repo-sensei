@@ -100,6 +100,8 @@ class Snapshot(IdMixin, OrgScopedMixin, Base):
     symbol_count: Mapped[int | None] = mapped_column(Integer)
     # Chunks saved for the snapshot (None: not chunked yet), for keyword and semantic search.
     chunk_count: Mapped[int | None] = mapped_column(Integer)
+    # The generation of chunks search reads (None: none live); set with ``chunk_count``.
+    chunk_generation: Mapped[int | None] = mapped_column(BigInteger)
     # What discovery found: totals per language, role and flag, frameworks, skipped paths.
     summary: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
