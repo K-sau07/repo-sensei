@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 
 import httpx2
 import pytest
@@ -14,6 +15,7 @@ from redis.exceptions import ConnectionError as RedisConnectionError
 from sensei_engine.ingest.constellation import LAYERS, OTHER_LAYER
 from sensei_engine.llm.anthropic_client import LLMUsage
 from sensei_engine.search.route import (
+    _REGEX_SIGNS,  # pyright: ignore[reportPrivateUsage]
     LANES,
     Lane,
     Layer,
@@ -165,6 +167,38 @@ def test_a_subscript_or_generic_is_a_literal_not_a_pattern(query: str) -> None:
 @pytest.mark.parametrize("pattern", ["[a-z]+_id", "[^/]+\\.py", "id[0-9]+", "[A-F]"])
 def test_a_character_class_is_a_pattern(pattern: str) -> None:
     assert classify(pattern).route.regex == pattern
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "rate limiting in middleware/ for UserService",
+        "how are sessions read in web/src/lib/session.ts",
+        "app/models.py",
+    ],
+)
+def test_a_path_narrows_the_search_without_deciding_it(query: str) -> None:
+    classified = classify(query)
+    assert not classified.decided
+    assert classified.route.query_class is not QueryClass.REGEX
+    assert classified.route.paths
+
+
+def test_a_definition_asked_for_in_a_file_is_a_symbol_query_within_it() -> None:
+    route = classify("where is get_user defined in api/users.py?").route
+    assert (route.query_class, route.symbol, route.paths) == (
+        QueryClass.SYMBOL, "get_user", ("api/users.py",),
+    )  # fmt: skip
+    # Quoted, a path is text to find.
+    assert classify('every mention of "api/users.py"').route.query_class is QueryClass.REGEX
+
+
+@pytest.mark.parametrize("query", ["[" * 40_000, "[a-" * 14_000, "x" * 40_000 + "[a-z]"])
+def test_the_rules_take_linear_time_on_a_long_query(query: str) -> None:
+    started = time.perf_counter()
+    classify(query)
+    _REGEX_SIGNS.search(query)
+    assert time.perf_counter() - started < 0.5
 
 
 def test_abbreviations_are_not_literals() -> None:

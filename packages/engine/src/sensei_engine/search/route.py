@@ -62,6 +62,8 @@ CACHE_TTL_SECONDS = 7 * 24 * 3600
 TIMEOUT_SECONDS = 8.0
 MAX_TOKENS = 2_000  # the answer is ~150 tokens; the rest is room for the model's thinking
 MAX_GUESSES = 8  # per list in the model's answer
+# The rules read this much of a query (a question is far shorter): their time stays bounded.
+MAX_RULE_CHARS = 1_000
 
 
 class QueryClass(enum.StrEnum):
@@ -149,9 +151,13 @@ _SINGLE_QUOTED = re.compile(rf"{_OPENS}'([^'\s][^']*?)'{_CLOSES}")
 _INNER_QUOTED = re.compile(r"""["']([^"'\s]+)["']""")
 # Brackets are a pattern only as a character class: a range or a negation not attached to a
 # name, or a quantifier after them. `Optional[User]` and `items[0]` are code, not patterns.
+# A class is looked for within :data:`MAX_CLASS_CHARS` of its bracket, and a range at its first
+# dash: the search stays linear in the token (unbounded, 40,000 brackets took seconds).
+MAX_CLASS_CHARS = 64
 _REGEX_SIGNS = re.compile(
     r"\\[\\()\[\]{}.*+?|^$dwsbDWSB]|\.\*|\.\+|\(\?|\|\w"
-    r"|(?<![\w\])])\[(?:\^|[^\]]*\w-\w)[^\]]*\]|\[[^\]]+\][*+?{]"
+    rf"|(?<![\w\])])\[(?:\^|[^\]\-]{{0,{MAX_CLASS_CHARS}}}\w-\w)[^\]]{{0,{MAX_CLASS_CHARS}}}\]"
+    rf"|\[[^\]]{{1,{MAX_CLASS_CHARS}}}\][*+?{{]"
 )
 _CODE_SIGNS = re.compile(r"""[()=<>{}\[\]"';]|::|->|=>""")
 _CONSTANT = re.compile(r"^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+$")
@@ -197,6 +203,11 @@ _DEFINITION_WORDS = frozenset(
         "live",
         "does",
         "do",
+        # "where is X defined in api/users.py": the path narrows the search.
+        "in",
+        "inside",
+        "under",
+        "within",
     }
 )
 _KIND_WORDS = frozenset(
@@ -371,7 +382,7 @@ def _scan(query: str) -> tuple[_Found, str]:
 def _definition_name(query: str, found: _Found) -> str | None:
     """The one name a "where is X defined" query asks for, if that is all it asks."""
     words = [w.strip(_TRIM).strip("`") for w in query.replace("`", " ` ").split()]
-    words = [w for w in words if w and w != "`"]
+    words = [w for w in words if w and w != "`" and w not in found.paths]
     kind = any(w.lower() in _KIND_WORDS for w in words)
     names = [
         w for w in words if w.lower() not in _DEFINITION_WORDS and w.lower() not in _KIND_WORDS
@@ -430,10 +441,11 @@ class Classified:
 
 
 def classify(query: str) -> Classified:
-    """Read ``query`` with rules (pure and deterministic)."""
+    """Read ``query`` with rules (pure and deterministic): its first :data:`MAX_RULE_CHARS`."""
     text = " ".join(query.split())
-    found, unquoted = _scan(text)
-    excluded = _excluded(text)
+    head = text[:MAX_RULE_CHARS]
+    found, unquoted = _scan(head)
+    excluded = _excluded(head)
     base = Route(
         query=text,
         query_class=QueryClass.CONCEPTUAL,
@@ -448,7 +460,7 @@ def classify(query: str) -> Classified:
     )
     if found.regex is not None and not _EXPLAIN.search(unquoted):
         return Classified(replace(base, query_class=QueryClass.REGEX, source="rules"), True)
-    name = _definition_name(text, found)
+    name = _definition_name(head, found)
     if name is not None:
         route = replace(
             base,
@@ -460,11 +472,14 @@ def classify(query: str) -> Classified:
             layers=(),
         )
         return Classified(route, True)
-    # A literal to find, with nothing asking how or why: "every use of "x" in the backend".
+    # A literal to find, with nothing asking how or why: "every use of "x" in the backend". A
+    # path the query names narrows the search ("rate limiting in middleware/"), unless quoted.
     findable = [
         literal
         for literal in found.literals
-        if literal in found.quoted or literal not in found.identifiers or _CONSTANT.match(literal)
+        if literal in found.quoted
+        or (literal not in found.identifiers and literal not in found.paths)
+        or _CONSTANT.match(literal)
     ]
     if findable and not _EXPLAIN.search(unquoted) and not _FLOW.search(unquoted):
         return Classified(replace(base, query_class=QueryClass.REGEX, source="rules"), True)

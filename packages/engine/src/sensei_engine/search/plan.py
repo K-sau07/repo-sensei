@@ -3,8 +3,10 @@ the retriever (2.9) runs and fuses. Pure: no model call, no database.
 
 * **Short-circuits.** A ``symbol`` query is one ``sym`` leg, run by
   :func:`sensei_engine.symbols.lookup.find_symbols`. A ``regex`` query (a pattern, or a literal
-  to find) is ``grep`` legs, run by :class:`sensei_engine.search.grep.ExactSearch`: the pattern,
-  or each literal as a fixed string.
+  to find) is ``grep`` legs, run by :class:`sensei_engine.search.grep.ExactSearch`: the pattern
+  (and, when it is quoted code like ``re.compile(r'[0-9]+')``, its text as a fixed string), or each
+  literal as a fixed string, with the names quoted inside it (``os.environ["SECRET_KEY"]``
+  finds ``getenv("SECRET_KEY")`` too). The paths the query names narrow either one.
 * **Everything else is additive.** The original query always runs as its own full leg set
   (every text leg, and ``sym`` on the names it holds). The model's two rewrites each add the
   content legs, never replace the original's. Names the model guesses add ``sym`` legs; routes
@@ -87,9 +89,15 @@ class SearchPlan:
         return [sub for sub in self.legs if sub.leg is leg]
 
 
+# A name quoted inside a code literal: `os.environ["SECRET_KEY"]`, `settings['DATABASE_URL']`.
+_INNER_QUOTED = re.compile(r"""["']([A-Za-z_$][\w$.\-]*)["']""")
+_QUOTES = frozenset("\"'")
+
+
 def with_literals(text: str, literals: Iterable[str]) -> str:
-    """``text`` with each literal it doesn't hold appended."""
-    missing = [literal for literal in literals if literal not in text]
+    """``text`` with each literal it doesn't hold (as a whole word: ``port`` isn't in "report")
+    appended."""
+    missing = [literal for literal in literals if not _in_query(literal, text)]
     return " ".join([text, *missing]) if missing else text
 
 
@@ -114,14 +122,19 @@ def _plan(route: Route, mode: Mode, legs: tuple[SubQuery, ...]) -> SearchPlan:
 
 
 def _grep(route: Route) -> tuple[SubQuery, ...]:
-    """The pattern, or each literal that isn't a path filter as a fixed string."""
+    """The pattern (and its text, if it holds quotes: code that quotes a pattern doesn't match
+    itself), or each literal that isn't a path filter as a fixed string, then the names quoted
+    inside them (whatever reads ``SECRET_KEY``, not one way of reading it)."""
     literals = route.literals
     if route.regex is not None:
-        return (SubQuery(Leg.GREP, route.regex, Origin.ORIGINAL, literals, regex=True),)
+        pattern = SubQuery(Leg.GREP, route.regex, Origin.ORIGINAL, literals, regex=True)
+        if _QUOTES.isdisjoint(route.regex):
+            return (pattern,)
+        return (pattern, SubQuery(Leg.GREP, route.regex, Origin.ORIGINAL, literals))
+    fixed = [literal for literal in literals if literal not in route.paths]
+    inner = [name for literal in fixed for name in _INNER_QUOTED.findall(literal)]
     return tuple(
-        SubQuery(Leg.GREP, literal, Origin.ORIGINAL, literals)
-        for literal in literals
-        if literal not in route.paths
+        SubQuery(Leg.GREP, text, Origin.ORIGINAL, literals) for text in dict.fromkeys(fixed + inner)
     )
 
 

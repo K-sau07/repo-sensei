@@ -185,3 +185,39 @@ def test_legs_are_not_repeated_and_are_capped() -> None:
 def test_with_literals_appends_only_what_is_missing() -> None:
     assert with_literals("save the invoice", ["invoice", "/api/x"]) == "save the invoice /api/x"
     assert with_literals("x", []) == "x"
+    # A literal inside a longer word isn't there.
+    assert with_literals("write the report", ["port"]) == "write the report port"
+
+
+async def test_a_path_narrows_a_search_and_keeps_its_semantic_and_symbol_legs() -> None:
+    api = _api()
+    found = plan(await _routed("rate limiting in middleware/ for UserService", api))
+    assert found.mode is Mode.HYBRID
+    assert found.paths == ("middleware/",)
+    assert {Leg.SEM_CODE, Leg.LEX_CODE, Leg.SYM} <= {sub.leg for sub in found.legs}
+    assert found.of(Leg.SYM)[0].text == "UserService"
+    # A definition asked for in a file: find_symbols, within the file.
+    found = plan(await _routed("where is get_user defined in api/users.py?", api))
+    assert found.mode is Mode.SYMBOL
+    assert [sub.text for sub in found.legs] == ["get_user"]
+    assert found.paths == ("api/users.py",)
+
+
+async def test_grep_finds_a_quoted_name_however_it_is_read() -> None:
+    found = plan(await _routed('os.environ["SECRET_KEY"]'))
+    assert found.mode is Mode.GREP
+    assert [(s.text, s.regex) for s in found.legs] == [
+        ('os.environ["SECRET_KEY"]', False),
+        ("SECRET_KEY", False),  # os.getenv("SECRET_KEY"), os.environ.get("SECRET_KEY")
+    ]
+
+
+async def test_a_pattern_quoted_in_code_is_also_grepped_as_text() -> None:
+    found = plan(await _routed("`re.compile(r'[0-9]+')`"))
+    assert found.mode is Mode.GREP
+    assert [(s.text, s.regex) for s in found.legs] == [
+        ("re.compile(r'[0-9]+')", True),
+        ("re.compile(r'[0-9]+')", False),  # the pattern doesn't match its own source
+    ]
+    # A bare pattern is grepped as one.
+    assert [s.regex for s in plan(await _routed("TODO\\(billing\\)")).legs] == [True]
