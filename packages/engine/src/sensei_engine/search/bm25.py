@@ -31,7 +31,6 @@ query does.
 from __future__ import annotations
 
 import enum
-import re
 import uuid
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
@@ -55,8 +54,8 @@ class Leg(enum.StrEnum):
 
 # The column each leg ranks (each partition has a BM25 index on it: bm25_index()).
 COLUMNS: dict[Leg, str] = {Leg.CODE: "search_text", Leg.PATH: "path_text"}
-PARTITIONS = frozenset(chunk_partitions())
-_SCHEMA = re.compile(r"[a-z_][a-z0-9_]*")
+SCHEMA = "public"  # where the migrations make every table
+PARTITIONS = frozenset(f"{SCHEMA}.{name}" for name in chunk_partitions())
 DEFAULT_WEIGHTS: dict[Leg, float] = {Leg.CODE: 1.0, Leg.PATH: 0.8}
 
 
@@ -92,9 +91,8 @@ def _like_prefix(prefix: str) -> str:
 
 
 def _partition_name(partition: str) -> bool:
-    """``schema.chunks_pNN``: a partition of ``chunks``, schema-qualified (safe in SQL)."""
-    schema, _, name = partition.rpartition(".")
-    return _SCHEMA.fullmatch(schema) is not None and name in PARTITIONS
+    """``public.chunks_pNN``: a partition of ``chunks``, schema-qualified (safe in SQL)."""
+    return partition in PARTITIONS
 
 
 async def chunk_partition(db: AsyncSession, repo_id: uuid.UUID) -> str | None:
@@ -103,7 +101,7 @@ async def chunk_partition(db: AsyncSession, repo_id: uuid.UUID) -> str | None:
     none of the repository's chunks."""
     found = await db.scalar(
         text(
-            "SELECT n.nspname || '.' || p.relname FROM chunks c "
+            "SELECT n.nspname || '.' || p.relname FROM public.chunks c "
             "JOIN pg_class p ON p.oid = c.tableoid "
             "JOIN pg_namespace n ON n.oid = p.relnamespace "
             "WHERE c.repo_id = :repo_id LIMIT 1"
@@ -121,7 +119,7 @@ async def searchable_partition(
     yet, being chunked for the first time, or not the session's)."""
     ready = await db.scalar(
         text(
-            "SELECT chunk_generation IS NOT NULL FROM snapshots "
+            "SELECT chunk_generation IS NOT NULL FROM public.snapshots "
             "WHERE id = :snapshot_id AND repo_id = :repo_id"
         ),
         {"snapshot_id": snapshot_id, "repo_id": repo_id},
@@ -155,7 +153,7 @@ async def bm25_search(
     conditions = [
         "c.repo_id = :repo_id",
         "c.snapshot_id = :snapshot_id",
-        "c.generation = (SELECT s.chunk_generation FROM snapshots s "
+        "c.generation = (SELECT s.chunk_generation FROM public.snapshots s "
         "WHERE s.id = :snapshot_id AND s.repo_id = :repo_id)",
         "c.view = :view",
     ]

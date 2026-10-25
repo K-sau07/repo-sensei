@@ -49,7 +49,7 @@ from sensei_engine.llm import rollups, summaries
 from sensei_engine.search.bm25 import keyword_search
 from sensei_testing.anthropic import FakeAnthropic, batch, jsonl, message
 from sensei_workers import statistics
-from sensei_workers.base import RetryableError
+from sensei_workers.base import NotYetError, RetryableError
 from sensei_workers.ingest.git import GitRunner
 from sensei_workers.runtime import Runtime, set_runtime
 from sensei_workers.tasks import chunk as chunk_task
@@ -361,7 +361,7 @@ async def _chunks(
 
 @pytest.fixture
 def upkeep(monkeypatch: pytest.MonkeyPatch) -> dict[str, list[uuid.UUID]]:
-    """The repositories the stages asked to analyze, and to vacuum (still done)."""
+    """The repositories the stages asked to analyze, and to vacuum (still done, in place)."""
     calls: dict[str, list[uuid.UUID]] = {"analyze": [], "vacuum": []}
     analyze, vacuum = statistics.analyze_chunks, maintenance.request_vacuum
 
@@ -370,8 +370,9 @@ def upkeep(monkeypatch: pytest.MonkeyPatch) -> dict[str, list[uuid.UUID]]:
         await analyze(repo_id)
 
     def vacuumed(repo_id: uuid.UUID, *, eager: bool = False) -> bool:
+        del eager  # in place: nothing goes to a broker other workers may share
         calls["vacuum"].append(repo_id)
-        return vacuum(repo_id, eager=eager)
+        return vacuum(repo_id, eager=True)
 
     monkeypatch.setattr(chunk_task, "analyze_chunks", analyzed)
     monkeypatch.setattr(chunk_task, "request_vacuum", vacuumed)
@@ -523,6 +524,7 @@ def test_indexing_another_commit_prunes_the_last_ones_chunks(
     ids: tuple[uuid.UUID, uuid.UUID, uuid.UUID],
     github: respx.MockRouter,
     bare_repo: Any,
+    upkeep: dict[str, list[uuid.UUID]],
 ) -> None:
     org_id, repo_id, job_id = ids
     _run(org_id, repo_id, job_id)
@@ -544,6 +546,9 @@ def test_indexing_another_commit_prunes_the_last_ones_chunks(
     assert count == rows > 0
     # The superseded snapshot isn't searchable any more, and its chunks are gone.
     assert runtime.run(_seen(runtime.system_database, old)) == (None, 0)
+    assert runtime.run(_chunk_ids(runtime.system_database, old)) == set()
+    # Each snapshot's first chunking only wrote rows; finalize's prune deleted some.
+    assert upkeep == {"analyze": [repo_id, repo_id], "vacuum": [repo_id]}
 
 
 async def _searched(
@@ -607,6 +612,42 @@ def test_a_chain_sent_without_the_chunks_stage_gets_it_from_finalize(
     assert job.stages["chunks"]["status"] == "done"
     assert job.snapshot_id is not None
     assert runtime.run(_seen(runtime.system_database, job.snapshot_id)) == (5, 5)
+
+
+def test_a_worker_finalizing_such_a_job_sends_the_chunks_stage_once(
+    runtime: Runtime,
+    ids: tuple[uuid.UUID, uuid.UUID, uuid.UUID],
+    github: respx.MockRouter,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Not in place: finalize sends the stages from chunks on and waits for them; a second
+    delivery doesn't send them again; a send that failed is tried again by the next one."""
+    org_id, repo_id, job_id = ids
+    kwargs = {"job_id": str(job_id), "org_id": str(org_id), "repo_id": str(repo_id)}
+    before = orchestrate.STAGES[: orchestrate.STAGES.index(chunk_task.chunk_snapshot)]
+    chain(*(stage.si(**kwargs) for stage in before)).apply().get()
+    sent: list[int] = []
+    broken = [True]  # the first send fails
+
+    def send_stages(*_: Any, eager: bool = False, first: int = 0) -> list[str]:
+        assert not eager
+        if broken:
+            broken.clear()
+            raise ConnectionError("the broker is down")
+        sent.append(first)
+        return []
+
+    monkeypatch.setattr(orchestrate, "send_stages", send_stages)
+    finalize = orchestrate.finalize_index
+    with pytest.raises(ConnectionError):
+        finalize.run(**kwargs)  # not sent: the key goes, so the next delivery sends
+    with pytest.raises(NotYetError, match="was sent"):
+        finalize.run(**kwargs)
+    with pytest.raises(NotYetError, match="hasn't run"):
+        finalize.run(**kwargs)  # a second delivery: sent once already
+    assert sent == [orchestrate.STAGES.index(chunk_task.chunk_snapshot)]
+    _, job = runtime.run(_state(runtime.system_database, repo_id, job_id))
+    assert (job.status, job.stage) == (JobStatus.RUNNING, Stage.SYMBOLS)
 
 
 # ---------------------------------------------------------------- summaries

@@ -63,9 +63,13 @@ class _NoChunksStageError(Exception):
     """The job went from symbols to finalize without a chunks stage."""
 
 
+def _sent_once_key(job_id: str, what: str) -> str:
+    return f"{chain_key(job_id)}:sent-{what}"
+
+
 def _send_once(job_id: str, what: str) -> bool:
     """True the first time for this job and ``what`` (until the chain's keys expire)."""
-    key = f"{chain_key(job_id)}:sent-{what}"
+    key = _sent_once_key(job_id, what)
     return bool(get_runtime().sync_redis.set(key, "1", nx=True, ex=CHAIN_TTL_SECONDS))
 
 
@@ -88,7 +92,8 @@ def finalize_index(self: IngestTask, *, job_id: str, org_id: str, repo_id: str) 
             resuming = job.stage is Stage.FINALIZE
             if not ready and not resuming:
                 stages = job.stages or {}
-                if job.stage is Stage.SYMBOLS and stages["symbols"].get("status") == "done":
+                symbols = stages.get("symbols", {})
+                if job.stage is Stage.SYMBOLS and symbols.get("status") == "done":
                     raise _NoChunksStageError  # its chain has none (see below)
                 if job.stage is None or STAGE_ORDER.index(job.stage) <= STAGE_ORDER.index(
                     Stage.SUMMARIES
@@ -119,18 +124,17 @@ def finalize_index(self: IngestTask, *, job_id: str, org_id: str, repo_id: str) 
     try:
         finished = runtime.run(_finalize())
     except _NoChunksStageError:
-        # A chain sent before the chunks stage existed goes from symbols straight here: the
-        # stages from chunks on are sent, once.
-        if not _send_once(job_id, "chunks"):
-            raise NotYetError("the chunks stage hasn't run") from None
-        log.warning("index job without a chunks stage: sending it", job_id=job_id)
         eager = bool(self.request.is_eager)
-        send_stages(job_id, org_id, repo_id, eager=eager, first=STAGES.index(chunk_snapshot))
+        _send_the_chunks_stage(job_id, org_id, repo_id, eager=eager)
         if not eager:
             raise NotYetError("the chunks stage was sent") from None  # its finalize finishes
         # Run in place, that chain's finalize found this one holding the lock and skipped: the
-        # chunks are done now, so this one finishes.
-        finished = runtime.run(_finalize())
+        # chunks are done now, so this one finishes (unless the chunks stage passed itself
+        # over: then it waits like any other).
+        try:
+            finished = runtime.run(_finalize())
+        except _NoChunksStageError:
+            raise NotYetError("the chunks stage hasn't run") from None
     if finished is None:
         return None
     sha, pruned = finished
@@ -138,6 +142,20 @@ def finalize_index(self: IngestTask, *, job_id: str, org_id: str, repo_id: str) 
         request_vacuum(uuid.UUID(repo_id), eager=bool(self.request.is_eager))
     log.info("index job succeeded", commit_sha=sha, pruned_chunks=pruned)
     return sha
+
+
+def _send_the_chunks_stage(job_id: str, org_id: str, repo_id: str, *, eager: bool) -> None:
+    """A chain sent before the chunks stage existed goes from symbols straight to finalize: the
+    stages from chunks on are sent, once (NotYetError for every delivery after the first)."""
+    if not _send_once(job_id, "chunks"):
+        raise NotYetError("the chunks stage hasn't run")
+    log.warning("index job without a chunks stage: sending it", job_id=job_id)
+    try:
+        send_stages(job_id, org_id, repo_id, eager=eager, first=STAGES.index(chunk_snapshot))
+    except Exception:
+        # Not sent: the next delivery (or the sweeper's resend) tries again.
+        get_runtime().sync_redis.delete(_sent_once_key(job_id, "chunks"))
+        raise
 
 
 def _ready_to_finalize(job: IndexJob) -> bool:
