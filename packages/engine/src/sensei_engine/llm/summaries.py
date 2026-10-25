@@ -764,11 +764,17 @@ async def retry_failed(
     ref_type: str | None = None,
     ref_id: str | None = None,
     concurrency: int = RETRY_CONCURRENCY,
+    before_calls: Callable[[], Awaitable[None]] | None = None,
+    on_summary: Callable[[FileSummary], Awaitable[None]] | None = None,
 ) -> None:
     """Send each of ``files`` once more on its own (full price, at once), if the estimate
     passes the cost guard; a file that fails again stays in ``run.skipped``, with the reason
     logged. Calls made at once aren't reserved like a batch: the guard's lock is held for the
-    check only."""
+    check only.
+
+    ``before_calls`` is awaited once the guard lets them through, before the first (paid)
+    call; ``on_summary`` after each summary is in ``run``, one at a time (store it there: a
+    run that stops part way keeps what it paid for)."""
     if not files:
         return
     estimate = await estimate_cost(
@@ -782,7 +788,10 @@ async def retry_failed(
             run.skipped[file.path] = "not retried: over the monthly cost cap"
         log.warning("summary retries over the cost cap", files=len(files), spent=str(exc.spent))
         return
+    if before_calls is not None:
+        await before_calls()
     gate = asyncio.Semaphore(concurrency)
+    keeping = asyncio.Lock()
 
     async def bill(usage: LLMUsage) -> None:
         # Recorded as each call is answered: a run that stops part way has billed these.
@@ -803,6 +812,9 @@ async def retry_failed(
         run.skipped.pop(file.path, None)
         run.summaries[file.path] = summary
         run.dropped_keys += dropped
+        if on_summary is not None:
+            async with keeping:
+                await on_summary(summary)
 
     run.retried += len(files)
     await asyncio.gather(*(retry(file) for file in files))

@@ -33,6 +33,7 @@ with the reason, never failing the index.
 
 from __future__ import annotations
 
+import json
 import uuid
 from collections.abc import AsyncGenerator, Mapping, Sequence
 from contextlib import asynccontextmanager
@@ -479,12 +480,20 @@ async def _load(target: Target) -> tuple[dict[str, FileSummary], dict[str, str]]
 async def _retry(
     task: IngestTask, target: Target, run: SummaryRun, files: Sequence[FileInput]
 ) -> None:
-    """Send each file without a summary once more (if the cost guard lets them), then store
-    everything again."""
+    """Send each file without a summary once more (if the cost guard lets them), storing each
+    summary as it comes (a stop part way keeps those paid for), then everything again."""
     runtime = get_runtime()
     retried = [file for file in files if file.path in run.skipped]
-    async with _stage(task, target) as scope:
-        scope.machine.note(STAGE, phase=RETRYING, retried=len(retried))
+
+    async def started() -> None:
+        # Once the guard let them through, before the first paid call (estimating is free).
+        async with _stage(task, target) as scope:
+            scope.machine.note(STAGE, phase=RETRYING, retried=len(retried))
+
+    async def kept(_: FileSummary) -> None:
+        async with _stage(task, target) as scope:
+            await _store(scope.db, target, run.summaries, run.skipped)
+            scope.machine.note(STAGE, summarized=len(run.summaries), skipped=len(run.skipped))
 
     @asynccontextmanager
     async def sessions() -> AsyncGenerator[AsyncSession]:
@@ -494,7 +503,7 @@ async def _retry(
     await retry_failed(
         sessions, runtime.anthropic, run, retried, calculator=runtime.costs,
         org_id=target.org_id, cap_usd=runtime.settings.pricing.org_monthly_cap_usd,
-        ref_type=REF_TYPE, ref_id=str(target.job_id),
+        ref_type=REF_TYPE, ref_id=str(target.job_id), before_calls=started, on_summary=kept,
     )  # fmt: skip
     async with _stage(task, target) as scope:
         await _store(scope.db, target, run.summaries, run.skipped)
@@ -541,7 +550,12 @@ async def _rollups(task: IngestTask, target: Target, summaries: Mapping[str, Fil
     if state == ROLLUPS_WRITTEN:
         written = int(details.get("directories", 0))
     elif state == ROLLUPS_STARTED:
-        written = 0  # cut short: left out, not paid for twice
+        # Written by this job before it stopped, or cut short: left out, not paid for twice.
+        written = await _rollups_written(target)
+        if written is not None:
+            async with _stage(task, target) as scope:
+                scope.machine.note(STAGE, rollups=ROLLUPS_WRITTEN)
+        written = written or 0
     else:
         written = await _summarize_directories(task, target, summaries)
     async with _stage(task, target) as scope:
@@ -569,7 +583,7 @@ def _partial(details: Mapping[str, Any]) -> dict[str, Any]:
     """What a stop cut short, by the markers left: the files whose retries were under way
     (still without a summary), and the directory summaries."""
     partial: dict[str, Any] = {}
-    if details.get("phase") == RETRYING:
+    if details.get("phase") == RETRYING and int(details.get("skipped", 0)):
         partial["files"] = int(details.get("skipped", 0))
     if details.get("rollups") == ROLLUPS_STARTED:
         partial["directories"] = True
@@ -583,6 +597,20 @@ def _cut_short(partial: Mapping[str, Any]) -> str:
     if partial.get("directories"):
         parts.append("the directory summaries")
     return " and ".join(parts)
+
+
+async def _rollups_written(target: Target) -> int | None:
+    """How many directories this job's rollups artifact has, if this job wrote one (another
+    job's, for the same commit, doesn't count)."""
+    storage = await get_runtime().storage()
+    key = artifact_key(target.org_id, target.repo_id, target.commit_sha, ROLLUPS_ARTIFACT)
+    data = await storage.get_bytes(Bucket.ARTIFACTS, key, max_bytes=MAX_ARTIFACT_BYTES)
+    if data is None:
+        return None
+    found = json.loads(data)
+    if found.get("job_id") != str(target.job_id):
+        return None
+    return len(found.get("directories", []))
 
 
 async def _summarize_directories(
@@ -609,7 +637,7 @@ async def _summarize_directories(
     )
     storage = await runtime.storage()
     key = artifact_key(target.org_id, target.repo_id, target.commit_sha, ROLLUPS_ARTIFACT)
-    data = rollups.to_json(found).encode()
+    data = rollups.to_json(found, job_id=str(target.job_id)).encode()
     await storage.put_bytes(Bucket.ARTIFACTS, key, data, content_type="application/json")
     async with _stage(task, target) as scope:
         scope.machine.note(STAGE, rollups=ROLLUPS_WRITTEN, directories=len(found))

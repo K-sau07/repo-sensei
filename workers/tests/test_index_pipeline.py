@@ -1026,18 +1026,23 @@ def test_retries_stopped_part_way_are_not_sent_again(
     bare_repo: Any,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The task stops after the retries were paid for, before they were stored: run again, it
-    doesn't send them again. The file stays without a summary, the marker at "retrying"; the
-    next index summarizes it."""
+    """The task stops after a retry was paid for, before it was stored: run again, it doesn't
+    send it again. The file stays without a summary, the marker at "retrying"; the next index
+    summarizes it."""
     org_id, repo_id, job_id = ids
     _garbled(claude)
     real = summaries.retry_failed
     stops = [RetryableError("the worker went away")]
 
     async def stopped(*args: Any, **kwargs: Any) -> None:
-        await real(*args, **kwargs)
         if stops:
-            raise stops.pop()
+            stop = stops.pop()
+
+            async def crash(_: Any) -> None:
+                raise stop
+
+            kwargs["on_summary"] = crash  # answered and paid for, then the worker goes
+        await real(*args, **kwargs)
 
     monkeypatch.setattr("sensei_workers.tasks.summaries.retry_failed", stopped)
     _run(org_id, repo_id, job_id)
@@ -1062,6 +1067,99 @@ def test_retries_stopped_part_way_are_not_sent_again(
     assert "partial" not in job.stages["summaries"]["details"]
     artifact, _, _ = runtime.run(_summaries(runtime, org_id, repo_id, later, bare_repo.second))
     assert [f["path"] for f in artifact["files"]] == ["src/app.py"]
+
+
+def test_a_retry_stored_before_a_stop_is_kept(
+    claude: FakeAnthropic,
+    runtime: Runtime,
+    ids: tuple[uuid.UUID, uuid.UUID, uuid.UUID],
+    github: respx.MockRouter,
+    bare_repo: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Each retried summary is stored as it comes: a stop after it keeps what was paid for."""
+    org_id, repo_id, job_id = ids
+    _garbled(claude)
+    real = summaries.retry_failed
+    stops = [RetryableError("the worker went away")]
+
+    async def stopped(*args: Any, **kwargs: Any) -> None:
+        await real(*args, **kwargs)
+        if stops:
+            raise stops.pop()
+
+    monkeypatch.setattr("sensei_workers.tasks.summaries.retry_failed", stopped)
+    _run(org_id, repo_id, job_id)
+
+    _, job = runtime.run(_state(runtime.system_database, repo_id, job_id))
+    stage = job.stages["summaries"]
+    assert stage["status"] == "done"
+    assert (stage["details"]["summarized"], stage["details"]["skipped"]) == (1, 0)
+    assert "partial" not in stage["details"]
+    asked = [b["messages"][0]["content"] for b in claude.bodies("/v1/messages")]
+    assert sum("<path>src/app.py</path>" in prompt for prompt in asked) == 1  # retried once
+    artifact, _, _ = runtime.run(_summaries(runtime, org_id, repo_id, job_id, bare_repo.second))
+    assert [f["path"] for f in artifact["files"]] == ["src/app.py"]
+
+
+def test_an_outage_before_the_retries_are_paid_for_retries_them_later(
+    claude: FakeAnthropic,
+    runtime: Runtime,
+    ids: tuple[uuid.UUID, uuid.UUID, uuid.UUID],
+    github: respx.MockRouter,
+) -> None:
+    """Counting the retries' tokens (free) meets an outage: nothing was paid, so "retrying"
+    isn't marked and the next attempt retries them."""
+    org_id, repo_id, job_id = ids
+    _garbled(claude)
+    counted = claude.routes["/v1/messages/count_tokens"]
+    calls: list[int] = []
+
+    def flaky(_: httpx2.Request) -> httpx2.Response:
+        calls.append(1)
+        if len(calls) == 2:  # the batch's count went through; the retries' first doesn't
+            return httpx2.Response(529, json={"type": "error", "error": {
+                "type": "overloaded_error", "message": "Overloaded"}})  # fmt: skip
+        assert isinstance(counted, httpx2.Response)
+        return counted
+
+    claude.routes["/v1/messages/count_tokens"] = flaky
+    _run(org_id, repo_id, job_id)
+
+    _, job = runtime.run(_state(runtime.system_database, repo_id, job_id))
+    details = job.stages["summaries"]["details"]
+    assert (details["phase"], details["summarized"], details["unavailable"]) == ("retried", 1, 1)
+    assert "partial" not in details
+
+
+def test_rollups_written_just_before_a_stop_are_kept(
+    claude: FakeAnthropic,
+    runtime: Runtime,
+    ids: tuple[uuid.UUID, uuid.UUID, uuid.UUID],
+    github: respx.MockRouter,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The task stops after writing rollups.json, before recording it: the artifact is this
+    job's, so it counts, and nothing is sent again."""
+    org_id, repo_id, job_id = ids
+    storage = runtime.run(runtime.storage())
+    real = storage.put_bytes
+    stops = [RetryableError("the worker went away")]
+
+    async def put_bytes(bucket: Bucket, key: str, data: bytes, **kwargs: Any) -> Any:
+        written = await real(bucket, key, data, **kwargs)
+        if key.endswith("rollups.json") and stops:
+            raise stops.pop()
+        return written
+
+    monkeypatch.setattr(storage, "put_bytes", put_bytes)
+    _run(org_id, repo_id, job_id)
+
+    _, job = runtime.run(_state(runtime.system_database, repo_id, job_id))
+    details = job.stages["summaries"]["details"]
+    assert (details["rollups"], details["directories"]) == ("written", 2)
+    assert "partial" not in details
+    assert len(claude.bodies("/v1/messages")) == 1  # the directory call, made once
 
 
 def test_directory_summaries_stopped_part_way_are_not_sent_again(

@@ -233,11 +233,13 @@ async def summarize_directories(
     return dict(sorted(done.items()))
 
 
-def to_json(rollups: Mapping[str, DirectorySummary]) -> str:
-    """The rollups as a JSON artifact (feature map seeds until 4.9 gives them a table)."""
+def to_json(rollups: Mapping[str, DirectorySummary], *, job_id: str | None = None) -> str:
+    """The rollups as a JSON artifact (feature map seeds until 4.9 gives them a table), with
+    the index job that wrote them."""
     return json.dumps(
         {
             "prompt_version": PROMPT_VERSION,
+            "job_id": job_id,
             "directories": [
                 {
                     "path": rollup.path,
