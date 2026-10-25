@@ -7,6 +7,7 @@ from __future__ import annotations
 import hashlib
 import itertools
 import json
+import math
 import re
 import statistics
 import tarfile
@@ -385,6 +386,12 @@ def test_a_line_too_long_for_one_chunk_is_cut() -> None:
     assert all(c.tokens <= MAX_TOKENS for c in chunks)
     assert {(c.start_line, c.end_line) for c in chunks} == {(1, 1)}
     assert "".join(c.content for c in chunks) == source.rstrip("\n")
+    # Cut by tokens, not characters: a line half words, half CJK fills its pieces just as well.
+    mixed = "const s = '" + "value_7 " * 6000 + "漢字かな交じり文" * 2000 + "';\n"
+    cut = chunk_file("mixed.js", "javascript", mixed)
+    assert len(cut) <= math.ceil(count_tokens(mixed) / (MAX_TOKENS - 100))
+    assert all(c.tokens <= MAX_TOKENS for c in cut)
+    assert "".join(c.content for c in cut) == mixed.rstrip("\n")
 
 
 def test_a_very_long_path_leaves_the_content_room() -> None:

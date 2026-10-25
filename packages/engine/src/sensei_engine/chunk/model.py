@@ -17,20 +17,21 @@ same place hashes the same in every snapshot.
 
 from __future__ import annotations
 
+import bisect
 import enum
 import hashlib
-import math
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 
 from sensei_engine.chunk.identifiers import index_terms
-from sensei_engine.chunk.tokens import count_each, count_tokens
+from sensei_engine.chunk.tokens import count_each, count_tokens, token_starts
 
 MIN_TOKENS = 100
 TARGET_TOKENS = 500
 MAX_TOKENS = 1000
 FULL_ENOUGH = 0.5  # a split piece at least this full may end at a shallower boundary
 SCRAP_TOKENS = MIN_TOKENS // 2  # other code this small joins a neighbouring definition
+_ANY_PART = (999, 999)  # a part line as long as any
 
 
 class ChunkKind(enum.StrEnum):
@@ -216,9 +217,10 @@ def build(
     if trimmed is None:
         return []
     start, end = trimmed
-    whole = spec.header(lines.text(start, end), None)
-    # Room for the header and its part line; the content keeps some whatever the header.
-    cap = max(MIN_TOKENS, MAX_TOKENS - count_tokens(whole) - 8)
+    # Room for the header with a part line, and the line break after it; the content keeps some
+    # whatever the header.
+    header = spec.header(lines.text(start, end), _ANY_PART)
+    cap = max(MIN_TOKENS, MAX_TOKENS - count_tokens(header) - 1)
     budget = max(MIN_TOKENS, min(TARGET_TOKENS, cap))
     texts = [
         (s, e, text)
@@ -258,18 +260,24 @@ def _pieces(
 
 
 def _fit(text: str, budget: int) -> list[str]:
-    """``text`` in as few pieces as keep each within ``budget`` tokens, cut between characters
-    (only a single line too long for one chunk needs it: minified code, a data blob)."""
-    tokens = count_tokens(text)
-    if tokens <= budget:
+    """``text`` in pieces of at most ``budget`` tokens, cut greedily between tokens (only a single
+    line too long for one chunk needs it: minified code, a data blob)."""
+    starts = token_starts(text)
+    if len(starts) <= budget:
         return [text]
-    count = math.ceil(tokens / budget)
-    while True:
-        size = math.ceil(len(text) / count)
-        pieces = [text[i : i + size] for i in range(0, len(text), size)]
-        if all(count_tokens(p) <= budget for p in pieces):
-            return pieces
-        count += 1
+    pieces: list[str] = []
+    begin = first = 0  # the piece's first character, and its first token
+    while first < len(starts):
+        last = min(first + budget, len(starts))  # the token after the piece
+        while True:
+            end = len(text) if last == len(starts) else max(starts[last], begin + 1)
+            # The piece alone may tokenize a little differently at its ends: step back.
+            if last == first + 1 or count_tokens(text[begin:end]) <= budget:
+                break
+            last -= 1
+        pieces.append(text[begin:end])
+        begin, first = end, bisect.bisect_left(starts, end)
+    return pieces
 
 
 def _chunk(

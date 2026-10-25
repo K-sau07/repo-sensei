@@ -29,3 +29,10 @@ def count_each(texts: Sequence[str]) -> list[int]:
     if not texts:
         return []
     return [len(tokens) for tokens in encoding().encode_ordinary_batch(list(texts))]
+
+
+def token_starts(text: str) -> list[int]:
+    """Where each of ``text``'s tokens starts, as an index into ``text`` (a token that begins
+    inside a character starts at that character)."""
+    tokens = encoding().encode_ordinary(text)
+    return encoding().decode_with_offsets(tokens)[1]
