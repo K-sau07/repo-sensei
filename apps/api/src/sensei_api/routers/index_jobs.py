@@ -63,6 +63,12 @@ class IndexJobOut(BaseModel):
     eta_s: int | None = Field(description="Seconds left, when there is a rate to go by.")
     error: dict[str, Any] | None
     features: list[Feature] = Field(description="What the repository can do after this run.")
+    partial: dict[str, dict[str, Any]] = Field(
+        default_factory=dict[str, dict[str, Any]],
+        description="Stages done with work left for the next index, by stage: what was cut short"
+        ' (summaries: "files" without a summary, "directories" not summarized). A feature they'
+        " unlock works on what was written.",
+    )
     created_at: datetime
     started_at: datetime | None
     finished_at: datetime | None
@@ -83,10 +89,21 @@ class IndexJobOut(BaseModel):
             eta_s=job.eta_s,
             error=job.error,
             features=unlocked(done),
+            partial=_partial(stages),
             created_at=job.created_at,
             started_at=job.started_at,
             finished_at=job.finished_at,
         )
+
+
+def _partial(stages: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """What each stage done with work left for the next index cut short (its details')."""
+    found: dict[str, dict[str, Any]] = {}
+    for name, entry in stages.items():
+        details: dict[str, Any] = entry.get("details") or {}
+        if entry.get("status") == "done" and details.get("partial"):
+            found[name] = dict(details["partial"])
+    return found
 
 
 def _jobs(request: Request) -> RepoJobs:

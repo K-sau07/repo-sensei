@@ -1233,6 +1233,15 @@
           "kind": {
             "$ref": "#/components/schemas/JobKind"
           },
+          "partial": {
+            "additionalProperties": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "description": "Stages done with work left for the next index, by stage: what was cut short (summaries: \"files\" without a summary, \"directories\" not summarized). A feature they unlock works on what was written.",
+            "title": "Partial",
+            "type": "object"
+          },
           "progress": {
             "description": "0 to 1, weighted by how long stages usually take.",
             "title": "Progress",

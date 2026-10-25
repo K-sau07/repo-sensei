@@ -1425,6 +1425,15 @@ export interface components {
             id: string;
             kind: components["schemas"]["JobKind"];
             /**
+             * Partial
+             * @description Stages done with work left for the next index, by stage: what was cut short (summaries: "files" without a summary, "directories" not summarized). A feature they unlock works on what was written.
+             */
+            partial?: {
+                [key: string]: {
+                    [key: string]: unknown;
+                };
+            };
+            /**
              * Progress
              * @description 0 to 1, weighted by how long stages usually take.
              */

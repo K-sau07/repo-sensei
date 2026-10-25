@@ -829,6 +829,29 @@ async def _finish(db: AsyncSession, job_id: str, fake_redis: FakeAsyncRedis) -> 
     await outbox.publish(fake_redis)
 
 
+def test_a_stage_done_with_work_left_is_reported_partial() -> None:
+    """Summaries cut short finish as done (the wiki works on what was written); the job says
+    what the next index completes."""
+    job = IndexJob(
+        id=uuid.uuid4(),
+        org_id=uuid.uuid4(),
+        repo_id=uuid.uuid4(),
+        kind=JobKind.FULL,
+        status=JobStatus.SUCCEEDED,
+        stage=Stage.FINALIZE,
+        progress=1.0,
+        stages={
+            "chunks": {"status": "done", "details": {"chunks": 12}},
+            "summaries": {"status": "done", "details": {"partial": {"directories": True}}},
+            "embeddings": {"status": "skipped", "details": {"partial": {"files": 1}}},
+        },
+        created_at=datetime.now(UTC),
+    )
+    out = index_jobs.IndexJobOut.build(job)
+    assert out.partial == {"summaries": {"directories": True}}
+    assert "wiki" in out.features
+
+
 async def test_connecting_queues_the_first_index_run(
     app: FastAPI,
     client: httpx.AsyncClient,
