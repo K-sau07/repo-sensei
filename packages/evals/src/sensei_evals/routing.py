@@ -3,14 +3,21 @@ with, rules alone or with the model; a confusion matrix, cost per model call and
 
 Unanswerable items have no router class (the router can't know what a repository lacks), so
 they are left out of the accuracy and listed by the class they were routed to.
+
+A run is recorded like a retrieval run (:func:`to_record`): suite ``router``, retriever
+``router-rules`` or ``router-llm``, the accuracy and each class's recall as metrics, and a row
+per query (``correct``, and the class it was routed to).
 """
 
 from __future__ import annotations
 
 import statistics
 import time
+import uuid
 from collections import Counter
+from collections.abc import Sequence
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -19,12 +26,16 @@ import yaml
 
 from sensei_core.usage import CostCalculator
 from sensei_engine.llm.anthropic_client import LLMUsage
-from sensei_engine.search.route import QueryClass, QueryRouter
+from sensei_engine.search.route import PROMPT_VERSION, QueryClass, QueryRouter
+from sensei_evals.runner import ItemResult, RunRecord
 from sensei_evals.schema import QueryClass as GoldClass
 from sensei_evals.schema import Suite
 
 UNANSWERABLE = GoldClass.UNANSWERABLE.value
 CLASSES = [c.value for c in QueryClass]
+SUITE = "router"
+SUITE_VERSION = 1
+NO_REPO = "-"  # routing reads queries only: no repository commit
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,6 +88,66 @@ class RoutingReport:
             return None
         p95 = times[min(len(times) - 1, round(0.95 * (len(times) - 1)))]
         return statistics.median(times), p95
+
+
+def recall(report: RoutingReport) -> dict[str, float]:
+    """Per labelled class: the share of its queries routed to it."""
+    confusion = report.confusion()
+    found: dict[str, float] = {}
+    for label in CLASSES:
+        total = sum(n for (gold, _), n in confusion.items() if gold == label)
+        if total:
+            found[label] = confusion[(label, label)] / total
+    return found
+
+
+def to_record(
+    report: RoutingReport,
+    *,
+    sources: Sequence[str],
+    git_sha: str | None,
+    now: datetime | None = None,
+) -> RunRecord:
+    """``report`` as a run for ``eval_runs`` (``sources``: the suites and query files read)."""
+    calls = report.model_calls()
+    metrics: dict[str, Any] = {
+        "accuracy": report.accuracy,
+        "answerable": len(report.scored),
+        "recall": recall(report),
+        "decided_by": dict(sorted(report.by_source().items())),
+        "model_calls": len(calls),
+        "cost_per_call_usd": str(report.cost_per_call()),
+    }
+    items = [
+        ItemResult(
+            id=row.query.id,
+            query_class=row.query.label,
+            answerable=row.query.label != UNANSWERABLE,
+            query=row.query.query,
+            abstained=False,
+            latency_ms=row.latency_ms,
+            metrics={
+                "correct": None
+                if row.query.label == UNANSWERABLE
+                else float(row.predicted == row.query.label)
+            },
+            hits=[{"routed": row.predicted, "source": row.source}],
+            missed=[],
+        )
+        for row in report.rows
+    ]
+    return RunRecord(
+        id=uuid.uuid4(),
+        suite=SUITE,
+        suite_version=SUITE_VERSION,
+        retriever=f"router-{report.mode}",
+        config={"sources": list(sources), "prompt_version": PROMPT_VERSION},
+        repo_sha=NO_REPO,
+        metrics=metrics,
+        per_item=items,
+        created_at=now or datetime.now(UTC),
+        git_sha=git_sha,
+    )
 
 
 def suite_queries(suite: Suite) -> list[LabelledQuery]:

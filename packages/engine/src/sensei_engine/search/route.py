@@ -23,8 +23,8 @@ Two steps:
    model may add literals only if they are in the query verbatim. If the model fails,
    refuses or is too slow, the rules' answer is used.
 
-Rewrites are additive (the original query always runs as its own leg); running them is for
-the retriever (2.9), not this module.
+Rewrites are additive (the original query always runs as its own legs): what to run is
+:func:`sensei_engine.search.plan.plan`'s, running it the retriever's (2.9).
 """
 
 from __future__ import annotations

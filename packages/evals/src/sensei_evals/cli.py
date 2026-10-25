@@ -277,8 +277,10 @@ def route_queries(
     ] = None,
     llm: Annotated[bool, typer.Option(help="Ask the model (else rules only, free).")] = True,
     reports_dir: Annotated[Path | None, typer.Option(help="Where reports go.")] = None,
+    store: Annotated[bool, typer.Option(help="Also store the run in eval_runs.")] = True,
 ) -> None:
-    """How often the query router picks each item's labelled class (2.10)."""
+    """How often the query router picks each item's labelled class (2.10); written as
+    ``route-<mode>.md`` and ``.json``, and stored like a retrieval run."""
     root = paths.repo_root()
     queries: list[routing.LabelledQuery] = []
     try:
@@ -303,8 +305,19 @@ def route_queries(
     reports.mkdir(parents=True, exist_ok=True)
     out = reports / f"route-{mode}.md"
     out.write_text(markdown, encoding="utf-8")
+    sources = [*suite, *(str(path) for path in extra or [])]
+    record = routing.to_record(report, sources=sources, git_sha=paths.head_sha(root))
+    json_path = reports / f"route-{mode}.json"
+    json_path.write_text(record.model_dump_json(indent=2), encoding="utf-8")
     typer.echo(markdown)
-    typer.echo(f"written to {out}")
+    if store:
+        try:
+            asyncio.run(_store(record))
+        except (OSError, SQLAlchemyError) as error:
+            raise _fail(
+                f"reports written, but storing the run failed ({_db_error(error)}); use --no-store"
+            ) from None
+    typer.echo(f"run {record.id}: {out} and {json_path}" + (" (stored)" if store else ""))
 
 
 @app.command("compare")

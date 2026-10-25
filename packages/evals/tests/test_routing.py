@@ -12,6 +12,7 @@ from sensei_core.usage import DEFAULT_PRICE_TABLE, CostCalculator
 from sensei_engine.llm.anthropic_client import AnthropicClient
 from sensei_engine.search.route import QueryRouter, classify
 from sensei_evals import routing
+from sensei_evals.runner import RunRecord
 from sensei_evals.schema import load_suite
 from sensei_testing.anthropic import settings
 
@@ -73,3 +74,29 @@ def test_extra_queries_need_a_router_class(tmp_path: Path) -> None:
     extra.write_text("- {class: unanswerable, query: x}\n", encoding="utf-8")
     with pytest.raises(ValueError, match="unknown class"):
         routing.extra_queries(extra)
+
+
+async def test_a_router_run_is_recorded_like_a_retrieval_run() -> None:
+    queries = [
+        routing.LabelledQuery("q-1", "useCartStore", "symbol"),
+        routing.LabelledQuery("q-2", "how is checkout structured?", "flow"),
+        routing.LabelledQuery("u-1", "where is the blockchain ledger?", "unanswerable"),
+    ]
+    router = QueryRouter(AnthropicClient(settings(api_key=None)))
+    report = await routing.evaluate(
+        router, queries, CostCalculator(DEFAULT_PRICE_TABLE), mode="rules"
+    )
+
+    record = routing.to_record(report, sources=["fastapi-template", "q.yaml"], git_sha="abc")
+
+    assert (record.suite, record.suite_version, record.retriever) == ("router", 1, "router-rules")
+    assert record.config == {
+        "sources": ["fastapi-template", "q.yaml"],
+        "prompt_version": "route_query.v1",
+    }
+    assert record.metrics["accuracy"] == pytest.approx(0.5)
+    assert record.metrics["recall"] == {"symbol": 1.0, "flow": 0.0}
+    assert record.metrics["answerable"] == 2
+    assert [item.metrics["correct"] for item in record.per_item] == [1.0, 0.0, None]
+    assert record.per_item[1].hits == [{"routed": "architecture", "source": "fallback"}]
+    assert RunRecord.model_validate_json(record.model_dump_json()) == record
