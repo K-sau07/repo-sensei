@@ -22,7 +22,6 @@ from sensei_engine.search.route import (
     answer_schema,
     cache_key,
     classify,
-    lane_of,
     normalize,
     system_prompt,
 )
@@ -354,8 +353,8 @@ async def test_a_slow_model_is_not_waited_for() -> None:
 
 def test_every_layer_folds_into_one_of_the_design_systems_lanes() -> None:
     assert set(LANES) == set(Layer)
-    assert {lane_of(layer) for layer in Layer} == set(Lane)
-    assert [lane_of(layer) for layer in (Layer.STATE, Layer.HANDLER, Layer.WORKER)] == [
+    assert {LANES[layer] for layer in Layer} == set(Lane)
+    assert [LANES[layer] for layer in (Layer.STATE, Layer.HANDLER, Layer.WORKER)] == [
         Lane.UI,
         Lane.API,
         Lane.SVC,

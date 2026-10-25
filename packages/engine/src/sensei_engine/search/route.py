@@ -89,7 +89,7 @@ class Layer(enum.StrEnum):
 
 class Lane(enum.StrEnum):
     """The design system's swimlanes, as the API, the constellation and the flow view (2.13)
-    draw them. The router's finer layers fold into them (:func:`lane_of`)."""
+    draw them. The router's finer layers fold into them (:data:`LANES`)."""
 
     UI = "ui"
     API = "api"
@@ -111,11 +111,6 @@ LANES: Mapping[Layer, Lane] = {
     Layer.TEST: Lane.OTHER,
     Layer.DOCS: Lane.OTHER,
 }
-
-
-def lane_of(layer: Layer) -> Lane:
-    """The swimlane ``layer`` is drawn in (search filters lanes through it)."""
-    return LANES[layer]
 
 
 Source = Literal["rules", "llm", "cache", "fallback"]
