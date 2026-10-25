@@ -32,6 +32,7 @@ from sensei_engine.embed.voyage import (
     VoyageNotConfigured,
     VoyageRateLimited,
     VoyageUnreachable,
+    estimate_tokens,
 )
 from sensei_engine.llm.anthropic_client import LLMUsage
 from sensei_engine.search import rerank
@@ -633,14 +634,22 @@ async def test_a_cross_encoder_over_its_budget_keeps_the_retrievers_order(
     respx.post(URL).mock(side_effect=slow)
     monkeypatch.setitem(rerank.POLICIES, RerankMode.INTERACTIVE, RerankPolicy(budget_seconds=0.05))
     candidates = _candidates(60)
+    billed, sink = _sink()
     async with httpx.AsyncClient() as http:
         reranker = Reranker(_voyage(http), LLMReranker(_model(_picks).client()))
         started = asyncio.get_running_loop().time()
-        ranking = await reranker.rerank(QUERY, candidates, RerankMode.INTERACTIVE)
+        ranking = await reranker.rerank(
+            QUERY, candidates, RerankMode.INTERACTIVE, on_rerank_usage=sink
+        )
         elapsed = asyncio.get_running_loop().time() - started
     assert elapsed < 1
     assert not ranking.scored
     assert [r.candidate for r in ranking.items] == candidates[:40]
+    # The request cut off had gone out: it is billed at its estimate.
+    [usage] = billed
+    assert (usage.provider, usage.documents) == ("voyage", 60)
+    query = estimate_tokens(QUERY)
+    assert usage.tokens == sum(query + estimate_tokens(c.document()) for c in candidates)
 
 
 @respx.mock
@@ -649,9 +658,13 @@ async def test_a_rate_limited_cross_encoder_keeps_the_retrievers_order() -> None
         return_value=httpx.Response(429, headers={"Retry-After": "20"}, json={"detail": "slow"})
     )
     candidates = _candidates(10)
+    billed, sink = _sink()
     async with httpx.AsyncClient() as http:
         reranker = Reranker(_voyage(http), LLMReranker(_model(_picks).client()))
-        ranking = await reranker.rerank(QUERY, candidates, RerankMode.INTERACTIVE)
+        ranking = await reranker.rerank(
+            QUERY, candidates, RerankMode.INTERACTIVE, on_rerank_usage=sink
+        )
+    assert billed == []  # refused: not billed
     assert route.call_count == 1
     assert not ranking.scored
     assert [r.candidate for r in ranking.items] == candidates

@@ -724,8 +724,11 @@ async def test_a_call_given_up_on_is_billed_at_the_most_it_can_cost() -> None:
             .client()
             .complete_within(request, timeout_seconds=0.05, on_usage=sink)
         )
-    assert billed == [LLMUsage("anthropic", "claude-haiku-5-5", 110, 500)]
-    assert ceiling_usage(request, "m").input_tokens == 110  # (300 + 30) / 3
+    assert billed == [LLMUsage("anthropic", "claude-haiku-5-5", 330, 500)]
+    assert ceiling_usage(request, "m").input_tokens == 330  # a token a byte
+    # Not fewer tokens than any script can take: a CJK character is a token or more, 3 bytes.
+    cjk = LLMRequest("漢" * 100, tier=Tier.FAST, max_tokens=10)
+    assert ceiling_usage(cjk, "m").input_tokens == 300
 
     # Answered in time: what it was billed, once.
     billed.clear()

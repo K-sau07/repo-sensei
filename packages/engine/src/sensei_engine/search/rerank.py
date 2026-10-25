@@ -195,6 +195,9 @@ def usage_ledger(
 class _Scores:
     by_index: dict[int, float] = field(default_factory=dict[int, float])
     billed: list[RerankUsage] = field(default_factory=list[RerankUsage])
+    # Requests sent and not answered, at their estimate: cancelled (the search's budget ran
+    # out, or another request failed), they may still be billed.
+    in_flight: dict[int, RerankUsage] = field(default_factory=dict[int, RerankUsage])
 
 
 class VoyageReranker:
@@ -265,8 +268,9 @@ class VoyageReranker:
             raise failed.exceptions[0] from None
         finally:
             # Reported here, not in the requests: a cancelled one must not stop a sink part way.
+            # A request cancelled before its answer is reported at its estimate.
             if on_usage is not None:
-                for usage in scores.billed:
+                for usage in [*scores.billed, *scores.in_flight.values()]:
                     await on_usage(usage)
         best = sorted(scores.by_index.items(), key=lambda item: (-item[1], item[0]))[:top_k]
         return [Ranked(candidates[index], score=score) for index, score in best]
@@ -289,14 +293,23 @@ class VoyageReranker:
             "top_k": expected,
             "truncation": True,
         }
-        answer = await self._api.post(
-            "rerank",
-            body,
-            tokens=sum(estimates[i] for i in batch),
-            timeout_seconds=self._settings.rerank_timeout_seconds,
-            max_retries=self._settings.rerank_max_retries,
-            wait=False,  # a search: never held by a rate limit
-        )
+        estimate = sum(estimates[i] for i in batch)
+        scores.in_flight[batch.start] = RerankUsage(self.provider, self.model, len(batch), estimate)
+        try:
+            answer = await self._api.post(
+                "rerank",
+                body,
+                tokens=estimate,
+                timeout_seconds=self._settings.rerank_timeout_seconds,
+                max_retries=self._settings.rerank_max_retries,
+                wait=False,  # a search: never held by a rate limit
+            )
+        except asyncio.CancelledError:
+            raise  # stays in flight
+        except BaseException:
+            del scores.in_flight[batch.start]  # refused or unreachable: not billed
+            raise
+        del scores.in_flight[batch.start]
         tokens = billed_tokens(answer)
         scores.billed.append(RerankUsage(self.provider, self.model, len(batch), tokens))
         data = answer.get("data")
