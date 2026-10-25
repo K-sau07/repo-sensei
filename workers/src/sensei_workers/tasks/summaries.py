@@ -19,6 +19,12 @@ starts so a task that stops part way resumes where it was:
 5. **Rollups**: a summary per directory, kept as ``rollups.json``; the stage completes, which
    unlocks the wiki.
 
+Steps 4 and 5 pay as they go, so each is marked started before its first call: a task that
+stops part way through one doesn't make (and pay for) its calls again. What it cut short stays
+detectably undone: the files without a summary (``skipped`` in the artifact), no rollups, the
+marker left at ``retrying`` or ``started``, and the stage's details say it is ``partial``. The
+wiki counts only what was written; the next index summarizes everything again.
+
 Summaries are optional: with no Anthropic key the stage is passed over, and when Claude can't
 do the work (refused requests, out of tries on an outage, nothing summarized) it is skipped
 with the reason, never failing the index.
@@ -98,7 +104,11 @@ MAX_ARTIFACT_BYTES = 256 * 1024 * 1024
 
 # What the stage records in its details, step by step ("phase").
 COLLECTED = "collected"
+RETRYING = "retrying"
 RETRIED = "retried"
+# details["rollups"]: the directory calls began; their artifact was written.
+ROLLUPS_STARTED = "started"
+ROLLUPS_WRITTEN = "written"
 
 
 @dataclass(frozen=True, slots=True)
@@ -464,6 +474,8 @@ async def _retry(
     everything again."""
     runtime = get_runtime()
     retried = [file for file in files if file.path in run.skipped]
+    async with _stage(task, target) as scope:
+        scope.machine.note(STAGE, phase=RETRYING, retried=len(retried))
 
     @asynccontextmanager
     async def sessions() -> AsyncGenerator[AsyncSession]:
@@ -512,12 +524,66 @@ async def _within_cap(task: IngestTask, target: Target, paths: Sequence[str]) ->
 
 
 async def _rollups(task: IngestTask, target: Target, summaries: Mapping[str, FileSummary]) -> int:
-    """Summarize the directories (within the cap), keep them as an artifact and complete the
-    stage."""
+    """Summarize the directories (within the cap, once), keep them as an artifact and complete
+    the stage. Started before by this job and never written, they are left out."""
+    async with _stage(task, target) as scope:
+        details = (scope.require(STAGE).stages or {}).get(STAGE.value, {}).get("details", {})
+        state = details.get("rollups")
+    if state == ROLLUPS_WRITTEN:
+        written = int(details.get("directories", 0))
+    elif state == ROLLUPS_STARTED:
+        written = 0  # cut short: left out, not paid for twice
+    else:
+        written = await _summarize_directories(task, target, summaries)
+    async with _stage(task, target) as scope:
+        machine = scope.machine
+        details = (scope.require(STAGE).stages or {}).get(STAGE.value, {}).get("details", {})
+        machine.note(STAGE, directories=written)
+        skipped = int(details.get("skipped", 0))
+        machine.log(
+            f"Summarized {len(summaries):,} files and {written:,} directories"
+            + (f"; {skipped:,} files couldn't be summarized." if skipped else ".")
+        )
+        partial = _partial(details)
+        if partial:
+            machine.note(STAGE, partial=partial)
+            machine.log(
+                f"Summaries are partial: {_cut_short(partial)} stopped part way and weren't"
+                " paid for twice; the next index summarizes them again.",
+                level="warn",
+            )
+        machine.complete(STAGE)
+    return len(summaries)
+
+
+def _partial(details: Mapping[str, Any]) -> dict[str, Any]:
+    """What a stop cut short, by the markers left: the files whose retries were under way
+    (still without a summary), and the directory summaries."""
+    partial: dict[str, Any] = {}
+    if details.get("phase") == RETRYING:
+        partial["files"] = int(details.get("skipped", 0))
+    if details.get("rollups") == ROLLUPS_STARTED:
+        partial["directories"] = True
+    return partial
+
+
+def _cut_short(partial: Mapping[str, Any]) -> str:
+    parts: list[str] = []
+    if partial.get("files"):
+        parts.append(f"the retries of {partial['files']:,} files")
+    if partial.get("directories"):
+        parts.append("the directory summaries")
+    return " and ".join(parts)
+
+
+async def _summarize_directories(
+    task: IngestTask, target: Target, summaries: Mapping[str, FileSummary]
+) -> int:
+    """The directories' summaries, written as the rollups artifact (none over the cap)."""
     runtime = get_runtime()
 
     async def bill(usage: LLMUsage) -> None:
-        # Recorded as each call is answered: rollups done again after a stop were paid twice.
+        # Recorded as each call is answered: a task stopped part way has billed these.
         async with task.org_session(target.org_id) as db:
             sink = usage_ledger(
                 db, runtime.costs, org_id=target.org_id, ref_type=REF_TYPE,
@@ -525,26 +591,20 @@ async def _rollups(task: IngestTask, target: Target, summaries: Mapping[str, Fil
             )  # fmt: skip
             await sink(usage)
 
-    found: dict[str, rollups.DirectorySummary] = {}
-    if await _within_cap(task, target, list(summaries)):
-        found = await rollups.summarize_directories(
-            runtime.anthropic, {path: s.summary for path, s in summaries.items()}, on_usage=bill
-        )
-        storage = await runtime.storage()
-        key = artifact_key(target.org_id, target.repo_id, target.commit_sha, ROLLUPS_ARTIFACT)
-        data = rollups.to_json(found).encode()
-        await storage.put_bytes(Bucket.ARTIFACTS, key, data, content_type="application/json")
+    if not await _within_cap(task, target, list(summaries)):
+        return 0
     async with _stage(task, target) as scope:
-        machine = scope.machine
-        details = (scope.require(STAGE).stages or {}).get(STAGE.value, {}).get("details", {})
-        machine.note(STAGE, directories=len(found))
-        skipped = int(details.get("skipped", 0))
-        machine.log(
-            f"Summarized {len(summaries):,} files and {len(found):,} directories"
-            + (f"; {skipped:,} files couldn't be summarized." if skipped else ".")
-        )
-        machine.complete(STAGE)
-    return len(summaries)
+        scope.machine.note(STAGE, rollups=ROLLUPS_STARTED)
+    found = await rollups.summarize_directories(
+        runtime.anthropic, {path: s.summary for path, s in summaries.items()}, on_usage=bill
+    )
+    storage = await runtime.storage()
+    key = artifact_key(target.org_id, target.repo_id, target.commit_sha, ROLLUPS_ARTIFACT)
+    data = rollups.to_json(found).encode()
+    await storage.put_bytes(Bucket.ARTIFACTS, key, data, content_type="application/json")
+    async with _stage(task, target) as scope:
+        scope.machine.note(STAGE, rollups=ROLLUPS_WRITTEN, directories=len(found))
+    return len(found)
 
 
 # ---------------------------------------------------------------- the task
@@ -576,7 +636,8 @@ async def _after_collect(
     if run is None:
         summaries, skipped = await _load(target)
         run = SummaryRun(summaries=summaries, skipped=skipped)
-    if target.phase != RETRIED and run.skipped and files is not None:
+    # Retries cut short (phase still "retrying") aren't made again: _rollups reports them.
+    if target.phase not in (RETRYING, RETRIED) and run.skipped and files is not None:
         await _retry(task, target, run, files)
     if not run.summaries:
         await _give_up(task, target, "nothing_summarized", "no file got a usable summary")

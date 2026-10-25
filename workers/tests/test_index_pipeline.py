@@ -42,7 +42,9 @@ from sensei_core.models import (
 )
 from sensei_core.storage import Bucket, artifact_key, repo_prefix
 from sensei_engine.chunk.store import ChunkWriter, FileChunks
+from sensei_engine.llm import rollups, summaries
 from sensei_testing.anthropic import FakeAnthropic, batch, jsonl, message
+from sensei_workers.base import RetryableError
 from sensei_workers.ingest.git import GitRunner
 from sensei_workers.runtime import Runtime, set_runtime
 from sensei_workers.statistics import vacuum_chunks
@@ -723,17 +725,7 @@ def test_a_file_whose_answer_is_unusable_is_retried_once_at_full_price(
     bare_repo: Any,
 ) -> None:
     org_id, repo_id, job_id = ids
-
-    def garbled(_: httpx2.Request) -> httpx2.Response:
-        [request] = claude.bodies(BATCHES)[0]["requests"]
-        answer = message('{"file_summary": "cut', usage=USAGE)
-        line = {
-            "custom_id": request["custom_id"],
-            "result": {"type": "succeeded", "message": answer},
-        }
-        return jsonl(line)
-
-    claude.routes[f"{BATCHES}/msgbatch_1/results"] = garbled
+    _garbled(claude)
     _run(org_id, repo_id, job_id)
 
     _, job = runtime.run(_state(runtime.system_database, repo_id, job_id))
@@ -752,3 +744,153 @@ def test_a_file_whose_answer_is_unusable_is_retried_once_at_full_price(
     assert [t.term for t in terms] == ["greeting"]
     # The batch's unusable answer (billed), then the retry and the directory call at full price.
     assert usage == [(False, 2), (True, 1)]
+
+
+def _garbled(claude: FakeAnthropic) -> None:
+    """The batch answers its one file with JSON cut short."""
+
+    def results(_: httpx2.Request) -> httpx2.Response:
+        [request] = claude.bodies(BATCHES)[0]["requests"]
+        answer = message('{"file_summary": "cut', usage=USAGE)
+        result = {"type": "succeeded", "message": answer}
+        return jsonl({"custom_id": request["custom_id"], "result": result})
+
+    claude.routes[f"{BATCHES}/msgbatch_1/results"] = results
+
+
+def _serve_next_batch(claude: FakeAnthropic, batch_id: str) -> None:
+    """The next batch sent is ``batch_id``: it ends on its first poll, every answer usable."""
+
+    def submitted() -> list[dict[str, Any]]:
+        return claude.bodies(BATCHES)[-1]["requests"]
+
+    def results(_: httpx2.Request) -> httpx2.Response:
+        return jsonl(*(
+            {"custom_id": r["custom_id"], "result": {"type": "succeeded",
+             "message": message(json.dumps(_answer(r["params"])), usage=USAGE)}}
+            for r in submitted()
+        ))  # fmt: skip
+
+    def state(_: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(200, json=batch(batch_id, "ended", succeeded=len(submitted())))
+
+    claude.routes.update(
+        {
+            BATCHES: httpx2.Response(200, json=batch(batch_id)),
+            f"{BATCHES}/{batch_id}": state,
+            f"{BATCHES}/{batch_id}/results": results,
+        }
+    )
+
+
+async def _next_job(database: Database, org_id: uuid.UUID, repo_id: uuid.UUID) -> uuid.UUID:
+    async with database.session() as db:
+        job = IndexJob(org_id=org_id, repo_id=repo_id, kind=JobKind.FULL)
+        db.add(job)
+        await db.flush()
+        return job.id
+
+
+def test_retries_stopped_part_way_are_not_sent_again(
+    claude: FakeAnthropic,
+    runtime: Runtime,
+    ids: tuple[uuid.UUID, uuid.UUID, uuid.UUID],
+    github: respx.MockRouter,
+    bare_repo: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The task stops after the retries were paid for, before they were stored: run again, it
+    doesn't send them again. The file stays without a summary, the marker at "retrying"; the
+    next index summarizes it."""
+    org_id, repo_id, job_id = ids
+    _garbled(claude)
+    real = summaries.retry_failed
+    stops = [RetryableError("the worker went away")]
+
+    async def stopped(*args: Any, **kwargs: Any) -> None:
+        await real(*args, **kwargs)
+        if stops:
+            raise stops.pop()
+
+    monkeypatch.setattr("sensei_workers.tasks.summaries.retry_failed", stopped)
+    _run(org_id, repo_id, job_id)
+
+    _, job = runtime.run(_state(runtime.system_database, repo_id, job_id))
+    assert job.status is JobStatus.SUCCEEDED
+    stage = job.stages["summaries"]
+    assert (stage["status"], stage["details"]["reason"]) == ("skipped", "nothing_summarized")
+    assert stage["details"]["phase"] == "retrying"
+    asked = [b["messages"][0]["content"] for b in claude.bodies("/v1/messages")]
+    assert sum("<path>src/app.py</path>" in prompt for prompt in asked) == 1  # retried once
+    artifact, _, _ = runtime.run(_summaries(runtime, org_id, repo_id, job_id, bare_repo.second))
+    assert artifact["files"] == []
+    assert list(artifact["skipped"]) == ["src/app.py"]
+
+    # The next index fills the gap.
+    _serve_next_batch(claude, "msgbatch_2")
+    later = runtime.run(_next_job(runtime.system_database, org_id, repo_id))
+    _run(org_id, repo_id, later)
+    _, job = runtime.run(_state(runtime.system_database, repo_id, later))
+    assert job.stages["summaries"]["status"] == "done"
+    assert "partial" not in job.stages["summaries"]["details"]
+    artifact, _, _ = runtime.run(_summaries(runtime, org_id, repo_id, later, bare_repo.second))
+    assert [f["path"] for f in artifact["files"]] == ["src/app.py"]
+
+
+def test_directory_summaries_stopped_part_way_are_not_sent_again(
+    claude: FakeAnthropic,
+    runtime: Runtime,
+    ids: tuple[uuid.UUID, uuid.UUID, uuid.UUID],
+    github: respx.MockRouter,
+    bare_repo: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    org_id, repo_id, job_id = ids
+    real = rollups.summarize_directories
+    stops = [RetryableError("the worker went away")]
+
+    async def stopped(*args: Any, **kwargs: Any) -> Any:
+        found = await real(*args, **kwargs)
+        if stops:
+            raise stops.pop()
+        return found
+
+    monkeypatch.setattr(rollups, "summarize_directories", stopped)
+    _run(org_id, repo_id, job_id)
+
+    _, job = runtime.run(_state(runtime.system_database, repo_id, job_id))
+    assert job.status is JobStatus.SUCCEEDED
+    stage = job.stages["summaries"]
+    assert stage["status"] == "done"
+    details = stage["details"]
+    assert (details["rollups"], details["directories"]) == ("started", 0)
+    assert details["partial"] == {"directories": True}
+    assert len(claude.bodies("/v1/messages")) == 1  # the directory call, made once
+    assert runtime.run(_rollups_artifact(runtime, org_id, repo_id, bare_repo.second)) is None
+    events = runtime.run(_events(runtime, job_stream(job_id)))
+    warned = [e["message"] for e in events if e["type"] == "log" and e["level"] == "warn"]
+    assert (
+        "Summaries are partial: the directory summaries stopped part way and weren't paid for"
+        " twice; the next index summarizes them again." in warned
+    )
+
+    # The next index fills the gap.
+    _serve_next_batch(claude, "msgbatch_2")
+    later = runtime.run(_next_job(runtime.system_database, org_id, repo_id))
+    _run(org_id, repo_id, later)
+    _, job = runtime.run(_state(runtime.system_database, repo_id, later))
+    details = job.stages["summaries"]["details"]
+    assert (details["rollups"], details["directories"]) == ("written", 2)
+    assert "partial" not in details
+    found = runtime.run(_rollups_artifact(runtime, org_id, repo_id, bare_repo.second))
+    assert found is not None
+    assert len(found["directories"]) == 2
+
+
+async def _rollups_artifact(
+    runtime: Runtime, org_id: uuid.UUID, repo_id: uuid.UUID, sha: str
+) -> Any:
+    storage = await runtime.storage()
+    key = artifact_key(org_id, repo_id, sha, "rollups.json")
+    found = await storage.get_bytes(Bucket.ARTIFACTS, key, max_bytes=1 << 20)
+    return json.loads(found) if found is not None else None
