@@ -13,7 +13,8 @@ repository hashed there). Every partition has the org isolation policy too.
 ``generation`` is the run of the chunks stage that wrote the row: search reads a snapshot's live
 generation only (``snapshots.chunk_generation``; see :mod:`sensei_engine.chunk.store`).
 ``symbol_id`` links a definition's chunks to its node (set to null if that node goes; the
-``symbol_key`` stays). ``embedding`` is filled by 2.7.
+``symbol_key`` stays). ``embedding`` is filled by 2.7's stage; each partition gets its own
+HNSW index on it (cosine, ``halfvec``) once its first vectors are loaded (:func:`embedding_index`).
 """
 
 from __future__ import annotations
@@ -48,6 +49,12 @@ def chunk_partitions() -> list[str]:
 def bm25_index(partition: str, column: str) -> str:
     """The BM25 index on ``column`` (``search_text`` or ``path_text``) of a partition."""
     return f"{partition}_{column}_bm25"
+
+
+def embedding_index(partition: str) -> str:
+    """The HNSW index on a partition's embeddings (built after its first bulk load by the
+    ``chunk_embedding_index`` function, migration 0024)."""
+    return f"{partition}_embedding_hnsw"
 
 
 class CodeChunk(OrgScopedMixin, Base):

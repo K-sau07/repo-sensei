@@ -1,9 +1,10 @@
 """The summaries stage (2.8): what every source file and its symbols do, in the domain's words,
 written by Claude in one Message Batch; then the snapshot's glossary and directory rollups.
 
-It follows chunks (embeddings, 2.7, will come in between: :data:`AFTER`),
-over the files that have symbols, and goes through these steps, each recorded before the next
-starts so a task that stops part way resumes where it was:
+It follows embeddings (done or skipped; or chunks, when the embeddings stage passed itself over
+for want of a Voyage key: :func:`_after_done`), over the files that have symbols, and goes
+through these steps, each recorded before the next starts so a task that stops part way resumes
+where it was:
 
 1. **Send**: the requests are built from the working copy, the cost estimated (the batch and the
    rollups after it) and checked against the org's monthly cap under the org's cost lock, in
@@ -88,8 +89,7 @@ from sensei_workers.tasks.ingest import IngestTask
 
 log = get_logger(__name__)
 
-# The stage before this one: EMBEDDINGS once embeddings (2.7) are in the chain.
-AFTER = Stage.CHUNKS
+AFTER = Stage.EMBEDDINGS  # the stage before this one
 STAGE = Stage.SUMMARIES
 REF_TYPE = "index_job"  # the batch and the usage belong to the job
 POLL_SECONDS = 60.0
@@ -159,7 +159,7 @@ async def _begin(task: IngestTask, org_id: str, job_id: uuid.UUID) -> Target | N
         if job is None or job.status not in ACTIVE_JOB_STATUSES:
             return None
         stages = job.stages or {}
-        ready = job.stage is AFTER and stages.get(AFTER.value, {}).get("status") == "done"
+        ready = _after_done(job.stage, stages)
         resuming = job.stage is STAGE and stages.get(STAGE.value, {}).get("status") == "running"
         if not ready and not resuming:
             order = list(Stage)
@@ -195,6 +195,15 @@ async def _begin(task: IngestTask, org_id: str, job_id: uuid.UUID) -> Target | N
             details.get("phase"),
             frameworks,
         )
+
+
+def _after_done(stage: Stage | None, stages: Mapping[str, Any]) -> bool:
+    """Whether the stage before this one is over: embeddings done or skipped, or chunks done
+    when there are no embeddings to wait for (no Voyage key: that stage passes itself over)."""
+    status = stages.get(stage.value, {}).get("status") if stage is not None else None
+    if stage is AFTER:
+        return status in {"done", "skipped"}
+    return stage is Stage.CHUNKS and status == "done" and get_runtime().embeddings is None
 
 
 def _skip(scope: JobScope, reason: str, why: str, **details: Any) -> None:

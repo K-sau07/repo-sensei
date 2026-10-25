@@ -133,6 +133,12 @@ def _bm25(context: RetrieverContext) -> Retriever:
     return checkout_keyword(context)
 
 
+def _dense(context: RetrieverContext) -> Retriever:
+    from sensei_evals.dense import checkout_semantic  # noqa: PLC0415 - imports this module
+
+    return checkout_semantic(context, "dense")
+
+
 def _hybrid(context: RetrieverContext) -> Retriever:
     from sensei_evals.hybrid import checkout_hybrid  # noqa: PLC0415 - imports this module
 
@@ -146,5 +152,6 @@ RETRIEVERS: dict[str, RetrieverFactory] = {
     "random": _random,
     "symbols": _symbols,
     "bm25": _bm25,
+    "dense": _dense,
     "hybrid": _hybrid,
 }

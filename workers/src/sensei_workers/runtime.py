@@ -26,17 +26,29 @@ from sensei_core.security.crypto import TokenCipher
 from sensei_core.storage import ObjectStorage
 from sensei_core.telemetry import instrument_engine
 from sensei_core.usage import CostCalculator
+from sensei_engine.embed.provider import EmbeddingProvider
+from sensei_engine.embed.voyage import VoyageClient
 from sensei_engine.llm.anthropic_client import AnthropicClient
 
 T = TypeVar("T")
 
 
 class Runtime:
-    def __init__(self, settings: Settings, *, anthropic: AnthropicClient | None = None) -> None:
-        """``anthropic``: the client to use instead of one from the settings (tests)."""
+    def __init__(
+        self,
+        settings: Settings,
+        *,
+        anthropic: AnthropicClient | None = None,
+        embeddings: EmbeddingProvider | None = None,
+    ) -> None:
+        """``anthropic``, ``embeddings``: the clients to use instead of ones from the settings
+        (tests)."""
         self.settings = settings
         self._anthropic = anthropic
         self._anthropic_given = anthropic is not None
+        self._embeddings = embeddings
+        self._embeddings_given = embeddings is not None
+        self._voyage_http: httpx.AsyncClient | None = None
         self._costs: CostCalculator | None = None
         self._runner: asyncio.Runner | None = None
         self._database: Database | None = None
@@ -133,6 +145,15 @@ class Runtime:
         return self._anthropic
 
     @property
+    def embeddings(self) -> EmbeddingProvider | None:
+        """The embedding provider: Voyage, or None when this deployment has no key. One per
+        runtime, so its rate limits count every request this process sends."""
+        if self._embeddings is None and self.settings.voyage.configured:
+            self._voyage_http = httpx.AsyncClient()
+            self._embeddings = VoyageClient(self.settings.voyage, self._voyage_http)
+        return self._embeddings
+
+    @property
     def costs(self) -> CostCalculator:
         """Prices for the usage ledger and the cost guard."""
         if self._costs is None:
@@ -155,8 +176,9 @@ class Runtime:
         async def _close() -> None:
             if self._storage is not None:
                 await self._storage.close()
-            if self._http is not None:
-                await self._http.aclose()
+            for http in (self._http, self._voyage_http):
+                if http is not None:
+                    await http.aclose()
             if self._redis is not None:
                 await self._redis.aclose()
             for database in (self._database, self._system_database):
@@ -180,6 +202,9 @@ class Runtime:
         self._storage = None
         if not self._anthropic_given:  # its connections belonged to the loop just closed
             self._anthropic = None
+        if not self._embeddings_given:
+            self._embeddings = None
+        self._voyage_http = None
 
 
 _runtime: Runtime | None = None

@@ -4,10 +4,11 @@ it, and resumed after an outage); and cancelling while the clone runs."""
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import uuid
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, cast
@@ -41,12 +42,15 @@ from sensei_core.models import (
     Snapshot,
     Stage,
     UsageEvent,
+    UsageKind,
 )
 from sensei_core.storage import Bucket, artifact_key, repo_prefix
 from sensei_engine.chunk.store import ChunkWriter, FileChunks
+from sensei_engine.embed.provider import EmbeddingUsage, InputType, UsageSink
+from sensei_engine.embed.voyage import VoyageError
 from sensei_engine.ingest.store import file_ids
 from sensei_engine.llm import rollups, summaries
-from sensei_engine.search.bm25 import keyword_search
+from sensei_engine.search.bm25 import chunk_partition, keyword_search
 from sensei_testing.anthropic import FakeAnthropic, batch, jsonl, message
 from sensei_workers import statistics
 from sensei_workers.base import NotYetError, RetryableError
@@ -67,8 +71,9 @@ COMMITS_URL = "https://api.github.com/repos/acme-gh/demo/commits/main"
 def runtime(
     migrated_test_db: Settings, bare_repo: Any, tmp_path: Path, request: pytest.FixtureRequest
 ) -> Iterator[Runtime]:
-    """The workers' runtime; with Claude (the ``claude`` fixture, and ``cap``) when the test
-    asks for them, else without (summaries are passed over)."""
+    """The workers' runtime; with Claude (the ``claude`` fixture, and ``cap``) and Voyage (the
+    ``voyage`` fixture) when the test asks for them, else without (summaries and embeddings are
+    passed over)."""
     settings = migrated_test_db.model_copy(
         update={
             "ingest": migrated_test_db.ingest.model_copy(
@@ -87,10 +92,49 @@ def runtime(
     claude: FakeAnthropic | None = (
         request.getfixturevalue("claude") if "claude" in request.fixturenames else None
     )
-    current = Runtime(settings, anthropic=claude.client() if claude is not None else None)
+    voyage: FakeVoyage | None = (
+        request.getfixturevalue("voyage") if "voyage" in request.fixturenames else None
+    )
+    current = Runtime(
+        settings, anthropic=claude.client() if claude is not None else None, embeddings=voyage
+    )
     set_runtime(current)
     yield current
     set_runtime(None)
+
+
+class FakeVoyage:
+    """Embeds each text as a unit vector picked by its hash, billing a token per 4 characters;
+    or refuses every request with ``refusal``."""
+
+    provider = "voyage"
+    model = "voyage-code-4"
+    dims = 1024
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[int, InputType]] = []  # texts per request, and what for
+        self.refusal: VoyageError | None = None
+
+    async def embed(
+        self, texts: Sequence[str], input_type: InputType, *, on_usage: UsageSink | None = None
+    ) -> list[list[float]]:
+        if self.refusal is not None:
+            raise self.refusal
+        self.calls.append((len(texts), input_type))
+        if on_usage is not None:
+            tokens = sum(len(t) // 4 + 1 for t in texts)
+            await on_usage(EmbeddingUsage(self.provider, self.model, len(texts), tokens))
+        vectors: list[list[float]] = []
+        for t in texts:
+            vector = [0.0] * self.dims
+            vector[int(hashlib.sha256(t.encode()).hexdigest(), 16) % self.dims] = 1.0
+            vectors.append(vector)
+        return vectors
+
+
+@pytest.fixture
+def voyage() -> FakeVoyage:
+    return FakeVoyage()
 
 
 @pytest.fixture
@@ -1077,3 +1121,134 @@ async def _rollups_artifact(
     key = artifact_key(org_id, repo_id, sha, "rollups.json")
     found = await storage.get_bytes(Bucket.ARTIFACTS, key, max_bytes=1 << 20)
     return json.loads(found) if found is not None else None
+
+
+# ---------------------------------------------------------------- embeddings
+
+
+async def _embedding_state(
+    runtime: Runtime, org_id: uuid.UUID, repo_id: uuid.UUID, job_id: uuid.UUID
+) -> tuple[int, int, list[int], bool]:
+    """Chunks with a vector and without; the job's embedding usage (tokens per request); and
+    whether the repository's partition has its HNSW index."""
+    async with runtime.system_database.session() as db:
+        with_vector = await db.scalar(
+            select(func.count())
+            .select_from(CodeChunk)
+            .where(CodeChunk.repo_id == repo_id, CodeChunk.embedding.is_not(None))
+        )
+        without = await db.scalar(
+            select(func.count())
+            .select_from(CodeChunk)
+            .where(CodeChunk.repo_id == repo_id, CodeChunk.embedding.is_(None))
+        )
+        usage = list(
+            await db.scalars(
+                select(UsageEvent.tokens_in).where(
+                    UsageEvent.org_id == org_id,
+                    UsageEvent.ref_id == str(job_id),
+                    UsageEvent.kind == UsageKind.EMBEDDING,
+                )
+            )
+        )
+        partition = await chunk_partition(db, repo_id)
+        indexed = bool(
+            await db.scalar(
+                text("SELECT to_regclass(:name) IS NOT NULL"),
+                {"name": f"{partition}_embedding_hnsw"},
+            )
+        )
+    return int(with_vector or 0), int(without or 0), usage, indexed
+
+
+def test_chunks_are_embedded_and_semantic_search_unlocked(
+    voyage: FakeVoyage,
+    runtime: Runtime,
+    ids: tuple[uuid.UUID, uuid.UUID, uuid.UUID],
+    github: respx.MockRouter,
+) -> None:
+    org_id, repo_id, job_id = ids
+    _run(org_id, repo_id, job_id)
+
+    repo, job = runtime.run(_state(runtime.system_database, repo_id, job_id))
+    assert (job.status, repo.status) == (JobStatus.SUCCEEDED, RepoStatus.READY)
+    stage = job.stages["embeddings"]
+    chunks = job.stages["chunks"]["details"]["chunks"]
+    assert (stage["status"], stage["done"], stage["total"]) == ("done", chunks, chunks)
+    assert (stage["details"]["cached"], stage["details"]["embedded"]) == (0, chunks)
+    assert {input_type for _, input_type in voyage.calls} == {InputType.DOCUMENT}
+    with_vector, without, usage, indexed = runtime.run(
+        _embedding_state(runtime, org_id, repo_id, job_id)
+    )
+    assert (with_vector, without) == (chunks, 0)
+    assert len(usage) == len(voyage.calls)
+    assert indexed
+
+    events = runtime.run(_events(runtime, job_stream(job_id)))
+    unlocks = {(e["stage"], tuple(e["unlocks"])) for e in events if e["type"] == "unlock"}
+    assert ("embeddings", ("semantic_search", "ask")) in unlocks
+    logs = [e["message"] for e in events if e["type"] == "log"]
+    assert f"Embedded {chunks:,} chunks (0 texts from the cache). Semantic search is ready." in logs
+
+
+def test_a_second_index_of_the_same_code_embeds_nothing_and_pays_nothing(
+    voyage: FakeVoyage,
+    runtime: Runtime,
+    ids: tuple[uuid.UUID, uuid.UUID, uuid.UUID],
+    github: respx.MockRouter,
+) -> None:
+    org_id, repo_id, job_id = ids
+    _run(org_id, repo_id, job_id)
+    sent = len(voyage.calls)
+
+    later = runtime.run(_next_job(runtime.system_database, org_id, repo_id))
+    _run(org_id, repo_id, later)
+
+    _, job = runtime.run(_state(runtime.system_database, repo_id, later))
+    details = job.stages["embeddings"]["details"]
+    chunks = job.stages["chunks"]["details"]["chunks"]
+    assert (job.stages["embeddings"]["status"], details["embedded"]) == ("done", 0)
+    assert details["cached"] == chunks  # every text from the cache
+    assert len(voyage.calls) == sent  # nothing sent
+    with_vector, without, usage, _ = runtime.run(_embedding_state(runtime, org_id, repo_id, later))
+    assert (with_vector, without, usage) == (chunks, 0, [])  # nothing billed
+
+
+def test_voyage_refusing_skips_semantic_search_and_the_index_still_finishes(
+    voyage: FakeVoyage,
+    runtime: Runtime,
+    ids: tuple[uuid.UUID, uuid.UUID, uuid.UUID],
+    github: respx.MockRouter,
+) -> None:
+    org_id, repo_id, job_id = ids
+    voyage.refusal = VoyageError(401, "invalid API key")
+    _run(org_id, repo_id, job_id)
+
+    repo, job = runtime.run(_state(runtime.system_database, repo_id, job_id))
+    assert (job.status, repo.status) == (JobStatus.SUCCEEDED, RepoStatus.READY)
+    stage = job.stages["embeddings"]
+    assert (stage["status"], stage["details"]["reason"]) == ("skipped", "voyage_error")
+    events = runtime.run(_events(runtime, job_stream(job_id)))
+    unlocked = [f for e in events if e["type"] == "unlock" for f in e["unlocks"]]
+    assert "semantic_search" not in unlocked
+    assert "keyword_search" in unlocked
+    warned = [e["message"] for e in events if e["type"] == "log" and e["level"] == "warn"]
+    assert "Semantic search skipped: Voyage refused (Voyage 401: invalid API key)." in warned
+
+
+def test_summaries_follow_embeddings(
+    voyage: FakeVoyage,
+    claude: FakeAnthropic,
+    runtime: Runtime,
+    ids: tuple[uuid.UUID, uuid.UUID, uuid.UUID],
+    github: respx.MockRouter,
+) -> None:
+    org_id, repo_id, job_id = ids
+    _run(org_id, repo_id, job_id)
+
+    _, job = runtime.run(_state(runtime.system_database, repo_id, job_id))
+    assert job.status is JobStatus.SUCCEEDED
+    assert job.stages["embeddings"]["status"] == job.stages["summaries"]["status"] == "done"
+    events = runtime.run(_events(runtime, job_stream(job_id)))
+    started = [e["stage"] for e in events if e["type"] == "stage_started"]
+    assert started.index("embeddings") < started.index("summaries") < started.index("finalize")

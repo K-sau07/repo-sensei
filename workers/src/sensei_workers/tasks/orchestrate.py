@@ -8,7 +8,8 @@ stage checks the job first: a cancelled or failed job makes the rest of the chai
 The stage task ids are kept in Redis so cancelling can revoke the ones still queued.
 
 ``finalize_index`` ends the run: stages this phase doesn't have yet are recorded as skipped (so
-are summaries when the server has no Anthropic key: that stage passes itself over), the
+are embeddings and summaries when the server has no Voyage or Anthropic key: those stages pass
+themselves over), the
 repository becomes ``ready`` at the indexed commit, and the job succeeds. The chunks of the
 repository's other snapshots are pruned in the same transaction (search serves the indexed
 commit), with its own rows outside the live generation; its chunks partition is vacuumed after
@@ -38,6 +39,7 @@ from sensei_workers.jobstate import job_scope
 from sensei_workers.runtime import get_runtime
 from sensei_workers.tasks.chunk import chunk_snapshot
 from sensei_workers.tasks.discover import discover_files
+from sensei_workers.tasks.embed import embed_snapshot
 from sensei_workers.tasks.ingest import IngestTask, clone_snapshot
 from sensei_workers.tasks.maintenance import request_vacuum
 from sensei_workers.tasks.merkle import build_merkle
@@ -159,10 +161,11 @@ def _send_the_chunks_stage(job_id: str, org_id: str, repo_id: str, *, eager: boo
 
 
 def _ready_to_finalize(job: IndexJob) -> bool:
-    """The last stage before finalize is over: summaries done or skipped, or chunks done when
-    the summaries stage passed itself over (no Anthropic key)."""
+    """The last stage before finalize is over: summaries done or skipped; or, when the
+    summaries stage passed itself over (no Anthropic key), embeddings done or skipped; or chunks
+    done when the embeddings stage passed itself over too (no Voyage key)."""
     status = (job.stages or {}).get(job.stage.value if job.stage else "", {}).get("status")
-    if job.stage is Stage.SUMMARIES:
+    if job.stage in (Stage.SUMMARIES, Stage.EMBEDDINGS):
         return status in {"done", "skipped"}
     return job.stage is Stage.CHUNKS and status == "done"
 
@@ -173,7 +176,7 @@ STAGES = (
     build_merkle,
     parse_snapshot,
     chunk_snapshot,
-    # Embeddings (2.7) go here; summaries follow them.
+    embed_snapshot,
     summarize_snapshot,
     finalize_index,
 )
