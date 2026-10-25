@@ -29,6 +29,7 @@ query does.
 from __future__ import annotations
 
 import enum
+import re
 import uuid
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
@@ -53,6 +54,7 @@ class Leg(enum.StrEnum):
 # The column each leg ranks (each partition has a BM25 index on it: bm25_index()).
 COLUMNS: dict[Leg, str] = {Leg.CODE: "search_text", Leg.PATH: "path_text"}
 PARTITIONS = frozenset(chunk_partitions())
+_SCHEMA = re.compile(r"[a-z_][a-z0-9_]*")
 DEFAULT_WEIGHTS: dict[Leg, float] = {Leg.CODE: 1.0, Leg.PATH: 0.8}
 
 
@@ -87,14 +89,27 @@ def _like_prefix(prefix: str) -> str:
     return escaped + "%"
 
 
+def _partition_name(partition: str) -> bool:
+    """``schema.chunks_pNN``: a partition of ``chunks``, schema-qualified (safe in SQL)."""
+    schema, _, name = partition.rpartition(".")
+    return _SCHEMA.fullmatch(schema) is not None and name in PARTITIONS
+
+
 async def chunk_partition(db: AsyncSession, repo_id: uuid.UUID) -> str | None:
-    """The partition holding the repository's chunks (None if it has none the session sees)."""
+    """The partition holding the repository's chunks, schema-qualified (``public.chunks_p07``:
+    the same name elsewhere on the search path can't stand in for it); None if the session sees
+    none of the repository's chunks."""
     found = await db.scalar(
-        text("SELECT tableoid::regclass::text FROM chunks WHERE repo_id = :repo_id LIMIT 1"),
+        text(
+            "SELECT n.nspname || '.' || p.relname FROM chunks c "
+            "JOIN pg_class p ON p.oid = c.tableoid "
+            "JOIN pg_namespace n ON n.oid = p.relnamespace "
+            "WHERE c.repo_id = :repo_id LIMIT 1"
+        ),
         {"repo_id": repo_id},
     )
     name = str(found) if found is not None else None
-    return name if name in PARTITIONS else None
+    return name if name is not None and _partition_name(name) else None
 
 
 async def searchable_partition(
@@ -131,7 +146,7 @@ async def bm25_search(
     if not terms.strip():
         return []
     partition = partition or await searchable_partition(db, repo_id, snapshot_id)
-    if partition is None or partition not in PARTITIONS:
+    if partition is None or not _partition_name(partition):
         return []
     column = COLUMNS[leg]
     index = bm25_index(partition, column)

@@ -26,6 +26,7 @@ from sensei_engine.ingest.store import save_discovery
 from sensei_engine.parse.parser import parse_file
 from sensei_engine.parse.stage import parseable
 from sensei_engine.search.bm25 import (
+    POOL_SLACK,
     Filters,
     Leg,
     LexHit,
@@ -41,6 +42,7 @@ from sensei_testing import make_user
 
 pytestmark = pytest.mark.integration
 
+DECOYS = 40
 ARCHIVE = Path(__file__).parent / "fixtures" / "fastapi-template.tar.gz"
 FILES = {
     "app/models.py": (
@@ -242,7 +244,9 @@ async def test_a_partition_read_directly_is_org_scoped_too(
 ) -> None:
     snapshot, _ = await _index(db_session, tmp_path, FILES)
     partition = await chunk_partition(db_session, snapshot.repo_id)
-    assert partition in chunk_partitions()
+    assert partition is not None
+    assert partition.split(".")[0] == "public"
+    assert partition.split(".")[1] in chunk_partitions()
     query = text(f"SELECT count(*) FROM {partition} WHERE snapshot_id = :s")
     assert await db_session.scalar(query, {"s": snapshot.id}) == snapshot.chunk_count
     await set_org_context(db_session, uuid.uuid4())  # another org
@@ -335,23 +339,41 @@ async def test_the_path_leg_matches_paths_signatures_and_names(
     assert found[0] == ("backend/app/models.py", "py backend/app/models.py/UpdatePassword#")
 
 
-async def test_filters_apply_before_the_limit(
-    fixture_snapshot: tuple[AsyncSession, Snapshot],
-) -> None:
-    db, snapshot = fixture_snapshot
-    tsx = await _search(db, snapshot, "items", filters=Filters(languages=["tsx"]))
-    assert tsx
-    assert all(path.endswith(".tsx") for path, _ in tsx)
-    backend = await _search(db, snapshot, "items", filters=Filters(path_prefix="backend/"))
-    assert all(path.startswith("backend/") for path, _ in backend)
-    tests = await _search(db, snapshot, "items", filters=Filters(roles=["test"]))
-    assert tests
-    assert all("test" in path for path, _ in tests)
-    assert {path for path, _ in tests} != {path for path, _ in backend}
-    classes = await _search(db, snapshot, "user", filters=Filters(kinds=["class"]))
-    assert classes
-    assert all(key is not None and key.endswith("#") for _, key in classes)
-    assert await _search(db, snapshot, "xyzzyqq") == []
+async def test_filters_apply_before_the_limit(db_session: AsyncSession, tmp_path: Path) -> None:
+    """Each filter's one match ranks below every decoy, past the rows a leg reads beyond ``k``
+    (``k + POOL_SLACK``): found only if the filter applies as the index is read."""
+    decoys = {
+        f"a/widget_{i:02}.py": f"def widget_{i:02}():\n    return 'widget widget widget'\n"
+        for i in range(DECOYS)
+    }
+    filler = " ".join(f"word{i}" for i in range(80))
+    matches = {
+        "z/notes.md": f"# Notes\n\nOne widget, among {filler}.\n",
+        "tests/test_parts.py": f"def test_parts():\n    assert 'widget' not in '{filler}'\n",
+        "b/shape.py": f"class Shape:\n    doc = 'a widget, {filler}'\n",
+    }
+    snapshot, _ = await _index(db_session, tmp_path, {**decoys, **matches})
+
+    async def paths(k: int, filters: Filters = Filters()) -> list[str]:  # noqa: B008
+        hits = await bm25_search(
+            db_session,
+            repo_id=snapshot.repo_id,
+            snapshot_id=snapshot.id,
+            query="widget",
+            k=k,
+            filters=filters,
+        )
+        return [hit.path for hit in hits]
+
+    ranked = await paths(DECOYS + len(matches))
+    assert ranked[:DECOYS] == sorted(decoys)  # every decoy first
+    assert sorted(ranked[DECOYS:]) == sorted(matches)
+    assert DECOYS > 1 + POOL_SLACK
+    assert await paths(1, Filters(path_prefix="z/")) == ["z/notes.md"]
+    assert await paths(1, Filters(languages=["markdown"])) == ["z/notes.md"]
+    assert await paths(1, Filters(roles=["test"])) == ["tests/test_parts.py"]
+    assert await paths(1, Filters(kinds=["class"])) == ["b/shape.py"]
+    assert await paths(5, Filters(path_prefix="nowhere/")) == []
 
 
 async def test_the_legs_fuse_by_reciprocal_rank(
@@ -398,3 +420,20 @@ async def test_a_snapshot_is_searched_only_once_chunked(
     assert snapshot.chunk_count is None
     assert await searchable_partition(db_session, repo_id, snapshot_id) is None
     assert await found() == ([], [])
+
+
+async def test_a_table_of_the_partitions_name_doesnt_stand_in_for_it(
+    db_session: AsyncSession, tmp_path: Path
+) -> None:
+    snapshot, _ = await _index(db_session, tmp_path, FILES)
+    partition = await chunk_partition(db_session, snapshot.repo_id)
+    assert partition is not None
+    # A temporary table comes first on the search path: the bare name would now be it.
+    name = partition.split(".")[1]
+    await db_session.execute(text(f"CREATE TEMPORARY TABLE {name} (LIKE chunks)"))
+    assert await chunk_partition(db_session, snapshot.repo_id) == partition
+    hits = await keyword_search(
+        db_session, repo_id=snapshot.repo_id, snapshot_id=snapshot.id, query="make_item"
+    )
+    assert hits
+    assert hits[0].symbol_key == "py app/models.py/make_item()."
