@@ -44,7 +44,8 @@ Sleep = Callable[[float], Awaitable[None]]
 # How far a provider batch's creation time may be from its row's (clock skew, a slow send).
 MATCH_WINDOW = timedelta(minutes=10)
 # How long the provider keeps a batch's results after the batch was created: an older batch not
-# collected yet never will be (nor billed through the ledger).
+# collected yet never will be (the cost guard settles it at its estimate:
+# sensei_engine.llm.summaries.settle_expired).
 RESULTS_KEPT = timedelta(days=29)
 
 
@@ -213,20 +214,6 @@ async def collect(
             for usage in item.usage:
                 await on_usage(usage)
     return items
-
-
-async def results(
-    client: AnthropicClient, batch: LLMBatch, *, json_output: bool = False
-) -> list[BatchItem]:
-    """The results of a batch collected already, read again: nothing is claimed and no usage
-    reported (it was when the batch was collected). Within :data:`RESULTS_KEPT` of its creation."""
-    if batch.collected_at is None or batch.provider_batch_id is None:
-        msg = f"batch {batch.id} hasn't been collected"
-        raise BatchNotCollectable(msg)
-    return [
-        item
-        async for item in client.batch_results(batch.provider_batch_id, json_output=json_output)
-    ]
 
 
 async def uncollected(

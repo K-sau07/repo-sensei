@@ -12,18 +12,23 @@ words, written by Claude through the Message Batches API (half price).
 * **Cost guard** (:func:`estimate_cost`, :func:`check_budget`, :func:`reserve_batch`): before
   anything is sent, the input is counted with ``count_tokens`` (every request, or a sample and a
   fit when there are many) and the output estimated per symbol. The run doesn't start if the
-  month's spend, plus the estimates of the org's batches not collected yet (that still can be:
-  :data:`~sensei_engine.llm.batches.RESULTS_KEPT`), plus this estimate would pass the org's cap
-  (:class:`CostCapExceeded`). Both are read in one statement, so a batch collected meanwhile is
-  counted once, as an estimate or as its usage. The check and the reservation hold a per-org
-  advisory lock to the end of their transaction, so two runs can't both pass on the same
-  headroom. The estimate is recorded on the batch.
+  month's spend, plus the estimates of the org's batches not collected yet, plus this estimate
+  would pass the org's cap (:class:`CostCapExceeded`). Both are read in one statement, so a
+  batch collected meanwhile is counted once, as an estimate or as its usage. An uncollected
+  batch counts against the month being checked, whenever it was sent: it is billed when it is
+  collected, now or later. One past the provider keeping its results (:data:`KEPT`) can't be
+  collected but was paid for: the guard settles it first, its estimate in the ledger dated when
+  it ended (:func:`settle_expired`). The check and the reservation hold a per-org advisory lock
+  to the end of their transaction, so two runs can't both pass on the same headroom. The
+  estimate is recorded on the batch. Calls made at once (retries, directory summaries) are
+  checked under the lock but not reserved: two jobs checking at once can both pass, together
+  over the cap by at most their own estimates (a few files at full price, the directories).
 * **Batch** (:func:`summarize_files`): reserved, sent, polled and collected through
   :mod:`sensei_engine.llm.batches`; usage goes to the ledger, and the summaries to the
   caller's ``store``, in the transaction that claims the batch. Run again for the same
   reference (a redelivered task), it takes up the batch still open for it instead of sending
-  (and paying for) another; or, if that batch was collected, reads its results again (without
-  billing them twice) and doesn't retry: a run that stopped after collecting may have retried.
+  (and paying for) another; if that batch was collected (its summaries stored), it raises
+  :class:`SummariesCollected` rather than send it again.
   A request that failed or whose answer is unusable (not JSON, cut off, not matching the
   schema) is sent once more on its own, after its own pass through the cost guard; if that
   fails too (or the cap is in the way) the file is skipped, with the reason.
@@ -52,8 +57,9 @@ from pydantic import BaseModel, ConfigDict, ValidationError
 from sqlalchemy import Select, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from sensei_core.db.base import new_id
 from sensei_core.logging import get_logger
-from sensei_core.models import LLMBatch, LLMBatchStatus, UsageEvent
+from sensei_core.models import LLMBatch, LLMBatchStatus, UsageEvent, UsageKind
 from sensei_core.usage import CostCalculator, month_start
 from sensei_engine.llm import batches
 from sensei_engine.llm.anthropic_client import (
@@ -89,6 +95,10 @@ RETRY_CONCURRENCY = 4
 # The advisory lock the cost guard holds per org (with the org id's hash): one namespace for every
 # check-then-reserve on an org's model spend.
 COST_LOCK = "llm_cost_guard"
+# How long an uncollected batch may still be collected: the provider keeps results that long
+# after it created the batch, a little after our row was (the send's margin).
+KEPT = batches.RESULTS_KEPT + batches.MATCH_WINDOW
+EXPIRED_PRICE_VERSION = "batch-estimate"  # a settled batch's ledger row: its estimate
 
 Sleep = Callable[[float], Awaitable[None]]
 Sessions = Callable[[], AbstractAsyncContextManager[AsyncSession]]
@@ -154,6 +164,14 @@ class SummaryRun:
     batch_id: uuid.UUID | None = None
     retried: int = 0
     dropped_keys: int = 0  # symbol keys the model gave that the file doesn't have, or repeated
+
+
+class SummariesCollected(Exception):
+    """The reference's batch was collected already: its summaries went to the store then."""
+
+    def __init__(self, batch_id: uuid.UUID) -> None:
+        super().__init__(f"the summaries batch {batch_id} was collected already")
+        self.batch_id = batch_id
 
 
 class CostCapExceeded(Exception):
@@ -396,7 +414,7 @@ def _pending(org_id: uuid.UUID, now: datetime) -> Select[tuple[Any]]:
         LLMBatch.org_id == org_id,
         LLMBatch.collected_at.is_(None),
         LLMBatch.status != LLMBatchStatus.FAILED,
-        LLMBatch.created_at >= now - batches.RESULTS_KEPT,
+        LLMBatch.created_at >= now - KEPT,
     )
 
 
@@ -404,8 +422,8 @@ async def pending_estimates(
     db: AsyncSession, org_id: uuid.UUID, *, now: datetime | None = None
 ) -> Decimal:
     """The estimates of the org's batches whose cost isn't in the ledger yet: reserved, sent or
-    ended, but not collected (and not failed). One older than the provider keeps results
-    (:data:`~sensei_engine.llm.batches.RESULTS_KEPT`) can't be collected: it doesn't count."""
+    ended, but not collected (and not failed), that can still be collected (:data:`KEPT`; an
+    older one is settled: :func:`settle_expired`)."""
     total = await db.scalar(_pending(org_id, now or datetime.now(UTC)))
     return Decimal(total or 0)
 
@@ -425,6 +443,46 @@ async def committed_spend(
     return Decimal(total or 0)
 
 
+async def settle_expired(db: AsyncSession, org_id: uuid.UUID, *, now: datetime) -> int:
+    """The org's batches sent but never collected, past :data:`KEPT`: they were paid for, and
+    their results are gone. Each one's estimate goes to the ledger, dated when it ended (or was
+    sent), and the batch is marked collected. How many there were."""
+    rows = await db.scalars(
+        select(LLMBatch)
+        .where(
+            LLMBatch.org_id == org_id,
+            LLMBatch.collected_at.is_(None),
+            LLMBatch.status != LLMBatchStatus.FAILED,
+            LLMBatch.provider_batch_id.is_not(None),
+            LLMBatch.created_at < now - KEPT,
+        )
+        .with_for_update(skip_locked=True)
+    )
+    settled = 0
+    for row in rows:
+        db.add(
+            UsageEvent(
+                id=new_id(),
+                org_id=org_id,
+                kind=UsageKind.LLM,
+                provider=row.provider,
+                model=row.model,
+                cost_usd=row.estimated_cost_usd or Decimal(0),
+                price_version=EXPIRED_PRICE_VERSION,
+                batch=True,
+                ref_type=row.ref_type,
+                ref_id=row.ref_id,
+                created_at=row.ended_at or row.created_at,
+            )
+        )
+        row.collected_at = now
+        settled += 1
+        log.warning("uncollected batch settled at its estimate", batch_id=str(row.id))
+    if settled:
+        await db.flush()
+    return settled
+
+
 async def check_budget(
     db: AsyncSession,
     org_id: uuid.UUID,
@@ -437,6 +495,7 @@ async def check_budget(
     :class:`CostCapExceeded` if the estimate on top of it would pass ``cap_usd``. Takes the org's
     cost-guard lock: reserve in the same transaction (:func:`reserve_batch`)."""
     await lock_spending(db, org_id)
+    await settle_expired(db, org_id, now=now or datetime.now(UTC))
     spent = await committed_spend(db, org_id, now=now)
     if spent + estimate.cost_usd > cap_usd:
         raise CostCapExceeded(estimate, spent, cap_usd)
@@ -491,17 +550,15 @@ async def summarize_files(
 
     With ``ref_id``, a batch still open for ``ref_type``/``ref_id`` (sent by a run that
     stopped) is waited for and collected instead of a new one; one still being sent is first
-    settled (:func:`batches.reconcile`), and only a send that failed is sent again."""
+    settled (:func:`batches.reconcile`), and only a send that failed is sent again. One the
+    reference collected already raises :class:`SummariesCollected`: its summaries were stored
+    then, and aren't paid for twice."""
     requests = build_requests(files)
     if not requests:
         return SummaryRun()
     collected = await _collected_batch(sessions, ref_type, ref_id)
     if collected is not None:
-        log.info("summaries batch collected already: read again", batch_id=str(collected.id))
-        run = _run(collected.id, await batches.results(client, collected, json_output=True), files)
-        for path in run.skipped:
-            run.skipped[path] += " (not retried: the run was restarted after collecting)"
-        return run
+        raise SummariesCollected(collected.id)
     estimate: CostEstimate | None = None
     batch_id = await _open_batch(
         sessions, client, ref_type, ref_id, poll_seconds=poll_seconds, sleep=sleep

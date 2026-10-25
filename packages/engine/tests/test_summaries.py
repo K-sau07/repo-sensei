@@ -324,6 +324,7 @@ async def test_the_guard_counts_what_uncollected_batches_will_cost(
     org_id = await _org(db_session)
     client = FakeAnthropic().client()
     requests = build_requests([_file()])
+    expired: LLMBatch | None = None
     for status, collected, cost in (
         (LLMBatchStatus.IN_PROGRESS, False, "2"),  # running: its cost isn't in the ledger yet
         (LLMBatchStatus.ENDED, False, "3"),  # ended, not collected: nor is this one's
@@ -334,8 +335,11 @@ async def test_the_guard_counts_what_uncollected_batches_will_cost(
         row = await batches.reserve(db_session, client, requests, org_id=org_id, kind="summaries")
         row.status, row.estimated_cost_usd = status, Decimal(cost)
         row.collected_at = datetime.now(UTC) if collected else None
-        if cost == "1000":
-            row.created_at = datetime.now(UTC) - batches.RESULTS_KEPT - timedelta(hours=1)
+        if cost == "1000":  # sent long ago, ended last month
+            row.provider_batch_id = f"msgbatch_{uuid.uuid4().hex}"
+            row.created_at = datetime.now(UTC) - summaries.KEPT - timedelta(hours=1)
+            row.ended_at = month_start() - timedelta(days=1)
+            expired = row
     await db_session.flush()
     assert await summaries.pending_estimates(db_session, org_id) == Decimal(5)
     await record_usage(
@@ -347,6 +351,36 @@ async def test_the_guard_counts_what_uncollected_batches_will_cost(
     assert await check_budget(db_session, org_id, _estimate("4"), Decimal(10)) == Decimal(6)
     with pytest.raises(CostCapExceeded):
         await check_budget(db_session, org_id, _estimate("4.01"), Decimal(10))
+    # The expired one was paid for: settled at its estimate, in the month it ended.
+    assert expired is not None
+    await db_session.refresh(expired)
+    assert expired.collected_at is not None
+    settled = await db_session.scalar(
+        select(UsageEvent).where(
+            UsageEvent.org_id == org_id,
+            UsageEvent.price_version == summaries.EXPIRED_PRICE_VERSION,
+        )
+    )
+    assert settled is not None
+    assert (settled.cost_usd, settled.created_at) == (Decimal(1000), expired.ended_at)
+
+
+@pytest.mark.integration
+async def test_a_batch_that_expired_this_month_counts_this_month(
+    db_session: AsyncSession,
+) -> None:
+    org_id = await _org(db_session)
+    client = FakeAnthropic().client()
+    row = await batches.reserve(
+        db_session, client, build_requests([_file()]), org_id=org_id, kind="summaries"
+    )
+    row.status, row.estimated_cost_usd = LLMBatchStatus.ENDED, Decimal(3)
+    row.provider_batch_id = f"msgbatch_{uuid.uuid4().hex}"
+    row.created_at = datetime.now(UTC) - summaries.KEPT - timedelta(hours=1)
+    row.ended_at = datetime.now(UTC)
+    await db_session.flush()
+    assert await summaries.pending_estimates(db_session, org_id) == 0  # can't be collected
+    assert await check_budget(db_session, org_id, _estimate("1"), Decimal(10)) == Decimal(3)
 
 
 @pytest.mark.integration
@@ -677,11 +711,11 @@ async def test_a_run_restarted_mid_batch_takes_up_its_batch_and_bills_once(
 
 
 @pytest.mark.integration
-async def test_a_run_restarted_after_collecting_reads_the_batch_again_and_sends_nothing(
+async def test_a_run_restarted_after_collecting_sends_and_bills_nothing(
     db_session: AsyncSession,
 ) -> None:
-    """The run stopped after its collect committed: run again, it reads the batch's results
-    again, bills nothing more, sends nothing and retries nothing (the first run may have)."""
+    """The run stopped after its collect committed (the summaries stored then): run again, it
+    says so rather than send, bill or retry anything."""
     org_id = await _org(db_session)
     files = [_file("c/one.py"), _file("c/two.py")]
     by_id = {file.custom_id: file for file in files}
@@ -705,12 +739,9 @@ async def test_a_run_restarted_after_collecting_reads_the_batch_again_and_sends_
     billed = await db_session.scalar(select(func.count()).select_from(UsageEvent))
     messages = len(api.bodies("/v1/messages"))
 
-    again = await summarize_files(_sessions(db_session), api.client(), files, **common)
-    assert list(again.summaries) == ["c/one.py"]
-    assert again.batch_id == first.batch_id
-    assert again.skipped["c/two.py"].endswith(
-        "(not retried: the run was restarted after collecting)"
-    )
+    with pytest.raises(summaries.SummariesCollected) as collected:
+        await summarize_files(_sessions(db_session), api.client(), files, **common)
+    assert collected.value.batch_id == first.batch_id
     assert len(api.bodies(BATCHES)) == 1
     assert len(api.bodies("/v1/messages")) == messages
     assert await db_session.scalar(select(func.count()).select_from(UsageEvent)) == billed
