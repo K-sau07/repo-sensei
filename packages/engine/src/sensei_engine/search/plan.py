@@ -5,8 +5,10 @@ the retriever (2.9) runs and fuses. Pure: no model call, no database.
   :func:`sensei_engine.symbols.lookup.find_symbols`. A ``regex`` query (a pattern, or a literal
   to find) is ``grep`` legs, run by :class:`sensei_engine.search.grep.ExactSearch`: the pattern
   (and, when it is quoted code like ``re.compile(r'[0-9]+')``, its text as a fixed string), or each
-  literal as a fixed string, with the names quoted inside it (``os.environ["SECRET_KEY"]``
-  finds ``getenv("SECRET_KEY")`` too). The paths the query names narrow either one.
+  literal as a fixed string, with the code names quoted inside it (``os.environ["SECRET_KEY"]``
+  finds ``getenv("SECRET_KEY")`` too; ``print("a")`` adds no ``a``): at most
+  :data:`MAX_GREP_LEGS`. The paths the query names narrow either one; until the retriever has
+  path filters (2.10.1), each is also a ``lex_path`` leg.
 * **Everything else is additive.** The original query always runs as its own full leg set
   (every text leg, and ``sym`` on the names it holds). The model's two rewrites each add the
   content legs, never replace the original's. Names the model guesses add ``sym`` legs; routes
@@ -28,9 +30,10 @@ import re
 from collections.abc import Iterable
 from dataclasses import dataclass
 
-from sensei_engine.search.route import Layer, QueryClass, Route
+from sensei_engine.search.route import Layer, QueryClass, Route, code_name
 
 MAX_LEGS = 32  # in plan order: the original's first, guesses last
+MAX_GREP_LEGS = 4  # what one ExactSearch runs (sensei_engine.search.grep)
 
 
 class Leg(enum.StrEnum):
@@ -101,20 +104,43 @@ def with_literals(text: str, literals: Iterable[str]) -> str:
     return " ".join([text, *missing]) if missing else text
 
 
-def _in_query(value: str, query: str) -> bool:
-    return re.search(rf"(?<!\w){re.escape(value)}(?!\w)", query) is not None
+def _word(char: str) -> bool:
+    return char.isalnum() or char == "_"
+
+
+def _in_query(value: str, text: str) -> bool:
+    """Whether ``text`` holds ``value`` whole: not inside a longer word, on each side where
+    ``value`` starts or ends with a word character (``port`` isn't in "report"; ``.env`` and
+    ``-v`` are where they stand). Plain string search: linear in ``text``."""
+    if not value:
+        return False
+    start = text.find(value)
+    while start != -1:
+        end = start + len(value)
+        left = not _word(value[0]) or start == 0 or not _word(text[start - 1])
+        right = not _word(value[-1]) or end == len(text) or not _word(text[end])
+        if left and right:
+            return True
+        start = text.find(value, start + 1)
+    return False
 
 
 def plan(route: Route) -> SearchPlan:
     """The legs for ``route``; see the module."""
     if route.query_class is QueryClass.SYMBOL and route.symbol:
         legs = (SubQuery(Leg.SYM, route.symbol, Origin.ORIGINAL, route.literals),)
-        return _plan(route, Mode.SYMBOL, legs)
+        return _plan(route, Mode.SYMBOL, legs + _paths(route))
     if route.query_class is QueryClass.REGEX:
         grep = _grep(route)
         if grep:
-            return _plan(route, Mode.GREP, grep)
+            return _plan(route, Mode.GREP, grep + _paths(route))
     return _plan(route, Mode.HYBRID, _hybrid(route))
+
+
+def _paths(route: Route) -> tuple[SubQuery, ...]:
+    """A ``lex_path`` leg per path the query names: a short-circuit's narrowing, until the
+    retriever filters by path (2.10.1)."""
+    return tuple(SubQuery(Leg.LEX_PATH, path, Origin.PATH, route.literals) for path in route.paths)
 
 
 def _plan(route: Route, mode: Mode, legs: tuple[SubQuery, ...]) -> SearchPlan:
@@ -132,10 +158,12 @@ def _grep(route: Route) -> tuple[SubQuery, ...]:
             return (pattern,)
         return (pattern, SubQuery(Leg.GREP, route.regex, Origin.ORIGINAL, literals))
     fixed = [literal for literal in literals if literal not in route.paths]
-    inner = [name for literal in fixed for name in _INNER_QUOTED.findall(literal)]
-    return tuple(
-        SubQuery(Leg.GREP, text, Origin.ORIGINAL, literals) for text in dict.fromkeys(fixed + inner)
-    )
+    # Only code names: print("a"), logger.info("done") or x['id'] would match nearly every line.
+    inner = [
+        name for literal in fixed for name in _INNER_QUOTED.findall(literal) if code_name(name)
+    ]
+    texts = list(dict.fromkeys(fixed + inner))[:MAX_GREP_LEGS]
+    return tuple(SubQuery(Leg.GREP, text, Origin.ORIGINAL, literals) for text in texts)
 
 
 def _hybrid(route: Route) -> tuple[SubQuery, ...]:

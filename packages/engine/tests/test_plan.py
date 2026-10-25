@@ -4,6 +4,7 @@ sub-query, short-circuits without a model call, and the rules-only plan when the
 from __future__ import annotations
 
 import json
+import time
 from dataclasses import replace
 
 import httpx2
@@ -187,6 +188,17 @@ def test_with_literals_appends_only_what_is_missing() -> None:
     assert with_literals("x", []) == "x"
     # A literal inside a longer word isn't there.
     assert with_literals("write the report", ["port"]) == "write the report port"
+    # One that starts or ends with punctuation is where it stands.
+    assert with_literals("read app/.env with -v", [".env", "-v"]) == "read app/.env with -v"
+    assert with_literals("pass -verbose", ["-v"]) == "pass -verbose -v"
+
+
+def test_with_literals_takes_linear_time_on_a_long_query() -> None:
+    text = "a" * 800_000
+    started = time.perf_counter()
+    for _ in range(5):
+        with_literals(text, ["aaab", "b"])
+    assert time.perf_counter() - started < 0.5
 
 
 async def test_a_path_narrows_a_search_and_keeps_its_semantic_and_symbol_legs() -> None:
@@ -199,7 +211,11 @@ async def test_a_path_narrows_a_search_and_keeps_its_semantic_and_symbol_legs() 
     # A definition asked for in a file: find_symbols, within the file.
     found = plan(await _routed("where is get_user defined in api/users.py?", api))
     assert found.mode is Mode.SYMBOL
-    assert [sub.text for sub in found.legs] == ["get_user"]
+    # Until the retriever filters by path, the path is a leg of its own.
+    assert [(sub.leg, sub.text) for sub in found.legs] == [
+        (Leg.SYM, "get_user"),
+        (Leg.LEX_PATH, "api/users.py"),
+    ]
     assert found.paths == ("api/users.py",)
 
 
@@ -210,6 +226,19 @@ async def test_grep_finds_a_quoted_name_however_it_is_read() -> None:
         ('os.environ["SECRET_KEY"]', False),
         ("SECRET_KEY", False),  # os.getenv("SECRET_KEY"), os.environ.get("SECRET_KEY")
     ]
+
+
+async def test_only_code_names_quoted_in_a_literal_are_grepped_and_grep_legs_are_capped() -> None:
+    for query, legs in (
+        ('find print("a")', ['print("a")']),  # "a" would match nearly every line
+        ("logger.info(\"done\") and x['id']", ['logger.info("done")', "x['id']"]),
+        ('t("save") or t("pk_live")', ['t("save")', 't("pk_live")', "pk_live"]),
+    ):
+        found = plan(classify(query).route)
+        assert found.mode is Mode.GREP
+        assert [s.text for s in found.of(Leg.GREP)] == legs, query
+    route = classify('"a1" "b1" "c1" "d1" "e1" "f1"').route
+    assert len(plan(route).of(Leg.GREP)) == plans.MAX_GREP_LEGS
 
 
 async def test_a_pattern_quoted_in_code_is_also_grepped_as_text() -> None:

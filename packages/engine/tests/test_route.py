@@ -17,6 +17,7 @@ from sensei_engine.llm.anthropic_client import LLMUsage
 from sensei_engine.search.route import (
     _REGEX_SIGNS,  # pyright: ignore[reportPrivateUsage]
     LANES,
+    MAX_RULE_CHARS,
     Lane,
     Layer,
     QueryClass,
@@ -182,6 +183,42 @@ def test_a_path_narrows_the_search_without_deciding_it(query: str) -> None:
     assert not classified.decided
     assert classified.route.query_class is not QueryClass.REGEX
     assert classified.route.paths
+
+
+@pytest.mark.parametrize(
+    "token", ["and/or", "i/o", "TCP/IP", "client/server", "frontend/backend", "10/25/2026"]
+)
+def test_prose_with_a_slash_is_not_a_path(token: str) -> None:
+    assert classify(f"find UserService in {token}").route.paths == ()
+
+
+@pytest.mark.parametrize(
+    "path", ["api/users.py", "app/api/", "src/my_app", ".github/workflows", "web-ui/src"]
+)
+def test_a_path_looks_like_one(path: str) -> None:
+    assert classify(f"how are sessions read in {path}").route.paths == (path,)
+
+
+def test_a_long_query_is_never_decided_by_the_rules() -> None:
+    """A pasted log, then the question: the rules don't read that far."""
+    log = " ".join(
+        f"ERROR worker-{i} KeyError 'DATABASE_URL' at app/settings.py" for i in range(30)
+    )
+    query = f"{log} why is DATABASE_URL missing here?"
+    assert len(query) > MAX_RULE_CHARS
+    classified = classify(query)
+    assert not classified.decided
+    assert classified.route.query_class is not QueryClass.REGEX
+    assert classified.route.query == query  # the model reads it all
+    # Cut at a space: no half token becomes a literal.
+    assert all(literal in query.split() for literal in classified.route.paths)
+
+
+def test_a_definition_under_one_of_two_paths_is_a_symbol_query() -> None:
+    route = classify("where is Foo defined under lib/ or under src/").route
+    assert (route.query_class, route.symbol, route.paths) == (
+        QueryClass.SYMBOL, "Foo", ("lib/", "src/"),
+    )  # fmt: skip
 
 
 def test_a_definition_asked_for_in_a_file_is_a_symbol_query_within_it() -> None:

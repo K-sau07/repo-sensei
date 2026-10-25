@@ -62,7 +62,8 @@ CACHE_TTL_SECONDS = 7 * 24 * 3600
 TIMEOUT_SECONDS = 8.0
 MAX_TOKENS = 2_000  # the answer is ~150 tokens; the rest is room for the model's thinking
 MAX_GUESSES = 8  # per list in the model's answer
-# The rules read this much of a query (a question is far shorter): their time stays bounded.
+# The rules read this much of a query (a question is far shorter): their time stays bounded. A
+# longer query goes to the model.
 MAX_RULE_CHARS = 1_000
 
 
@@ -167,6 +168,10 @@ _FILE = re.compile(
     r"|html|css|scss|sh|txt|lock|env)$"
 )
 _DIRECTORY = re.compile(r"^(?:[\w.\-]+/)+[\w.\-]*$")
+# A directory named in prose looks like one: a trailing slash, or a segment with ".", "_" or "-"
+# (``app/api/``, ``src/my_app``, ``.github/workflows``). ``client/server``, ``and/or``, ``i/o``
+# and ``10/25/2026`` aren't paths.
+_PATH_SIGN = re.compile(r"/$|[._\-]")
 _CAMEL = re.compile(r"^[a-z][a-z0-9]*(?:[A-Z][a-z0-9]*)+$")  # useFlowStore
 _PASCAL_COMPOUND = re.compile(r"^[A-Z][a-z0-9]+(?:[A-Z][a-z0-9]*)+$")  # JobQueueService
 _SNAKE = re.compile(r"^_*[a-z][a-z0-9]*(?:_[a-z0-9]+)+$")  # build_custom_component_template
@@ -203,11 +208,13 @@ _DEFINITION_WORDS = frozenset(
         "live",
         "does",
         "do",
-        # "where is X defined in api/users.py": the path narrows the search.
+        # "where is X defined in api/users.py (or under src/)": the path narrows the search.
         "in",
         "inside",
         "under",
         "within",
+        "or",
+        "and",
     }
 )
 _KIND_WORDS = frozenset(
@@ -313,6 +320,19 @@ def _add(items: list[str], value: str) -> None:
         items.append(value)
 
 
+def _path(token: str) -> bool:
+    """A file (a known extension) or a directory that looks like one (:data:`_PATH_SIGN`)."""
+    if _FILE.match(token):
+        return True
+    return _DIRECTORY.match(token) is not None and _PATH_SIGN.search(token) is not None
+
+
+def code_name(token: str) -> bool:
+    """Whether ``token`` names something in code (camelCase, snake_case, CONSTANT_CASE, ...): a
+    name worth searching for on its own, unlike ``a``, ``id`` or ``done``."""
+    return _identifier(token) or _CONSTANT.match(token) is not None
+
+
 def _identifier(token: str, *, plain_words: bool = False) -> bool:
     """A code name: camelCase, CompoundPascal, snake_case, dotted, CONSTANT_CASE; with
     ``plain_words``, any single word that could name something (``Graph``, ``Vertex``)."""
@@ -331,7 +351,7 @@ def _scan_token(token: str, found: _Found) -> None:
     elif _ROUTE.match(token) and token.count("/") >= 1 and len(token) > 1:
         _add(found.literals, token)
         _add(found.routes, token)
-    elif _FILE.match(token) or (_DIRECTORY.match(token) and "/" in token):
+    elif _path(token):
         _add(found.literals, token)
         _add(found.paths, token)
     elif _CODE_SIGNS.search(token):
@@ -360,13 +380,13 @@ def _scan(query: str) -> tuple[_Found, str]:
                 found.regex = found.regex or token
             elif _ROUTE.match(token):
                 _add(found.routes, token)
-            elif _FILE.match(token) or _DIRECTORY.match(token):
+            elif _path(token):
                 _add(found.paths, token)
             elif _identifier(token, plain_words=pattern is _BACKTICKED):
                 _add(found.identifiers, token)
         rest = pattern.sub(" ", rest)
     for raw in rest.split():
-        token = raw.strip(_TRIM)
+        token = raw.strip(_TRIM.replace(".", "")).rstrip(".")  # .env, .github: a leading dot stays
         # Brackets of the sentence, not of code: "(not tests)", "(see above".
         if token.startswith("(") and ")" not in token:
             token = token[1:]
@@ -441,9 +461,12 @@ class Classified:
 
 
 def classify(query: str) -> Classified:
-    """Read ``query`` with rules (pure and deterministic): its first :data:`MAX_RULE_CHARS`."""
+    """Read ``query`` with rules (pure and deterministic): its first :data:`MAX_RULE_CHARS`. A
+    longer query (a pasted log, then a question) is never decided by them: the question may be
+    past what they read."""
     text = " ".join(query.split())
-    head = text[:MAX_RULE_CHARS]
+    # Cut at a space: a token cut in two would be a bogus literal or path.
+    head = text if len(text) <= MAX_RULE_CHARS else text[:MAX_RULE_CHARS].rsplit(" ", 1)[0]
     found, unquoted = _scan(head)
     excluded = _excluded(head)
     base = Route(
@@ -458,6 +481,8 @@ def classify(query: str) -> Classified:
         excluded_layers=excluded,
         regex=found.regex,
     )
+    if len(head) < len(text):
+        return Classified(replace(base, query_class=_guess_class(unquoted, base.layers)), False)
     if found.regex is not None and not _EXPLAIN.search(unquoted):
         return Classified(replace(base, query_class=QueryClass.REGEX, source="rules"), True)
     name = _definition_name(head, found)
