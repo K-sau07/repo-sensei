@@ -77,12 +77,12 @@ class Weights:
 
     legs: Mapping[Leg, float] = field(
         default_factory=lambda: {
-            Leg.SEM_CODE: 1.0,
+            Leg.SEM_CODE: 2.4,
             Leg.SEM_SUMMARY: 0.7,
-            Leg.LEX_CODE: 1.0,
-            Leg.LEX_PATH: 0.4,
+            Leg.LEX_CODE: 0.6,
+            Leg.LEX_PATH: 0.8,
             Leg.LEX_SUMMARY: 0.4,
-            Leg.SYM: 1.2,
+            Leg.SYM: 0.6,
             Leg.GREP: 1.0,
         }
     )
@@ -99,9 +99,9 @@ class Weights:
     rrf_k: int = RRF_K
     # Each further chunk of a result found adds this share of a first place's score (at most
     # ``max_extra`` of them).
-    multi_hit: float = 0.3
+    multi_hit: float = 0.1
     max_extra: int = 3
-    layer_boost: float = 1.2  # results in a layer the query names
+    layer_boost: float = 1.0  # results in a layer the query names
 
     def of(self, sub: SubQuery) -> float:
         return self.legs.get(sub.leg, 0.0) * self.origins.get(sub.origin, 0.0)

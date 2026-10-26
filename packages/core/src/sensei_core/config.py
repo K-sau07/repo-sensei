@@ -326,12 +326,12 @@ class SearchSettings(BaseSettings):
 
     model_config = _config("SENSEI_SEARCH_")
 
-    sem_code: float = Field(default=1.0, ge=0)
+    sem_code: float = Field(default=2.4, ge=0)
     sem_summary: float = Field(default=0.7, ge=0)
-    lex_code: float = Field(default=1.0, ge=0)
-    lex_path: float = Field(default=0.4, ge=0)
+    lex_code: float = Field(default=0.6, ge=0)
+    lex_path: float = Field(default=0.8, ge=0)
     lex_summary: float = Field(default=0.4, ge=0)
-    sym: float = Field(default=1.2, ge=0)
+    sym: float = Field(default=0.6, ge=0)
     grep: float = Field(default=1.0, ge=0)
     # The query as asked, and what the plan made of it.
     origin_original: float = Field(default=1.0, ge=0)
@@ -342,9 +342,9 @@ class SearchSettings(BaseSettings):
     origin_path: float = Field(default=0.8, ge=0)
     rrf_k: int = Field(default=60, gt=0)
     # Each further chunk of a definition found adds this share of a first place's score.
-    multi_hit: float = Field(default=0.3, ge=0)
+    multi_hit: float = Field(default=0.1, ge=0)
     # Results in a layer the query names ("the endpoint", "the model") are lifted by this.
-    layer_boost: float = Field(default=1.2, ge=1)
+    layer_boost: float = Field(default=1.0, ge=1)
     # Searches one user may run a minute (a token bucket: as many at once, then this rate).
     rate_per_minute: int = Field(default=60, gt=0)
     # The cross-encoder reorders the best results (when Voyage is configured).
