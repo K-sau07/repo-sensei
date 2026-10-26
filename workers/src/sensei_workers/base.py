@@ -31,7 +31,7 @@ import uuid
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, ClassVar, Literal, NoReturn
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, NoReturn, cast
 
 import httpx
 import redis
@@ -59,6 +59,9 @@ log = get_logger(__name__)
 # Celery needs a number to retry by; a task waits this many times at most (a day of minute-long
 # waits is 1,440), each wait bounded by the caller's own deadline.
 WAITS = 100_000
+# Error retries are counted per task id (waits aren't errors), kept past the longest wait.
+ERROR_RETRIES_PREFIX = "error-retries:"
+ERROR_RETRIES_TTL_SECONDS = 3 * 86_400
 
 MAX_TEXT = 20_000
 
@@ -323,13 +326,25 @@ class SenseiTask(_TaskBase):
         reads ``max_retries=None`` as "the task's limit", which a long wait would run past.)"""
         raise self.retry(exc=exc, countdown=countdown, max_retries=WAITS)
 
+    def _error_retries(self) -> tuple[str, int]:
+        """This task's retries after an error so far (Redis key, count). Celery's
+        ``request.retries`` also counts waits (:meth:`wait_again`), so an error late in a long
+        wait would find the limit spent; errors are counted apart, by task id (a retry keeps
+        the id)."""
+        key = f"{ERROR_RETRIES_PREFIX}{self.request.id}"
+        found = get_runtime().sync_redis.get(key)
+        return key, int(cast("Any", found) or 0)
+
     def _maybe_retry(self, exc: Exception) -> None:
         settings = get_runtime().settings.worker
         limit = self.max_retries if self.max_retries is not None else settings.max_retries
-        retries = int(self.request.retries or 0)
+        key, retries = self._error_retries()
         delay = retry_delay(exc, retries, settings)
         if delay is None or retries >= limit:
             return
+        client = get_runtime().sync_redis
+        client.incr(key)
+        client.expire(key, ERROR_RETRIES_TTL_SECONDS)
         log.warning(
             "task will be retried",
             error_type=type(exc).__name__,
@@ -337,7 +352,8 @@ class SenseiTask(_TaskBase):
             delay_seconds=round(delay, 1),
         )
         self.on_retry_scheduled(dict(self.request.kwargs or {}), delay)
-        raise self.retry(exc=exc, countdown=delay, max_retries=limit)
+        # The limit is ours (above); Celery's would count the waits too.
+        raise self.retry(exc=exc, countdown=delay, max_retries=WAITS)
 
     def on_retry_scheduled(self, kwargs: dict[str, Any], delay: float) -> None:
         """Called when the task will run again in ``delay`` seconds. For subclasses whose work

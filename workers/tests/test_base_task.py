@@ -217,6 +217,44 @@ def test_waiting_is_not_failing_and_has_no_retry_limit(app: Celery) -> None:
     assert len(waits) == 2 * WORKER.max_retries + 1
 
 
+def test_errors_after_a_long_wait_still_get_their_retries(app: Celery) -> None:
+    """A batch polled past the retry limit, then an outage: the outage is retried as if no
+    waits had come before (waits aren't errors), up to the limit, and then fails."""
+    events: list[str] = []
+    waits = 2 * WORKER.max_retries
+
+    @app.task(bind=True, base=SenseiTask, name="sensei.default.long_poll")
+    def long_poll(self: SenseiTask) -> None:
+        if events.count("wait") < waits:
+            events.append("wait")
+            self.wait_again(0)
+        events.append("error")
+        raise httpx.ConnectError("down")
+
+    result = long_poll.apply_async()
+    assert result.state == "FAILURE"
+    assert events == ["wait"] * waits + ["error"] * (WORKER.max_retries + 1)
+
+
+def test_a_retried_error_and_a_wait_count_apart(app: Celery) -> None:
+    events: list[str] = []
+
+    @app.task(bind=True, base=SenseiTask, name="sensei.default.mixed")
+    def mixed(self: SenseiTask) -> str:
+        events.append("run")
+        if len(events) % 2:  # odd runs: an outage; even ones: still waiting
+            if len(events) < 2 * WORKER.max_retries:
+                raise RetryableError("flaky", retry_after=1)
+            return "done"
+        self.wait_again(0)
+
+    result = mixed.apply_async()
+    assert (result.state, result.result) == ("SUCCESS", "done")
+    # max_retries errors, each followed by a wait, then the run that ends. Counted together,
+    # the waits would have spent the limit before the last error.
+    assert len(events) == 2 * WORKER.max_retries + 1
+
+
 def test_other_errors_fail_immediately(app: Celery) -> None:
     attempts: list[int] = []
 
