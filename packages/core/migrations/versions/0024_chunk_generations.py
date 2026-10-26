@@ -35,6 +35,13 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    # Without generations every row is searched: only the live ones may stay (row-level
+    # security off, so a role it would filter fails here instead of deleting nothing).
+    op.execute("SET LOCAL row_security = off")
+    op.execute(
+        "DELETE FROM chunks c USING snapshots s WHERE s.id = c.snapshot_id "
+        "AND c.generation IS DISTINCT FROM s.chunk_generation"
+    )
     op.drop_column("snapshots", "chunk_generation")
     op.drop_column("chunks", "generation")
     op.execute("DROP SEQUENCE chunk_generations")

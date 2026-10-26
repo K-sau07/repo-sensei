@@ -115,17 +115,23 @@ async def save_symbols(
         driver = cast("Any", raw.driver_connection)  # asyncpg.Connection
         columns = ", ".join(COLUMNS)
         updates = ", ".join(f"{c} = EXCLUDED.{c}" for c in UPDATED)
+        # A definition unchanged since it was saved isn't written again.
+        changed = (
+            f"({', '.join(f'n.{c}' for c in UPDATED)}) IS DISTINCT FROM "
+            f"({', '.join(f'EXCLUDED.{c}' for c in UPDATED)})"
+        )
         await driver.execute(
-            f"CREATE TEMPORARY TABLE {STAGING_TABLE} (LIKE nodes INCLUDING DEFAULTS) ON COMMIT DROP"
+            f"CREATE TEMPORARY TABLE {STAGING_TABLE} (LIKE public.nodes INCLUDING DEFAULTS) "
+            "ON COMMIT DROP"
         )
         await driver.copy_records_to_table(STAGING_TABLE, records=records(), columns=list(COLUMNS))
         await driver.execute(
-            f"INSERT INTO nodes ({columns}) SELECT {columns} FROM {STAGING_TABLE} "  # noqa: S608 - constant names
-            f"ON CONFLICT (snapshot_id, symbol_key) DO UPDATE SET {updates}"
+            f"INSERT INTO public.nodes AS n ({columns}) SELECT {columns} FROM {STAGING_TABLE} "  # noqa: S608 - constant names
+            f"ON CONFLICT (snapshot_id, symbol_key) DO UPDATE SET {updates} WHERE {changed}"
         )
         if replace_all:
             await driver.execute(
-                f"DELETE FROM nodes n WHERE n.snapshot_id = $1 AND NOT EXISTS "  # noqa: S608 - constant names
+                f"DELETE FROM public.nodes n WHERE n.snapshot_id = $1 AND NOT EXISTS "  # noqa: S608 - constant names
                 f"(SELECT FROM {STAGING_TABLE} s WHERE s.symbol_key = n.symbol_key)",
                 snapshot.id,
             )

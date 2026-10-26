@@ -511,6 +511,53 @@ def test_chunking_a_snapshot_again_serves_its_chunks_until_the_new_ones_are_live
     assert upkeep == {"analyze": [], "vacuum": [repo_id]}
 
 
+def test_a_run_killed_before_it_discarded_its_rows_is_swept_by_the_next(
+    runtime: Runtime,
+    ids: tuple[uuid.UUID, uuid.UUID, uuid.UUID],
+    github: respx.MockRouter,
+    monkeypatch: pytest.MonkeyPatch,
+    upkeep: dict[str, list[uuid.UUID]],
+) -> None:
+    org_id, repo_id, job_id = ids
+    _run(org_id, repo_id, job_id)
+    _, job = runtime.run(_state(runtime.system_database, repo_id, job_id))
+    snapshot_id = job.snapshot_id
+    assert snapshot_id is not None
+    old = runtime.run(_chunk_ids(runtime.system_database, snapshot_id))
+
+    class Killed(ChunkWriter):
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            super().__init__(*args, **{**kwargs, "batch_rows": 1})
+
+        async def add(self, file: FileChunks) -> None:
+            await super().add(file)
+            if self.written >= 2:
+                raise RuntimeError("killed")
+
+    async def unreachable(*_: object) -> int:
+        raise ConnectionError("the database went away")
+
+    with monkeypatch.context() as killed:
+        killed.setattr(chunk_task, "ChunkWriter", Killed)
+        killed.setattr(chunk_task, "_discard", unreachable)
+        runtime.run(_chunks_stage_again(runtime.system_database, job_id))
+        kwargs = {"job_id": str(job_id), "org_id": str(org_id), "repo_id": str(repo_id)}
+        with pytest.raises(RuntimeError):
+            chunk_task.chunk_snapshot.run(**kwargs)
+    left = runtime.run(_chunk_ids(runtime.system_database, snapshot_id)) - old
+    assert len(left) >= 2  # the killed run's rows, not searched but still there
+
+    runtime.run(_chunks_stage_again(runtime.system_database, job_id))
+    upkeep["analyze"].clear()
+    upkeep["vacuum"].clear()
+    assert chunk_task.chunk_snapshot.run(**kwargs) == 5
+    rows = runtime.run(_chunk_ids(runtime.system_database, snapshot_id))
+    assert len(rows) == 5
+    assert rows.isdisjoint(old | left)
+    # Swept as the run started, and the old generation deleted as it went live.
+    assert upkeep == {"analyze": [], "vacuum": [repo_id, repo_id]}
+
+
 async def _another_job(database: Database, org_id: uuid.UUID, repo_id: uuid.UUID) -> uuid.UUID:
     async with database.session() as db:
         job = IndexJob(org_id=org_id, repo_id=repo_id, kind=JobKind.FULL)

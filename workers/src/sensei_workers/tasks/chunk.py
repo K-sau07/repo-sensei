@@ -13,7 +13,9 @@ makes the new one live (with ``chunk_count``), deletes the old one's rows and co
 stage (see :mod:`sensei_engine.chunk.store`). A run that fails or is cancelled deletes what it
 wrote and leaves the live generation as it was; so does a reindex of the same commit (its files
 keep their ids when discovered again: only the chunks of files that are gone go before this
-stage). Afterwards the repository's partition is analyzed, or vacuumed when rows were deleted
+stage). A run that couldn't delete its rows (its worker killed, the database gone) leaves them
+to the next run, which deletes every earlier generation that isn't live as it starts.
+Afterwards the repository's partition is analyzed, or vacuumed when rows were deleted
 (:mod:`sensei_workers.statistics`: deleted rows count in its BM25 statistics until a VACUUM).
 Progress is reported in files, at most once a second, each report in its own transaction (which
 also stops the stage if the job was cancelled).
@@ -39,6 +41,7 @@ from sensei_engine.chunk.store import (
     discard_generation,
     make_live,
     new_generation,
+    sweep_stale_generations,
 )
 from sensei_engine.snapshots import ArchiveTooLargeError
 from sensei_workers.app import celery_app
@@ -122,9 +125,12 @@ async def _progress(
         scope.machine.update_progress(Stage.CHUNKS, max(done, previous), total)
 
 
-async def _generation(task: SenseiTask, target: Target) -> int:
+async def _generation(task: SenseiTask, target: Target) -> tuple[int, int]:
+    """A new generation for this run, and how many rows of runs that stopped were deleted."""
     async with task.org_session(target.org_id) as db:
-        return await new_generation(db)
+        generation = await new_generation(db)
+        swept = await sweep_stale_generations(db, target.repo_id, below=generation)
+        return generation, swept
 
 
 async def _write(
@@ -219,7 +225,9 @@ def chunk_snapshot(self: IngestTask, *, job_id: str, org_id: str, repo_id: str) 
     if target is None:
         return None
     files = runtime.run(_files(self, target))
-    generation = runtime.run(_generation(self, target))
+    generation, swept = runtime.run(_generation(self, target))
+    if swept:
+        request_vacuum(target.repo_id, eager=bool(self.request.is_eager))
     started = time.monotonic()
     try:
         with repo_lock(runtime.settings.ingest.cache_dir, str(target.repo_id)):

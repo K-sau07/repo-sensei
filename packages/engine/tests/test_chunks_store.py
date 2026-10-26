@@ -30,6 +30,7 @@ from sensei_engine.chunk.store import (
     new_generation,
     prune_chunks,
     save_chunks,
+    sweep_stale_generations,
 )
 from sensei_engine.ingest.discover import discover
 from sensei_engine.ingest.store import file_ids, save_discovery
@@ -279,6 +280,36 @@ async def test_a_run_that_stopped_is_discarded_and_swept(
     assert await _generation_rows(db_session, snapshot) == {live: rows}
 
 
+async def test_a_run_that_couldnt_discard_its_rows_is_swept_by_the_next(
+    db_session: AsyncSession, tmp_path: Path
+) -> None:
+    snapshot, file_ids = await _index(db_session, tmp_path, FILES)
+    live = snapshot.chunk_generation
+    assert live is not None
+    rows = snapshot.chunk_count
+    killed = await new_generation(db_session)  # its worker killed before it could discard
+    written = await _write_generation(db_session, snapshot, file_ids, killed)
+    mine = await new_generation(db_session)
+    assert await sweep_stale_generations(db_session, snapshot.repo_id, below=mine) == written
+    assert await _generation_rows(db_session, snapshot) == {live: rows}
+    # Nothing live, nor of this run or later, ever goes.
+    later = await new_generation(db_session)
+    await _write_generation(db_session, snapshot, file_ids, later)
+    assert await sweep_stale_generations(db_session, snapshot.repo_id, below=later) == 0
+    assert await _generation_rows(db_session, snapshot) == {live: rows, later: written}
+
+
+async def test_an_incremental_save_needs_a_live_generation(
+    db_session: AsyncSession, tmp_path: Path
+) -> None:
+    snapshot, file_ids = await _index(db_session, tmp_path, FILES)
+    snapshot.chunk_generation = None
+    await db_session.flush()
+    files = [FileChunks("README.md", "markdown", chunk_file("README.md", "markdown", "# A\n"))]
+    with pytest.raises(ValueError, match="live generation"):
+        await save_chunks(db_session, snapshot, file_ids, files, replace_all=False)
+
+
 async def test_chunks_are_org_scoped(db_session: AsyncSession, tmp_path: Path) -> None:
     await _index(db_session, tmp_path, FILES)
     await set_org_context(db_session, uuid.uuid4())  # another org
@@ -519,12 +550,22 @@ async def _rows(db: AsyncSession, snapshot_id: uuid.UUID) -> tuple[dict[str, uui
     )
 
 
+async def _versions(db: AsyncSession, table: str, snapshot_id: uuid.UUID) -> set[str]:
+    """Where each row's current version is (an update writes a new one elsewhere)."""
+    found = await db.scalars(
+        text(f"SELECT ctid::text FROM public.{table} WHERE snapshot_id = :id"),
+        {"id": snapshot_id},
+    )
+    return set(found)
+
+
 async def test_discovering_a_snapshot_again_keeps_its_rows_and_its_search(
     db_session: AsyncSession, tmp_path: Path
 ) -> None:
     snapshot, _ = await _index(db_session, tmp_path, FILES)
     repo_id, snapshot_id = snapshot.repo_id, snapshot.id
     before = await _rows(db_session, snapshot_id)
+    versions = await _versions(db_session, "files", snapshot_id)
 
     # A reindex of the commit: its files are discovered again, with the ids they have.
     known = await file_ids(db_session, snapshot_id)
@@ -533,6 +574,7 @@ async def test_discovering_a_snapshot_again_keeps_its_rows_and_its_search(
     await save_discovery(db_session, snapshot, again)
     await db_session.flush()
     assert await _rows(db_session, snapshot_id) == before
+    assert await _versions(db_session, "files", snapshot_id) == versions  # none rewritten
     await db_session.refresh(snapshot)
     assert snapshot.chunk_count == len(before[2])
     hits = await keyword_search(
@@ -563,6 +605,10 @@ async def test_saving_symbols_again_keeps_their_ids(
     _, nodes, _ = await _rows(db_session, snapshot.id)
     data = (tmp_path / "app/models.py").read_bytes()
     parsed = parse_file("app/models.py", data, language="python")
+    everything = [FileSymbols("app/models.py", "python", extract_symbols(parsed, "python"))]
+    versions = await _versions(db_session, "nodes", snapshot.id)
+    await save_symbols(db_session, snapshot, ids, everything)
+    assert await _versions(db_session, "nodes", snapshot.id) == versions  # none rewritten
     found = [s for s in extract_symbols(parsed, "python") if s.name != "save"]
     await save_symbols(db_session, snapshot, ids, [FileSymbols("app/models.py", "python", found)])
     _, after, _ = await _rows(db_session, snapshot.id)

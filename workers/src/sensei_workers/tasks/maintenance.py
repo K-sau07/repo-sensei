@@ -30,7 +30,7 @@ KEY_TTL_SECONDS = 3600  # a lost task doesn't hold off vacuums for longer
 LOCK_NOT_AVAILABLE = "55P03"
 
 
-def _sqlstate(exc: DBAPIError) -> str | None:
+def sqlstate(exc: DBAPIError) -> str | None:
     return getattr(exc.orig, "sqlstate", None) or getattr(exc.orig, "pgcode", None)
 
 
@@ -45,12 +45,19 @@ def request_vacuum(repo_id: uuid.UUID, *, eager: bool = False) -> bool:
     runtime = get_runtime()
     try:
         partition = runtime.run(chunk_partition_of(repo_id))
-        if not runtime.sync_redis.set(vacuum_key(partition), "1", nx=True, ex=KEY_TTL_SECONDS):
+        key = vacuum_key(partition)
+        if not runtime.sync_redis.set(key, "1", nx=True, ex=KEY_TTL_SECONDS):
             return False
-        if eager:
-            vacuum_chunks.apply(kwargs={"partition": partition})
-        else:
-            vacuum_chunks.apply_async(kwargs={"partition": partition}, countdown=DEBOUNCE_SECONDS)
+        try:
+            if eager:
+                vacuum_chunks.apply(kwargs={"partition": partition})
+            else:
+                vacuum_chunks.apply_async(
+                    kwargs={"partition": partition}, countdown=DEBOUNCE_SECONDS
+                )
+        except Exception:
+            runtime.sync_redis.delete(key)  # not sent: the next request sends one
+            raise
     except Exception:
         log.warning("couldn't ask for a vacuum", repo_id=str(repo_id), exc_info=True)
         return False
@@ -65,7 +72,7 @@ def vacuum_chunks(self: SenseiTask, *, partition: str) -> str:
     try:
         runtime.run(vacuum_partition(partition))
     except DBAPIError as exc:
-        if _sqlstate(exc) == LOCK_NOT_AVAILABLE:
+        if sqlstate(exc) == LOCK_NOT_AVAILABLE:
             raise RetryableError("the partition is locked") from exc
         raise
     log.info("chunks vacuumed", partition=partition)

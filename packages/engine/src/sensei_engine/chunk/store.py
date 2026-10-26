@@ -92,7 +92,7 @@ def _rowcount(result: object) -> int:
 
 async def new_generation(db: AsyncSession) -> int:
     """A generation no run has used."""
-    return int(await db.scalar(text("SELECT nextval('chunk_generations')")) or 0)
+    return int(await db.scalar(text("SELECT nextval('public.chunk_generations')")) or 0)
 
 
 async def make_live(db: AsyncSession, snapshot: Snapshot, generation: int, count: int) -> int:
@@ -151,6 +151,26 @@ async def prune_chunks(db: AsyncSession, repo_id: uuid.UUID, *, keep: uuid.UUID)
     return _rowcount(result)
 
 
+async def sweep_stale_generations(db: AsyncSession, repo_id: uuid.UUID, *, below: int) -> int:
+    """Delete the repository's rows of generations before ``below`` that aren't their snapshot's
+    live one (runs that stopped without discarding theirs: a worker killed, the database gone
+    meanwhile); returns how many went. Generations only grow and one job per repository runs at
+    a time, so none of them is still being written."""
+    live = (
+        select(Snapshot.chunk_generation)
+        .where(Snapshot.id == CodeChunk.snapshot_id)
+        .scalar_subquery()
+    )
+    result = await db.execute(
+        delete(CodeChunk).where(
+            CodeChunk.repo_id == repo_id,
+            CodeChunk.generation < below,
+            CodeChunk.generation.is_distinct_from(live),
+        )
+    )
+    return _rowcount(result)
+
+
 async def delete_owned_chunks(db: AsyncSession, owner_file_ids: Sequence[uuid.UUID]) -> None:
     """Delete the chunks these files own (before they're chunked again)."""
     if owner_file_ids:
@@ -163,16 +183,16 @@ async def _insert(db: AsyncSession, records: Sequence[tuple[Any, ...]]) -> None:
     driver = cast("Any", raw.driver_connection)  # asyncpg.Connection
     await driver.execute(
         f"CREATE TEMPORARY TABLE IF NOT EXISTS {STAGING_TABLE} "
-        "(LIKE chunks INCLUDING DEFAULTS) ON COMMIT DROP"
+        "(LIKE public.chunks INCLUDING DEFAULTS) ON COMMIT DROP"
     )
     await driver.copy_records_to_table(STAGING_TABLE, records=records, columns=list(COLUMNS))
     columns = ", ".join(COLUMNS)
     selected = ", ".join(f"s.{c}" for c in COLUMNS)
     # A definition's chunks point at its node, found by key in the same snapshot.
     await driver.execute(
-        f"INSERT INTO chunks ({columns}, symbol_id) "  # noqa: S608 - constant names
+        f"INSERT INTO public.chunks ({columns}, symbol_id) "  # noqa: S608 - constant names
         f"SELECT {selected}, n.id FROM {STAGING_TABLE} s "
-        "LEFT JOIN nodes n ON n.snapshot_id = s.snapshot_id AND n.symbol_key = s.symbol_key"
+        "LEFT JOIN public.nodes n ON n.snapshot_id = s.snapshot_id AND n.symbol_key = s.symbol_key"
     )
     await driver.execute(f"DROP TABLE {STAGING_TABLE}")
 
@@ -272,7 +292,10 @@ class ChunkWriter:
             live = await db.scalar(
                 select(Snapshot.chunk_generation).where(Snapshot.id == self._ids[2])
             )
-            self.generation = int(live or 0)
+            if live is None:  # its rows would never be searched
+                msg = "an incremental save adds to a live generation, and the snapshot has none"
+                raise ValueError(msg)
+            self.generation = int(live)
 
     async def _flush(self) -> None:
         records, self._records = self._records, []

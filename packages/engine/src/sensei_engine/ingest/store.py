@@ -83,16 +83,22 @@ async def save_discovery(db: AsyncSession, snapshot: Snapshot, discovery: Discov
     # Dropped at the end of the transaction, or right away when all went well (so this can run
     # again in the same transaction). On an error the transaction rolls back and takes it along.
     await driver.execute(
-        f"CREATE TEMPORARY TABLE {STAGING_TABLE} (LIKE files INCLUDING DEFAULTS) ON COMMIT DROP"
+        f"CREATE TEMPORARY TABLE {STAGING_TABLE} (LIKE public.files INCLUDING DEFAULTS) "
+        "ON COMMIT DROP"
     )
     await driver.copy_records_to_table(STAGING_TABLE, records=records, columns=list(COLUMNS))
     updates = ", ".join(f"{c} = EXCLUDED.{c}" for c in UPDATED)
-    await driver.execute(
-        f"INSERT INTO files ({columns}) SELECT {columns} FROM {STAGING_TABLE} "  # noqa: S608 - constant names
-        f"ON CONFLICT (snapshot_id, path) DO UPDATE SET {updates}"
+    # A file unchanged since it was saved isn't written again.
+    changed = (
+        f"({', '.join(f'f.{c}' for c in UPDATED)}) IS DISTINCT FROM "
+        f"({', '.join(f'EXCLUDED.{c}' for c in UPDATED)})"
     )
     await driver.execute(
-        f"DELETE FROM files f WHERE f.snapshot_id = $1 AND NOT EXISTS "  # noqa: S608 - constant names
+        f"INSERT INTO public.files AS f ({columns}) SELECT {columns} FROM {STAGING_TABLE} "  # noqa: S608 - constant names
+        f"ON CONFLICT (snapshot_id, path) DO UPDATE SET {updates} WHERE {changed}"
+    )
+    await driver.execute(
+        f"DELETE FROM public.files f WHERE f.snapshot_id = $1 AND NOT EXISTS "  # noqa: S608 - constant names
         f"(SELECT FROM {STAGING_TABLE} s WHERE s.path = f.path)",
         snapshot.id,
     )

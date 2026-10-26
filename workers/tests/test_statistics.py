@@ -9,10 +9,14 @@ from collections.abc import Iterator
 
 import pytest
 from sqlalchemy import text
+from sqlalchemy.exc import DBAPIError
+from sqlalchemy.ext.asyncio import create_async_engine
 
 from sensei_core.config import Settings
 from sensei_core.db import Database
 from sensei_core.models.chunks import chunk_partitions
+from sensei_workers import statistics
+from sensei_workers.base import RetryableError
 from sensei_workers.runtime import Runtime, set_runtime
 from sensei_workers.statistics import analyze_chunks, chunk_partition_of, vacuum_partition
 from sensei_workers.tasks import maintenance
@@ -110,3 +114,62 @@ def test_vacuums_asked_for_meanwhile_are_one(
         assert len(sent) == 2
     finally:
         runtime.sync_redis.delete(maintenance.vacuum_key(partition))
+
+
+def test_a_vacuum_asked_for_but_not_sent_doesnt_hold_off_the_next(
+    runtime: Runtime, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def broker_down(**_: object) -> None:
+        raise ConnectionError("the broker is down")
+
+    monkeypatch.setattr(maintenance.vacuum_chunks, "apply_async", broker_down)
+    repo_id = uuid.uuid4()
+    partition = runtime.run(chunk_partition_of(repo_id))
+    key = maintenance.vacuum_key(partition)
+    runtime.sync_redis.delete(key)
+    try:
+        assert not maintenance.request_vacuum(repo_id)
+        assert not runtime.sync_redis.exists(key)
+    finally:
+        runtime.sync_redis.delete(key)
+
+
+async def _vacuum_while_locked(settings: Settings, partition: str) -> DBAPIError:
+    """The error of a vacuum of ``partition`` while another session holds a lock it needs."""
+    owner = create_async_engine(settings.database.migrate_url.get_secret_value())
+    try:
+        async with owner.connect() as holder:
+            await holder.execute(text(f"LOCK TABLE {partition} IN SHARE UPDATE EXCLUSIVE MODE"))
+            with pytest.raises(DBAPIError) as caught:
+                await vacuum_partition(partition)
+            await holder.rollback()
+    finally:
+        await owner.dispose()
+    return caught.value
+
+
+async def _session_settings(database: Database) -> tuple[str, str]:
+    async with database.engine.connect() as connection:
+        lock = await connection.scalar(text("SHOW lock_timeout"))
+        statement = await connection.scalar(text("SHOW statement_timeout"))
+    return str(lock), str(statement)
+
+
+def test_a_vacuum_that_cant_have_its_lock_is_tried_again(
+    runtime: Runtime, migrated_test_db: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(statistics, "LOCK_TIMEOUT", "100ms")
+    partition = runtime.run(chunk_partition_of(uuid.uuid4()))
+    defaults = runtime.run(_session_settings(runtime.system_database))
+    error = runtime.run(_vacuum_while_locked(migrated_test_db, partition))
+    # As the driver reports it (not just as a test would make one up).
+    assert maintenance.sqlstate(error) == maintenance.LOCK_NOT_AVAILABLE
+    # Its connection's session timeouts didn't go back to the pool with it.
+    assert runtime.run(_session_settings(runtime.system_database)) == defaults
+
+    async def locked(_: str) -> None:
+        raise error
+
+    monkeypatch.setattr(maintenance, "vacuum_partition", locked)
+    with pytest.raises(RetryableError, match="locked"):
+        maintenance.vacuum_chunks.run(partition=partition)

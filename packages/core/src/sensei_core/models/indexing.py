@@ -98,7 +98,10 @@ class Snapshot(IdMixin, OrgScopedMixin, Base):
     merkle_root: Mapped[str | None] = mapped_column(String(64))
     # Symbols extracted from the snapshot (None: not extracted yet; 0: none found).
     symbol_count: Mapped[int | None] = mapped_column(Integer)
-    # Chunks saved for the snapshot (None: not chunked yet), for keyword and semantic search.
+    # Chunks saved for the snapshot (None: not chunked yet), for keyword and semantic search:
+    # the live generation's count when it went live. A reindex of the same commit that drops
+    # files deletes their chunks at once, so until its own generation goes live this can count
+    # more than are left (a figure to show, not one to page by).
     chunk_count: Mapped[int | None] = mapped_column(Integer)
     # The generation of chunks search reads (None: none live); set with ``chunk_count``.
     chunk_generation: Mapped[int | None] = mapped_column(BigInteger)

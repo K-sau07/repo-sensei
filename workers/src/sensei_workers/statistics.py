@@ -88,10 +88,14 @@ async def vacuum_partition(partition: str) -> None:
     engine = get_runtime().system_database.engine
     async with engine.connect() as connection:
         autocommit = await connection.execution_options(isolation_level="AUTOCOMMIT")
-        await autocommit.execute(text(f"SET lock_timeout = '{LOCK_TIMEOUT}'"))
-        await autocommit.execute(text(f"SET statement_timeout = '{VACUUM_TIMEOUT}'"))
         try:
+            await autocommit.execute(text(f"SET lock_timeout = '{LOCK_TIMEOUT}'"))
+            await autocommit.execute(text(f"SET statement_timeout = '{VACUUM_TIMEOUT}'"))
             await autocommit.execute(text(f"VACUUM (ANALYZE) {partition}"))
-        finally:
-            await autocommit.execute(text("RESET lock_timeout"))
-            await autocommit.execute(text("RESET statement_timeout"))
+        except BaseException:
+            # The session's timeouts (VACUUM can't run in a transaction, so they're the
+            # session's) must not go back to the pool: the connection is closed instead.
+            await connection.invalidate()
+            raise
+        await autocommit.execute(text("RESET lock_timeout"))
+        await autocommit.execute(text("RESET statement_timeout"))
