@@ -345,6 +345,14 @@ class SearchSettings(BaseSettings):
     multi_hit: float = Field(default=0.3, ge=0)
     # Results in a layer the query names ("the endpoint", "the model") are lifted by this.
     layer_boost: float = Field(default=1.2, ge=1)
+    # Searches one user may run a minute (a token bucket: as many at once, then this rate).
+    rate_per_minute: int = Field(default=60, gt=0)
+    # The cross-encoder reorders the best results (when Voyage is configured).
+    rerank: bool = True
+    # How long the search box waits on the model to read a query the rules can't (else rules).
+    router_timeout_seconds: float = Field(default=2.5, gt=0)
+    # An answer is kept this long, so its lanes page from one ranking.
+    cache_seconds: int = Field(default=300, ge=0)
 
 
 class Settings(BaseSettings):

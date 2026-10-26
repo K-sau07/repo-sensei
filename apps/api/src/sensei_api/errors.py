@@ -121,7 +121,11 @@ async def _app_error_handler(_request: Request, exc: Exception) -> JSONResponse:
 async def _domain_error_handler(_request: Request, exc: Exception) -> JSONResponse:
     if not isinstance(exc, DomainError):  # registered only for DomainError
         raise exc
-    return JSONResponse(error_body(exc.code, exc.message, exc.details), status_code=exc.status_code)
+    return JSONResponse(
+        error_body(exc.code, exc.message, exc.details),
+        status_code=exc.status_code,
+        headers=exc.headers,
+    )
 
 
 async def _validation_handler(_request: Request, exc: Exception) -> JSONResponse:

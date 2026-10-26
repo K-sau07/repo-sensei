@@ -786,6 +786,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/orgs/{org}/repos/{repo}/search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Search
+         * @description The snapshot's results for ``q``, by lane (see the module).
+         */
+        post: operations["search_api_v1_orgs__org__repos__repo__search_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/orgs/{org}/repos/{repo}/symbols": {
         parameters: {
             query?: never;
@@ -1584,6 +1604,13 @@ export interface components {
          * @enum {string}
          */
         JobStatus: "queued" | "running" | "succeeded" | "failed" | "cancelled";
+        /**
+         * Lane
+         * @description The design system's swimlanes, as the API, the constellation and the flow view (2.13)
+         *     draw them. The router's finer layers fold into them (:data:`LANES`).
+         * @enum {string}
+         */
+        Lane: "ui" | "api" | "svc" | "db" | "other";
         /** MeResponse */
         MeResponse: {
             /** Avatar Url */
@@ -1791,6 +1818,25 @@ export interface components {
         RoleUpdate: {
             role: components["schemas"]["Role"];
         };
+        /** SearchExactQuery */
+        SearchExactQuery: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "literal" | "regex" | "symbol" | "path";
+            /** Query */
+            query: string;
+        };
+        /** SearchHighlight */
+        SearchHighlight: {
+            /** End */
+            end: number;
+            /** Line */
+            line: number;
+            /** Start */
+            start: number;
+        };
         /** SearchHit */
         SearchHit: {
             /** Language */
@@ -1806,6 +1852,64 @@ export interface components {
             /** Size */
             size: number;
         };
+        /** SearchInterpretation */
+        SearchInterpretation: {
+            /**
+             * Class
+             * @enum {string}
+             */
+            class: "symbol" | "literal" | "regex" | "conceptual" | "flow" | "architecture" | "impact";
+            /** Literals */
+            literals: string[];
+            /** Path Filter */
+            path_filter: string | null;
+            /** Rewrites */
+            rewrites: string[];
+        };
+        /** SearchLaneCounts */
+        SearchLaneCounts: {
+            /** Api */
+            api: number;
+            /** Db */
+            db: number;
+            /** Other */
+            other: number;
+            /** Svc */
+            svc: number;
+            /** Ui */
+            ui: number;
+        };
+        /** SearchLaneCursors */
+        SearchLaneCursors: {
+            /** Api */
+            api: string | null;
+            /** Db */
+            db: string | null;
+            /** Other */
+            other: string | null;
+            /** Svc */
+            svc: string | null;
+            /** Ui */
+            ui: string | null;
+        };
+        /** SearchLanes */
+        SearchLanes: {
+            /** Api */
+            api: components["schemas"]["SearchResultHit"][];
+            /** Db */
+            db: components["schemas"]["SearchResultHit"][];
+            /** Other */
+            other: components["schemas"]["SearchResultHit"][];
+            /** Svc */
+            svc: components["schemas"]["SearchResultHit"][];
+            /** Ui */
+            ui: components["schemas"]["SearchResultHit"][];
+        };
+        /**
+         * SearchMode
+         * @enum {string}
+         */
+        SearchMode: "auto" | "keyword" | "semantic";
         /** SearchOut */
         SearchOut: {
             /** Commit Sha */
@@ -1814,6 +1918,85 @@ export interface components {
             query: string;
             /** Results */
             results: components["schemas"]["SearchHit"][];
+        };
+        /** SearchPartial */
+        SearchPartial: {
+            /** Semantic Pending */
+            semantic_pending: boolean;
+            /** Summaries Pending */
+            summaries_pending: boolean;
+        };
+        /** SearchRequest */
+        SearchRequest: {
+            /** Cursor */
+            cursor?: string | null;
+            /** Langs */
+            langs?: string[] | null;
+            /** Layers */
+            layers?: components["schemas"]["Lane"][] | null;
+            /**
+             * Limit
+             * @description Per lane.
+             * @default 8
+             */
+            limit: number;
+            /** @default auto */
+            mode: components["schemas"]["SearchMode"];
+            /**
+             * Path
+             * @description A path prefix.
+             */
+            path?: string | null;
+            /** Q */
+            q: string;
+            /** Ref */
+            ref?: string | null;
+        };
+        /** SearchResponse */
+        SearchResponse: {
+            counts: components["schemas"]["SearchLaneCounts"];
+            /** Exact Queries */
+            exact_queries: components["schemas"]["SearchExactQuery"][];
+            interpretation: components["schemas"]["SearchInterpretation"];
+            lanes: components["schemas"]["SearchLanes"];
+            next: components["schemas"]["SearchLaneCursors"];
+            partial: components["schemas"]["SearchPartial"];
+            /** Query */
+            query: string;
+        };
+        /** SearchResultHit */
+        SearchResultHit: {
+            /** End Line */
+            end_line: number;
+            /** Id */
+            id: string;
+            /** Kind */
+            kind: components["schemas"]["SymbolKind"] | "file";
+            /** Language */
+            language: string | null;
+            layer: components["schemas"]["Lane"];
+            /** Name */
+            name: string;
+            /** Path */
+            path: string;
+            /** Score */
+            score: number;
+            snippet: components["schemas"]["SearchSnippet"];
+            /** Start Line */
+            start_line: number;
+            /** Symbol Key */
+            symbol_key: string | null;
+            /** Why */
+            why: ("keyword" | "semantic" | "symbol" | "graph")[];
+        };
+        /** SearchSnippet */
+        SearchSnippet: {
+            /** Highlights */
+            highlights: components["schemas"]["SearchHighlight"][];
+            /** Lines */
+            lines: string[];
+            /** Start Line */
+            start_line: number;
         };
         /** SessionInfo */
         SessionInfo: {
@@ -3582,6 +3765,58 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
+            };
+        };
+    };
+    search_api_v1_orgs__org__repos__repo__search_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization slug */
+                org: string;
+                /** @description Repository slug */
+                repo: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SearchRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    /** @description The commit the response was read from. */
+                    "X-Commit-Sha"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SearchResponse"];
+                };
+            };
+            /** @description Not searchable yet (``not_indexed``, ``semantic_not_ready``) */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description ``validation_failed``, ``invalid_query`` or ``invalid_cursor`` */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Too many searches (``rate_limited``, with ``Retry-After``) */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

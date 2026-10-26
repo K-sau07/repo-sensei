@@ -10,12 +10,18 @@ class DomainError(Exception):
     code: str = "bad_request"
 
     def __init__(
-        self, message: str, *, code: str | None = None, details: dict[str, Any] | None = None
+        self,
+        message: str,
+        *,
+        code: str | None = None,
+        details: dict[str, Any] | None = None,
+        headers: dict[str, str] | None = None,
     ) -> None:
         super().__init__(message)
         self.message = message
         self.code = code or self.code
         self.details = details
+        self.headers = headers  # sent with the error response (``Retry-After``)
 
 
 class NotFoundError(DomainError):
@@ -36,3 +42,8 @@ class ConflictError(DomainError):
 class InvalidError(DomainError):
     status_code = 422
     code = "validation_failed"
+
+
+class RateLimitedError(DomainError):
+    status_code = 429
+    code = "rate_limited"

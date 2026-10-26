@@ -58,6 +58,8 @@ from sensei_core.models import (
 from sensei_core.orgs.service import OrgService
 from sensei_core.repos.access import RepoAccess
 from sensei_core.storage import Bucket, ObjectStorage, artifact_key, repo_prefix, snapshot_key
+from sensei_engine.chunk.files import chunk_file
+from sensei_engine.chunk.store import FileChunks, save_chunks
 from sensei_engine.ingest.constellation import (
     LIVE_BATCH,
     Constellation,
@@ -71,6 +73,8 @@ from sensei_engine.ingest.merkle import ARTIFACT_NAME, Leaf, build_tree
 from sensei_engine.ingest.store import save_discovery
 from sensei_engine.parse.parser import parse_file
 from sensei_engine.search.grep import ExactSearch
+from sensei_engine.search.route import Lane
+from sensei_engine.search.service import SearchService
 from sensei_engine.snapshots import SnapshotCache
 from sensei_engine.symbols.extract import extract_symbols
 from sensei_engine.symbols.store import FileSymbols, save_symbols
@@ -80,6 +84,7 @@ from sensei_workers.ingest.archive import write_archive
 pytestmark = pytest.mark.integration
 
 API = "/api/v1"
+LANES = [lane.value for lane in Lane]
 GITHUB_API = "https://api.github.com"
 INSTALLATION = 555_001
 
@@ -1782,6 +1787,279 @@ async def test_symbols_need_access(
         hidden = await client.get(f"{API}/orgs/acme/repos/api/{path}", params=params)
         assert hidden.json()["error"]["code"] == "repo_not_found_or_no_access", path
         assert "x-commit-sha" not in hidden.headers
+
+
+# ------------------------------------------------------------------ search
+
+SEARCH_FILES = {
+    "backend/app/api/routes/items.py": (
+        b"from app.services.items import create_item\n"
+        b"\n"
+        b"\n"
+        b"@router.post('/items/')\n"
+        b"def create_item_route(item_in):\n"
+        b'    """Create a new item."""\n'
+        b"    return create_item(item_in)\n"
+    ),
+    "backend/app/services/items.py": (
+        b"def create_item(item_in):\n"
+        b"    item = Item(title=item_in.title)\n"
+        b"    session.add(item)\n"
+        b"    return item\n"
+        b"\n"
+        b"\n"
+        b"def delete_item(item_id):\n"
+        b"    item = session.get(Item, item_id)\n"
+        b"    session.delete(item)\n"
+    ),
+    "backend/app/models.py": b"class Item:\n    title: str\n    owner_id: int\n",
+    "frontend/src/routes/items.tsx": (
+        b"export function ItemsPage() {\n"
+        b"  const create = () => createItem({ title: 'new item' })\n"
+        b"  return <button onClick={create}>New item</button>\n"
+        b"}\n"
+    ),
+    "backend/tests/test_items.py": b"def test_create_item():\n    assert create_item(1)\n",
+    "README.md": b"# Items\n\nCreate an item with POST /items/.\n",
+}
+
+
+async def _chunk(db: AsyncSession, files: dict[str, bytes], sha: str) -> None:
+    """The symbols and chunks stages, on the snapshot ``_index`` left at ``sha``."""
+    await _extract_symbols(db, files, sha)
+    snapshot = await db.scalar(select(Snapshot).where(Snapshot.commit_sha == sha))
+    assert snapshot is not None
+    rows = await db.execute(
+        select(RepoFile.path, RepoFile.id, RepoFile.language).where(
+            RepoFile.snapshot_id == snapshot.id
+        )
+    )
+    found = {row.path: (row.id, row.language) for row in rows}
+    chunks = [
+        FileChunks(path, found[path][1], chunk_file(path, found[path][1], data))
+        for path, data in files.items()
+        if path in found
+    ]
+    await save_chunks(db, snapshot, {path: ids[0] for path, ids in found.items()}, chunks)
+    await db.flush()
+
+
+@pytest.fixture
+def searching(app: FastAPI) -> SearchService:
+    """Search by the rules, in the fused order (no model, no reranker)."""
+    service = SearchService()
+    app.state.search_service = service
+    return service
+
+
+async def _searchable_repo(
+    app: FastAPI,
+    client: httpx.AsyncClient,
+    db: AsyncSession,
+    fake: FakeGitHub,
+    storage: ObjectStorage,
+    tmp_path: Path,
+) -> dict[str, str]:
+    _, headers, _ = await _connected(app, client, db, fake)
+    await _index(app, db, storage, tmp_path, SEARCH_FILES, SHA_ONE)
+    await _chunk(db, SEARCH_FILES, SHA_ONE)
+    return headers
+
+
+SEARCH_URL = f"{API}/orgs/acme/repos/api/search"
+
+
+async def test_search_answers_by_lane(
+    app: FastAPI,
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    fake: FakeGitHub,
+    storage: ObjectStorage,
+    tmp_path: Path,
+    searching: SearchService,
+) -> None:
+    _, headers, _ = await _connected(app, client, db_session, fake)
+    never = await client.post(SEARCH_URL, json={"q": "item"}, headers=headers)
+    assert (never.status_code, never.json()["error"]["code"]) == (404, "repo_not_indexed")
+    await _index(app, db_session, storage, tmp_path, SEARCH_FILES, SHA_ONE)
+    not_yet = await client.post(SEARCH_URL, json={"q": "item"}, headers=headers)
+    assert (not_yet.status_code, not_yet.json()["error"]["code"]) == (409, "not_indexed")
+    await _chunk(db_session, SEARCH_FILES, SHA_ONE)
+
+    response = await client.post(
+        SEARCH_URL, json={"q": "how is a new item created?"}, headers=headers
+    )
+    assert response.status_code == 200, response.text
+    assert response.headers["x-commit-sha"] == SHA_ONE
+    body = response.json()
+    assert body["query"] == "how is a new item created?"
+    assert set(body["lanes"]) == set(body["counts"]) == set(body["next"]) == set(LANES)
+    assert body["partial"] == {"semantic_pending": True, "summaries_pending": True}
+    assert body["interpretation"]["class"] in ("conceptual", "flow")
+    hits = {hit["id"]: hit for lane in body["lanes"].values() for hit in lane}
+    service = hits["py backend/app/services/items.py/create_item()."]
+    assert service in body["lanes"]["svc"]
+    assert (service["name"], service["kind"], service["layer"]) == (
+        "create_item",
+        "function",
+        "svc",
+    )
+    assert (service["start_line"], service["end_line"]) == (1, 4)
+    assert service["snippet"]["start_line"] == 1
+    assert service["snippet"]["lines"][0] == "def create_item(item_in):"
+    assert {"line": 1, "start": 11, "end": 15} in service["snippet"]["highlights"]  # "item"
+    assert "keyword" in service["why"]
+    handler = hits["py backend/app/api/routes/items.py/create_item_route()."]
+    assert handler in body["lanes"]["api"]
+    assert any(hit["layer"] == "db" for hit in body["lanes"]["db"])
+    assert any(hit["kind"] == "file" and hit["symbol_key"] is None for hit in hits.values())
+    for lane, found in body["lanes"].items():
+        assert body["counts"][lane] >= len(found)
+        for hit in found:
+            assert 0 <= hit["score"] <= 1
+            assert hit["why"]
+            assert len(hit["snippet"]["lines"]) <= 12
+    scores = [hit["score"] for lane in body["lanes"].values() for hit in lane]
+    assert max(scores) == 1.0
+
+
+async def test_search_pages_a_lane_with_its_cursor(
+    app: FastAPI,
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    fake: FakeGitHub,
+    storage: ObjectStorage,
+    tmp_path: Path,
+    searching: SearchService,
+) -> None:
+    headers = await _searchable_repo(app, client, db_session, fake, storage, tmp_path)
+    first = (await client.post(SEARCH_URL, json={"q": "item", "limit": 1}, headers=headers)).json()
+    lane = next(lane for lane in LANES if first["counts"][lane] > 1)
+    assert len(first["lanes"][lane]) == 1
+    cursor = first["next"][lane]
+    assert cursor
+    seen = [hit["id"] for hit in first["lanes"][lane]]
+    while cursor:
+        page = await client.post(
+            SEARCH_URL,
+            json={"q": "item", "limit": 1, "layers": [lane], "cursor": cursor},
+            headers=headers,
+        )
+        assert page.status_code == 200, page.text
+        more = page.json()
+        assert more["counts"] == first["counts"]
+        assert all(not more["lanes"][other] for other in LANES if other != lane)
+        seen += [hit["id"] for hit in more["lanes"][lane]]
+        cursor = more["next"][lane]
+    assert len(seen) == len(set(seen)) == first["counts"][lane]
+
+    for body in (
+        {"q": "item", "cursor": "nope"},
+        {"q": "other words", "cursor": first["next"][lane]},  # another search's
+        {"q": "item", "layers": [o for o in LANES if o != lane], "cursor": first["next"][lane]},
+    ):
+        bad = await client.post(SEARCH_URL, json=body, headers=headers)
+        assert (bad.status_code, bad.json()["error"]["code"]) == (422, "invalid_cursor"), body
+
+
+async def test_search_modes_filters_and_exact_pivots(
+    app: FastAPI,
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    fake: FakeGitHub,
+    storage: ObjectStorage,
+    tmp_path: Path,
+    searching: SearchService,
+) -> None:
+    headers = await _searchable_repo(app, client, db_session, fake, storage, tmp_path)
+
+    async def search(**body: Any) -> httpx.Response:
+        return await client.post(SEARCH_URL, json=body, headers=headers)
+
+    semantic = await search(q="item", mode="semantic")
+    assert (semantic.status_code, semantic.json()["error"]["code"]) == (409, "semantic_not_ready")
+    keyword = (await search(q="item", mode="keyword")).json()
+    assert all("semantic" not in hit["why"] for lane in keyword["lanes"].values() for hit in lane)
+    # A literal: the exact leg finds the line, reported as the definition around it.
+    literal = (await search(q='where is "session.delete(item)" called')).json()
+    assert {"kind": "literal", "query": "session.delete(item)"} in literal["exact_queries"]
+    assert literal["interpretation"]["literals"] == ["session.delete(item)"]
+    first = literal["lanes"]["svc"][0]
+    assert first["id"] == "py backend/app/services/items.py/delete_item()."
+    assert (first["start_line"], first["end_line"]) == (7, 9)
+    symbol = (await search(q="create_item_route")).json()
+    assert symbol["interpretation"]["class"] == "symbol"
+    assert {"kind": "symbol", "query": "create_item_route"} in symbol["exact_queries"]
+    # Filters hold on every leg; the query's "not tests" too.
+    scoped = (await search(q="item", path="backend/app/")).json()
+    paths = {hit["path"] for lane in scoped["lanes"].values() for hit in lane}
+    assert paths
+    assert all(path.startswith("backend/app/") for path in paths)
+    assert scoped["interpretation"]["path_filter"] == "backend/app/"
+    typescript = (await search(q="item", langs=["typescript"])).json()
+    assert {hit["language"] for lane in typescript["lanes"].values() for hit in lane} <= {
+        "typescript"
+    }
+    no_tests = (await search(q="create item (not tests)")).json()
+    assert all("tests/" not in hit["path"] for hit in no_tests["lanes"]["other"])
+    # Only the lanes asked for.
+    api_only = (await search(q="item", layers=["api"])).json()
+    assert api_only["lanes"]["api"]
+    assert all(not api_only["lanes"][lane] for lane in LANES if lane != "api")
+
+    for body, code in (
+        ({"q": "   "}, "invalid_query"),
+        ({"q": "x" * 501}, "validation_failed"),
+        ({"q": "item", "limit": 51}, "validation_failed"),
+        ({"q": "item", "layers": ["service"]}, "validation_failed"),
+        ({"q": "item", "mode": "fuzzy"}, "validation_failed"),
+        ({"q": "item", "path": "../etc"}, "validation_failed"),
+        ({"q": "item", "extra": 1}, "validation_failed"),
+    ):
+        refused = await search(**body)
+        assert (refused.status_code, refused.json()["error"]["code"]) == (422, code), body
+
+
+async def test_search_is_rate_limited_per_user(
+    app: FastAPI,
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    fake: FakeGitHub,
+    storage: ObjectStorage,
+    tmp_path: Path,
+    searching: SearchService,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    headers = await _searchable_repo(app, client, db_session, fake, storage, tmp_path)
+    monkeypatch.setattr(app.state.settings.search, "rate_per_minute", 2)
+    for _ in range(2):
+        ok = await client.post(SEARCH_URL, json={"q": "item"}, headers=headers)
+        assert ok.status_code == 200, ok.text
+    limited = await client.post(SEARCH_URL, json={"q": "item"}, headers=headers)
+    assert (limited.status_code, limited.json()["error"]["code"]) == (429, "rate_limited")
+    assert 1 <= int(limited.headers["retry-after"]) <= 30
+    # Another user has a bucket of their own.
+    member, member_headers = await _member(app, client, db_session)
+    fake.user_can_read[f"ghu_{member.login}"] = {101}
+    other = await client.post(SEARCH_URL, json={"q": "item"}, headers=member_headers)
+    assert other.status_code == 200, other.text
+
+
+async def test_search_needs_access(
+    app: FastAPI,
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    fake: FakeGitHub,
+    storage: ObjectStorage,
+    tmp_path: Path,
+    searching: SearchService,
+) -> None:
+    await _searchable_repo(app, client, db_session, fake, storage, tmp_path)
+    member, member_headers = await _member(app, client, db_session)
+    fake.user_can_read[f"ghu_{member.login}"] = set()  # can't read acme-gh/api on GitHub
+    hidden = await client.post(SEARCH_URL, json={"q": "item"}, headers=member_headers)
+    assert hidden.json()["error"]["code"] == "repo_not_found_or_no_access"
+    assert "x-commit-sha" not in hidden.headers
 
 
 async def test_repo_rows_carry_index_summaries(

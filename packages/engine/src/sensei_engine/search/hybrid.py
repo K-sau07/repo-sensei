@@ -28,7 +28,7 @@ from __future__ import annotations
 
 import time
 import uuid
-from collections.abc import Container, Mapping, Sequence
+from collections.abc import Container, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
@@ -47,7 +47,13 @@ from sensei_engine.search.bm25 import (
     live_chunks,
 )
 from sensei_engine.search.bm25 import Leg as LexLeg
-from sensei_engine.search.grep import MAX_LIMIT, ExactSearch, GrepQuery, InvalidQueryError
+from sensei_engine.search.grep import (
+    MAX_LIMIT,
+    ExactSearch,
+    GrepHit,
+    GrepQuery,
+    InvalidQueryError,
+)
 from sensei_engine.search.layers import lane_of, layer_of
 from sensei_engine.search.plan import Leg, Origin, SearchPlan, SubQuery
 from sensei_engine.search.route import Lane, Layer
@@ -163,11 +169,17 @@ class WorktreeGrep:
             result = await self._search.search(self._root, query, files=self._files)
         except InvalidQueryError:
             return []
-        lines: dict[str, list[int]] = {}
-        for hit in result.hits:
-            lines.setdefault(hit.path, []).append(hit.line)
-        ordered = sorted(lines, key=lambda path: (-len(lines[path]), path))
-        return [(path, line) for path in ordered for line in lines[path]][: limit * 4]
+        return grep_places(result.hits, limit)
+
+
+def grep_places(hits: Iterable[GrepHit], limit: int) -> list[tuple[str, int]]:
+    """A grep leg's ranking of matched lines: files with more matches first, then by path,
+    each file's lines in order (at most ``4 * limit``: a definition often holds several)."""
+    lines: dict[str, list[int]] = {}
+    for hit in hits:
+        lines.setdefault(hit.path, []).append(hit.line)
+    ordered = sorted(lines, key=lambda path: (-len(lines[path]), path))
+    return [(path, line) for path in ordered for line in lines[path]][: limit * 4]
 
 
 class DenseLegs(Protocol):

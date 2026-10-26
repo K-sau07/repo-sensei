@@ -1589,6 +1589,18 @@
         "title": "JobStatus",
         "type": "string"
       },
+      "Lane": {
+        "description": "The design system's swimlanes, as the API, the constellation and the flow view (2.13)\ndraw them. The router's finer layers fold into them (:data:`LANES`).",
+        "enum": [
+          "ui",
+          "api",
+          "svc",
+          "db",
+          "other"
+        ],
+        "title": "Lane",
+        "type": "string"
+      },
       "MeResponse": {
         "properties": {
           "avatar_url": {
@@ -2155,6 +2167,53 @@
         "title": "RoleUpdate",
         "type": "object"
       },
+      "SearchExactQuery": {
+        "properties": {
+          "kind": {
+            "enum": [
+              "literal",
+              "regex",
+              "symbol",
+              "path"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "query": {
+            "title": "Query",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "query"
+        ],
+        "title": "SearchExactQuery",
+        "type": "object"
+      },
+      "SearchHighlight": {
+        "properties": {
+          "end": {
+            "title": "End",
+            "type": "integer"
+          },
+          "line": {
+            "title": "Line",
+            "type": "integer"
+          },
+          "start": {
+            "title": "Start",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "line",
+          "start",
+          "end"
+        ],
+        "title": "SearchHighlight",
+        "type": "object"
+      },
       "SearchHit": {
         "properties": {
           "language": {
@@ -2200,6 +2259,214 @@
         "title": "SearchHit",
         "type": "object"
       },
+      "SearchInterpretation": {
+        "properties": {
+          "class": {
+            "enum": [
+              "symbol",
+              "literal",
+              "regex",
+              "conceptual",
+              "flow",
+              "architecture",
+              "impact"
+            ],
+            "title": "Class",
+            "type": "string"
+          },
+          "literals": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Literals",
+            "type": "array"
+          },
+          "path_filter": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Path Filter"
+          },
+          "rewrites": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Rewrites",
+            "type": "array"
+          }
+        },
+        "required": [
+          "class",
+          "rewrites",
+          "literals",
+          "path_filter"
+        ],
+        "title": "SearchInterpretation",
+        "type": "object"
+      },
+      "SearchLaneCounts": {
+        "properties": {
+          "api": {
+            "title": "Api",
+            "type": "integer"
+          },
+          "db": {
+            "title": "Db",
+            "type": "integer"
+          },
+          "other": {
+            "title": "Other",
+            "type": "integer"
+          },
+          "svc": {
+            "title": "Svc",
+            "type": "integer"
+          },
+          "ui": {
+            "title": "Ui",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "ui",
+          "api",
+          "svc",
+          "db",
+          "other"
+        ],
+        "title": "SearchLaneCounts",
+        "type": "object"
+      },
+      "SearchLaneCursors": {
+        "properties": {
+          "api": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Api"
+          },
+          "db": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Db"
+          },
+          "other": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Other"
+          },
+          "svc": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Svc"
+          },
+          "ui": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ui"
+          }
+        },
+        "required": [
+          "ui",
+          "api",
+          "svc",
+          "db",
+          "other"
+        ],
+        "title": "SearchLaneCursors",
+        "type": "object"
+      },
+      "SearchLanes": {
+        "properties": {
+          "api": {
+            "items": {
+              "$ref": "#/components/schemas/SearchResultHit"
+            },
+            "title": "Api",
+            "type": "array"
+          },
+          "db": {
+            "items": {
+              "$ref": "#/components/schemas/SearchResultHit"
+            },
+            "title": "Db",
+            "type": "array"
+          },
+          "other": {
+            "items": {
+              "$ref": "#/components/schemas/SearchResultHit"
+            },
+            "title": "Other",
+            "type": "array"
+          },
+          "svc": {
+            "items": {
+              "$ref": "#/components/schemas/SearchResultHit"
+            },
+            "title": "Svc",
+            "type": "array"
+          },
+          "ui": {
+            "items": {
+              "$ref": "#/components/schemas/SearchResultHit"
+            },
+            "title": "Ui",
+            "type": "array"
+          }
+        },
+        "required": [
+          "ui",
+          "api",
+          "svc",
+          "db",
+          "other"
+        ],
+        "title": "SearchLanes",
+        "type": "object"
+      },
+      "SearchMode": {
+        "enum": [
+          "auto",
+          "keyword",
+          "semantic"
+        ],
+        "title": "SearchMode",
+        "type": "string"
+      },
       "SearchOut": {
         "properties": {
           "commit_sha": {
@@ -2224,6 +2491,289 @@
           "results"
         ],
         "title": "SearchOut",
+        "type": "object"
+      },
+      "SearchPartial": {
+        "properties": {
+          "semantic_pending": {
+            "title": "Semantic Pending",
+            "type": "boolean"
+          },
+          "summaries_pending": {
+            "title": "Summaries Pending",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "semantic_pending",
+          "summaries_pending"
+        ],
+        "title": "SearchPartial",
+        "type": "object"
+      },
+      "SearchRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "cursor": {
+            "anyOf": [
+              {
+                "maxLength": 512,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cursor"
+          },
+          "langs": {
+            "anyOf": [
+              {
+                "items": {
+                  "maxLength": 40,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "maxItems": 20,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Langs"
+          },
+          "layers": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/Lane"
+                },
+                "maxItems": 5,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Layers"
+          },
+          "limit": {
+            "default": 8,
+            "description": "Per lane.",
+            "maximum": 50.0,
+            "minimum": 1.0,
+            "title": "Limit",
+            "type": "integer"
+          },
+          "mode": {
+            "$ref": "#/components/schemas/SearchMode",
+            "default": "auto"
+          },
+          "path": {
+            "anyOf": [
+              {
+                "maxLength": 1024,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "A path prefix.",
+            "title": "Path"
+          },
+          "q": {
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Q",
+            "type": "string"
+          },
+          "ref": {
+            "anyOf": [
+              {
+                "maxLength": 255,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ref"
+          }
+        },
+        "required": [
+          "q"
+        ],
+        "title": "SearchRequest",
+        "type": "object"
+      },
+      "SearchResponse": {
+        "properties": {
+          "counts": {
+            "$ref": "#/components/schemas/SearchLaneCounts"
+          },
+          "exact_queries": {
+            "items": {
+              "$ref": "#/components/schemas/SearchExactQuery"
+            },
+            "title": "Exact Queries",
+            "type": "array"
+          },
+          "interpretation": {
+            "$ref": "#/components/schemas/SearchInterpretation"
+          },
+          "lanes": {
+            "$ref": "#/components/schemas/SearchLanes"
+          },
+          "next": {
+            "$ref": "#/components/schemas/SearchLaneCursors"
+          },
+          "partial": {
+            "$ref": "#/components/schemas/SearchPartial"
+          },
+          "query": {
+            "title": "Query",
+            "type": "string"
+          }
+        },
+        "required": [
+          "query",
+          "interpretation",
+          "lanes",
+          "counts",
+          "next",
+          "exact_queries",
+          "partial"
+        ],
+        "title": "SearchResponse",
+        "type": "object"
+      },
+      "SearchResultHit": {
+        "properties": {
+          "end_line": {
+            "title": "End Line",
+            "type": "integer"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SymbolKind"
+              },
+              {
+                "const": "file",
+                "type": "string"
+              }
+            ],
+            "title": "Kind"
+          },
+          "language": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Language"
+          },
+          "layer": {
+            "$ref": "#/components/schemas/Lane"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "score": {
+            "title": "Score",
+            "type": "number"
+          },
+          "snippet": {
+            "$ref": "#/components/schemas/SearchSnippet"
+          },
+          "start_line": {
+            "title": "Start Line",
+            "type": "integer"
+          },
+          "symbol_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Symbol Key"
+          },
+          "why": {
+            "items": {
+              "enum": [
+                "keyword",
+                "semantic",
+                "symbol",
+                "graph"
+              ],
+              "type": "string"
+            },
+            "title": "Why",
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "symbol_key",
+          "name",
+          "kind",
+          "path",
+          "language",
+          "layer",
+          "start_line",
+          "end_line",
+          "snippet",
+          "score",
+          "why"
+        ],
+        "title": "SearchResultHit",
+        "type": "object"
+      },
+      "SearchSnippet": {
+        "properties": {
+          "highlights": {
+            "items": {
+              "$ref": "#/components/schemas/SearchHighlight"
+            },
+            "title": "Highlights",
+            "type": "array"
+          },
+          "lines": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 12,
+            "title": "Lines",
+            "type": "array"
+          },
+          "start_line": {
+            "title": "Start Line",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "start_line",
+          "lines",
+          "highlights"
+        ],
+        "title": "SearchSnippet",
         "type": "object"
       },
       "SessionInfo": {
@@ -5327,6 +5877,80 @@
         "summary": "Reindex",
         "tags": [
           "indexing"
+        ]
+      }
+    },
+    "/api/v1/orgs/{org}/repos/{repo}/search": {
+      "post": {
+        "description": "The snapshot's results for ``q``, by lane (see the module).",
+        "operationId": "search_api_v1_orgs__org__repos__repo__search_post",
+        "parameters": [
+          {
+            "description": "Organization slug",
+            "in": "path",
+            "name": "org",
+            "required": true,
+            "schema": {
+              "description": "Organization slug",
+              "title": "Org",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Repository slug",
+            "in": "path",
+            "name": "repo",
+            "required": true,
+            "schema": {
+              "description": "Repository slug",
+              "maxLength": 201,
+              "title": "Repo",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SearchRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SearchResponse"
+                }
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "X-Commit-Sha": {
+                "description": "The commit the response was read from.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Not searchable yet (``not_indexed``, ``semantic_not_ready``)"
+          },
+          "422": {
+            "description": "``validation_failed``, ``invalid_query`` or ``invalid_cursor``"
+          },
+          "429": {
+            "description": "Too many searches (``rate_limited``, with ``Retry-After``)"
+          }
+        },
+        "summary": "Search",
+        "tags": [
+          "search"
         ]
       }
     },
