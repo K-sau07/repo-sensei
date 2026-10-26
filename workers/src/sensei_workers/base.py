@@ -272,7 +272,7 @@ class SenseiTask(_TaskBase):
             except Exception as exc:
                 if lock is not None:
                     lock.release()
-                self._maybe_retry(exc)
+                self._maybe_retry(exc, task_id)
                 raise
             if lock is not None:
                 lock.complete()
@@ -326,25 +326,37 @@ class SenseiTask(_TaskBase):
         reads ``max_retries=None`` as "the task's limit", which a long wait would run past.)"""
         raise self.retry(exc=exc, countdown=countdown, max_retries=WAITS)
 
-    def _error_retries(self) -> tuple[str, int]:
-        """This task's retries after an error so far (Redis key, count). Celery's
-        ``request.retries`` also counts waits (:meth:`wait_again`), so an error late in a long
-        wait would find the limit spent; errors are counted apart, by task id (a retry keeps
-        the id)."""
-        key = f"{ERROR_RETRIES_PREFIX}{self.request.id}"
-        found = get_runtime().sync_redis.get(key)
-        return key, int(cast("Any", found) or 0)
+    def _error_retries(self, task_id: str) -> int:
+        """This task's retries after an error so far. Celery's ``request.retries`` also counts
+        waits (:meth:`wait_again`), so an error late in a long wait would find the limit spent;
+        errors are counted apart, by task id (a retry keeps the id). Without Redis, Celery's
+        count stands in (waits included: the stricter limit)."""
+        try:
+            found = get_runtime().sync_redis.get(f"{ERROR_RETRIES_PREFIX}{task_id}")
+        except redis.exceptions.RedisError as exc:
+            log.warning("error retries unreadable; counting waits too", error=type(exc).__name__)
+            return int(self.request.retries or 0)
+        return int(cast("Any", found) or 0)
 
-    def _maybe_retry(self, exc: Exception) -> None:
+    def _count_error_retry(self, task_id: str) -> None:
+        key = f"{ERROR_RETRIES_PREFIX}{task_id}"
+        try:
+            client = get_runtime().sync_redis
+            client.incr(key)
+            client.expire(key, ERROR_RETRIES_TTL_SECONDS)
+        except redis.exceptions.RedisError as exc:
+            log.warning("error retry not counted", error=type(exc).__name__)
+
+    def _maybe_retry(self, exc: Exception, task_id: str) -> None:
+        """Retry after ``exc`` if it is retryable and the limit isn't reached; ``task_id``: the
+        run's (as :meth:`__call__` resolved it: a direct call has no Celery id)."""
         settings = get_runtime().settings.worker
         limit = self.max_retries if self.max_retries is not None else settings.max_retries
-        key, retries = self._error_retries()
+        retries = self._error_retries(task_id)
         delay = retry_delay(exc, retries, settings)
         if delay is None or retries >= limit:
             return
-        client = get_runtime().sync_redis
-        client.incr(key)
-        client.expire(key, ERROR_RETRIES_TTL_SECONDS)
+        self._count_error_retry(task_id)
         log.warning(
             "task will be retried",
             error_type=type(exc).__name__,

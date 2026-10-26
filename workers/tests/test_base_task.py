@@ -10,6 +10,7 @@ from typing import Any
 import fakeredis
 import httpx
 import pytest
+import redis.exceptions
 import sqlalchemy.exc
 from celery import Celery
 
@@ -253,6 +254,46 @@ def test_a_retried_error_and_a_wait_count_apart(app: Celery) -> None:
     # max_retries errors, each followed by a wait, then the run that ends. Counted together,
     # the waits would have spent the limit before the last error.
     assert len(events) == 2 * WORKER.max_retries + 1
+
+
+def test_without_redis_errors_are_still_retried_up_to_the_limit(
+    app: Celery, runtime: FakeRuntime, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Redis down: the error count falls back to Celery's (waits included), never fails the
+    retry itself."""
+
+    def down(*_: object, **__: object) -> None:
+        raise redis.exceptions.ConnectionError("redis is down")
+
+    for name in ("get", "incr", "expire"):
+        monkeypatch.setattr(runtime.fake, name, down)
+    attempts: list[int] = []
+
+    @app.task(bind=True, base=SenseiTask, name="sensei.default.no_redis")
+    def no_redis(self: SenseiTask) -> None:
+        attempts.append(int(self.request.retries or 0))
+        raise httpx.ConnectError("down")
+
+    result = no_redis.apply_async()
+    assert result.state == "FAILURE"
+    assert isinstance(result.result, httpx.ConnectError)  # the error, not Redis's
+    assert attempts == [0, 1, 2, 3]
+
+
+def test_a_direct_call_counts_its_errors_under_its_own_id(
+    app: Celery, runtime: FakeRuntime
+) -> None:
+    @app.task(bind=True, base=SenseiTask, name="sensei.default.direct")
+    def direct(self: SenseiTask) -> None:
+        raise httpx.ConnectError("down")
+
+    for _ in range(2):
+        with pytest.raises(httpx.ConnectError):
+            direct()  # no Celery id
+    fake: Any = runtime.fake
+    keys: list[str] = sorted(fake.keys("error-retries:*"))
+    assert "error-retries:None" not in keys
+    assert len(keys) == 2  # one per call, not one shared count
 
 
 def test_other_errors_fail_immediately(app: Celery) -> None:
