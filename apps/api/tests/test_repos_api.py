@@ -7,7 +7,7 @@ import asyncio
 import hashlib
 import math
 import uuid
-from collections.abc import AsyncGenerator, Awaitable, Iterator
+from collections.abc import AsyncGenerator, Awaitable, Iterator, Sequence
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -52,6 +52,8 @@ from sensei_core.models import (
     Snapshot,
     SnapshotStatus,
     Stage,
+    UsageEvent,
+    UsageKind,
     User,
     UserSession,
 )
@@ -60,6 +62,8 @@ from sensei_core.repos.access import RepoAccess
 from sensei_core.storage import Bucket, ObjectStorage, artifact_key, repo_prefix, snapshot_key
 from sensei_engine.chunk.files import chunk_file
 from sensei_engine.chunk.store import FileChunks, save_chunks
+from sensei_engine.embed import store as embed_store
+from sensei_engine.embed.provider import EmbeddingUsage, InputType, UsageSink
 from sensei_engine.ingest.constellation import (
     LIVE_BATCH,
     Constellation,
@@ -2065,6 +2069,82 @@ async def test_search_needs_access(
     hidden = await client.post(SEARCH_URL, json={"q": "item"}, headers=member_headers)
     assert hidden.json()["error"]["code"] == "repo_not_found_or_no_access"
     assert "x-commit-sha" not in hidden.headers
+
+
+class TopicEmbeddings:
+    """Embeds by topic: anything about items along one axis, the rest along another."""
+
+    provider = "voyage"
+    model = "voyage-code-4"
+    dims = 1024
+
+    def __init__(self) -> None:
+        self.requests = 0
+
+    async def embed(
+        self, texts: Sequence[str], input_type: InputType, *, on_usage: UsageSink | None = None
+    ) -> list[list[float]]:
+        self.requests += 1
+        if on_usage is not None:
+            await on_usage(EmbeddingUsage(self.provider, self.model, len(texts), 7 * len(texts)))
+        return [_topic_axis(text) for text in texts]
+
+
+def _topic_axis(text: str) -> list[float]:
+    vector = [0.0] * TopicEmbeddings.dims
+    vector[1 if "item" in text.lower() else 2] = 1.0
+    return vector
+
+
+async def test_search_runs_its_semantic_legs_once_the_embeddings_are_ready(
+    app: FastAPI,
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    fake: FakeGitHub,
+    storage: ObjectStorage,
+    tmp_path: Path,
+    searching: SearchService,
+) -> None:
+    headers = await _searchable_repo(app, client, db_session, fake, storage, tmp_path)
+    embeddings = TopicEmbeddings()
+    app.state.embeddings = embeddings
+    question = {"q": "how is a new item created?"}
+    pending = (await client.post(SEARCH_URL, json=question, headers=headers)).json()
+    assert pending["partial"]["semantic_pending"] is True
+    assert embeddings.requests == 0  # not embedded yet: no query embedded either
+    semantic = await client.post(SEARCH_URL, json={**question, "mode": "semantic"}, headers=headers)
+    assert (semantic.status_code, semantic.json()["error"]["code"]) == (409, "semantic_not_ready")
+
+    snapshot = await db_session.scalar(select(Snapshot).where(Snapshot.commit_sha == SHA_ONE))
+    assert snapshot is not None
+    chunks = await embed_store.pending(
+        db_session, snapshot.id, generation=snapshot.chunk_generation, limit=1000
+    )
+    await embed_store.save(
+        db_session, snapshot.repo_id, {c.id: _topic_axis(c.text) for c in chunks}
+    )
+    await db_session.flush()
+
+    ready = (await client.post(SEARCH_URL, json=question, headers=headers)).json()
+    assert ready["partial"]["semantic_pending"] is False  # not the keyword-only answer kept
+    hits = [hit for lane in ready["lanes"].values() for hit in lane]
+    assert any("semantic" in hit["why"] for hit in hits)
+    assert embeddings.requests == 1
+    only = await client.post(SEARCH_URL, json={**question, "mode": "semantic"}, headers=headers)
+    assert only.status_code == 200, only.text
+    found = [hit for lane in only.json()["lanes"].values() for hit in lane]
+    assert found
+    assert all(hit["why"][0] == "semantic" for hit in found)
+    org_id = await _org_id(db_session, "acme")
+    await set_org_context(db_session, org_id)
+    billed = await db_session.scalars(
+        select(UsageEvent.tokens_in).where(
+            UsageEvent.org_id == org_id,
+            UsageEvent.kind == UsageKind.EMBEDDING,
+            UsageEvent.ref_type == "search",
+        )
+    )
+    assert list(billed) == [7, 7]  # each search's one question
 
 
 async def test_repo_rows_carry_index_summaries(

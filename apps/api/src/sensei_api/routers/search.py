@@ -23,6 +23,7 @@ from __future__ import annotations
 import base64
 import binascii
 import json
+import uuid
 from collections.abc import Container
 from typing import Annotated, Any, Literal
 
@@ -30,6 +31,7 @@ from fastapi import APIRouter, Request, Response
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
 from redis.asyncio import Redis
 from redis.exceptions import RedisError
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from sensei_api.deps import DbSession, RedisClient
@@ -48,8 +50,12 @@ from sensei_core.indexing.snapshots import resolve_snapshot
 from sensei_core.logging import get_logger
 from sensei_core.models import Snapshot
 from sensei_core.usage import CostCalculator
+from sensei_engine.embed.provider import EmbeddingProvider
+from sensei_engine.embed.provider import usage_ledger as embedding_ledger
+from sensei_engine.embed.voyage import VoyageClient
 from sensei_engine.llm.anthropic_client import AnthropicClient
 from sensei_engine.llm.ledger import usage_ledger as llm_ledger
+from sensei_engine.search.dense import EmbeddedLegs
 from sensei_engine.search.grep import (
     MAX_LIMIT,
     GrepBusyError,
@@ -85,6 +91,8 @@ MAX_LIMIT_PER_LANE = 50
 MAX_OFFSET = 10_000
 CACHE_PREFIX = "search:v1:"
 REF_TYPE = "search"
+EMBEDDED_PREFIX = "search:embedded:"
+EMBEDDED_SECONDS = 24 * 3600
 _ANSWER = TypeAdapter(Answer)
 
 
@@ -216,6 +224,69 @@ def _costs(request: Request) -> CostCalculator:
         calc = CostCalculator.from_settings(settings.pricing)
         state.cost_calculator = calc
     return calc
+
+
+def _embeddings(request: Request) -> EmbeddingProvider | None:
+    """The deployment's embedding provider (the one the chunks were embedded with); None
+    without a Voyage key. Tests set their own on ``app.state.embeddings``."""
+    state = request.app.state
+    found: EmbeddingProvider | None = getattr(state, "embeddings", None)
+    if found is None:
+        settings: Settings = state.settings
+        if not settings.voyage.configured:
+            return None
+        found = VoyageClient(settings.voyage, state.http)
+        state.embeddings = found
+    return found
+
+
+async def embeddings_ready(db: AsyncSession, redis: Redis, snapshot: Snapshot) -> bool:
+    """Whether every chunk of the snapshot's live generation has its vector. Once it has, the
+    answer holds for that generation: it is kept in Redis (a day) instead of read again."""
+    marker = f"{EMBEDDED_PREFIX}{snapshot.id}:{snapshot.chunk_generation}"
+    try:
+        if await redis.get(marker):
+            return True
+    except RedisError:
+        log.warning("embeddings marker unreadable")
+    missing = await db.scalar(
+        text(
+            "SELECT EXISTS (SELECT 1 FROM public.chunks WHERE repo_id = :repo_id "
+            "AND snapshot_id = :snapshot_id AND generation = :generation "
+            "AND embedding IS NULL)"
+        ),
+        {
+            "repo_id": snapshot.repo_id,
+            "snapshot_id": snapshot.id,
+            "generation": snapshot.chunk_generation,
+        },
+    )
+    if missing:
+        return False
+    try:
+        await redis.set(marker, "1", ex=EMBEDDED_SECONDS)
+    except RedisError:
+        log.warning("embeddings marker not kept")
+    return True
+
+
+async def _semantic_legs(
+    request: Request,
+    db: AsyncSession,
+    redis: Redis,
+    snapshot: Snapshot,
+    costs: CostCalculator,
+    *,
+    org_id: uuid.UUID,
+) -> EmbeddedLegs | None:
+    """The semantic legs, once the snapshot's embeddings are ready (else None: partial mode);
+    the query's embedding is billed to the org."""
+    provider = _embeddings(request)
+    if provider is None or not await embeddings_ready(db, redis, snapshot):
+        return None
+    return EmbeddedLegs(
+        provider, on_usage=embedding_ledger(db, costs, org_id=org_id, ref_type=REF_TYPE)
+    )
 
 
 class _SnapshotGrep:
@@ -377,7 +448,8 @@ async def search(
             "Search appears once this commit's indexing has chunked its files.",
             code="not_indexed",
         )
-    dense = None  # 2.7: the snapshot's embeddings
+    costs = _costs(request)
+    dense = await _semantic_legs(request, db, redis, snapshot, costs, org_id=access.org.id)
     if query.mode is SearchMode.SEMANTIC and dense is None:
         raise ConflictError(
             "Semantic search appears once this commit's embeddings are ready.",
@@ -386,7 +458,6 @@ async def search(
     cache_key = f"{CACHE_PREFIX}{snapshot.id}:{snapshot.chunk_generation}:{dense is not None}:{key}"
     answer = await _cached(redis, cache_key)
     if answer is None:
-        costs = _costs(request)
         org_id, user_id = access.org.id, access.user.id
         try:
             answer = await get_search_service(request).search(
