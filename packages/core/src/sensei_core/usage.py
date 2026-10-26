@@ -256,3 +256,20 @@ async def spent_since(db: AsyncSession, org_id: uuid.UUID, since: datetime) -> D
         )
     )
     return Decimal(total or 0)
+
+
+async def costs_of(
+    db: AsyncSession, org_id: uuid.UUID, ref_type: str, ref_id: str
+) -> dict[UsageKind, Decimal]:
+    """What ``org_id`` was charged for one piece of work (an index job, a search), by kind of
+    usage; kinds with no usage are left out."""
+    rows = await db.execute(
+        select(UsageEvent.kind, func.sum(UsageEvent.cost_usd))
+        .where(
+            UsageEvent.org_id == org_id,
+            UsageEvent.ref_type == ref_type,
+            UsageEvent.ref_id == ref_id,
+        )
+        .group_by(UsageEvent.kind)
+    )
+    return {kind: Decimal(total or 0) for kind, total in rows.tuples()}

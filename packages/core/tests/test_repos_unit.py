@@ -137,10 +137,11 @@ def test_a_truncated_tree_is_a_floor() -> None:
 def test_time_and_cost_follow_the_measured_stages() -> None:
     size_kb, languages, tree, _ = MEASURED["langflow"]
     langflow = estimate_index(size_kb, languages, CALC, tree)
-    # ~59K chunks to embed (~$2.30) and 8,415 file summaries (~$2.20), each priced as its own
-    # short request (one 22M-token prompt would be at the long-context rate).
-    assert Decimal(4) < langflow.cost_usd < Decimal(6)
-    assert 15 < langflow.index_minutes < 30
+    # ~32M tokens to embed (~$3.85; the full index measured 32.1M) and 8,415 file summaries
+    # (~$2.20), each priced as its own short request (one 22M-token prompt would be at the
+    # long-context rate).
+    assert Decimal(5) < langflow.cost_usd < Decimal(7)
+    assert 20 < langflow.index_minutes < 35
     size_kb, languages, tree, _ = MEASURED["full-stack-fastapi-template"]
     template = estimate_index(size_kb, languages, CALC, tree)
     assert Decimal("0.05") < template.cost_usd < Decimal("0.15")
@@ -150,11 +151,12 @@ def test_time_and_cost_follow_the_measured_stages() -> None:
 def test_embedding_time_respects_the_accounts_tokens_a_minute() -> None:
     size_kb, languages, tree, _ = MEASURED["langflow"]
     paid = estimate_index(size_kb, languages, CALC, tree)
-    # ~59K chunks of 330 tokens at 3M a minute: ~6.5 minutes of sending, not ~2.5 at full speed.
+    # ~32M tokens at 3M a minute: ~10.7 minutes of sending, not ~4 at full speed; twice as long
+    # at half the rate.
     slower = estimate_index(
         size_kb, languages, CALC, tree, EstimateModels(embed_tokens_per_minute=1_500_000)
     )
-    assert 6 < slower.index_minutes - paid.index_minutes < 7.5
+    assert 10 < slower.index_minutes - paid.index_minutes < 11.5
 
 
 def test_the_deployments_models_are_priced_and_one_without_a_price_is_named() -> None:

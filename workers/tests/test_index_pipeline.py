@@ -1287,6 +1287,11 @@ def test_chunks_are_embedded_and_semantic_search_unlocked(
     assert (with_vector, without) == (chunks, 0)
     assert len(usage) == len(voyage.calls)
     assert indexed
+    # What the run was charged is on the job, by kind.
+    finalized = job.stages["finalize"]["details"]
+    assert job.cost_usd > 0
+    assert finalized["cost_usd"] == str(job.cost_usd)
+    assert set(finalized["costs"]) == {"embedding"}
 
     events = runtime.run(_events(runtime, job_stream(job_id)))
     unlocks = {(e["stage"], tuple(e["unlocks"])) for e in events if e["type"] == "unlock"}

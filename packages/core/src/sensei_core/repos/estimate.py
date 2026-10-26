@@ -13,9 +13,11 @@ history included) is the last resort.
 - clone: ~1.3 s plus ~0.075 s a MB (flask-api 0.5 MB in 1.3 s, fastapi 35 MB in 3.9 s);
 - discover: ~0.4 ms a file (langflow, 11,407 files: 4.3 s);
 - parse and symbols: ~0.8 ms a code file (langflow, 8,197: 4.3 s on 10 cores; doubled for a worker)
-  and ~0.07 ms a symbol saved;
-- embeddings: ~7 chunks a code file (the symbols that get summaries, ~6 a file, plus the file), at
-  ~330 tokens a chunk with voyage-code-4: about $0.04 per thousand chunks, sent at ~400 chunks a
+  and ~0.05 ms a symbol saved, ~11 symbols a code file (fastapi-template 9.4, langflow 12.3);
+- chunks: ~5 ms a file chunked (langflow, 11,036 files: 52 s);
+- embeddings: what is embedded is every chunk (code, docs, config), ~0.55 tokens a byte of code
+  (fastapi-template 222K tokens from 409 KB of code, langflow 32.1M from 58.1 MB: 0.54 and 0.55),
+  ~340 tokens a chunk; with voyage-code-4 about $0.12 per million tokens, sent at ~400 chunks a
   second or as fast as Voyage's tokens a minute allow, whichever is slower (3M by default, about
   150 chunks a second);
 - summaries (Haiku, batch): ~2,600 input and ~540 output tokens a code file (fastapi-template:
@@ -89,10 +91,11 @@ DISCOVER_SECONDS = 0.25
 DISCOVER_SECONDS_PER_FILE = 0.0004
 PARSE_SECONDS = 0.5
 PARSE_SECONDS_PER_CODE_FILE = 0.0008
-SAVE_SECONDS_PER_SYMBOL = 0.00007
-SYMBOLS_PER_CODE_FILE = 6
-CHUNKS_PER_CODE_FILE = 7
-TOKENS_PER_CHUNK = 330
+SAVE_SECONDS_PER_SYMBOL = 0.00005
+SYMBOLS_PER_CODE_FILE = 11
+CHUNK_SECONDS_PER_FILE = 0.005
+EMBED_TOKENS_PER_CODE_BYTE = 0.55  # every chunk's tokens, per byte of code
+TOKENS_PER_CHUNK = 340
 EMBED_CHUNKS_PER_SECOND = 400  # 128 a request, 4 at once, ~1 s each
 SUMMARY_INPUT_TOKENS_PER_FILE = 2_600
 SUMMARY_OUTPUT_TOKENS_PER_FILE = 540
@@ -191,7 +194,8 @@ def estimate_index(
         files, code_files, code_bytes = guessed_files, guessed_code, round(source_bytes)
         repo_bytes = disk_bytes
     tokens = round(code_bytes / CHARS_PER_TOKEN)
-    chunks = code_files * CHUNKS_PER_CODE_FILE if models.embeddings else 0
+    embed_tokens = round(code_bytes * EMBED_TOKENS_PER_CODE_BYTE) if models.embeddings else 0
+    chunks = round(embed_tokens / TOKENS_PER_CHUNK)
     summarized = code_files if models.summaries else 0
     seconds = (
         CLONE_SECONDS
@@ -201,6 +205,7 @@ def estimate_index(
         + PARSE_SECONDS
         + PARSE_SECONDS_PER_CODE_FILE * code_files
         + SAVE_SECONDS_PER_SYMBOL * SYMBOLS_PER_CODE_FILE * code_files
+        + CHUNK_SECONDS_PER_FILE * files
         + _embed_seconds(chunks, models.embed_tokens_per_minute)
         + (SUMMARY_BATCH_SECONDS + SUMMARY_SECONDS_PER_FILE * summarized if summarized else 0)
     )
@@ -209,7 +214,7 @@ def estimate_index(
     embed = Decimal(0)
     if chunks:
         embed = _priced(
-            calc.cost("voyage", models.embed_model, tokens_in=chunks * TOKENS_PER_CHUNK),
+            calc.cost("voyage", models.embed_model, tokens_in=embed_tokens),
             models.embed_model,
             unpriced,
         )

@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 from typing import Any
 
 from celery import chain
@@ -32,6 +33,7 @@ from sensei_core.indexing.state import IndexJobStateMachine
 from sensei_core.jobs import TaskName, chain_key
 from sensei_core.logging import get_logger
 from sensei_core.models import ACTIVE_JOB_STATUSES, IndexJob, JobStatus, Repo, Snapshot, Stage
+from sensei_core.usage import costs_of
 from sensei_engine.chunk.store import prune_chunks
 from sensei_workers.app import celery_app
 from sensei_workers.base import NotYetError, SenseiTask
@@ -47,6 +49,7 @@ from sensei_workers.tasks.parse import parse_snapshot
 from sensei_workers.tasks.summaries import summarize_snapshot
 
 log = get_logger(__name__)
+JOB_REF_TYPE = "index_job"  # what the stages record a job's paid usage against
 
 STAGE_ORDER = list(Stage)
 CHAIN_TTL_SECONDS = 2 * 86_400
@@ -115,9 +118,17 @@ def finalize_index(self: IngestTask, *, job_id: str, org_id: str, repo_id: str) 
             repo.last_indexed_sha = snapshot.commit_sha
             pruned = await prune_chunks(scope.db, repo.id, keep=snapshot.id)
             settle_repo(repo, JobStatus.SUCCEEDED)
+            # What the run was charged (embeddings, summaries), on the job and by kind.
+            costs = await costs_of(scope.db, job.org_id, JOB_REF_TYPE, str(job.id))
+            job.cost_usd = sum(costs.values(), Decimal(0))
+            machine.note(
+                Stage.FINALIZE,
+                cost_usd=str(job.cost_usd),
+                costs={kind.value: str(cost) for kind, cost in sorted(costs.items())},
+            )
             machine.log(
                 f"Indexed {snapshot.commit_sha[:12]}: {snapshot.file_count or 0:,} files. "
-                "The code browser is ready."
+                "The code browser is ready." + _cost_line(job.cost_usd)
             )
             machine.finish()
             return snapshot.commit_sha, pruned
@@ -144,6 +155,12 @@ def finalize_index(self: IngestTask, *, job_id: str, org_id: str, repo_id: str) 
         request_vacuum(uuid.UUID(repo_id), eager=bool(self.request.is_eager))
     log.info("index job succeeded", commit_sha=sha, pruned_chunks=pruned)
     return sha
+
+
+def _cost_line(cost: Decimal) -> str:
+    if cost >= Decimal("0.01"):
+        return f" This index cost ${cost:.2f}."
+    return " This index cost less than a cent." if cost > 0 else ""
 
 
 def _send_the_chunks_stage(job_id: str, org_id: str, repo_id: str, *, eager: bool) -> None:
