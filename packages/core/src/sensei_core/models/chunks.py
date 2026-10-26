@@ -93,7 +93,7 @@ class CodeChunk(OrgScopedMixin, Base):
         primary_key=True, default=new_id, server_default=text("uuidv7()")
     )
     snapshot_id: Mapped[uuid.UUID] = mapped_column()
-    generation: Mapped[int] = mapped_column(BigInteger, server_default="0")
+    generation: Mapped[int] = mapped_column(BigInteger)  # no default: a writer names it
     file_id: Mapped[uuid.UUID] = mapped_column()
     owner_file_id: Mapped[uuid.UUID] = mapped_column()  # deleted and rebuilt with this file
     symbol_id: Mapped[uuid.UUID | None] = mapped_column()

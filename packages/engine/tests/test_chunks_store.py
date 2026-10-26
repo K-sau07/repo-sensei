@@ -310,6 +310,22 @@ async def test_an_incremental_save_needs_a_live_generation(
         await save_chunks(db_session, snapshot, file_ids, files, replace_all=False)
 
 
+async def test_every_writer_names_the_generation(engines: dict[str, AsyncEngine]) -> None:
+    async with engines["owner"].connect() as conn:
+        rows = await conn.execute(
+            text(
+                "SELECT c.relname, pg_get_expr(d.adbin, d.adrelid) FROM pg_class c "
+                "JOIN pg_namespace n ON n.oid = c.relnamespace AND n.nspname = 'public' "
+                "JOIN pg_attribute a ON a.attrelid = c.oid AND a.attname = 'generation' "
+                "LEFT JOIN pg_attrdef d ON d.adrelid = c.oid AND d.adnum = a.attnum "
+                "WHERE c.relname = 'chunks' OR c.relname LIKE 'chunks\\_p%'"
+            )
+        )
+        defaults = dict(rows.tuples().all())
+    assert set(defaults) == {"chunks", *chunk_partitions()}
+    assert set(defaults.values()) == {None}  # the parent's and every partition's
+
+
 async def test_chunks_are_org_scoped(db_session: AsyncSession, tmp_path: Path) -> None:
     await _index(db_session, tmp_path, FILES)
     await set_org_context(db_session, uuid.uuid4())  # another org
