@@ -1,14 +1,8 @@
-import type { Client } from "openapi-fetch";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { createApiClient } from "@/lib/api/client";
 import { ApiError } from "@/lib/api/errors";
-import {
-  LAYERS,
-  type SearchPaths,
-  type SearchRequest,
-  type SearchResponse,
-} from "@/lib/api/search";
+import { LAYERS, searchBody, type SearchRequest, type SearchResponse } from "@/lib/api/search";
 import { pathGlobs } from "@/lib/search/url-state";
 
 import { BROWSE_COMMIT, contentFiles } from "./browse";
@@ -28,8 +22,7 @@ import {
   type Indexed,
 } from "./search";
 
-const client = createApiClient({ baseUrl: "http://api.test", getCsrfToken: () => null });
-const api = client as unknown as Client<SearchPaths>;
+const api = createApiClient({ baseUrl: "http://api.test", getCsrfToken: () => null });
 const path = { params: { path: { org: "acme", repo: "api" } } };
 
 beforeAll(() => {
@@ -346,7 +339,7 @@ describe("POST /search", () => {
   it("answers with lanes, counts and the commit in X-Commit-Sha", async () => {
     const { data, response } = await api.POST("/api/v1/orgs/{org}/repos/{repo}/search", {
       ...path,
-      body: { q: "create_user" },
+      body: searchBody({ q: "create_user" }),
     });
     expect(response.headers.get("X-Commit-Sha")).toBe(BROWSE_COMMIT);
     expect(Object.keys(data?.lanes ?? {}).sort()).toEqual([...LAYERS].sort());
@@ -359,7 +352,10 @@ describe("POST /search", () => {
     if (repo) repo.last_indexed_sha = null;
     db.jobs = {};
     const error = await failure(
-      api.POST("/api/v1/orgs/{org}/repos/{repo}/search", { ...path, body: { q: "login" } }),
+      api.POST("/api/v1/orgs/{org}/repos/{repo}/search", {
+        ...path,
+        body: searchBody({ q: "login" }),
+      }),
     );
     expect(error).toMatchObject({ status: 404, code: "repo_not_indexed" });
   });
@@ -376,20 +372,26 @@ describe("POST /search", () => {
     // run 40 ms after that.
     vi.setSystemTime(started + 4600);
     const error = await failure(
-      api.POST("/api/v1/orgs/{org}/repos/{repo}/search", { ...path, body: { q: "login" } }),
+      api.POST("/api/v1/orgs/{org}/repos/{repo}/search", {
+        ...path,
+        body: searchBody({ q: "login" }),
+      }),
     );
     expect(error).toMatchObject({ status: 409, code: "not_indexed" });
     vi.setSystemTime(started + 4820);
     const { data } = await api.POST("/api/v1/orgs/{org}/repos/{repo}/search", {
       ...path,
-      body: { q: "login" },
+      body: searchBody({ q: "login" }),
     });
     expect(data?.partial.semantic_pending).toBe(true);
   });
 
   it("refuses a bad body with the standard error", async () => {
     const error = await failure(
-      api.POST("/api/v1/orgs/{org}/repos/{repo}/search", { ...path, body: { q: "a", limit: 0 } }),
+      api.POST("/api/v1/orgs/{org}/repos/{repo}/search", {
+        ...path,
+        body: searchBody({ q: "a", limit: 0 }),
+      }),
     );
     expect(error).toMatchObject({ status: 422, code: "validation_failed" });
   });
@@ -407,7 +409,7 @@ describe("Retry-After", () => {
       ),
     );
     const error = await failure(
-      api.POST("/api/v1/orgs/{org}/repos/{repo}/search", { ...path, body: { q: "a" } }),
+      api.POST("/api/v1/orgs/{org}/repos/{repo}/search", { ...path, body: searchBody({ q: "a" }) }),
     );
     expect(error).toMatchObject({ status: 429, code: "rate_limited", retryAfter: 12 });
   });

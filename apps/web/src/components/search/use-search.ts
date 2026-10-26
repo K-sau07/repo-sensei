@@ -5,7 +5,13 @@ import { useQueryStates } from "nuqs";
 
 import { useRepoSlug } from "@/components/repo/use-repo";
 import { api } from "@/lib/api/client";
-import { searchApi, type Layer, type SearchRequest, type SearchResponse } from "@/lib/api/search";
+import {
+  searchApi,
+  searchBody,
+  type Layer,
+  type SearchRequest,
+  type SearchResponse,
+} from "@/lib/api/search";
 import type { GrepRequest, GrepResult } from "@/lib/api/types";
 import { queryKeys } from "@/lib/query/keys";
 import { pathGlobs, requestOf, searchParsers, type SearchState } from "@/lib/search/url-state";
@@ -38,7 +44,7 @@ async function post(
 ): Promise<SearchResult> {
   const { data, response } = await searchApi.POST("/api/v1/orgs/{org}/repos/{repo}/search", {
     params: { path: { org, repo } },
-    body,
+    body: searchBody(body),
     signal,
   });
   if (!data) throw new Error("empty search response");
