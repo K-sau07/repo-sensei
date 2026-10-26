@@ -202,6 +202,21 @@ def test_retries_stop_at_the_limit(app: Celery) -> None:
     assert attempts == [0, 1, 2, 3]  # the first try and max_retries=3 retries
 
 
+def test_waiting_is_not_failing_and_has_no_retry_limit(app: Celery) -> None:
+    waits: list[int] = []
+
+    @app.task(bind=True, base=SenseiTask, name="sensei.default.batch_poll")
+    def poll(self: SenseiTask) -> str:
+        waits.append(int(self.request.retries or 0))
+        if len(waits) <= 2 * WORKER.max_retries:  # a batch still running, polled again
+            self.wait_again(0)
+        return "ended"
+
+    result = poll.apply_async()
+    assert (result.state, result.result) == ("SUCCESS", "ended")
+    assert len(waits) == 2 * WORKER.max_retries + 1
+
+
 def test_other_errors_fail_immediately(app: Celery) -> None:
     attempts: list[int] = []
 

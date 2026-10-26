@@ -286,7 +286,7 @@ def embed_snapshot(self: IngestTask, *, job_id: str, org_id: str, repo_id: str) 
         wait = runtime.run(_unavailable(self, target, exc))
         if wait is None:
             return None
-        raise self.retry(countdown=wait, max_retries=None) from exc
+        self.wait_again(wait, exc)
     built = runtime.run(_build_index(target))
     runtime.run(analyze("chunks"))
     runtime.run(_finish(self, target, tally, built=built))

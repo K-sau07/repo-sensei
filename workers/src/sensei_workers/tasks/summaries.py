@@ -703,7 +703,7 @@ def summarize_snapshot(self: IngestTask, *, job_id: str, org_id: str, repo_id: s
             files = _inputs(target, runtime.run(_file_rows(self, target)))
             outcome = runtime.run(_summaries(self, target, files))
             if isinstance(outcome, Wait):
-                raise self.retry(countdown=outcome.seconds, max_retries=None)
+                self.wait_again(outcome.seconds)
             if outcome is None:
                 return None
             run = outcome
@@ -717,7 +717,7 @@ def summarize_snapshot(self: IngestTask, *, job_id: str, org_id: str, repo_id: s
         wait = runtime.run(_unavailable(self, target, exc))
         if wait is None:
             return None
-        raise self.retry(countdown=wait.seconds, max_retries=None) from exc
+        self.wait_again(wait.seconds, exc)
     except (SnapshotUnavailableError, ArchiveTooLargeError):
         message = "the snapshot of this commit can't be read"
         runtime.run(_give_up(self, target, "snapshot_unavailable", message))

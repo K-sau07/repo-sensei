@@ -31,7 +31,7 @@ import uuid
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, ClassVar, Literal
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, NoReturn
 
 import httpx
 import redis
@@ -55,6 +55,10 @@ from sensei_core.redaction import redact, redact_text
 from sensei_workers.runtime import get_runtime
 
 log = get_logger(__name__)
+
+# Celery needs a number to retry by; a task waits this many times at most (a day of minute-long
+# waits is 1,440), each wait bounded by the caller's own deadline.
+WAITS = 100_000
 
 MAX_TEXT = 20_000
 
@@ -247,7 +251,7 @@ class SenseiTask(_TaskBase):
                 state = lock.acquire()
                 if state == "running":
                     log.info("same task already running; checking back later")
-                    raise self.retry(countdown=lock.beat_ttl + 1, max_retries=None)
+                    self.wait_again(lock.beat_ttl + 1)
                 if state != "acquired":
                     log.info("duplicate task skipped", reason=state)
                     return None
@@ -312,6 +316,12 @@ class SenseiTask(_TaskBase):
             done_ttl=self.idempotency_window_seconds,
             heartbeat=settings.lock_heartbeat_seconds,
         )
+
+    def wait_again(self, countdown: float, exc: Exception | None = None) -> NoReturn:
+        """Run again in ``countdown`` seconds: work that is waiting (a batch still running, a
+        rate limit, another copy of the task), not failing, so no retry limit applies. (Celery
+        reads ``max_retries=None`` as "the task's limit", which a long wait would run past.)"""
+        raise self.retry(exc=exc, countdown=countdown, max_retries=WAITS)
 
     def _maybe_retry(self, exc: Exception) -> None:
         settings = get_runtime().settings.worker
