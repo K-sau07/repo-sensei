@@ -343,8 +343,10 @@ async def _plan(system: AsyncEngine, statement: TextClause, params: dict[str, An
     async with AsyncSession(system) as db, db.begin():
         await tune(db)
         # Three rows: sorting the snapshot's rows exactly is cheaper, and the planner rightly
-        # takes that. Rule sorting out to see the index's path.
+        # takes that (whole, or incrementally over another index once other tests' rows and
+        # statistics are in the partition). Rule both out to see the index's path.
         await db.execute(text("SET LOCAL enable_sort = off"))
+        await db.execute(text("SET LOCAL enable_incremental_sort = off"))
         lines = await db.scalars(text(f"EXPLAIN {statement.text}"), params)
         return "\n".join(str(line) for line in lines)
 
