@@ -41,7 +41,8 @@ GATE = "recall_symbol@20"
 REPORTED = ("recall_symbol@20", "recall_symbol@10", "recall_file@20", "ndcg_symbol@10")
 KS = (10, 20)
 DEPTH = 100  # what a run reads: its largest k (each leg as deep)
-SINGLE_LEGS = (Leg.LEX_CODE, Leg.LEX_PATH, Leg.SYM, Leg.GREP)
+# Each leg the sweep weighs and measures alone (sem_summary waits for summary-view chunks).
+SINGLE_LEGS = (Leg.SEM_CODE, Leg.LEX_CODE, Leg.LEX_PATH, Leg.SYM, Leg.GREP)
 
 
 @dataclass(frozen=True, slots=True)
@@ -126,6 +127,7 @@ def evaluate(collected: Iterable[Collected], weights: Weights, view: str) -> dic
 
 
 GRID: Mapping[str, Sequence[float]] = {
+    "sem_code": (1.0, 1.6, 2.4),
     "lex_code": (0.6, 1.0, 1.4),
     "lex_path": (0.4, 0.8, 1.2),
     "sym": (0.6, 1.2, 1.8),
@@ -140,7 +142,7 @@ def grid(base: Weights, values: Mapping[str, Sequence[float]] = GRID) -> Iterabl
     for point in itertools.product(*(values[name] for name in names)):
         chosen = dict(zip(names, point, strict=True))
         legs = dict(base.legs)
-        for leg in (Leg.LEX_CODE, Leg.LEX_PATH, Leg.SYM, Leg.GREP):
+        for leg in SINGLE_LEGS:
             if leg.value in chosen:
                 legs[leg] = chosen[leg.value]
         yield dataclasses.replace(

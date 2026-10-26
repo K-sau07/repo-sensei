@@ -37,7 +37,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from sensei_core.db.types import vector_literal
 from sensei_engine.embed.provider import EmbeddingProvider, InputType, UsageSink
-from sensei_engine.search.bm25 import PARTITIONS, RRF_K, Filters, searchable_partition
+from sensei_engine.search.bm25 import (
+    PARTITIONS,
+    RRF_K,
+    Filters,
+    chunk_partition,
+    searchable_partition,
+)
+from sensei_engine.search.hybrid import ChunkRef
 
 EF_SEARCH = 120
 
@@ -106,16 +113,21 @@ def legs_query(
     legs: Sequence[Leg],
     k: int = 60,
     filters: Filters = Filters(),  # noqa: B008 - frozen, never mutated
+    generation: int | None = None,
 ) -> tuple[TextClause, dict[str, Any]]:
     """One statement for every leg on ``partition`` (``schema.chunks_pNN``): each leg's ``k``
-    nearest chunks, tagged with the leg's position in ``legs``; and its parameters."""
+    nearest chunks, tagged with the leg's position in ``legs``; and its parameters.
+    ``generation``: the chunks to read, when the caller pinned them (else the live ones)."""
     if not _partition_name(partition):
         msg = f"not a partition of chunks: {partition!r}"
         raise ValueError(msg)
     conditions = [
         "c.repo_id = :repo_id",
         "c.snapshot_id = :snapshot_id",
-        "c.generation = (SELECT s.chunk_generation FROM public.snapshots s "
+        # The snapshot's live generation: the caller's, or read in the same statement.
+        "c.generation = :generation"
+        if generation is not None
+        else "c.generation = (SELECT s.chunk_generation FROM public.snapshots s "
         "WHERE s.id = :snapshot_id AND s.repo_id = :repo_id)",
         "c.embedding IS NOT NULL",
     ]
@@ -125,6 +137,8 @@ def legs_query(
         "query": vector_literal(vector),
         "k": k,
     }
+    if generation is not None:
+        params["generation"] = generation
     if filters.kinds:
         conditions.append("c.kind = ANY(:kinds)")
         params["kinds"] = list(filters.kinds)
@@ -177,11 +191,12 @@ async def search_legs(
     k: int = 60,
     filters: Filters = Filters(),  # noqa: B008 - frozen, never mutated
     partition: str | None = None,
+    generation: int | None = None,
 ) -> dict[Leg, list[DenseHit]]:
     """Each leg's ``k`` chunks nearest ``vector`` (a query's embedding), nearest first, read in
-    one statement (nothing while the snapshot isn't chunked). ``partition``:
-    :func:`~sensei_engine.search.bm25.searchable_partition`'s, when the caller has it. Sets
-    ``hnsw.*`` for the rest of the transaction (:func:`tune`)."""
+    one statement (nothing while the snapshot isn't chunked). ``partition`` and
+    ``generation``: :func:`~sensei_engine.search.bm25.live_chunks`', when the caller has them.
+    Sets ``hnsw.*`` for the rest of the transaction (:func:`tune`)."""
     legs = tuple(dict.fromkeys(legs))
     results: dict[Leg, list[DenseHit]] = {leg: [] for leg in legs}
     if not vector or k <= 0 or not legs:
@@ -197,6 +212,7 @@ async def search_legs(
         legs=legs,
         k=k,
         filters=filters,
+        generation=generation,
     )
     await tune(db)
     for row in await db.execute(statement, params):
@@ -322,3 +338,53 @@ class DenseRetriever:
         if len(legs) == 1:
             return list(results[legs[0]])
         return fuse(results, weights=weights, k=k)
+
+
+VIEW_LEGS: dict[str, Leg] = {view: leg for leg, view in VIEWS.items()}
+
+
+class EmbeddedLegs:
+    """Hybrid search's semantic legs (:class:`~sensei_engine.search.hybrid.DenseLegs`) on the
+    snapshot's embeddings: the queries' texts embedded in one request (as queries, by the
+    provider the chunks were embedded with, billed to ``on_usage``), then per text both views'
+    nearest chunks in one statement, of the generation the search read."""
+
+    def __init__(self, provider: EmbeddingProvider, *, on_usage: UsageSink | None = None) -> None:
+        self._provider = provider
+        self._on_usage = on_usage
+
+    async def __call__(
+        self,
+        db: AsyncSession,
+        *,
+        repo_id: uuid.UUID,
+        snapshot_id: uuid.UUID,
+        generation: int,
+        queries: Sequence[tuple[str, str]],
+        k: int,
+        filters: Filters,
+    ) -> list[list[ChunkRef]]:
+        """One ranking per ``(text, view)`` query, in order (nothing for an empty text)."""
+        for _, view in queries:
+            if view not in VIEW_LEGS:
+                msg = f"not a view of chunks: {view!r}"
+                raise ValueError(msg)
+        texts = list(dict.fromkeys(words for words, _ in queries if words.strip()))
+        partition = await chunk_partition(db, repo_id) if texts and k > 0 else None
+        if partition is None:
+            return [[] for _ in queries]
+        vectors = await self._provider.embed(texts, InputType.QUERY, on_usage=self._on_usage)
+        found: dict[str, dict[Leg, list[DenseHit]]] = {}
+        for words, vector in zip(texts, vectors, strict=True):
+            views = tuple(dict.fromkeys(VIEW_LEGS[view] for t, view in queries if t == words))
+            found[words] = await search_legs(
+                db, repo_id=repo_id, snapshot_id=snapshot_id, vector=vector, legs=views, k=k,
+                filters=filters, partition=partition, generation=generation,
+            )  # fmt: skip
+        return [
+            [
+                ChunkRef(hit.chunk_id, hit.symbol_key)
+                for hit in found.get(words, {}).get(VIEW_LEGS[view], [])
+            ]
+            for words, view in queries
+        ]

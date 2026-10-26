@@ -41,6 +41,7 @@ from sensei_engine.search.bm25 import Filters, chunk_partition
 from sensei_engine.search.dense import (
     DenseHit,
     DenseRetriever,
+    EmbeddedLegs,
     Leg,
     dense_search,
     fuse,
@@ -49,6 +50,10 @@ from sensei_engine.search.dense import (
     search_legs,
     tune,
 )
+from sensei_engine.search.hybrid import HybridRetriever
+from sensei_engine.search.plan import Leg as PlanLeg
+from sensei_engine.search.plan import plan
+from sensei_engine.search.route import classify
 from sensei_testing import make_user
 
 pytestmark = pytest.mark.integration
@@ -447,3 +452,66 @@ def test_fusion_adds_each_legs_reciprocal_rank() -> None:
     assert fused[0].legs == {"sem_code": 2, "sem_summary": 1}
     assert fused[0].score == pytest.approx(1 / 62 + 0.7 / 61, abs=1e-6)
     assert fuse({Leg.CODE: [make(a, "a"), make(b, "b")]}, k=1)[0].chunk_id == a
+
+
+# ---------------------------------------------------------------- hybrid search's semantic legs
+
+
+async def test_the_semantic_legs_rank_each_query_and_view_from_one_request(
+    system_session: AsyncSession, tmp_path: Path
+) -> None:
+    db = system_session
+    snapshot, ids = await _embedded(db, tmp_path)
+    provider = FakeProvider()
+    billed: list[EmbeddingUsage] = []
+
+    async def sink(usage: EmbeddingUsage) -> None:
+        billed.append(usage)
+
+    legs = EmbeddedLegs(provider, on_usage=sink)
+    live = snapshot.chunk_generation
+    assert live is not None
+    rankings = await legs(
+        db, repo_id=snapshot.repo_id, snapshot_id=snapshot.id, generation=live,
+        queries=[("who creates a user?", "code"), ("who creates a user?", "summary"),
+                 ("anything else", "code"), ("  ", "code")],
+        k=2, filters=Filters(),
+    )  # fmt: skip
+    assert provider.calls == [(["who creates a user?", "anything else"], InputType.QUERY)]
+    assert len(billed) == 1
+    assert rankings[0][0].chunk_id == ids["app/users.py"]
+    assert rankings[1] == []  # no summary-view chunks yet
+    assert len(rankings[2]) == 2  # k
+    assert rankings[3] == []
+    under = await legs(
+        db, repo_id=snapshot.repo_id, snapshot_id=snapshot.id, generation=live,
+        queries=[("user", "code")], k=5, filters=Filters(path_prefix="app/"),
+    )  # fmt: skip
+    assert {ref.chunk_id for ref in under[0]} == {ids["app/users.py"], ids["app/items.py"]}
+    stale = await legs(
+        db, repo_id=snapshot.repo_id, snapshot_id=snapshot.id, generation=live + 1000,
+        queries=[("user", "code")], k=5, filters=Filters(),
+    )  # fmt: skip
+    assert stale == [[]]  # only the generation the search read
+    with pytest.raises(ValueError, match="not a view of chunks"):
+        await legs(
+            db, repo_id=snapshot.repo_id, snapshot_id=snapshot.id, generation=live,
+            queries=[("user", "docs")], k=5, filters=Filters(),
+        )  # fmt: skip
+
+
+async def test_hybrid_search_runs_its_semantic_legs_once_it_has_them(
+    system_session: AsyncSession, tmp_path: Path
+) -> None:
+    db = system_session
+    snapshot, ids = await _embedded(db, tmp_path)
+    question = plan(classify("who creates a user?").route)
+    without = await HybridRetriever().search(
+        db, question, repo_id=snapshot.repo_id, snapshot_id=snapshot.id
+    )
+    assert set(without.pending) == {PlanLeg.SEM_CODE, PlanLeg.SEM_SUMMARY}
+    hybrid = HybridRetriever(dense=EmbeddedLegs(FakeProvider()))
+    found = await hybrid.search(db, question, repo_id=snapshot.repo_id, snapshot_id=snapshot.id)
+    assert found.pending == ()
+    assert found.hits[0].chunk_id == ids["app/users.py"]
+    assert "sem_code" in found.hits[0].legs

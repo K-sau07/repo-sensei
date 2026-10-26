@@ -1,5 +1,5 @@
-"""The semantic retrievers: step 2.7's dense search (:mod:`sensei_engine.search.dense`) over a
-benchmark checkout's chunks, alone (``dense``) or fused with 2.6's BM25 legs (``hybrid``).
+"""The semantic retriever: step 2.7's dense search (:mod:`sensei_engine.search.dense`) over a
+benchmark checkout's chunks (``dense``; every leg fused is :mod:`sensei_evals.hybrid`).
 
 The checkout is indexed as the keyword retriever does it (:class:`~sensei_evals.keyword.
 KeywordRetriever`), then embedded as the embeddings stage does: every chunk's text through the
@@ -7,9 +7,6 @@ org's embedding cache (by content hash), Voyage for the rest, the vectors writte
 then the partition's HNSW index. A second run on the same code finds every vector in the cache.
 Each question is embedded as a query.
 
-``hybrid`` fuses the dense code leg with both BM25 legs by reciprocal rank (k = 60), each leg
-asked for :data:`POOL` chunks, all read in one repeatable-read transaction: what 2.9's retriever
-starts from, before routing and reranking.
 What Voyage was paid is counted (:attr:`SemanticRetriever.tokens`).
 """
 
@@ -17,7 +14,7 @@ from __future__ import annotations
 
 import time
 import uuid
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping
 
 import httpx
 
@@ -28,7 +25,7 @@ from sensei_engine.embed import store
 from sensei_engine.embed.cache import embed_documents
 from sensei_engine.embed.provider import EmbeddingProvider, EmbeddingUsage
 from sensei_engine.embed.voyage import VoyageClient
-from sensei_engine.search.bm25 import RRF_K, Leg, LexHit, chunk_partition, keyword_search
+from sensei_engine.search.bm25 import chunk_partition
 from sensei_engine.search.dense import DenseHit, DenseRetriever
 from sensei_engine.search.dense import Leg as DenseLeg
 from sensei_evals.keyword import KeywordRetriever, analyze_index
@@ -36,8 +33,7 @@ from sensei_evals.retrieval import Hit, RepoRef, RetrieverContext
 from sensei_evals.symbols import EVAL_DATABASE, Sessions, eval_database_url
 
 GROUP = 1_000  # chunks per transaction, as the embeddings stage takes them
-POOL = 60  # chunks each leg contributes to the fusion
-MODES = ("dense", "hybrid")
+MODES = ("dense",)
 
 
 async def embed_snapshot(
@@ -82,7 +78,7 @@ async def embed_snapshot(
     return cached, embedded, built
 
 
-def _hit(found: DenseHit | LexHit) -> Hit:
+def _hit(found: DenseHit) -> Hit:
     return Hit(
         path=found.path,
         lines=(found.start_line, found.end_line),
@@ -91,30 +87,9 @@ def _hit(found: DenseHit | LexHit) -> Hit:
     )
 
 
-def fuse(rankings: Sequence[Sequence[tuple[uuid.UUID, Hit]]], k: int) -> list[Hit]:
-    """Reciprocal rank fusion of chunk rankings: a chunk scores the sum of ``1 / (60 + rank)``
-    over the rankings that hold it; best first (ties: the first ranking's order)."""
-    scores: dict[uuid.UUID, float] = {}
-    first: dict[uuid.UUID, Hit] = {}
-    for ranking in rankings:
-        for rank, (chunk_id, hit) in enumerate(ranking, 1):
-            scores[chunk_id] = scores.get(chunk_id, 0.0) + 1.0 / (RRF_K + rank)
-            first.setdefault(chunk_id, hit)
-    ordered = sorted(scores, key=lambda chunk_id: -scores[chunk_id])[:k]
-    return [
-        Hit(
-            path=first[c].path,
-            lines=first[c].lines,
-            score=round(scores[c], 6),
-            symbol=first[c].symbol,
-        )
-        for c in ordered
-    ]
-
-
 class SemanticRetriever:
-    """Dense search over one snapshot's chunks (``dense``), or fused with BM25 (``hybrid``).
-    :meth:`prepare` indexes the checkout (through ``keyword``) and embeds it."""
+    """Dense search over one snapshot's chunks. :meth:`prepare` indexes the checkout (through
+    ``keyword``) and embeds it."""
 
     def __init__(
         self,
@@ -169,24 +144,12 @@ class SemanticRetriever:
         if found is None:  # pragma: no cover - prepare set it or raised
             return []
         repo_id, snapshot_id = found
-        pool = max(k, POOL)
         async with self._sessions() as db:
-            if not db.in_transaction():  # a session of its own (a test's may be one already)
-                # The legs read one snapshot of the database, so one generation of the chunks.
-                await db.connection(execution_options={"isolation_level": "REPEATABLE READ"})
             dense = await self._dense.search(
-                db, repo_id=repo_id, snapshot_id=snapshot_id, query=query, k=pool,
+                db, repo_id=repo_id, snapshot_id=snapshot_id, query=query, k=k,
                 legs=(DenseLeg.CODE,), on_usage=self._bill,
             )  # fmt: skip
-            if self.name == "dense":
-                return [_hit(hit) for hit in dense[:k]]
-            rankings: list[list[tuple[uuid.UUID, Hit]]] = [[(h.chunk_id, _hit(h)) for h in dense]]
-            for leg in (Leg.CODE, Leg.PATH):
-                lexical = await keyword_search(
-                    db, repo_id=repo_id, snapshot_id=snapshot_id, query=query, k=pool, legs=(leg,)
-                )
-                rankings.append([(h.chunk_id, _hit(h)) for h in lexical])
-        return fuse(rankings, k)
+        return [_hit(hit) for hit in dense]
 
     def report(self) -> Mapping[str, object]:
         """What the run cost and found in the cache, for the eval's notes."""
@@ -204,7 +167,7 @@ class SemanticRetriever:
 
 
 def checkout_semantic(context: RetrieverContext, mode: str) -> SemanticRetriever:
-    """The ``dense`` and ``hybrid`` retrievers of ``sensei-eval run``: the checkout indexed into
+    """The ``dense`` retriever of ``sensei-eval run``: the checkout indexed into
     the eval database (``--opt db=<name>``, default :data:`EVAL_DATABASE`) and embedded with the
     deployment's Voyage model (its key from the settings)."""
     if context.repo.checkout is None:

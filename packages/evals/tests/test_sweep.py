@@ -56,7 +56,8 @@ def test_the_grid_covers_every_combination_from_the_base() -> None:
     points = list(sweep.grid(base))
     size = math.prod(len(values) for values in sweep.GRID.values())
     assert len(points) == len(set(map(sweep.describe, points))) == size
-    assert all(point.legs[Leg.SEM_CODE] == base.legs[Leg.SEM_CODE] for point in points)
+    assert {point.legs[Leg.SEM_CODE] for point in points} == set(sweep.GRID["sem_code"])
+    assert all(point.legs[Leg.SEM_SUMMARY] == base.legs[Leg.SEM_SUMMARY] for point in points)
 
 
 def test_equal_scores_keep_the_weights_nearest_the_base(monkeypatch: pytest.MonkeyPatch) -> None:

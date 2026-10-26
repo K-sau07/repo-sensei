@@ -1,9 +1,8 @@
-"""The semantic retrievers: a checkout indexed and embedded as the indexer would (through the
-org's embedding cache), the question embedded as a query; alone, or fused with BM25."""
+"""The semantic retriever: a checkout indexed and embedded as the indexer would (through the
+org's embedding cache), the question embedded as a query."""
 
 from __future__ import annotations
 
-import uuid
 from collections.abc import AsyncGenerator, Callable, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from pathlib import Path
@@ -12,9 +11,9 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from sensei_engine.embed.provider import EmbeddingUsage, InputType, UsageSink
-from sensei_evals.dense import SemanticRetriever, checkout_semantic, fuse
+from sensei_evals.dense import SemanticRetriever, checkout_semantic
 from sensei_evals.keyword import KeywordRetriever
-from sensei_evals.retrieval import Hit, RepoRef, RetrieverContext
+from sensei_evals.retrieval import RepoRef, RetrieverContext
 from sensei_evals.schema import Suite
 
 SHA = "e" * 40
@@ -107,30 +106,6 @@ async def test_dense_finds_by_meaning_and_a_second_index_is_all_cache(
     assert len(provider.calls) == sent  # nothing embedded
 
 
-@pytest.mark.integration
-async def test_hybrid_fuses_dense_with_both_bm25_legs(
-    system_session: AsyncSession, tmp_path: Path
-) -> None:
-    repo = RepoRef(id="tiny-hybrid", sha=SHA, checkout=_tree(tmp_path))
-    retriever = _retriever(system_session, FakeProvider(), tmp_path, "hybrid")
-    assert retriever.name == "hybrid"
-    hits = await retriever.search("make_item", repo, 3)
-    # BM25 puts make_item first; dense agrees on the items' side.
-    assert (hits[0].path, hits[0].lines) == ("app/models.py", (6, 7))
-    assert hits[0].score > hits[-1].score
-
-
-def test_fusion_adds_reciprocal_ranks() -> None:
-    a, b, c = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
-
-    def hit(path: str) -> Hit:
-        return Hit(path=path, lines=(1, 2))
-
-    fused = fuse([[(a, hit("a")), (b, hit("b"))], [(b, hit("b")), (c, hit("c"))]], k=3)
-    assert [h.path for h in fused] == ["b", "a", "c"]
-    assert fused[0].score == round(1 / 62 + 1 / 61, 6)
-
-
 def test_the_factory_needs_a_checkout_and_a_voyage_key(tmp_path: Path) -> None:
     suite = Suite.model_construct(items=[])
 
@@ -140,6 +115,6 @@ def test_the_factory_needs_a_checkout_and_a_voyage_key(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="needs a checkout"):
         checkout_semantic(context(None), "dense")
     with pytest.raises(ValueError, match="needs a Voyage API key"):  # tests have none
-        checkout_semantic(context(tmp_path), "hybrid")
-    with pytest.raises(ValueError, match="mode must be one of dense, hybrid"):
+        checkout_semantic(context(tmp_path), "dense")
+    with pytest.raises(ValueError, match="mode must be one of dense"):
         SemanticRetriever(None, FakeProvider(), None, mode="sparse")  # type: ignore[arg-type]
