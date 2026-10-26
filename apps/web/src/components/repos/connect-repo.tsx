@@ -112,7 +112,7 @@ export function EstimateCard({ estimate }: { estimate: Estimate }) {
             ["Size", formatSize(estimate.size_kb)],
             ["Files", `~${compact.format(estimate.files)}`],
             ["Tokens", `~${compact.format(estimate.tokens)}`],
-            ["Indexing time", minutes(estimate.index_minutes)],
+            ["Search ready", minutes(estimate.search_ready_minutes)],
             ["First index", formatCost(estimate), unpriced.length ? unpricedNote : undefined],
           ] as const
         ).map(([term, value, describedBy]) => (
@@ -124,6 +124,11 @@ export function EstimateCard({ estimate }: { estimate: Estimate }) {
           </div>
         ))}
       </dl>
+      {estimate.summaries_minutes > 0 && (
+        <p className="text-xs text-fg-muted">
+          Summaries finish in the background, {minutes(estimate.summaries_minutes)} more.
+        </p>
+      )}
       {unpriced.length > 0 && (
         <p id={unpricedNote} className="text-xs text-fg-muted">
           No price for {unpriced.join(", ")} on this server, so the cost is unknown.

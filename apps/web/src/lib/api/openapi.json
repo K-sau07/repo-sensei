@@ -604,6 +604,7 @@
             "type": "boolean"
           },
           "index_minutes": {
+            "description": "The whole first index, summaries included.",
             "title": "Index Minutes",
             "type": "number"
           },
@@ -617,6 +618,11 @@
           "private": {
             "title": "Private",
             "type": "boolean"
+          },
+          "search_ready_minutes": {
+            "description": "Until search works (keyword, then semantic); the summaries follow it.",
+            "title": "Search Ready Minutes",
+            "type": "number"
           },
           "size_kb": {
             "title": "Size Kb",
@@ -633,6 +639,11 @@
             ],
             "description": "GitHub stars, when GitHub says.",
             "title": "Stars"
+          },
+          "summaries_minutes": {
+            "description": "The summaries' time after search is ready, in the background.",
+            "title": "Summaries Minutes",
+            "type": "number"
           },
           "tokens": {
             "description": "Estimated tokens to embed.",
@@ -656,6 +667,8 @@
           "files",
           "tokens",
           "index_minutes",
+          "search_ready_minutes",
+          "summaries_minutes",
           "cost_usd",
           "unpriced"
         ],

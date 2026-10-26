@@ -28,6 +28,9 @@ The models priced are the deployment's (:class:`EstimateModels`), for the stages
 has no price (a model, or the index worker's compute) is named in ``unpriced`` (with a warning),
 and the cost is only what the rest adds: not a total.
 
+Search is ready once the embeddings are in (``search_ready_minutes``); the summaries finish
+in the background after it (``summaries_minutes``): most of a large repository's time.
+
 Rounded and labelled estimates in the UI.
 """
 
@@ -141,9 +144,12 @@ class TreeStats:
 class IndexEstimate:
     files: int
     tokens: int
-    index_minutes: float
+    index_minutes: float  # the whole first index
     cost_usd: Decimal  # without the unpriced models' share
     unpriced: tuple[str, ...] = ()  # models without a price: the cost is incomplete
+    # Of index_minutes: until search is ready, then the summaries' (in the background).
+    search_ready_minutes: float = 0.0
+    summaries_minutes: float = 0.0
 
 
 def tree_stats(body: Mapping[str, Any]) -> TreeStats | None:
@@ -197,7 +203,8 @@ def estimate_index(
     embed_tokens = round(code_bytes * EMBED_TOKENS_PER_CODE_BYTE) if models.embeddings else 0
     chunks = round(embed_tokens / TOKENS_PER_CHUNK)
     summarized = code_files if models.summaries else 0
-    seconds = (
+    # Search (keyword, then semantic) is ready once the embeddings are in; summaries follow.
+    search_seconds = (
         CLONE_SECONDS
         + CLONE_SECONDS_PER_MB * repo_bytes / 1_000_000
         + DISCOVER_SECONDS
@@ -207,9 +214,13 @@ def estimate_index(
         + SAVE_SECONDS_PER_SYMBOL * SYMBOLS_PER_CODE_FILE * code_files
         + CHUNK_SECONDS_PER_FILE * files
         + _embed_seconds(chunks, models.embed_tokens_per_minute)
-        + (SUMMARY_BATCH_SECONDS + SUMMARY_SECONDS_PER_FILE * summarized if summarized else 0)
     )
-    minutes = round(seconds / 60, 1)
+    summary_seconds = (
+        SUMMARY_BATCH_SECONDS + SUMMARY_SECONDS_PER_FILE * summarized if summarized else 0
+    )
+    search_minutes = round(search_seconds / 60, 1)
+    summary_minutes = round(summary_seconds / 60, 1)
+    minutes = round((search_seconds + summary_seconds) / 60, 1)
     unpriced: list[str] = []
     embed = Decimal(0)
     if chunks:
@@ -241,6 +252,8 @@ def estimate_index(
         index_minutes=minutes,
         cost_usd=embed + per_file * summarized + compute,
         unpriced=tuple(unpriced),
+        search_ready_minutes=search_minutes,
+        summaries_minutes=summary_minutes,
     )
 
 

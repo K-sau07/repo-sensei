@@ -148,7 +148,13 @@ class EstimateOut(BaseModel):
     languages: dict[str, int]
     files: int = Field(description="Estimated number of source files.")
     tokens: int = Field(description="Estimated tokens to embed.")
-    index_minutes: float
+    index_minutes: float = Field(description="The whole first index, summaries included.")
+    search_ready_minutes: float = Field(
+        description="Until search works (keyword, then semantic); the summaries follow it."
+    )
+    summaries_minutes: float = Field(
+        description="The summaries' time after search is ready, in the background."
+    )
     cost_usd: Decimal = Field(
         description="Estimated one-time cost of the first full index, without the unpriced"
         " models' share."
@@ -287,6 +293,8 @@ async def estimate_repo(
         files=estimate.files,
         tokens=estimate.tokens,
         index_minutes=estimate.index_minutes,
+        search_ready_minutes=estimate.search_ready_minutes,
+        summaries_minutes=estimate.summaries_minutes,
         cost_usd=estimate.cost_usd,
         unpriced=list(estimate.unpriced),
     )

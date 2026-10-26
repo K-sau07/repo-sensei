@@ -55,7 +55,8 @@ export const PublicEstimate: Story = {
   play: async ({ canvas }) => {
     await paste(canvas, "https://github.com/langflow-ai/langflow");
     const card = await canvas.findByRole("region", { name: "Estimate for langflow-ai/langflow" });
-    await expect(card).toHaveTextContent("Indexing time");
+    await expect(card).toHaveTextContent("Search ready");
+    await expect(card).toHaveTextContent(/Summaries finish in the background, .* more\./);
     await expect(canvas.getByRole("button", { name: "Connect and index" })).toBeEnabled();
   },
 };

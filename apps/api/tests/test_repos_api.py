@@ -542,6 +542,9 @@ async def test_estimate_before_connecting(
     # No Voyage or Anthropic key in tests: embeddings and summaries won't run, so they add neither
     # time nor cost (four files take seconds: 0.0 minutes).
     assert estimate["index_minutes"] >= 0
+    assert estimate["search_ready_minutes"] + estimate["summaries_minutes"] == pytest.approx(
+        estimate["index_minutes"], abs=0.1
+    )
     assert float(estimate["cost_usd"]) >= 0
     assert estimate["heuristic"] is True
     assert estimate["unpriced"] == []

@@ -62,6 +62,8 @@ export function estimateFor(
 ) {
   const bytes = Object.values(languages).reduce((sum, value) => sum + value, 0);
   const files = Math.max(1, Math.round(bytes / 8000));
+  const searchReady = Math.round((0.5 + files / 2500) * 10) / 10;
+  const summaries = Math.round((3.5 + files / 600) * 10) / 10; // the batch, in the background
   return {
     full_name: fullName,
     private: isPrivate,
@@ -70,7 +72,9 @@ export function estimateFor(
     languages,
     files,
     tokens: Math.round(bytes / 3.5),
-    index_minutes: Math.round((0.5 + files / 2500) * 10) / 10,
+    index_minutes: searchReady + summaries,
+    search_ready_minutes: searchReady,
+    summaries_minutes: summaries,
     cost_usd: (Math.round((bytes / 3.5 / 1_000_000) * 0.12 * 100) / 100).toFixed(2),
     unpriced: [],
     heuristic: true,

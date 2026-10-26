@@ -1148,7 +1148,10 @@ export interface components {
              * @default true
              */
             heuristic: boolean;
-            /** Index Minutes */
+            /**
+             * Index Minutes
+             * @description The whole first index, summaries included.
+             */
             index_minutes: number;
             /** Languages */
             languages: {
@@ -1156,6 +1159,11 @@ export interface components {
             };
             /** Private */
             private: boolean;
+            /**
+             * Search Ready Minutes
+             * @description Until search works (keyword, then semantic); the summaries follow it.
+             */
+            search_ready_minutes: number;
             /** Size Kb */
             size_kb: number;
             /**
@@ -1163,6 +1171,11 @@ export interface components {
              * @description GitHub stars, when GitHub says.
              */
             stars?: number | null;
+            /**
+             * Summaries Minutes
+             * @description The summaries' time after search is ready, in the background.
+             */
+            summaries_minutes: number;
             /**
              * Tokens
              * @description Estimated tokens to embed.

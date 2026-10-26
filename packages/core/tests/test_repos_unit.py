@@ -148,6 +148,19 @@ def test_time_and_cost_follow_the_measured_stages() -> None:
     assert template.index_minutes < langflow.index_minutes
 
 
+def test_search_is_ready_before_the_summaries_finish() -> None:
+    size_kb, languages, tree, _ = MEASURED["langflow"]
+    langflow = estimate_index(size_kb, languages, CALC, tree)
+    total = langflow.search_ready_minutes + langflow.summaries_minutes
+    assert abs(total - langflow.index_minutes) <= 0.1  # each part rounded on its own
+    # Search in ~15 min (most of it sending 32M tokens to embed); the summaries' batch after.
+    assert 10 < langflow.search_ready_minutes < 20
+    assert langflow.summaries_minutes > 10
+    off = estimate_index(size_kb, languages, CALC, tree, EstimateModels(summaries=False))
+    assert off.summaries_minutes == 0
+    assert off.search_ready_minutes == off.index_minutes
+
+
 def test_embedding_time_respects_the_accounts_tokens_a_minute() -> None:
     size_kb, languages, tree, _ = MEASURED["langflow"]
     paid = estimate_index(size_kb, languages, CALC, tree)
