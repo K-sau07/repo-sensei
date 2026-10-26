@@ -17,7 +17,9 @@ and the new rows are embedded by the stage that follows the re-chunk.
 Once every chunk has its vector, the partition's HNSW index is built if it has none yet (one
 build after the first bulk load beats inserting into the graph row by row; later loads go into
 the index as they come). The build runs as the system role (only the tables' owner may create
-an index: a ``SECURITY DEFINER`` function does it).
+an index: a ``SECURITY DEFINER`` function does it). The build takes a lock that blocks writes to the
+whole partition (every repository hashed there) while it runs: once per partition, after its
+first bulk load (Langflow's 93k vectors: under a minute).
 
 Embeddings are optional: with no Voyage key the stage is passed over (keyword search still
 works). Voyage out of reach or rate limited past its own retries: tried again later, then
@@ -31,6 +33,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
+from sensei_core.indexing.jobs import JOB_USAGE_REF
 from sensei_core.jobs import TaskName
 from sensei_core.logging import get_logger
 from sensei_core.models import ACTIVE_JOB_STATUSES, Repo, Snapshot, Stage
@@ -48,14 +51,14 @@ from sensei_workers.app import celery_app
 from sensei_workers.base import NotYetError
 from sensei_workers.jobstate import JobScope, job_scope
 from sensei_workers.runtime import get_runtime
-from sensei_workers.statistics import analyze
 from sensei_workers.tasks.ingest import IngestTask
+from sensei_workers.tasks.maintenance import request_vacuum
 
 log = get_logger(__name__)
 
 AFTER = Stage.CHUNKS
 STAGE = Stage.EMBEDDINGS
-REF_TYPE = "index_job"  # the usage belongs to the job
+REF_TYPE = JOB_USAGE_REF  # the usage belongs to the job
 GROUP = 1_000  # chunks per transaction (one cache lookup, at most one Voyage request group)
 # Attempts that may end with Voyage out of reach before the stage gives up (skipped).
 MAX_UNAVAILABLE = 6
@@ -288,7 +291,10 @@ def embed_snapshot(self: IngestTask, *, job_id: str, org_id: str, repo_id: str) 
             return None
         self.wait_again(wait, exc)
     built = runtime.run(_build_index(target))
-    runtime.run(analyze("chunks"))
+    if tally.chunks:
+        # Every vector written is a new version of its row (not HOT once the partition has
+        # its HNSW index): vacuumed, the dead ones leave the BM25 statistics and the size.
+        request_vacuum(target.repo_id, eager=bool(self.request.is_eager))
     runtime.run(_finish(self, target, tally, built=built))
     log.info(
         "chunks embedded",

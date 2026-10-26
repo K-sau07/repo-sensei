@@ -32,6 +32,10 @@ from sensei_core.models import (
 )
 from sensei_core.orgs.service import OrgAccess, require_role
 
+# What an index job's paid usage (embeddings, summaries) is recorded against, with the job id:
+# its stages write it, finalize sums it.
+JOB_USAGE_REF = "index_job"
+
 HISTORY_LIMIT = 50
 
 

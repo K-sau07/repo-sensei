@@ -45,6 +45,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from sensei_core.indexing.jobs import JOB_USAGE_REF
 from sensei_core.jobs import TaskName
 from sensei_core.logging import get_logger
 from sensei_core.models import (
@@ -92,7 +93,7 @@ log = get_logger(__name__)
 
 AFTER = Stage.EMBEDDINGS  # the stage before this one
 STAGE = Stage.SUMMARIES
-REF_TYPE = "index_job"  # the batch and the usage belong to the job
+REF_TYPE = JOB_USAGE_REF  # the batch and the usage belong to the job
 POLL_SECONDS = 60.0
 # Waiting out a batch row whose send may or may not have reached the provider.
 UNSETTLED_SECONDS = batches.MATCH_WINDOW.total_seconds()

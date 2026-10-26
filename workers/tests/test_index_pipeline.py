@@ -427,6 +427,7 @@ def upkeep(monkeypatch: pytest.MonkeyPatch) -> dict[str, list[uuid.UUID]]:
     monkeypatch.setattr(chunk_task, "analyze_chunks", analyzed)
     monkeypatch.setattr(chunk_task, "request_vacuum", vacuumed)
     monkeypatch.setattr(orchestrate, "request_vacuum", vacuumed)
+    monkeypatch.setattr(embed_task, "request_vacuum", vacuumed)
     return calls
 
 
@@ -1270,9 +1271,13 @@ def test_chunks_are_embedded_and_semantic_search_unlocked(
     runtime: Runtime,
     ids: tuple[uuid.UUID, uuid.UUID, uuid.UUID],
     github: respx.MockRouter,
+    upkeep: dict[str, list[uuid.UUID]],
 ) -> None:
     org_id, repo_id, job_id = ids
     _run(org_id, repo_id, job_id)
+    # The vectors were written over every row: the partition is vacuumed (the parent table,
+    # every repository's partitions, isn't analyzed).
+    assert upkeep["vacuum"] == [repo_id]
 
     repo, job = runtime.run(_state(runtime.system_database, repo_id, job_id))
     assert (job.status, repo.status) == (JobStatus.SUCCEEDED, RepoStatus.READY)
