@@ -77,6 +77,8 @@ ban-relative-imports = "all"
 # ---------------------------------------------------------------- pytest
 [tool.pytest.ini_options]
 addopts = "--import-mode=importlib -ra --strict-markers"
+# A test that hangs dumps every thread's stack instead of stalling the run silently.
+faulthandler_timeout = 240
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 python_functions = ["test_*"]
