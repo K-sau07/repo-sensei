@@ -1,0 +1,306 @@
+{
+  "apps": [
+    {
+      "entry": "app.main:app",
+      "operation_ids": {
+        "DELETE /api/v1/items/{id}": "items-delete_item",
+        "DELETE /api/v1/users/me": "users-delete_user_me",
+        "DELETE /api/v1/users/{user_id}": "users-delete_user",
+        "GET /api/v1/items/": "items-read_items",
+        "GET /api/v1/items/{id}": "items-read_item",
+        "GET /api/v1/users/": "users-read_users",
+        "GET /api/v1/users/me": "users-read_user_me",
+        "GET /api/v1/users/{user_id}": "users-read_user_by_id",
+        "GET /api/v1/utils/health-check/": "utils-health_check",
+        "PATCH /api/v1/users/me": "users-update_user_me",
+        "PATCH /api/v1/users/me/password": "users-update_password_me",
+        "PATCH /api/v1/users/{user_id}": "users-update_user",
+        "POST /api/v1/items/": "items-create_item",
+        "POST /api/v1/login/access-token": "login-login_access_token",
+        "POST /api/v1/login/test-token": "login-test_token",
+        "POST /api/v1/password-recovery-html-content/{email}": "login-recover_password_html_content",
+        "POST /api/v1/password-recovery/{email}": "login-recover_password",
+        "POST /api/v1/private/users/": "private-create_user",
+        "POST /api/v1/reset-password/": "login-reset_password",
+        "POST /api/v1/users/": "users-create_user",
+        "POST /api/v1/users/signup": "users-register_user",
+        "POST /api/v1/utils/test-email/": "utils-test_email",
+        "PUT /api/v1/items/{id}": "items-update_item"
+      },
+      "root_path": "",
+      "routes": [
+        {
+          "api": false,
+          "include_in_schema": false,
+          "methods": ["GET", "HEAD"],
+          "module": "fastapi.applications",
+          "name": "openapi",
+          "path": "/api/v1/openapi.json",
+          "qualname": "FastAPI.setup.<locals>.openapi",
+          "tags": []
+        },
+        {
+          "api": false,
+          "include_in_schema": false,
+          "methods": ["GET", "HEAD"],
+          "module": "fastapi.applications",
+          "name": "swagger_ui_html",
+          "path": "/docs",
+          "qualname": "FastAPI.setup.<locals>.swagger_ui_html",
+          "tags": []
+        },
+        {
+          "api": false,
+          "include_in_schema": false,
+          "methods": ["GET", "HEAD"],
+          "module": "fastapi.applications",
+          "name": "swagger_ui_redirect",
+          "path": "/docs/oauth2-redirect",
+          "qualname": "FastAPI.setup.<locals>.swagger_ui_redirect",
+          "tags": []
+        },
+        {
+          "api": false,
+          "include_in_schema": false,
+          "methods": ["GET", "HEAD"],
+          "module": "fastapi.applications",
+          "name": "redoc_html",
+          "path": "/redoc",
+          "qualname": "FastAPI.setup.<locals>.redoc_html",
+          "tags": []
+        },
+        {
+          "api": true,
+          "include_in_schema": true,
+          "methods": ["POST"],
+          "module": "app.api.routes.login",
+          "name": "login_access_token",
+          "path": "/api/v1/login/access-token",
+          "qualname": "login_access_token",
+          "tags": ["login"]
+        },
+        {
+          "api": true,
+          "include_in_schema": true,
+          "methods": ["POST"],
+          "module": "app.api.routes.login",
+          "name": "test_token",
+          "path": "/api/v1/login/test-token",
+          "qualname": "test_token",
+          "tags": ["login"]
+        },
+        {
+          "api": true,
+          "include_in_schema": true,
+          "methods": ["POST"],
+          "module": "app.api.routes.login",
+          "name": "recover_password",
+          "path": "/api/v1/password-recovery/{email}",
+          "qualname": "recover_password",
+          "tags": ["login"]
+        },
+        {
+          "api": true,
+          "include_in_schema": true,
+          "methods": ["POST"],
+          "module": "app.api.routes.login",
+          "name": "reset_password",
+          "path": "/api/v1/reset-password/",
+          "qualname": "reset_password",
+          "tags": ["login"]
+        },
+        {
+          "api": true,
+          "include_in_schema": true,
+          "methods": ["POST"],
+          "module": "app.api.routes.login",
+          "name": "recover_password_html_content",
+          "path": "/api/v1/password-recovery-html-content/{email}",
+          "qualname": "recover_password_html_content",
+          "tags": ["login"]
+        },
+        {
+          "api": true,
+          "include_in_schema": true,
+          "methods": ["GET"],
+          "module": "app.api.routes.users",
+          "name": "read_users",
+          "path": "/api/v1/users/",
+          "qualname": "read_users",
+          "tags": ["users"]
+        },
+        {
+          "api": true,
+          "include_in_schema": true,
+          "methods": ["POST"],
+          "module": "app.api.routes.users",
+          "name": "create_user",
+          "path": "/api/v1/users/",
+          "qualname": "create_user",
+          "tags": ["users"]
+        },
+        {
+          "api": true,
+          "include_in_schema": true,
+          "methods": ["PATCH"],
+          "module": "app.api.routes.users",
+          "name": "update_user_me",
+          "path": "/api/v1/users/me",
+          "qualname": "update_user_me",
+          "tags": ["users"]
+        },
+        {
+          "api": true,
+          "include_in_schema": true,
+          "methods": ["PATCH"],
+          "module": "app.api.routes.users",
+          "name": "update_password_me",
+          "path": "/api/v1/users/me/password",
+          "qualname": "update_password_me",
+          "tags": ["users"]
+        },
+        {
+          "api": true,
+          "include_in_schema": true,
+          "methods": ["GET"],
+          "module": "app.api.routes.users",
+          "name": "read_user_me",
+          "path": "/api/v1/users/me",
+          "qualname": "read_user_me",
+          "tags": ["users"]
+        },
+        {
+          "api": true,
+          "include_in_schema": true,
+          "methods": ["DELETE"],
+          "module": "app.api.routes.users",
+          "name": "delete_user_me",
+          "path": "/api/v1/users/me",
+          "qualname": "delete_user_me",
+          "tags": ["users"]
+        },
+        {
+          "api": true,
+          "include_in_schema": true,
+          "methods": ["POST"],
+          "module": "app.api.routes.users",
+          "name": "register_user",
+          "path": "/api/v1/users/signup",
+          "qualname": "register_user",
+          "tags": ["users"]
+        },
+        {
+          "api": true,
+          "include_in_schema": true,
+          "methods": ["GET"],
+          "module": "app.api.routes.users",
+          "name": "read_user_by_id",
+          "path": "/api/v1/users/{user_id}",
+          "qualname": "read_user_by_id",
+          "tags": ["users"]
+        },
+        {
+          "api": true,
+          "include_in_schema": true,
+          "methods": ["PATCH"],
+          "module": "app.api.routes.users",
+          "name": "update_user",
+          "path": "/api/v1/users/{user_id}",
+          "qualname": "update_user",
+          "tags": ["users"]
+        },
+        {
+          "api": true,
+          "include_in_schema": true,
+          "methods": ["DELETE"],
+          "module": "app.api.routes.users",
+          "name": "delete_user",
+          "path": "/api/v1/users/{user_id}",
+          "qualname": "delete_user",
+          "tags": ["users"]
+        },
+        {
+          "api": true,
+          "include_in_schema": true,
+          "methods": ["POST"],
+          "module": "app.api.routes.utils",
+          "name": "test_email",
+          "path": "/api/v1/utils/test-email/",
+          "qualname": "test_email",
+          "tags": ["utils"]
+        },
+        {
+          "api": true,
+          "include_in_schema": true,
+          "methods": ["GET"],
+          "module": "app.api.routes.utils",
+          "name": "health_check",
+          "path": "/api/v1/utils/health-check/",
+          "qualname": "health_check",
+          "tags": ["utils"]
+        },
+        {
+          "api": true,
+          "include_in_schema": true,
+          "methods": ["GET"],
+          "module": "app.api.routes.items",
+          "name": "read_items",
+          "path": "/api/v1/items/",
+          "qualname": "read_items",
+          "tags": ["items"]
+        },
+        {
+          "api": true,
+          "include_in_schema": true,
+          "methods": ["GET"],
+          "module": "app.api.routes.items",
+          "name": "read_item",
+          "path": "/api/v1/items/{id}",
+          "qualname": "read_item",
+          "tags": ["items"]
+        },
+        {
+          "api": true,
+          "include_in_schema": true,
+          "methods": ["POST"],
+          "module": "app.api.routes.items",
+          "name": "create_item",
+          "path": "/api/v1/items/",
+          "qualname": "create_item",
+          "tags": ["items"]
+        },
+        {
+          "api": true,
+          "include_in_schema": true,
+          "methods": ["PUT"],
+          "module": "app.api.routes.items",
+          "name": "update_item",
+          "path": "/api/v1/items/{id}",
+          "qualname": "update_item",
+          "tags": ["items"]
+        },
+        {
+          "api": true,
+          "include_in_schema": true,
+          "methods": ["DELETE"],
+          "module": "app.api.routes.items",
+          "name": "delete_item",
+          "path": "/api/v1/items/{id}",
+          "qualname": "delete_item",
+          "tags": ["items"]
+        },
+        {
+          "api": true,
+          "include_in_schema": true,
+          "methods": ["POST"],
+          "module": "app.api.routes.private",
+          "name": "create_user",
+          "path": "/api/v1/private/users/",
+          "qualname": "create_user",
+          "tags": ["private"]
+        }
+      ]
+    }
+  ],
+  "notes": []
+}

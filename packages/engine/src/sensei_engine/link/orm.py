@@ -46,7 +46,6 @@ Prisma models.
 
 from __future__ import annotations
 
-import codecs
 import re
 from collections import defaultdict
 from collections.abc import Iterable, Iterator, Sequence
@@ -59,6 +58,7 @@ from tree_sitter import Node
 from sensei_core.models import EdgeType, NodeKind, Provenance
 from sensei_engine.graph.confidence import confidence_of
 from sensei_engine.graph.writer import GraphEdge, GraphNode
+from sensei_engine.link.pytree import ancestors, string_value, walk
 from sensei_engine.link.sql import looks_like_sql, tables
 from sensei_engine.parse.parser import ParseResult
 from sensei_engine.symbols.extract import Symbol, SymbolKind
@@ -93,9 +93,6 @@ _SKIPPED_FIELDS = frozenset({"model_config", "metadata", "registry", "__table_ar
 _MIGRATION_OPS = frozenset({"create_table", "drop_table", "rename_table", "add_column"})
 _OPTIONAL_RE = re.compile(r"^(?:Optional\[(.+)\]|(.+?)\s*\|\s*None|None\s*\|\s*(.+))$")
 _ANNOTATED_RE = re.compile(r"^Annotated\[\s*([^,\]]+)")
-_ESCAPE_RE = re.compile(
-    r"\\(x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4}|U[0-9a-fA-F]{8}|[0-7]{1,3}|.)", re.DOTALL
-)
 
 
 @dataclass(frozen=True, slots=True)
@@ -229,14 +226,6 @@ class OrmGraph:
 # ---------------------------------------------------------------- scanning one file
 
 
-def _walk(root: Node) -> Iterator[Node]:
-    stack = [root]
-    while stack:
-        node = stack.pop()
-        yield node
-        stack.extend(reversed(node.named_children))
-
-
 def _last_name(node: Node | None, text: str) -> str:
     if node is None:
         return ""
@@ -299,7 +288,7 @@ class _Scanner:
         tree = self.result.tree
         if tree is None or not self.result.ok:
             return self.out
-        for node in _walk(tree.root_node):
+        for node in walk(tree.root_node):
             if node.type == "import_from_statement":
                 self.import_from(node)
             elif node.type == "import_statement":
@@ -480,25 +469,7 @@ class _Scanner:
     # strings
 
     def string(self, node: Node | None) -> str | None:
-        """A plain string literal's value (adjacent literals joined); None for anything else,
-        an f-string included."""
-        if node is None:
-            return None
-        if node.type == "concatenated_string":
-            parts = [self.string(child) for child in node.named_children]
-            return None if any(part is None for part in parts) else "".join(p or "" for p in parts)
-        if node.type != "string":
-            return None
-        start = node.named_children[0] if node.named_children else None
-        raw = start is not None and "r" in self.text(start).lower()
-        value: list[str] = []
-        for child in node.named_children:
-            if child.type == "interpolation":
-                return None
-            if child.type == "string_content":
-                content = self.text(child)
-                value.append(content if raw else _ESCAPE_RE.sub(_unescape, content))
-        return "".join(value)
+        return string_value(self.result, node)
 
     # calls
 
@@ -589,7 +560,7 @@ class _Scanner:
                 variable = (
                     self.text(left) if left is not None and left.type == "identifier" else None
                 )
-            in_class = any(p.type == "class_definition" for p in _ancestors(node))
+            in_class = any(p.type == "class_definition" for p in ancestors(node))
             table = None if in_class else self.table_call(node, variable)
             if table is not None:
                 self.out.tables.append(table)
@@ -636,12 +607,12 @@ class _Scanner:
         """The model ``variable`` holds at ``line``, from its function: the last assignment
         before it (``x = M(...)``, ``x = M.model_validate(...)``, ``x = session.get(M, …)``,
         ``x: M = ...``), else its parameter's annotation."""
-        function = next((p for p in _ancestors(call) if p.type == "function_definition"), None)
+        function = next((p for p in ancestors(call) if p.type == "function_definition"), None)
         if function is None:
             return None
         found: str | None = None
         body = function.child_by_field_name("body")
-        for node in _walk(body) if body is not None else ():
+        for node in walk(body) if body is not None else ():
             if node.type != "assignment" or self.line(node) >= line:
                 continue
             left = node.child_by_field_name("left")
@@ -691,21 +662,6 @@ class _Scanner:
         if target.type != "identifier" or _sessionish(self.text(target)):
             return None
         return text if name[:1].isupper() else f"{text}()"  # models.Item(...), crud.get(...)
-
-
-def _unescape(found: re.Match[str]) -> str:
-    """One backslash escape in a string literal, decoded as Python does."""
-    try:
-        return codecs.decode("\\" + found[1], "unicode_escape")
-    except UnicodeDecodeError:
-        return found[1]
-
-
-def _ancestors(node: Node) -> Iterator[Node]:
-    parent = node.parent
-    while parent is not None:
-        yield parent
-        parent = parent.parent
 
 
 def _sessionish(owner: str) -> bool:
