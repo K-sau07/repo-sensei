@@ -151,6 +151,23 @@ class GraphWriter:
         counts.edges, counts.unresolved = await self._write_edges(driver, edges)
         return counts
 
+    async def annotate(self, attrs: Mapping[str, Mapping[str, Any]]) -> int:
+        """Merge ``attrs`` into the nodes with those keys (definitions too: an import table on
+        a module's node, 3.2); returns how many nodes were found. Creates none."""
+        if not attrs:
+            return 0
+        driver = await self._driver()
+        keys = sorted(attrs)
+        status = await driver.execute(
+            "UPDATE public.nodes n SET attrs = n.attrs || a.attrs::jsonb "
+            "FROM unnest($2::text[], $3::text[]) AS a(key, attrs) "
+            "WHERE n.snapshot_id = $1 AND n.symbol_key = a.key",
+            self._ids[2],
+            [_text(key) for key in keys],
+            [_json(attrs[key]) for key in keys],
+        )
+        return int(status.rsplit(" ", 1)[-1])
+
     async def _driver(self) -> Any:
         connection = await self._db.connection()
         raw = await connection.get_raw_connection()

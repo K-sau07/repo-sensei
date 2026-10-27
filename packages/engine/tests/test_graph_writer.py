@@ -296,3 +296,19 @@ async def test_definition_readers_never_see_the_graphs_nodes(
     client_id = (await file_ids(db_session, snapshot.id))["web/client.ts"]
     at = await symbols_at(db_session, client_id, 2)
     assert [node.kind for node in at] == ["function", "module"]
+
+
+async def test_a_modules_import_table_is_kept_on_its_node(
+    db_session: AsyncSession, tmp_path: Path
+) -> None:
+    snapshot = await _snapshot(db_session, tmp_path)
+    module = "py app/service.py/"
+    found = await GraphWriter(db_session, snapshot).annotate(
+        {module: {"imports": {"helper": HELPER}}, "py nowhere.py/": {"imports": {}}}
+    )
+    assert found == 1  # only nodes that exist
+    node = await db_session.scalar(select(CodeNode).where(CodeNode.symbol_key == module))
+    assert node is not None
+    await db_session.refresh(node)
+    assert node.attrs["imports"] == {"helper": HELPER}
+    assert node.kind == "module"  # merged into, not replaced
