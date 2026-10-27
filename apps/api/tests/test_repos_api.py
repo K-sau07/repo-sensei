@@ -2032,6 +2032,25 @@ async def test_search_modes_filters_and_exact_pivots(
         assert (refused.status_code, refused.json()["error"]["code"]) == (422, code), body
 
 
+async def test_a_pattern_search_without_exact_search_says_so(
+    app: FastAPI,
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    fake: FakeGitHub,
+    storage: ObjectStorage,
+    tmp_path: Path,
+    searching: SearchService,
+) -> None:
+    headers = await _searchable_repo(app, client, db_session, fake, storage, tmp_path)
+    app.state.exact_search = ExactSearch(binary="no-such-rg")  # ripgrep unavailable
+    pattern = await client.post(SEARCH_URL, json={"q": "session\\.\\w+\\(item\\)"}, headers=headers)
+    # Its exact legs were all it had: not "no matches".
+    assert (pattern.status_code, pattern.json()["error"]["code"]) == (503, "search_unavailable")
+    # A question still answers from its other legs.
+    question = await client.post(SEARCH_URL, json={"q": "how is an item created?"}, headers=headers)
+    assert question.status_code == 200, question.text
+
+
 async def test_search_is_rate_limited_per_user(
     app: FastAPI,
     client: httpx.AsyncClient,

@@ -175,8 +175,8 @@ FILES = {
 }
 
 
-async def _index(db: AsyncSession, root: Path) -> Snapshot:
-    for path, content in FILES.items():
+async def _index(db: AsyncSession, root: Path, files: dict[str, str] | None = None) -> Snapshot:
+    for path, content in (files or FILES).items():
         (root / path).parent.mkdir(parents=True, exist_ok=True)
         (root / path).write_text(content)
     owner = await make_user(db)
@@ -307,14 +307,16 @@ async def test_every_leg_reads_the_generation_live_when_the_search_began(
     )
     grep = WorktreeGrep(tmp_path)
 
-    async def grep_after_a_run_went_live(sub: SubQuery, limit: int) -> list[tuple[str, int]]:
+    async def grep_after_a_run_went_live(
+        sub: SubQuery, limit: int, filters: Filters
+    ) -> list[tuple[str, int]]:
         # Another run of the chunks stage finishes between the lexical legs and this one.
         file_ids = {f.path: f.id for f in await db_session.scalars(
             select(RepoFile).where(RepoFile.snapshot_id == snapshot.id)
         )}  # fmt: skip
         files = [FileChunks(p, None, chunk_file(p, None, c)) for p, c in FILES.items()]
         await save_chunks(db_session, snapshot, file_ids, files)
-        return await grep(sub, limit)
+        return await grep(sub, limit, filters)
 
     found = dataclasses.replace(
         plan(classify("create item").route),
@@ -330,6 +332,67 @@ async def test_every_leg_reads_the_generation_live_when_the_search_began(
     read = {ref.chunk_id for ranking in rankings for ref in ranking.found}
     assert read
     assert read <= before
+
+
+async def test_a_pattern_narrowed_to_a_path_finds_its_lines_there(
+    db_session: AsyncSession, tmp_path: Path
+) -> None:
+    # More matching lines before the prefix (in path order) than a grep leg reads.
+    files = {f"apps/a{n:02}.py": "SECRET_TOKEN = 1\n" * 5 for n in range(60)}
+    files["backend/auth.py"] = "def check(token):\n    return token == SECRET_TOKEN\n"
+    snapshot = await _index(db_session, tmp_path, files)
+    found = plan(classify("SECRET_\\w+").route)
+    assert {sub.leg for sub in found.legs} == {Leg.GREP}
+    result = await HybridRetriever(grep=WorktreeGrep(tmp_path)).search(
+        db_session,
+        found,
+        repo_id=snapshot.repo_id,
+        snapshot_id=snapshot.id,
+        filters=Filters(path_prefix="backend/"),
+    )
+    assert [hit.path for hit in result.hits] == ["backend/auth.py"]
+
+
+async def test_symbols_found_outside_the_filters_are_left_out(
+    db_session: AsyncSession, tmp_path: Path
+) -> None:
+    snapshot = await _index(db_session, tmp_path)
+    repo_id, snapshot_id = snapshot.repo_id, snapshot.id
+    found = plan(classify("create_item").route)
+    retriever = HybridRetriever()
+    everywhere = await retriever.search(db_session, found, repo_id=repo_id, snapshot_id=snapshot_id)
+    assert "backend/tests/test_items.py" in {hit.path for hit in everywhere.hits}
+    scoped = await retriever.search(
+        db_session,
+        found,
+        repo_id=repo_id,
+        snapshot_id=snapshot_id,
+        filters=Filters(path_prefix="backend/app/"),
+    )
+    assert scoped.hits
+    assert {hit.path for hit in scoped.hits} <= {
+        "backend/app/services/items.py",
+        "backend/app/api/routes/items.py",
+    }
+    by_role = await retriever.search(
+        db_session,
+        found,
+        repo_id=repo_id,
+        snapshot_id=snapshot_id,
+        filters=Filters(roles=["test"]),
+    )
+    assert {hit.path for hit in by_role.hits} == {"backend/tests/test_items.py"}
+    # Filtered where the symbols are located: nothing outside them takes a rank.
+    rankings, _ = await retriever.rankings(
+        db_session,
+        found,
+        repo_id=repo_id,
+        snapshot_id=snapshot_id,
+        filters=Filters(roles=["test"]),
+    )
+    ranked = [ref.chunk_id for ranking in rankings for ref in ranking.found]
+    paths = await db_session.scalars(select(CodeChunk.path).where(CodeChunk.id.in_(ranked)))
+    assert set(paths) == {"backend/tests/test_items.py"}
 
 
 async def test_a_snapshot_not_chunked_finds_nothing(

@@ -8,7 +8,8 @@ Each sub-query of the plan is one ranking:
 * ``sym``: :func:`~sensei_engine.symbols.lookup.find_symbols` (exact, prefix, qualified,
   contains, then trigram typos), each symbol at its chunk;
 * ``grep``: exact text or a pattern, through a :class:`GrepLegs` when the caller has the
-  snapshot's files (each matched line at the chunk around it);
+  snapshot's files (each matched line at the chunk around it), the path prefix searched as
+  ripgrep globs (:func:`path_globs`) so the leg's lines come from inside it;
 * ``sem_code`` and ``sem_summary``: nearest embeddings, through a :class:`DenseLegs` once 2.7 has
   embedded the snapshot; without one they are reported pending.
 
@@ -19,13 +20,20 @@ paths: :class:`Weights`, from the settings). Fusion is per **symbol**: a definit
 bonus for each further chunk of it that was found (a fragment never outranks its function on
 its own). A chunk outside any definition (a Markdown section, a config key) is its own result.
 
+Every leg applies the request's filters (kinds, languages, roles, a path prefix) before it ranks:
+BM25 and the embeddings in their statements, symbols and grep where their places are located
+(:func:`locate_all`), so a filtered search ranks only what it can show. The grep legs run at
+once (ripgrep caps how many run), then every symbol and grep place is located in one query.
+
 The fused results are then read in one query (name, kind, language, the file's role) and each
 gets its layer (:mod:`sensei_engine.search.layers`). The plan's excluded layers ("not tests")
-are dropped, and results in the layers the query names are lifted by ``layer_boost``.
+are dropped, and results in the layers the query names are lifted by ``layer_boost``; then the
+best :data:`MAX_RESULTS` are kept.
 """
 
 from __future__ import annotations
 
+import asyncio
 import time
 import uuid
 from collections.abc import Container, Iterable, Mapping, Sequence
@@ -144,7 +152,23 @@ class GrepLegs(Protocol):
     """Runs a ``grep`` sub-query over the snapshot's files: the matched lines, as (path, line),
     in the order they rank."""
 
-    async def __call__(self, sub: SubQuery, limit: int) -> Sequence[tuple[str, int]]: ...
+    async def __call__(
+        self, sub: SubQuery, limit: int, filters: Filters
+    ) -> Sequence[tuple[str, int]]: ...
+
+
+_GLOB_SPECIAL = frozenset("\\*?[]{}!")
+
+
+def path_globs(prefix: str | None) -> tuple[str, ...]:
+    """ripgrep globs for the paths that start with ``prefix`` (``src/ap`` takes in ``src/app/``
+    and ``src/api.ts``): literal (``[org]`` isn't a character class), anchored at the root. As the
+    search page's exact mode builds them."""
+    stripped = (prefix or "").strip().lstrip("/")
+    if not stripped:
+        return ()
+    literal = "".join(f"\\{ch}" if ch in _GLOB_SPECIAL else ch for ch in stripped)
+    return (f"/{literal}*", f"/{literal}*/**")
 
 
 class WorktreeGrep:
@@ -163,9 +187,19 @@ class WorktreeGrep:
         self._search = search or ExactSearch()
         self._files = files
 
-    async def __call__(self, sub: SubQuery, limit: int) -> list[tuple[str, int]]:
+    async def __call__(
+        self,
+        sub: SubQuery,
+        limit: int,
+        filters: Filters = Filters(),  # noqa: B008 - frozen, never mutated
+    ) -> list[tuple[str, int]]:
         try:
-            query = GrepQuery(sub.text, regex=sub.regex, limit=min(limit * 4, MAX_LIMIT))
+            query = GrepQuery(
+                sub.text,
+                regex=sub.regex,
+                globs=path_globs(filters.path_prefix),
+                limit=min(limit * 4, MAX_LIMIT),
+            )
             result = await self._search.search(self._root, query, files=self._files)
         except InvalidQueryError:
             return []
@@ -298,10 +332,15 @@ _LOCATE = text(
     "FROM unnest(:paths, :lines, :keys) "
     "WITH ORDINALITY AS q(path, line, key, i) "
     "JOIN public.files f ON f.snapshot_id = :snapshot_id AND f.path = q.path "
+    # The request's filters, as the other legs apply them.
+    "AND (cardinality(:languages) = 0 OR f.language = ANY(:languages)) "
+    "AND (cardinality(:roles) = 0 OR f.role = ANY(:roles)) "
+    "AND (:prefix = '' OR f.path LIKE :prefix ESCAPE '\\') "
     "CROSS JOIN LATERAL ("
     "SELECT c.id, c.symbol_key FROM public.chunks c "
     "WHERE c.repo_id = :repo_id AND c.file_id = f.id AND c.view = 'code' "
     "AND c.generation = :generation "
+    "AND (cardinality(:kinds) = 0 OR c.kind = ANY(:kinds)) "
     "AND (c.symbol_key = q.key OR (c.start_line <= q.line AND q.line <= c.end_line)) "
     # The definition by its key (its first part), else the innermost chunk around the line.
     "ORDER BY c.symbol_key = q.key DESC NULLS LAST, "
@@ -318,7 +357,12 @@ _LOCATE = text(
     bindparam("paths", type_=ARRAY(Text)),
     bindparam("lines", type_=ARRAY(Integer)),
     bindparam("keys", type_=ARRAY(String)),
+    bindparam("languages", type_=ARRAY(String)),
+    bindparam("roles", type_=ARRAY(String)),
+    bindparam("kinds", type_=ARRAY(String)),
 )
+
+Place = tuple[str, int, str | None]  # path, line, and the symbol's key if the place is one
 
 
 async def locate(
@@ -327,13 +371,38 @@ async def locate(
     repo_id: uuid.UUID,
     snapshot_id: uuid.UUID,
     generation: int,
-    places: Sequence[tuple[str, int, str | None]],
+    places: Sequence[Place],
+    filters: Filters = Filters(),  # noqa: B008 - frozen, never mutated
 ) -> list[ChunkRef]:
     """The chunk of each place (path, line, and the symbol's key if it is one), in order, with
     the definition at the place when the chunk isn't one; a place with no chunk (a file that
-    wasn't chunked) is left out."""
+    wasn't chunked) or outside ``filters`` is left out."""
+    [found] = await locate_all(
+        db,
+        repo_id=repo_id,
+        snapshot_id=snapshot_id,
+        generation=generation,
+        groups=[places],
+        filters=filters,
+    )
+    return found
+
+
+async def locate_all(
+    db: AsyncSession,
+    *,
+    repo_id: uuid.UUID,
+    snapshot_id: uuid.UUID,
+    generation: int,
+    groups: Sequence[Sequence[Place]],
+    filters: Filters = Filters(),  # noqa: B008 - frozen, never mutated
+) -> list[list[ChunkRef]]:
+    """:func:`locate` for several rankings' places at once (one query), each group's in order."""
+    places = [place for group in groups for place in group]
+    owner = [n for n, group in enumerate(groups) for _ in group]
+    found: list[list[ChunkRef]] = [[] for _ in groups]
     if not places:
-        return []
+        return found
     rows = await db.execute(
         _LOCATE,
         {
@@ -343,9 +412,20 @@ async def locate(
             "snapshot_id": snapshot_id,
             "repo_id": repo_id,
             "generation": generation,
+            "languages": list(filters.languages),
+            "roles": list(filters.roles),
+            "kinds": list(filters.kinds),
+            "prefix": _like_prefix(filters.path_prefix) if filters.path_prefix else "",
         },
     )
-    return [ChunkRef(row.id, row.symbol_key, row.focus) for row in rows]
+    for row in rows:  # in place order
+        found[owner[int(row.i) - 1]].append(ChunkRef(row.id, row.symbol_key, row.focus))
+    return found
+
+
+def _like_prefix(prefix: str) -> str:
+    escaped = prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return escaped + "%"
 
 
 class HybridRetriever:
@@ -420,31 +500,33 @@ class HybridRetriever:
             seconds = (time.monotonic() - started) / len(semantic)
             for (n, sub), refs in zip(semantic, results, strict=True):
                 found[n] = Ranking(sub, list(refs), seconds)
+        started = time.monotonic()
+        located: list[tuple[int, SubQuery]] = []
+        groups: list[Sequence[Place]] = []
+        greps = [(n, sub) for n, sub in enumerate(plan.legs) if sub.leg is Leg.GREP]
+        if greps and self._grep is not None:
+            grep = self._grep
+            lines = await asyncio.gather(*(grep(sub, depth, filters) for _, sub in greps))
+            for (n, sub), found_lines in zip(greps, lines, strict=True):
+                located.append((n, sub))
+                groups.append([(path, line, None) for path, line in found_lines])
         for n, sub in enumerate(plan.legs):
             if sub.leg is Leg.SYM:
-                started = time.monotonic()
                 symbols = await find_symbols(db, snapshot_id, sub.text, limit=depth)
-                places = [(hit.path, hit.start_line, hit.symbol_key) for hit in symbols]
-                refs = await locate(
-                    db,
-                    repo_id=repo_id,
-                    snapshot_id=snapshot_id,
-                    generation=live.generation,
-                    places=places,
-                )
-                found[n] = Ranking(sub, refs, time.monotonic() - started)
-            elif sub.leg is Leg.GREP and self._grep is not None:
-                started = time.monotonic()
-                lines = await self._grep(sub, depth)
-                places = [(path, line, None) for path, line in lines]
-                refs = await locate(
-                    db,
-                    repo_id=repo_id,
-                    snapshot_id=snapshot_id,
-                    generation=live.generation,
-                    places=places,
-                )
-                found[n] = Ranking(sub, refs, time.monotonic() - started)
+                located.append((n, sub))
+                groups.append([(hit.path, hit.start_line, hit.symbol_key) for hit in symbols])
+        if located:
+            refs = await locate_all(
+                db,
+                repo_id=repo_id,
+                snapshot_id=snapshot_id,
+                generation=live.generation,
+                groups=groups,
+                filters=filters,
+            )
+            seconds = (time.monotonic() - started) / len(located)
+            for (n, sub), ranked in zip(located, refs, strict=True):
+                found[n] = Ranking(sub, ranked, seconds)
         return [found[n] for n in sorted(found)], tuple(pending)
 
     async def search(
@@ -477,13 +559,15 @@ class HybridRetriever:
         filters: Filters = Filters(),  # noqa: B008 - frozen, never mutated
         weights: Weights | None = None,
     ) -> list[SearchHit]:
-        """The rankings fused, read, tagged and filtered by layer: up to :data:`MAX_RESULTS`."""
-        fused = fuse(rankings, weights or self.weights)[:MAX_RESULTS]
+        """The rankings fused, read, tagged and filtered by layer, then the best
+        :data:`MAX_RESULTS` (cut after the filters, so a filtered search keeps as many)."""
+        fused = fuse(rankings, weights or self.weights)
         details = await read_chunks(db, repo_id, [result.chunk_id for result in fused])
         focus = await read_symbols(db, snapshot_id, [r.focus for r in fused if r.focus])
-        return arrange(
+        hits = arrange(
             plan, fused, details, weights or self.weights, filters=filters, symbols=focus
         )
+        return hits[:MAX_RESULTS]
 
 
 @dataclass(frozen=True, slots=True)

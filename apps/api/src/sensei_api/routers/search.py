@@ -20,6 +20,7 @@ columns).
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import binascii
 import json
@@ -45,16 +46,18 @@ from sensei_api.routers.browse import (
     _searchable,  # pyright: ignore[reportPrivateUsage]
 )
 from sensei_core.config import Settings
-from sensei_core.errors import ConflictError, InvalidError, RateLimitedError
+from sensei_core.errors import ConflictError, DomainError, InvalidError, RateLimitedError
 from sensei_core.indexing.snapshots import resolve_snapshot
 from sensei_core.logging import get_logger
-from sensei_core.models import Snapshot
+from sensei_core.models import Repo, Snapshot
+from sensei_core.orgs.service import OrgAccess
 from sensei_core.usage import CostCalculator
 from sensei_engine.embed.provider import EmbeddingProvider
 from sensei_engine.embed.provider import usage_ledger as embedding_ledger
 from sensei_engine.embed.voyage import VoyageClient
 from sensei_engine.llm.anthropic_client import AnthropicClient
 from sensei_engine.llm.ledger import usage_ledger as llm_ledger
+from sensei_engine.search.bm25 import Filters
 from sensei_engine.search.dense import EmbeddedLegs
 from sensei_engine.search.grep import (
     MAX_LIMIT,
@@ -63,7 +66,7 @@ from sensei_engine.search.grep import (
     GrepUnavailableError,
     InvalidQueryError,
 )
-from sensei_engine.search.hybrid import Weights, grep_places
+from sensei_engine.search.hybrid import DenseLegs, Weights, grep_places, path_globs
 from sensei_engine.search.plan import SubQuery
 from sensei_engine.search.rerank import LLMReranker, Reranker, VoyageReranker
 from sensei_engine.search.rerank import usage_ledger as rerank_ledger
@@ -290,25 +293,45 @@ async def _semantic_legs(
 
 
 class _SnapshotGrep:
-    """The plan's exact-text legs, on the unpacked snapshot (as ``/grep`` searches it). A leg
-    that can't run (search busy or unavailable) is left out of the answer, not failed."""
+    """The plan's exact-text legs, on the unpacked snapshot (as ``/grep`` searches it), within
+    the request's path prefix. A leg that can't run (search busy or unavailable) is left out of
+    the answer and kept in ``failed``: an answer that had only such legs isn't "no matches".
+    The legs run at once; the files they may report are read once, on the request's session."""
 
     def __init__(self, request: Request, db: AsyncSession, snapshot: Snapshot) -> None:
         self._request = request
         self._db = db
         self._snapshot = snapshot
         self._files: Container[str] | None = None
+        self._reading = asyncio.Lock()  # one statement at a time on the session
+        self.failed: DomainError | None = None
 
-    async def __call__(self, sub: SubQuery, limit: int) -> list[tuple[str, int]]:
-        try:
-            query = GrepQuery(sub.text, regex=sub.regex, limit=min(limit * 4, MAX_LIMIT))
+    async def _searchable(self) -> Container[str]:
+        async with self._reading:
             if self._files is None:
                 self._files = await _searchable(self._request, self._db, self._snapshot)
-            result = await _grep(self._request, self._snapshot, query, self._files)
+            return self._files
+
+    async def __call__(self, sub: SubQuery, limit: int, filters: Filters) -> list[tuple[str, int]]:
+        try:
+            query = GrepQuery(
+                sub.text,
+                regex=sub.regex,
+                globs=path_globs(filters.path_prefix),
+                limit=min(limit * 4, MAX_LIMIT),
+            )
+            result = await _grep(self._request, self._snapshot, query, await self._searchable())
         except InvalidQueryError:
             return []
-        except (GrepBusyError, GrepUnavailableError, SearchUnavailableError) as exc:
+        except GrepBusyError:
+            log.warning("search left out its exact legs", error="GrepBusyError")
+            self.failed = SearchUnavailableError(
+                "Too many searches are running; try again in a moment.", code="search_busy"
+            )
+            return []
+        except (GrepUnavailableError, SearchUnavailableError) as exc:
             log.warning("search left out its exact legs", error=type(exc).__name__)
+            self.failed = SearchUnavailableError("Exact search isn't available right now.")
             return []
         return grep_places(result.hits, limit)
 
@@ -363,6 +386,50 @@ async def _keep(redis: Redis, key: str, answer: Answer, seconds: int) -> None:
         await redis.set(key, _ANSWER.dump_json(answer), ex=seconds)
     except RedisError as exc:
         log.warning("search cache unavailable", error=type(exc).__name__)
+
+
+async def _answer(
+    request: Request,
+    db: AsyncSession,
+    query: SearchQuery,
+    *,
+    redis: Redis,
+    access: OrgAccess,
+    repo: Repo,
+    snapshot: Snapshot,
+    dense: DenseLegs | None,
+    costs: CostCalculator,
+    cache_key: str,
+    cache_seconds: int,
+) -> Answer:
+    """The kept answer to ``query``, or a new one (kept unless some of its legs couldn't run)."""
+    answer = await _cached(redis, cache_key)
+    if answer is not None:
+        return answer
+    org_id, user_id = access.org.id, access.user.id
+    grep = _SnapshotGrep(request, db, snapshot)
+    try:
+        answer = await get_search_service(request).search(
+            db,
+            query,
+            repo_id=repo.id,
+            snapshot_id=snapshot.id,
+            scope=str(org_id),
+            grep=grep,
+            dense=dense,
+            on_llm_usage=llm_ledger(db, costs, org_id=org_id, user_id=user_id, ref_type=REF_TYPE),
+            on_rerank_usage=rerank_ledger(
+                db, costs, org_id=org_id, user_id=user_id, ref_type=REF_TYPE
+            ),
+        )
+    except SemanticNotReadyError:  # pragma: no cover - checked by the caller
+        raise ConflictError("Semantic search isn't ready.", code="semantic_not_ready") from None
+    if grep.failed is not None:
+        if not any(answer.lanes.values()):  # its exact legs were all it had
+            raise grep.failed
+    else:  # an answer missing legs isn't kept: the next search runs them
+        await _keep(redis, cache_key, answer, cache_seconds)
+    return answer
 
 
 def _hit(result: Result, snippet: Any) -> SearchResultHit:
@@ -456,28 +523,19 @@ async def search(
             code="semantic_not_ready",
         )
     cache_key = f"{CACHE_PREFIX}{snapshot.id}:{snapshot.chunk_generation}:{dense is not None}:{key}"
-    answer = await _cached(redis, cache_key)
-    if answer is None:
-        org_id, user_id = access.org.id, access.user.id
-        try:
-            answer = await get_search_service(request).search(
-                db,
-                query,
-                repo_id=repo.id,
-                snapshot_id=snapshot.id,
-                scope=str(access.org.id),
-                grep=_SnapshotGrep(request, db, snapshot),
-                dense=dense,
-                on_llm_usage=llm_ledger(
-                    db, costs, org_id=org_id, user_id=user_id, ref_type=REF_TYPE
-                ),
-                on_rerank_usage=rerank_ledger(
-                    db, costs, org_id=org_id, user_id=user_id, ref_type=REF_TYPE
-                ),
-            )
-        except SemanticNotReadyError:  # pragma: no cover - checked above
-            raise ConflictError("Semantic search isn't ready.", code="semantic_not_ready") from None
-        await _keep(redis, cache_key, answer, settings.search.cache_seconds)
+    answer = await _answer(
+        request,
+        db,
+        query,
+        redis=redis,
+        access=access,
+        repo=repo,
+        snapshot=snapshot,
+        dense=dense,
+        costs=costs,
+        cache_key=cache_key,
+        cache_seconds=settings.search.cache_seconds,
+    )
 
     pages: dict[Lane, list[Result]] = {lane: [] for lane in Lane}
     after: dict[Lane, str | None] = dict.fromkeys(Lane)
