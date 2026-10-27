@@ -1,6 +1,7 @@
 """The graph (3.1): confidence by provenance, and the writer: facts by key, owned by files (a file
 re-written leaves nothing behind), one edge per evidence line, org-scoped, and definitions left
-to the symbols stage (which, run again, leaves the graph alone)."""
+to the symbols stage (which, run again, leaves the graph alone), and two layers that never take
+each other's facts."""
 
 from __future__ import annotations
 
@@ -14,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sensei_core.db.tenancy import set_org_context
 from sensei_core.mail import MemoryMailer
 from sensei_core.models import (
+    GRAPH_KINDS,
     CodeEdge,
     CodeNode,
     EdgeType,
@@ -25,7 +27,14 @@ from sensei_core.models import (
 )
 from sensei_core.orgs.service import OrgService
 from sensei_engine.graph.confidence import FLAGGED, confidence_of, path_confidence
-from sensei_engine.graph.writer import GraphEdge, GraphError, GraphNode, GraphWriter
+from sensei_engine.graph.writer import (
+    CODE,
+    LINKS,
+    GraphEdge,
+    GraphError,
+    GraphNode,
+    GraphWriter,
+)
 from sensei_engine.ingest.discover import discover
 from sensei_engine.ingest.store import file_ids, save_discovery
 from sensei_engine.parse.parser import parse_file
@@ -61,6 +70,13 @@ def test_confidence_follows_provenance() -> None:
     assert path_confidence([]) == 1.0
     with pytest.raises(ValueError, match="at least 1"):
         confidence_of(Provenance.NAME_AMBIGUOUS, candidates=0)
+
+
+def test_every_edge_type_and_graph_kind_is_one_layers() -> None:
+    assert CODE.edge_types | LINKS.edge_types == set(EdgeType)
+    assert not CODE.edge_types & LINKS.edge_types
+    assert CODE.node_kinds | LINKS.node_kinds == set(GRAPH_KINDS)
+    assert not CODE.node_kinds & LINKS.node_kinds
 
 
 # ---------------------------------------------------------------------- the writer
@@ -165,10 +181,11 @@ async def test_a_files_facts_are_written_by_key(db_session: AsyncSession, tmp_pa
             ),
             GraphEdge(CREATE, "py app/nowhere.py/gone().", EdgeType.CALLS, Provenance.NAME_UNIQUE),
         ],
+        layer=CODE,
     )
     assert (counts.nodes, counts.edges, counts.unresolved) == (0, 1, 1)
     nodes, edges = _client_facts()
-    counts = await writer.replace_file("web/client.ts", nodes, edges)
+    counts = await writer.replace_file("web/client.ts", nodes, edges, layer=LINKS)
     assert (counts.nodes, counts.edges, counts.unresolved) == (1, 1, 0)
     assert await _edges(db_session, snapshot) == {
         (CREATE, HELPER, "calls", 0.9, "import_resolved"),
@@ -192,23 +209,24 @@ async def test_rewriting_a_file_leaves_nothing_of_it_behind(
     snapshot = await _snapshot(db_session, tmp_path)
     writer = GraphWriter(db_session, snapshot)
     nodes, edges = _client_facts()
-    await writer.replace_file("web/client.ts", nodes, edges)
+    await writer.replace_file("web/client.ts", nodes, edges, layer=LINKS)
     # A snapshot-wide fact: the call matched to an endpoint (owned by no file).
     endpoint = GraphNode(ENDPOINT, NodeKind.API_ENDPOINT, "POST /api/items/")
     await writer.replace_all(
         [*nodes, endpoint],
         [*edges, GraphEdge(CALL, ENDPOINT, EdgeType.TARGETS, Provenance.URL_LITERAL)],
+        layer=LINKS,
     )
     first = await _nodes(db_session, snapshot)
     assert len(await _edges(db_session, snapshot)) == 2
 
     # The file again, the same call: its node keeps its id, and the edge into it survives.
-    await writer.replace_file("web/client.ts", nodes, edges)
+    await writer.replace_file("web/client.ts", nodes, edges, layer=LINKS)
     assert (await _nodes(db_session, snapshot))[CALL] == first[CALL]
     assert len(await _edges(db_session, snapshot)) == 2
 
     # The file without the call: its node goes, with every edge at either end.
-    await writer.replace_file("web/client.ts", [], [])
+    await writer.replace_file("web/client.ts", [], [], layer=LINKS)
     assert CALL not in await _nodes(db_session, snapshot)
     assert await _edges(db_session, snapshot) == set()
     left = await db_session.scalar(
@@ -225,15 +243,15 @@ async def test_one_edge_per_evidence_line_and_the_more_certain_stays(
     writer = GraphWriter(db_session, snapshot)
     guess = GraphEdge(CREATE, HELPER, EdgeType.CALLS, Provenance.NAME_UNIQUE)  # no line
     sure = GraphEdge(CREATE, HELPER, EdgeType.CALLS, Provenance.SCIP)
-    counts = await writer.replace_all([], [guess, sure, guess])
+    counts = await writer.replace_all([], [guess, sure, guess], layer=CODE)
     assert counts.edges == 1  # no evidence line counts as one line
     assert await _edges(db_session, snapshot) == {(CREATE, HELPER, "calls", 1.0, "scip")}
     # Another file finding the same edge less surely doesn't replace it.
-    await writer.replace_file("app/util.py", [], [guess])
+    await writer.replace_file("app/util.py", [], [guess], layer=CODE)
     assert await _edges(db_session, snapshot) == {(CREATE, HELPER, "calls", 1.0, "scip")}
     # Another evidence line is another edge.
     elsewhere = GraphEdge(CREATE, HELPER, EdgeType.CALLS, Provenance.NAME_UNIQUE, evidence_line=5)
-    await writer.replace_all([], [sure, elsewhere])
+    await writer.replace_all([], [sure, elsewhere], layer=CODE)
     assert await _edges(db_session, snapshot) == {
         (CREATE, HELPER, "calls", 1.0, "scip"),
         (CREATE, HELPER, "calls", 0.4, "name_unique"),
@@ -246,9 +264,12 @@ async def test_the_symbols_stage_run_again_leaves_the_graph_alone(
     snapshot = await _snapshot(db_session, tmp_path)
     writer = GraphWriter(db_session, snapshot)
     nodes, edges = _client_facts()
-    await writer.replace_file("web/client.ts", nodes, edges)
+    await writer.replace_file("web/client.ts", nodes, edges, layer=LINKS)
     await writer.replace_file(
-        "app/service.py", [], [GraphEdge(CREATE, HELPER, EdgeType.CALLS, Provenance.SCIP)]
+        "app/service.py",
+        [],
+        [GraphEdge(CREATE, HELPER, EdgeType.CALLS, Provenance.SCIP)],
+        layer=CODE,
     )
     before = (await _nodes(db_session, snapshot), await _edges(db_session, snapshot))
     await _symbols(db_session, snapshot)  # a full re-run of the symbols stage
@@ -262,21 +283,33 @@ async def test_the_writer_refuses_what_isnt_its_to_write(
     snapshot = await _snapshot(db_session, tmp_path)
     writer = GraphWriter(db_session, snapshot)
     with pytest.raises(GraphError, match="symbols stage"):
-        await writer.replace_all([GraphNode("py x.py/f().", NodeKind.FUNCTION, "f")], [])
+        await writer.replace_all(
+            [GraphNode("py x.py/f().", NodeKind.FUNCTION, "f")], [], layer=CODE
+        )
     with pytest.raises(GraphError, match="not a file"):
-        await writer.replace_file("app/missing.py", [], [])
+        await writer.replace_file("app/missing.py", [], [], layer=CODE)
     with pytest.raises(GraphError, match="not files"):
-        await writer.replace_all([GraphNode(ENDPOINT, NodeKind.API_ENDPOINT, "x", path="z.py")], [])
+        await writer.replace_all(
+            [GraphNode(ENDPOINT, NodeKind.API_ENDPOINT, "x", path="z.py")], [], layer=LINKS
+        )
     with pytest.raises(GraphError, match="0 to 1"):
         await writer.replace_all(
-            [], [GraphEdge(CREATE, HELPER, EdgeType.CALLS, Provenance.SCIP, confidence=1.5)]
+            [],
+            [GraphEdge(CREATE, HELPER, EdgeType.CALLS, Provenance.SCIP, confidence=1.5)],
+            layer=CODE,
+        )
+    with pytest.raises(GraphError, match="not the code layer's: \\['issues_request edge'\\]"):
+        await writer.replace_file("web/client.ts", [], _client_facts()[1], layer=CODE)
+    with pytest.raises(GraphError, match="not the links layer's: \\['package node'\\]"):
+        await writer.replace_all(
+            [GraphNode("package py:os", NodeKind.PACKAGE, "os")], [], layer=LINKS
         )
 
 
 async def test_the_graph_is_org_scoped(db_session: AsyncSession, tmp_path: Path) -> None:
     snapshot = await _snapshot(db_session, tmp_path)
     nodes, edges = _client_facts()
-    await GraphWriter(db_session, snapshot).replace_file("web/client.ts", nodes, edges)
+    await GraphWriter(db_session, snapshot).replace_file("web/client.ts", nodes, edges, layer=LINKS)
     assert await db_session.scalar(select(func.count()).select_from(CodeEdge)) == 1
     await set_org_context(db_session, uuid.uuid4())  # another org
     assert (await db_session.scalars(select(CodeEdge))).all() == []
@@ -290,7 +323,7 @@ async def test_definition_readers_never_see_the_graphs_nodes(
 ) -> None:
     snapshot = await _snapshot(db_session, tmp_path)
     nodes, edges = _client_facts()
-    await GraphWriter(db_session, snapshot).replace_file("web/client.ts", nodes, edges)
+    await GraphWriter(db_session, snapshot).replace_file("web/client.ts", nodes, edges, layer=LINKS)
     found = await find_symbols(db_session, snapshot.id, "items", limit=50)
     assert all(hit.symbol_key != CALL for hit in found)
     client_id = (await file_ids(db_session, snapshot.id))["web/client.ts"]
@@ -312,3 +345,28 @@ async def test_a_modules_import_table_is_kept_on_its_node(
     await db_session.refresh(node)
     assert node.attrs["imports"] == {"helper": HELPER}
     assert node.kind == "module"  # merged into, not replaced
+
+
+async def test_a_layer_written_again_leaves_the_others_facts(
+    db_session: AsyncSession, tmp_path: Path
+) -> None:
+    snapshot = await _snapshot(db_session, tmp_path)
+    writer = GraphWriter(db_session, snapshot)
+    nodes, edges = _client_facts()
+    await writer.replace_all(nodes, edges, layer=LINKS)
+    os_package = GraphNode("package py:os", NodeKind.PACKAGE, "os")
+    imports = GraphEdge("py app/service.py/", "package py:os", EdgeType.IMPORTS, Provenance.SCIP)
+    calls = GraphEdge(CREATE, HELPER, EdgeType.CALLS, Provenance.SCIP)
+    await writer.replace_all([os_package], [imports, calls], layer=CODE)
+    links = ("ts web/client.ts/createItem().", CALL, "issues_request", 0.7, "receiver_heuristic")
+    assert links in await _edges(db_session, snapshot)
+
+    await writer.replace_all([], [calls], layer=CODE)  # the code again: its package gone
+    assert await _edges(db_session, snapshot) == {(CREATE, HELPER, "calls", 1.0, "scip"), links}
+    assert CALL in await _nodes(db_session, snapshot)
+    assert "package py:os" not in await _nodes(db_session, snapshot)
+
+    await writer.replace_file("web/client.ts", [], [], layer=CODE)  # nothing of links there
+    assert await _edges(db_session, snapshot) == {(CREATE, HELPER, "calls", 1.0, "scip"), links}
+    await writer.replace_all([], [], layer=LINKS)
+    assert await _edges(db_session, snapshot) == {(CREATE, HELPER, "calls", 1.0, "scip")}
