@@ -355,6 +355,30 @@ class SearchSettings(BaseSettings):
     cache_seconds: int = Field(default=300, ge=0)
 
 
+class SandboxSettings(BaseSettings):
+    """Running a repository's own code (3.7): a fresh container per run, without network, with
+    the snapshot read-only. Its dependencies are installed from ``index_url`` into an image."""
+
+    model_config = _config("SENSEI_SANDBOX_")
+
+    docker_binary: str = "docker"
+    # gVisor (runsc) where the host has it (Linux); Docker's default runtime when unset.
+    runtime: Literal["runc", "runsc"] | None = None
+    image: str = "repo-sensei/python-runner"  # tagged by Python version (make sandbox-image)
+    index_url: str = "https://pypi.org/simple"
+    # Packages without wheels are built from source: their build code runs while the image
+    # build has network (8.2 moves installs behind the registry proxy). Off, those repositories
+    # fall back to static analysis.
+    source_builds: bool = True
+    cpus: float = Field(default=2.0, gt=0)
+    memory_mb: int = Field(default=2048, ge=128)
+    pids: int = Field(default=256, ge=16)
+    timeout_seconds: float = Field(default=120.0, gt=0)
+    install_timeout_seconds: float = Field(default=600.0, gt=0)
+    max_output_bytes: int = Field(default=1024 * 1024, gt=0)  # of stdout, and of stderr
+    max_concurrent: int = Field(default=2, ge=1)
+
+
 class Settings(BaseSettings):
     """Root settings object. Use :func:`get_settings` instead of constructing directly."""
 
@@ -381,6 +405,7 @@ class Settings(BaseSettings):
     worker: WorkerSettings = Field(default_factory=WorkerSettings)
     ingest: IngestSettings = Field(default_factory=IngestSettings)
     search: SearchSettings = Field(default_factory=SearchSettings)
+    sandbox: SandboxSettings = Field(default_factory=SandboxSettings)
 
     @model_validator(mode="after")
     def _refuse_dev_secrets_outside_dev(self) -> Settings:

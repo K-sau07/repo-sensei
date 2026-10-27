@@ -3,7 +3,7 @@ SHELL := /bin/bash
 
 PYTEST_UNIT := -m "not integration and not e2e"
 
-.PHONY: help setup up down reset-db psql infra-check api worker beat dev webhooks web web-build storybook storybook-build e2e e2e-real openapi migrate revision downgrade lint typecheck test test-int check fmt eval golden-validate
+.PHONY: help setup up down reset-db psql infra-check api worker beat dev webhooks web web-build storybook storybook-build e2e e2e-real sandbox-image openapi migrate revision downgrade lint typecheck test test-int check fmt eval golden-validate
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2}'
@@ -79,6 +79,14 @@ e2e: ## Browser tests of the web app against the mock API (no backend needed)
 e2e-real: ## Browser tests against the real API and a GitHub OAuth stub (needs `make up`)
 	uv run python scripts/e2e/prepare_db.py
 	pnpm --filter web e2e:real
+
+SANDBOX_PYTHONS := 3.13 3.14 3.12
+
+sandbox-image: ## Build the sandbox's Python runner images (one per Python version)
+	for py in $(SANDBOX_PYTHONS); do \
+		docker build -f sandbox/images/python-runner.Dockerfile --build-arg PYTHON_VERSION=$$py \
+			-t repo-sensei/python-runner:$$py sandbox/images || exit 1; \
+	done
 
 openapi: ## Export the OpenAPI schema and regenerate the web client types
 	uv run python scripts/export_openapi.py
