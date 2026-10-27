@@ -165,6 +165,25 @@ def test_a_subscript_or_generic_is_a_literal_not_a_pattern(query: str) -> None:
     assert route.literals[0] in query
 
 
+@pytest.mark.parametrize(
+    ("query", "pattern"),
+    [
+        ("/SECRET_\\w+/", "SECRET_\\w+"),
+        ("where is /TODO\\(.*\\)/i in the backend", "(?i)TODO\\(.*\\)"),
+        ("`/^def test_\\w+/m`", "(?m)^def test_\\w+"),
+        ("/api/v2/items", None),  # a route, not a pattern
+    ],
+)
+def test_a_pattern_between_slashes_is_searched_without_them(
+    query: str, pattern: str | None
+) -> None:
+    route = classify(query).route
+    assert route.regex == pattern
+    if pattern is not None:
+        assert route.query_class is QueryClass.REGEX
+        assert all(not literal.startswith("/") for literal in route.literals if "\\" in literal)
+
+
 @pytest.mark.parametrize("pattern", ["[a-z]+_id", "[^/]+\\.py", "id[0-9]+", "[A-F]"])
 def test_a_character_class_is_a_pattern(pattern: str) -> None:
     assert classify(pattern).route.regex == pattern

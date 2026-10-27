@@ -160,6 +160,9 @@ _REGEX_SIGNS = re.compile(
     rf"|(?<![\w\])])\[(?:\^|[^\]\-]{{0,{MAX_CLASS_CHARS}}}\w-\w)[^\]]{{0,{MAX_CLASS_CHARS}}}\]"
     rf"|\[[^\]]{{1,{MAX_CLASS_CHARS}}}\][*+?{{]"
 )
+# A pattern written as in JavaScript or an editor, between slashes with optional flags:
+# /SECRET_\w+/, /todo\(.*\)/i. Only the inside is searched for (as (?i)… for the flags).
+_DELIMITED = re.compile(r"^/(.+)/([im]{0,2})$", re.DOTALL)
 _CODE_SIGNS = re.compile(r"""[()=<>{}\[\]"';]|::|->|=>""")
 _CONSTANT = re.compile(r"^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+$")
 _ROUTE = re.compile(r"^/[\w{}:.\-]+(?:/[\w{}:.\-]*)*$")
@@ -341,13 +344,23 @@ def _identifier(token: str, *, plain_words: bool = False) -> bool:
     return plain_words and bool(_WORD.match(token))
 
 
+def _pattern(token: str) -> str:
+    """``token`` as a pattern: its ``/…/`` delimiters dropped when the inside is one."""
+    match = _DELIMITED.match(token)
+    if match is None or not _REGEX_SIGNS.search(match[1]):
+        return token
+    flags = "".join(sorted(set(match[2])))
+    return f"(?{flags}){match[1]}" if flags else match[1]
+
+
 def _scan_token(token: str, found: _Found) -> None:
     """Sort one whitespace-separated token (outside quotes) into what it is."""
     if _CONTRACTION.match(token) or token.lower() in _ABBREVIATIONS:  # editor's, e.g.
         return
     if _REGEX_SIGNS.search(token) and not _ROUTE.match(token):
-        _add(found.literals, token)
-        found.regex = found.regex or token
+        pattern = _pattern(token)
+        _add(found.literals, pattern)
+        found.regex = found.regex or pattern
     elif _ROUTE.match(token) and token.count("/") >= 1 and len(token) > 1:
         _add(found.literals, token)
         _add(found.routes, token)
@@ -372,12 +385,13 @@ def _scan(query: str) -> tuple[_Found, str]:
     for pattern in (_BACKTICKED, _DOUBLE_QUOTED, _SINGLE_QUOTED):
         for match in pattern.finditer(rest):
             text = next(group for group in match.groups() if group)
-            _add(found.literals, text)
+            token = text.strip()
+            regex = pattern is _BACKTICKED and _REGEX_SIGNS.search(token) is not None
+            _add(found.literals, _pattern(token) if regex else text)
             if pattern is not _BACKTICKED:
                 _add(found.quoted, text)
-            token = text.strip()
-            if _REGEX_SIGNS.search(token) and pattern is _BACKTICKED:
-                found.regex = found.regex or token
+            if regex:
+                found.regex = found.regex or _pattern(token)
             elif _ROUTE.match(token):
                 _add(found.routes, token)
             elif _path(token):
