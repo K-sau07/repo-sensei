@@ -10,6 +10,14 @@ from sensei_core.models.evals import EvalRun
 from sensei_core.models.files import RepoFile
 from sensei_core.models.github import GitHubInstallation
 from sensei_core.models.glossary import GlossaryTerm
+from sensei_core.models.graph import (
+    GRAPH_KINDS,
+    SYMBOL_KINDS,
+    CodeEdge,
+    EdgeType,
+    NodeKind,
+    Provenance,
+)
 from sensei_core.models.indexing import (
     ACTIVE_JOB_STATUSES,
     IndexJob,
@@ -29,12 +37,16 @@ from sensei_core.models.webhook import DeliveryStatus, WebhookDelivery
 
 __all__ = [
     "ACTIVE_JOB_STATUSES",
+    "GRAPH_KINDS",
+    "SYMBOL_KINDS",
     "ActorType",
     "AuditEvent",
     "Base",
     "CodeChunk",
+    "CodeEdge",
     "CodeNode",
     "DeliveryStatus",
+    "EdgeType",
     "EmbeddingCache",
     "EvalRun",
     "GitHubInstallation",
@@ -47,8 +59,10 @@ __all__ = [
     "LLMBatch",
     "LLMBatchStatus",
     "Membership",
+    "NodeKind",
     "OAuthToken",
     "Org",
+    "Provenance",
     "Repo",
     "RepoFile",
     "RepoSource",

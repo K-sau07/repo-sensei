@@ -46,7 +46,7 @@ from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from sensei_core.config import SearchSettings
-from sensei_core.models import CodeChunk, CodeNode, RepoFile
+from sensei_core.models import SYMBOL_KINDS, CodeChunk, CodeNode, RepoFile
 from sensei_engine.search.bm25 import (
     RRF_K,
     Filters,
@@ -350,6 +350,7 @@ _LOCATE = text(
     # In a chunk of several definitions, a line's is the innermost around it.
     "LEFT JOIN LATERAL (SELECT n.symbol_key FROM public.nodes n "
     "WHERE q.key IS NULL AND c.symbol_key IS NULL AND n.file_id = f.id "
+    "AND n.kind = ANY(:symbol_kinds) "
     "AND n.start_line <= q.line AND q.line <= n.end_line "
     "ORDER BY n.end_line - n.start_line, n.start_line DESC LIMIT 1"
     ") n ON true ORDER BY q.i"
@@ -360,6 +361,7 @@ _LOCATE = text(
     bindparam("languages", type_=ARRAY(String)),
     bindparam("roles", type_=ARRAY(String)),
     bindparam("kinds", type_=ARRAY(String)),
+    bindparam("symbol_kinds", type_=ARRAY(String)),
 )
 
 Place = tuple[str, int, str | None]  # path, line, and the symbol's key if the place is one
@@ -416,6 +418,7 @@ async def locate_all(
             "roles": list(filters.roles),
             "kinds": list(filters.kinds),
             "prefix": _like_prefix(filters.path_prefix) if filters.path_prefix else "",
+            "symbol_kinds": list(SYMBOL_KINDS),
         },
     )
     for row in rows:  # in place order
@@ -642,7 +645,11 @@ async def read_symbols(
             CodeNode.kind,
             CodeNode.start_line,
             CodeNode.end_line,
-        ).where(CodeNode.snapshot_id == snapshot_id, CodeNode.symbol_key.in_(sorted(set(keys))))
+        ).where(
+            CodeNode.snapshot_id == snapshot_id,
+            CodeNode.symbol_key.in_(sorted(set(keys))),
+            CodeNode.kind.in_(SYMBOL_KINDS),
+        )
     )
     return {row[1]: SymbolDetails(*row) for row in rows}
 

@@ -50,6 +50,7 @@ from sensei_core.jobs import TaskName
 from sensei_core.logging import get_logger
 from sensei_core.models import (
     ACTIVE_JOB_STATUSES,
+    SYMBOL_KINDS,
     CodeNode,
     LLMBatch,
     LLMBatchStatus,
@@ -264,7 +265,10 @@ async def _file_rows(task: IngestTask, target: Target) -> list[FileRow]:
                 CodeNode.start_line,
                 CodeNode.end_line,
                 CodeNode.signature,
-            ).where(CodeNode.snapshot_id == target.snapshot_id)
+            ).where(
+                CodeNode.snapshot_id == target.snapshot_id,
+                CodeNode.kind.in_(SYMBOL_KINDS),  # definitions, not the graph's facts
+            )
         )
         symbols: dict[uuid.UUID, list[SymbolInput]] = {}
         for file_id, key, kind, name, start, end, signature in nodes:

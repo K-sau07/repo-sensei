@@ -31,7 +31,7 @@ from dataclasses import dataclass
 from sqlalchemy import ColumnElement, Float, Select, case, func, literal, or_, select, union
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from sensei_core.models import CodeNode, RepoFile
+from sensei_core.models import SYMBOL_KINDS, CodeNode, RepoFile
 from sensei_engine.symbols.extract import SymbolKind
 
 KIND_WEIGHTS: dict[SymbolKind, float] = {
@@ -114,7 +114,7 @@ async def find_symbols(
         CodeNode.start_line,
         CodeNode.id,
     )
-    scope = [CodeNode.snapshot_id == snapshot_id]
+    scope = [CodeNode.snapshot_id == snapshot_id, CodeNode.kind.in_(SYMBOL_KINDS)]
     if kind is not None:
         scope.append(CodeNode.kind == kind.value)
 
@@ -177,6 +177,7 @@ async def symbols_at(db: AsyncSession, file_id: uuid.UUID, line: int) -> list[Co
         select(CodeNode)
         .where(
             CodeNode.file_id == file_id,
+            CodeNode.kind.in_(SYMBOL_KINDS),  # definitions, not the graph's facts
             CodeNode.start_line <= line,
             CodeNode.end_line >= line,
         )

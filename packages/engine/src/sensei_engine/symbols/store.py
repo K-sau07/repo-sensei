@@ -21,7 +21,7 @@ from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from uuid_utils.compat import uuid7
 
-from sensei_core.models import CodeNode, Snapshot
+from sensei_core.models import SYMBOL_KINDS, CodeNode, Snapshot
 from sensei_engine.symbols.extract import Symbol
 
 COLUMNS = (
@@ -106,9 +106,17 @@ async def save_symbols(
                 )
 
     if not replace_all and owners:
-        await db.execute(delete(CodeNode).where(CodeNode.owner_file_id.in_(owners)))
+        await db.execute(
+            delete(CodeNode).where(
+                CodeNode.owner_file_id.in_(owners), CodeNode.kind.in_(SYMBOL_KINDS)
+            )
+        )
     if replace_all and not written:
-        await db.execute(delete(CodeNode).where(CodeNode.snapshot_id == snapshot.id))
+        await db.execute(
+            delete(CodeNode).where(
+                CodeNode.snapshot_id == snapshot.id, CodeNode.kind.in_(SYMBOL_KINDS)
+            )
+        )
     if written:
         connection = await db.connection()
         raw = await connection.get_raw_connection()
@@ -131,9 +139,10 @@ async def save_symbols(
         )
         if replace_all:
             await driver.execute(
-                f"DELETE FROM public.nodes n WHERE n.snapshot_id = $1 AND NOT EXISTS "  # noqa: S608 - constant names
-                f"(SELECT FROM {STAGING_TABLE} s WHERE s.symbol_key = n.symbol_key)",
+                f"DELETE FROM public.nodes n WHERE n.snapshot_id = $1 AND n.kind = ANY($2) "  # noqa: S608 - constant names
+                f"AND NOT EXISTS (SELECT FROM {STAGING_TABLE} s WHERE s.symbol_key = n.symbol_key)",
                 snapshot.id,
+                list(SYMBOL_KINDS),  # the graph's nodes are the graph writer's
             )
         await driver.execute(f"DROP TABLE {STAGING_TABLE}")
     return written
