@@ -1,0 +1,219 @@
+"""Frontend HTTP calls: every detector and URL form on a small repository, then the
+fastapi-template's generated client."""
+
+from __future__ import annotations
+
+import tarfile
+import textwrap
+from collections.abc import Mapping
+from pathlib import Path
+
+import pytest
+
+from sensei_core.models import EdgeType
+from sensei_engine.graph.project import Definition, Project, is_config
+from sensei_engine.graph.writer import LINKS
+from sensei_engine.link.http_calls import CallGraph, client_calls, env_values, scan_all
+from sensei_engine.parse.parser import ParseResult, parse_file
+from sensei_engine.symbols.extract import extract_symbols
+
+FIXTURE = Path(__file__).parent / "fixtures" / "fastapi-template.tar.gz"
+
+REPO = {
+    "web/tsconfig.json": '{"compilerOptions": {"baseUrl": ".", "paths": {"@/*": ["./src/*"]}}}',
+    "web/.env": "VITE_API_URL=http://localhost:8000/backend\n",
+    "web/src/config.ts": """
+        export const API = "/api"
+        export const ROUTES = { users: "/api/users", items: `${API}/items` }
+    """,
+    "web/src/http.ts": """
+        import axios from "axios"
+        import { API } from "./config"
+
+        export const api = axios.create({ baseURL: `${API}/v2` })
+
+        export function getJson(path: string) {
+          return fetch(API + path).then((r) => r.json())
+        }
+
+        export function request(method: string, path: string) {
+          return getJson(path)
+        }
+    """,
+    "web/src/components/Users.tsx": """
+        import { useQuery } from "@tanstack/react-query"
+        import useSWR from "swr"
+        import ky from "ky"
+        import createClient from "openapi-fetch"
+        import { api, getJson } from "@/http"
+        import { ROUTES } from "../config"
+
+        const client = createClient({ baseUrl: "" })
+
+        export function Users({ id }: { id: number }) {
+          const { data } = useQuery({
+            queryKey: ["users"],
+            queryFn: () => fetch(ROUTES.users, { method: "GET" }),
+          })
+          const url = `/api/users/${id}/avatar`
+          fetch(url, { method: "PUT" })
+          useSWR(`/api/users/${id}`, fetcher)
+          ky.post("/api/ky")
+          api.delete(`/things/${id}`)
+          client.GET("/api/users/{id}", { params: { path: { id } } })
+          getJson("/wrapped")
+          window.fetch(import.meta.env.VITE_API_URL + "/health")
+          fetch(process.env.NEXT_PUBLIC_UNKNOWN + "/x")
+          const params = new URLSearchParams()
+          params.get("/not-a-call")
+          const cache = new Map()
+          cache.get("/neither")
+          fetch(someUrl)
+          return null
+        }
+    """,
+    "web/src/hooks/useItems.ts": """
+        import axios from "axios"
+        import { ROUTES } from "@/config"
+
+        export function useItems() {
+          return axios({ url: ROUTES.items, method: "post" })
+        }
+    """,
+    "server/index.js": """
+        import express from "express"
+        const app = express()
+        app.get("/api/users", (req, res) => res.send([]))
+        fetch("/api/from-server")
+    """,
+}
+
+
+def _graph(files: Mapping[str, str]) -> CallGraph:
+    definitions: dict[str, list[Definition]] = {}
+    results: list[tuple[ParseResult, list[Definition]]] = []
+    for path, content in sorted(files.items()):
+        if not path.endswith((".ts", ".tsx", ".js", ".jsx")):
+            continue
+        parsed = parse_file(path, content.encode())
+        assert parsed.language is not None
+        definitions[path] = [
+            Definition(
+                s.symbol_key, s.name, s.qualified_name, s.kind.value, s.start_line, s.end_line
+            )
+            for s in extract_symbols(parsed, parsed.language)
+        ]
+        results.append((parsed, definitions[path]))
+    configs = {p: c for p, c in files.items() if is_config(p)}
+    project = Project(frozenset(files), configs, definitions)
+    envs = env_values(project, {p: c for p, c in files.items() if "/.env" in f"/{p}"})
+    return client_calls(project, scan_all(results, envs))
+
+
+@pytest.fixture(scope="module")
+def repo() -> CallGraph:
+    return _graph({path: textwrap.dedent(text).lstrip() for path, text in REPO.items()})
+
+
+def test_every_detector_and_url_form(repo: CallGraph) -> None:
+    found = {(c.method, c.url, c.base, c.dynamic) for c in repo.calls}
+    assert found == {
+        ("GET", "/api/users", "", False),  # useQuery's queryFn: an imported object's property
+        ("PUT", "/api/users/{}/avatar", "", False),  # a local const, a template literal
+        ("GET", "/api/users/{}", "", False),  # useSWR's key
+        ("POST", "/api/ky", "", False),
+        ("DELETE", "/things/{}", "/api/v2", False),  # an imported axios instance's baseURL
+        ("GET", "/api/users/{id}", "", False),  # openapi-fetch
+        ("GET", "/api/wrapped", "", False),  # a wrapper: fetch(API + path)
+        ("GET", "http://localhost:8000/backend/health", "", False),  # .env value
+        ("GET", "{env:NEXT_PUBLIC_UNKNOWN}/x", "", False),  # unknown env: kept as a segment
+        ("GET", "", "", True),  # fetch(someUrl): nothing known
+        ("POST", "/api/items", "", False),  # axios(config) through a tsconfig alias
+    }
+    assert repo.report.through_wrappers == 1
+    assert not [c for c in repo.calls if "not-a-call" in c.url or "neither" in c.url]
+    assert not [c for c in repo.calls if (c.evidence_path or "").startswith("server/")]
+
+
+def test_calls_are_issued_by_the_definition_around_them(repo: CallGraph) -> None:
+    LINKS.check(repo.nodes, repo.edges)
+    issuers = {(e.src, e.dst.split(" ")[1]) for e in repo.edges}
+    assert all(e.type is EdgeType.ISSUES_REQUEST for e in repo.edges)
+    assert ("tsx web/src/components/Users.tsx/Users().", "PUT") in issuers
+    assert ("ts web/src/hooks/useItems.ts/useItems().", "POST") in issuers
+    node = next(n for n in repo.nodes if n.attrs["client"] == "axios" and n.attrs["base_ref"])
+    assert node.attrs["url_template"] == "/things/{}"
+    assert node.attrs["base_ref"] == "/api/v2"
+    assert node.key.startswith("http_client_call DELETE /things/{} web/src/components/Users.tsx:")
+
+
+def test_a_wrapper_calling_a_wrapper_is_followed() -> None:
+    graph = _graph(
+        {
+            "a.ts": textwrap.dedent(
+                """
+                const BASE = "/api"
+                function raw(p: string) { return fetch(BASE + p) }
+                function mid(p: string) { return raw("/v1" + p) }
+                export function top() { return mid("/deep") }
+                """
+            )
+        }
+    )
+    assert [c.url for c in graph.calls] == ["/api/v1/deep"]
+
+
+def test_the_template_generated_client(tmp_path: Path) -> None:
+    with tarfile.open(FIXTURE) as tar:
+        tar.extractall(tmp_path, filter="data")
+    base = tmp_path / "fastapi-template"
+    files = {
+        str(p.relative_to(base)): p.read_text(errors="replace")
+        for p in base.rglob("*")
+        if p.is_file()
+        and "node_modules" not in p.parts
+        and (p.suffix in (".ts", ".tsx") or is_config(p.name) or p.name.startswith(".env"))
+        and str(p.relative_to(base)).startswith("frontend/")
+    }
+    graph = _graph(files)
+    app = [c for c in graph.calls if (c.evidence_path or "").startswith("frontend/src/")]
+    assert len(app) == 23  # one per SDK method (hey-api, config objects)
+    assert {c.evidence_path for c in app} == {"frontend/src/client/sdk.gen.ts"}
+    assert not [c for c in graph.calls if c.dynamic]
+    # The rest: the end-to-end tests' calls to the mail catcher.
+    assert {c.evidence_path for c in graph.calls} - {c.evidence_path for c in app} == {
+        "frontend/tests/utils/mailpit.ts"
+    }
+    issuers = {e.src for e in graph.edges}
+    assert "ts frontend/src/client/sdk.gen.ts/ItemsService#readItems()." in issuers
+
+
+def test_aliases_come_from_real_tsconfigs() -> None:
+    """A URL in a string isn't a comment, nor is a glob's ``/*`` one's start, and ``paths`` can
+    come through ``extends``: the tsconfigs generators write."""
+    graph = _graph(
+        {
+            "web/tsconfig.base.json": textwrap.dedent(
+                """
+                {
+                  "$schema": "https://json.schemastore.org/tsconfig",
+                  // where things are
+                  "compilerOptions": {
+                    "baseUrl": ".",
+                    "paths": { "@/*": ["./src/*"] },
+                  },
+                  "include": ["src/**/*.ts", "src/**/*.tsx"]
+                }
+                """
+            ),
+            "web/tsconfig.json": '{ "extends": "./tsconfig.base.json", /* app */ }',
+            "web/src/lib/api.ts": 'export const USERS = "/api/users"\n',
+            "web/src/app.ts": textwrap.dedent(
+                """
+                import { USERS } from "@/lib/api"
+                export function load() { return fetch(USERS) }
+                """
+            ),
+        }
+    )
+    assert [c.url for c in graph.calls] == ["/api/users"]
