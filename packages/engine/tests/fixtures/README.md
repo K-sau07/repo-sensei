@@ -28,3 +28,12 @@ aliased symbols through barrels) what they name. Nothing is installed: a bare sp
 labelled a package when the importer's `package.json` declares it, or Node lists it as a
 built-in; a stylesheet or image import is labelled with its file, which must exist. The
 resolver under test is never asked. A sample of rows was checked by hand against the sources.
+
+## `imports/fastapi-template-code.tsv`
+
+What every call, `new`, JSX element and prop given a name in the fixture's JavaScript and
+TypeScript refers to, by the TypeScript compiler (6.0.3), for the call and React edge test
+(3.5): the file and line of the use, the name used, and the declaring file and name, for the
+1,039 uses whose declaration is in the repository. Built by `build_code_labels.py`, which has
+`code_labels_oracle.cjs` walk every file and ask the checker (through imports and barrels:
+`getAliasedSymbol`). The resolver under test is never asked.

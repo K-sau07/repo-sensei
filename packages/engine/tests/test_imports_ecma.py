@@ -15,7 +15,7 @@ from sensei_core.models import EdgeType, NodeKind, Provenance
 from sensei_engine.graph.project import Project, is_config
 from sensei_engine.graph.writer import CODE as CODE_LAYER
 from sensei_engine.imports.ecma.config import ProjectConfig, parse_jsonc
-from sensei_engine.imports.ecma.graph import extract, resolve
+from sensei_engine.imports.ecma.graph import EcmaFacts, extract, resolve
 from sensei_engine.imports.ecma.resolve import (
     ModuleResolver,
     Resolution,
@@ -32,7 +32,6 @@ from sensei_engine.imports.ecma.statements import (
 )
 from sensei_engine.imports.ecma.table import (
     MAX_HOPS,
-    FileExports,
     ImportTables,
     ImportTarget,
     TargetKind,
@@ -59,8 +58,8 @@ class Repo:
             for path, text in self.files.items()
         }
 
-    def facts(self) -> dict[str, FileExports]:
-        found: dict[str, FileExports] = {}
+    def facts(self) -> dict[str, EcmaFacts]:
+        found: dict[str, EcmaFacts] = {}
         for path, data in self.contents.items():
             if detect_language(path) in CODE:
                 facts = extract(parse_file(path, data, language=detect_language(path)))
@@ -82,7 +81,7 @@ class Repo:
         return ModuleResolver(self.paths, ProjectConfig.load(self.paths, self.contents.get))
 
     def tables(self) -> ImportTables:
-        return ImportTables(self.resolver(), self.facts())
+        return ImportTables(self.resolver(), {p: f.exports for p, f in self.facts().items()})
 
 
 def _statements(source: str, path: str = "web/src/x.tsx") -> list[ImportStatement]:

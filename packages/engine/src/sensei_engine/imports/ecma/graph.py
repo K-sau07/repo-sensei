@@ -1,8 +1,9 @@
-"""JavaScript and TypeScript imports as graph facts, for the graph stage: :func:`extract` in the
-parse pool (on the tree), :func:`resolve` over the whole snapshot.
+"""JavaScript and TypeScript files as graph facts (the CODE layer), for the graph stage:
+:func:`extract` in the parse pool (on the tree), :func:`resolve` over the whole snapshot.
 
-- :func:`extract` keeps what a file imports and exports (:class:`FileExports`): plain data, so
-  no tree leaves the worker process.
+- :func:`extract` keeps what a file imports and exports (:class:`FileExports`) and what it calls,
+  renders and tests (:class:`~sensei_engine.imports.ecma.calls.FileCode`): plain data, so no
+  tree leaves the worker process.
 - :func:`resolve` reads the project's configuration (tsconfig, package.json) from the graph
   stage's :class:`~sensei_engine.graph.project.Project`, resolves every file's imports
   (:mod:`sensei_engine.imports.ecma.table`) and returns ``IMPORTS`` edges from each file's
@@ -14,7 +15,10 @@ parse pool (on the tree), :func:`resolve` over the whole snapshot.
   - outside the repository: a named or default import goes to an ``external_symbol`` node
     (``external_symbol npm:react/useState``), anything else to the package's ``package`` node
     (``package npm:react``); Node's built-ins are ``npm:node:fs``;
-  - a file that isn't code (``./App.css``, ``./logo.svg``, ``./en.json``) has no node: left out.
+  - a file that isn't code (``./App.css``, ``./logo.svg``, ``./en.json``) has no node: left out;
+
+  and the CALLS, USES_HOOK, RENDERS, REFERENCES and TESTS edges and test nodes of
+  :mod:`sensei_engine.imports.ecma.code`.
 
 Edges are owned by the importing file, with the statement's line as evidence and
 ``import_resolved``'s confidence; a type-only import is marked (``attrs.type_only``). External
@@ -30,6 +34,8 @@ from dataclasses import dataclass, field
 from sensei_core.models import EdgeType, NodeKind, Provenance
 from sensei_engine.graph.project import Project
 from sensei_engine.graph.writer import GraphEdge, GraphNode
+from sensei_engine.imports.ecma.calls import FileCode, extract_code
+from sensei_engine.imports.ecma.code import CodeResolver, CodeStats, code_edges
 from sensei_engine.imports.ecma.config import ProjectConfig
 from sensei_engine.imports.ecma.resolve import ModuleResolver, ResolutionKind
 from sensei_engine.imports.ecma.statements import (
@@ -61,32 +67,39 @@ class ImportStats:
     )  # (importer, line, specifier)
     # Module key → local name → the key of what it is bound to (for the module nodes' attrs).
     tables: dict[str, dict[str, str]] = field(default_factory=dict[str, dict[str, str]])
+    code: CodeStats = field(default_factory=CodeStats)  # calls, elements, callbacks, tests
 
     @property
     def rate(self) -> float:
         return self.resolved / self.internal if self.internal else 1.0
 
 
-def extract(parsed: ParseResult) -> FileExports | None:
-    """What ``parsed`` imports and exports; None for a file that isn't JavaScript or
-    TypeScript, or didn't parse. Exported names are read from its definitions, keyed as the
-    symbols stage keys them."""
+@dataclass(frozen=True, slots=True)
+class EcmaFacts:
+    """What the parse pool keeps of a file: its imports and exports, and what it calls,
+    renders and tests."""
+
+    exports: FileExports
+    code: FileCode = field(default_factory=FileCode)
+
+
+def extract(parsed: ParseResult) -> EcmaFacts | None:
+    """What ``parsed`` imports, exports, calls, renders and tests; None for a file that isn't
+    JavaScript or TypeScript, or didn't parse. Definitions are keyed as the symbols stage keys
+    them."""
     language = detect_language(parsed.path, parsed.source[:HEAD_BYTES])
     if not parsed.ok or language not in LANGUAGES:
         return None
-    return FileExports.of(
-        parsed.path,
-        extract_imports(parsed),
-        extract_exports(parsed),
-        extract_symbols(parsed, language),
-    )
+    symbols = extract_symbols(parsed, language)
+    exports = FileExports.of(parsed.path, extract_imports(parsed), extract_exports(parsed), symbols)
+    return EcmaFacts(exports, extract_code(parsed, symbols))
 
 
 def resolve(
-    project: Project, facts: Mapping[str, FileExports]
+    project: Project, facts: Mapping[str, EcmaFacts]
 ) -> tuple[list[GraphNode], list[GraphEdge], ImportStats]:
-    """Every file's import edges, the external nodes they reach and the stats (see the
-    module)."""
+    """Every file's import, call, render, reference and test edges, the nodes they reach and
+    the stats (see the module)."""
     configs = project.configs
 
     def read(path: str) -> bytes | None:
@@ -94,12 +107,15 @@ def resolve(
         return text.encode() if text is not None else None
 
     config = ProjectConfig.load(project.paths, read)
-    tables = ImportTables(ModuleResolver(project.paths, config), facts)
+    exports = {path: fact.exports for path, fact in facts.items()}
+    tables = ImportTables(ModuleResolver(project.paths, config), exports)
+    code = CodeResolver(project, tables)
     nodes: dict[str, GraphNode] = {}
     edges: list[GraphEdge] = []
     stats = ImportStats()
     for path in sorted(facts):
         edges.extend(import_edges(tables, path, nodes, stats))
+        edges.extend(code_edges(code, path, facts[path].code, nodes, stats.code))
     return list(nodes.values()), edges, stats
 
 
