@@ -1,0 +1,217 @@
+# Hand-checked edges of the fastapi-template (3.4): '<path>:<line> <type> <destination key>'. Every
+# edge of a listed line and type is listed, so precision is measured on whole lines. The code
+# after '    # ' is the line, for review.
+backend/app/alembic/env.py:9 references external_symbol py:alembic/context    # config = context.config
+backend/app/alembic/env.py:13 references py backend/app/alembic/env.py/config.    # assert config.config_file_name is not None
+backend/app/alembic/env.py:14 calls external_symbol py:logging.config/fileConfig    # fileConfig(config.config_file_name)
+backend/app/alembic/env.py:49 calls py backend/app/alembic/env.py/get_url().    # url = get_url()
+backend/app/alembic/env.py:84 calls py backend/app/alembic/env.py/run_migrations_offline().    # run_migrations_offline()
+backend/app/alembic/versions/1a31ce608336_add_cascade_delete_relationships.py:34 calls external_symbol py:alembic/op.alter_column    # op.alter_column('item', 'owner_id',
+backend/app/alembic/versions/9c0a54914c78_add_max_length_for_string_varchar_.py:49 calls external_symbol py:sqlalchemy/String    # existing_type=sa.String(length=255),
+backend/app/alembic/versions/d98dd8ec85a3_edit_replace_id_integers_in_all_models_.py:31 calls external_symbol py:alembic/op.execute    # op.execute('UPDATE "user" SET new_id = uuid_generate_v4()')
+backend/app/alembic/versions/d98dd8ec85a3_edit_replace_id_integers_in_all_models_.py:59 calls external_symbol py:alembic/op.add_column    # op.add_column('user', sa.Column('old_id', sa.Integer, autoincrement=Tr
+backend/app/alembic/versions/d98dd8ec85a3_edit_replace_id_integers_in_all_models_.py:59 calls external_symbol py:sqlalchemy/Column    # op.add_column('user', sa.Column('old_id', sa.Integer, autoincrement=Tr
+backend/app/alembic/versions/d98dd8ec85a3_edit_replace_id_integers_in_all_models_.py:83 calls external_symbol py:alembic/op.alter_column    # op.alter_column('item', 'old_id', new_column_name='id')
+backend/app/alembic/versions/e2412789c190_initialize_models.py:36 calls external_symbol py:sqlalchemy/Column    # sa.Column("description", sqlmodel.sql.sqltypes.AutoString(), nullable=
+backend/app/alembic/versions/e2412789c190_initialize_models.py:36 calls external_symbol py:sqlmodel/sql.sqltypes.AutoString    # sa.Column("description", sqlmodel.sql.sqltypes.AutoString(), nullable=
+backend/app/api/deps.py:17 references py backend/app/core/config.py/Settings#API_V1_STR.    # tokenUrl=f"{settings.API_V1_STR}/login/access-token"
+backend/app/api/deps.py:26 calls external_symbol py:fastapi/Depends    # SessionDep = Annotated[Session, Depends(get_db)]
+backend/app/api/deps.py:35 calls py backend/app/models.py/TokenPayload#    # token_data = TokenPayload(**payload)
+backend/app/api/deps.py:41 references py backend/app/models.py/TokenPayload#sub.    # user = session.get(User, token_data.sub)
+backend/app/api/deps.py:41 references py backend/app/models.py/User#    # user = session.get(User, token_data.sub)
+backend/app/api/main.py:9 references py backend/app/api/routes/utils.py/router.    # api_router.include_router(utils.router)
+backend/app/api/routes/items.py:10 calls external_symbol py:fastapi/APIRouter    # router = APIRouter(prefix="/items", tags=["items"])
+backend/app/api/routes/items.py:21 references py backend/app/models.py/UserBase#is_superuser.    # if current_user.is_superuser:
+backend/app/api/routes/items.py:37 references py backend/app/models.py/Item#owner_id.    # .where(Item.owner_id == current_user.id)
+backend/app/api/routes/items.py:37 references py backend/app/models.py/User#id.    # .where(Item.owner_id == current_user.id)
+backend/app/api/routes/items.py:57 calls external_symbol py:fastapi/HTTPException    # raise HTTPException(status_code=403, detail="Not enough permissions")
+backend/app/api/routes/items.py:61 references py backend/app/models.py/ItemPublic#    # @router.post("/", response_model=ItemPublic)
+backend/app/api/routes/items.py:81 references py backend/app/models.py/ItemUpdate#    # item_in: ItemUpdate,
+backend/app/api/routes/items.py:106 calls external_symbol py:sqlmodel/Session.get    # item = session.get(Item, id)
+backend/app/api/routes/items.py:109 references py backend/app/models.py/User#id.    # if not current_user.is_superuser and (item.owner_id != current_user.id
+backend/app/api/routes/items.py:109 references py backend/app/models.py/UserBase#is_superuser.    # if not current_user.is_superuser and (item.owner_id != current_user.id
+backend/app/api/routes/items.py:113 calls py backend/app/models.py/Message#    # return Message(message="Item deleted successfully")
+backend/app/api/routes/login.py:25 references external_symbol py:fastapi.security/OAuth2PasswordRequestForm    # session: SessionDep, form_data: Annotated[OAuth2PasswordRequestForm, D
+backend/app/api/routes/login.py:25 references external_symbol py:typing/Annotated    # session: SessionDep, form_data: Annotated[OAuth2PasswordRequestForm, D
+backend/app/api/routes/login.py:25 references py backend/app/api/deps.py/SessionDep.    # session: SessionDep, form_data: Annotated[OAuth2PasswordRequestForm, D
+backend/app/api/routes/login.py:38 calls py backend/app/models.py/Token#    # return Token(
+backend/app/api/routes/login.py:45 references py backend/app/models.py/UserPublic#    # @router.post("/login/test-token", response_model=UserPublic)
+backend/app/api/routes/login.py:58 calls py backend/app/crud.py/get_user_by_email().    # user = crud.get_user_by_email(session=session, email=email)
+backend/app/api/routes/login.py:64 calls py backend/app/utils.py/generate_reset_password_email().    # email_data = generate_reset_password_email(
+backend/app/api/routes/login.py:70 references py backend/app/utils.py/EmailData#html_content.    # html_content=email_data.html_content,
+backend/app/api/routes/login.py:72 calls py backend/app/models.py/Message#    # return Message(
+backend/app/api/routes/login.py:85 calls py backend/app/crud.py/get_user_by_email().    # user = crud.get_user_by_email(session=session, email=email)
+backend/app/api/routes/login.py:88 calls external_symbol py:fastapi/HTTPException    # raise HTTPException(status_code=400, detail="Invalid token")
+backend/app/api/routes/login.py:92 calls py backend/app/crud.py/update_user().    # crud.update_user(
+backend/app/api/routes/login.py:105 references external_symbol py:typing/Any    # def recover_password_html_content(email: str, session: SessionDep) ->
+backend/app/api/routes/login.py:105 references py backend/app/api/deps.py/SessionDep.    # def recover_password_html_content(email: str, session: SessionDep) ->
+backend/app/api/routes/login.py:109 calls py backend/app/crud.py/get_user_by_email().    # user = crud.get_user_by_email(session=session, email=email)
+backend/app/api/routes/login.py:117 calls py backend/app/utils.py/generate_reset_password_email().    # email_data = generate_reset_password_email(
+backend/app/api/routes/private.py:16 inherits external_symbol py:pydantic/BaseModel    # class PrivateUserCreate(BaseModel):
+backend/app/api/routes/private.py:31 references py backend/app/api/routes/private.py/PrivateUserCreate#full_name.    # full_name=user_in.full_name,
+backend/app/api/routes/private.py:32 calls py backend/app/core/security.py/get_password_hash().    # hashed_password=get_password_hash(user_in.password),
+backend/app/api/routes/users.py:46 calls external_symbol py:sqlmodel/col    # select(User).order_by(col(User.created_at).desc()).offset(skip).limit(
+backend/app/api/routes/users.py:46 calls external_symbol py:sqlmodel/select    # select(User).order_by(col(User.created_at).desc()).offset(skip).limit(
+backend/app/api/routes/users.py:46 references py backend/app/models.py/User#    # select(User).order_by(col(User.created_at).desc()).offset(skip).limit(
+backend/app/api/routes/users.py:46 references py backend/app/models.py/User#created_at.    # select(User).order_by(col(User.created_at).desc()).offset(skip).limit(
+backend/app/api/routes/users.py:61 calls py backend/app/crud.py/get_user_by_email().    # user = crud.get_user_by_email(session=session, email=user_in.email)
+backend/app/api/routes/users.py:70 calls py backend/app/utils.py/generate_new_account_email().    # email_data = generate_new_account_email(
+backend/app/api/routes/users.py:74 references py backend/app/models.py/UserBase#email.    # email_to=user_in.email,
+backend/app/api/routes/users.py:90 calls py backend/app/crud.py/get_user_by_email().    # existing_user = crud.get_user_by_email(session=session, email=user_in.
+backend/app/api/routes/users.py:90 references py backend/app/models.py/UserUpdateMe#email.    # existing_user = crud.get_user_by_email(session=session, email=user_in.
+backend/app/api/routes/users.py:114 calls external_symbol py:fastapi/HTTPException    # raise HTTPException(
+backend/app/api/routes/users.py:117 calls py backend/app/core/security.py/get_password_hash().    # hashed_password = get_password_hash(body.new_password)
+backend/app/api/routes/users.py:117 references py backend/app/models.py/UpdatePassword#new_password.    # hashed_password = get_password_hash(body.new_password)
+backend/app/api/routes/users.py:143 calls py backend/app/models.py/Message#    # return Message(message="User deleted successfully")
+backend/app/api/routes/users.py:146 references py backend/app/models.py/UserPublic#    # @router.post("/signup", response_model=UserPublic)
+backend/app/api/routes/users.py:158 calls py backend/app/crud.py/create_user().    # user = crud.create_user(session=session, user_create=user_create)
+backend/app/api/routes/users.py:172 references py backend/app/models.py/UserBase#is_superuser.    # if not current_user.is_superuser:
+backend/app/api/routes/users.py:182 calls external_symbol py:fastapi/APIRouter.patch    # @router.patch(
+backend/app/api/routes/users.py:203 references py backend/app/models.py/UserUpdate#email.    # if user_in.email:
+backend/app/api/routes/users.py:210 calls py backend/app/crud.py/update_user().    # db_user = crud.update_user(session=session, db_user=db_user, user_in=u
+backend/app/api/routes/users.py:221 references py backend/app/models.py/User#    # user = session.get(User, user_id)
+backend/app/api/routes/utils.py:13 calls external_symbol py:fastapi/Depends    # dependencies=[Depends(get_current_active_superuser)],
+backend/app/api/routes/utils.py:20 calls py backend/app/utils.py/generate_test_email().    # email_data = generate_test_email(email_to=email_to)
+backend/app/api/routes/utils.py:26 calls py backend/app/models.py/Message#    # return Message(message="Test email sent")
+backend/app/core/config.py:15 inherits external_symbol py:pydantic_settings/BaseSettings    # class Settings(BaseSettings):
+backend/app/core/config.py:27 references external_symbol py:typing/Literal    # FASTAPI_ENV: Literal["development"] | None = None
+backend/app/core/config.py:53 references py backend/app/core/config.py/Settings#EMAILS_FROM_NAME.    # if not self.EMAILS_FROM_NAME:
+backend/app/core/config.py:83 calls py backend/app/core/config.py/Settings#_check_default_secret().    # self._check_default_secret("DATABASE_URL password", host["password"])
+backend/app/core/config.py:91 calls py backend/app/core/config.py/Settings#    # settings = Settings()  # type: ignore # ty: ignore[unused-ignore-comme
+backend/app/core/db.py:7 references py backend/app/core/config.py/Settings#DATABASE_URL.    # engine = create_engine(str(settings.DATABASE_URL), pool_pre_ping=True)
+backend/app/core/db.py:33 calls py backend/app/crud.py/create_user().    # user = crud.create_user(session=session, user_create=user_in)
+backend/app/core/security.py:25 calls external_symbol py:jwt/encode    # encoded_jwt = jwt.encode(to_encode, settings.SECRET_KEY, algorithm=ALG
+backend/app/crud.py:12 references py backend/app/models.py/UserCreate#password.    # user_create, update={"hashed_password": get_password_hash(user_create.
+backend/app/crud.py:25 calls py backend/app/core/security.py/get_password_hash().    # hashed_password = get_password_hash(password)
+backend/app/crud.py:50 calls py backend/app/core/security.py/verify_password().    # verify_password(password, DUMMY_HASH)
+backend/app/crud.py:52 references py backend/app/models.py/User#hashed_password.    # verified, updated_password_hash = verify_password(password, db_user.ha
+backend/app/crud.py:58 calls external_symbol py:sqlmodel/Session.commit    # session.commit()
+backend/app/initial_data.py:7 references package py:logging    # logging.basicConfig(level=logging.INFO)
+backend/app/initial_data.py:13 calls py backend/app/core/db.py/init_db().    # init_db(session)
+backend/app/initial_data.py:23 calls py backend/app/initial_data.py/main().    # main()
+backend/app/main.py:23 references py backend/app/core/config.py/Settings#API_V1_STR.    # openapi_url=f"{settings.API_V1_STR}/openapi.json",
+backend/app/models.py:9 calls external_symbol py:datetime/datetime.now    # return datetime.now(UTC)
+backend/app/models.py:13 inherits external_symbol py:sqlmodel/SQLModel    # class UserBase(SQLModel):
+backend/app/models.py:21 inherits py backend/app/models.py/UserBase#    # class UserCreate(UserBase):
+backend/app/models.py:25 inherits external_symbol py:sqlmodel/SQLModel    # class UserRegister(SQLModel):
+backend/app/models.py:32 inherits external_symbol py:sqlmodel/SQLModel    # class UserUpdate(SQLModel):
+backend/app/models.py:40 inherits external_symbol py:sqlmodel/SQLModel    # class UserUpdateMe(SQLModel):
+backend/app/models.py:45 inherits external_symbol py:sqlmodel/SQLModel    # class UpdatePassword(SQLModel):
+backend/app/models.py:51 inherits py backend/app/models.py/UserBase#    # class User(UserBase, table=True):
+backend/app/models.py:54 calls external_symbol py:sqlmodel/Field    # created_at: datetime | None = Field(default_factory=get_datetime_utc)
+backend/app/models.py:55 references py backend/app/models.py/Item#    # items: list[Item] = Relationship(back_populates="owner", cascade_delet
+backend/app/models.py:59 inherits py backend/app/models.py/UserBase#    # class UserPublic(UserBase):
+backend/app/models.py:64 inherits external_symbol py:sqlmodel/SQLModel    # class UsersPublic(SQLModel):
+backend/app/models.py:70 inherits external_symbol py:sqlmodel/SQLModel    # class ItemBase(SQLModel):
+backend/app/models.py:76 inherits py backend/app/models.py/ItemBase#    # class ItemCreate(ItemBase):
+backend/app/models.py:81 inherits external_symbol py:sqlmodel/SQLModel    # class ItemUpdate(SQLModel):
+backend/app/models.py:87 inherits py backend/app/models.py/ItemBase#    # class Item(ItemBase, table=True):
+backend/app/models.py:97 inherits py backend/app/models.py/ItemBase#    # class ItemPublic(ItemBase):
+backend/app/models.py:100 references external_symbol py:datetime/datetime    # created_at: datetime | None = None
+backend/app/models.py:103 inherits external_symbol py:sqlmodel/SQLModel    # class ItemsPublic(SQLModel):
+backend/app/models.py:109 inherits external_symbol py:sqlmodel/SQLModel    # class Message(SQLModel):
+backend/app/models.py:114 inherits external_symbol py:sqlmodel/SQLModel    # class Token(SQLModel):
+backend/app/models.py:120 inherits external_symbol py:sqlmodel/SQLModel    # class TokenPayload(SQLModel):
+backend/app/models.py:124 inherits external_symbol py:sqlmodel/SQLModel    # class NewPassword(SQLModel):
+backend/app/utils.py:30 calls external_symbol py:jinja2/Template.render    # html_content = template.render(context)
+backend/app/utils.py:41 references py backend/app/core/config.py/Settings#EMAILS_FROM_EMAIL.    # assert settings.EMAILS_FROM_EMAIL  # For type checker
+backend/app/utils.py:53 references py backend/app/core/config.py/Settings#SMTP_USER.    # smtp_options["user"] = settings.SMTP_USER
+backend/app/utils.py:67 calls py backend/app/utils.py/EmailData#    # return EmailData(html_content=html_content, subject=subject)
+backend/app/utils.py:70 references py backend/app/utils.py/EmailData#    # def generate_reset_password_email(email_to: str, email: str, token: st
+backend/app/utils.py:84 calls py backend/app/utils.py/EmailData#    # return EmailData(html_content=html_content, subject=subject)
+backend/app/utils.py:90 references py backend/app/core/config.py/Settings#PROJECT_NAME.    # project_name = settings.PROJECT_NAME
+backend/app/utils.py:102 calls py backend/app/utils.py/EmailData#    # return EmailData(html_content=html_content, subject=subject)
+backend/app/utils.py:121 references py backend/app/core/config.py/Settings#SECRET_KEY.    # token, settings.SECRET_KEY, algorithms=[security.ALGORITHM]
+backend/app/utils.py:121 references py backend/app/core/security.py/ALGORITHM.    # token, settings.SECRET_KEY, algorithms=[security.ALGORITHM]
+backend/tests/api/routes/test_items.py:40 references py backend/app/models.py/Item#owner_id.    # assert content["owner_id"] == str(item.owner_id)
+backend/tests/api/routes/test_items.py:58 calls py backend/tests/utils/item.py/create_random_item().    # item = create_random_item(db)
+backend/tests/api/routes/test_items.py:72 calls py backend/tests/utils/item.py/create_random_item().    # create_random_item(db)
+backend/tests/api/routes/test_items.py:97 references py backend/app/models.py/Item#owner_id.    # assert content["owner_id"] == str(item.owner_id)
+backend/tests/api/routes/test_items.py:105 calls external_symbol py:uuid/uuid4    # f"{settings.API_V1_STR}/items/{uuid.uuid4()}",
+backend/tests/api/routes/test_items.py:117 calls py backend/tests/utils/item.py/create_random_item().    # item = create_random_item(db)
+backend/tests/api/routes/test_items.py:157 calls py backend/tests/utils/item.py/create_random_item().    # item = create_random_item(db)
+backend/tests/api/routes/test_login.py:16 references external_symbol py:fastapi.testclient/TestClient    # def test_get_access_token(client: TestClient) -> None:
+backend/tests/api/routes/test_login.py:18 references py backend/app/core/config.py/Settings#FIRST_SUPERUSER.    # "username": settings.FIRST_SUPERUSER,
+backend/tests/api/routes/test_login.py:58 references py backend/app/core/config.py/Settings#API_V1_STR.    # f"{settings.API_V1_STR}/password-recovery/{email}",
+backend/tests/api/routes/test_login.py:84 calls py backend/tests/utils/utils.py/random_lower_string().    # password = random_lower_string()
+backend/tests/api/routes/test_login.py:87 calls py backend/app/models.py/UserCreate#    # user_create = UserCreate(
+backend/tests/api/routes/test_login.py:95 calls py backend/app/utils.py/generate_password_reset_token().    # token = generate_password_reset_token(email=email)
+backend/tests/api/routes/test_login.py:109 calls py backend/app/core/security.py/verify_password().    # verified, _ = verify_password(new_password, user.hashed_password)
+backend/tests/api/routes/test_login.py:117 calls external_symbol py:fastapi.testclient/TestClient.post    # r = client.post(
+backend/tests/api/routes/test_login.py:134 calls py backend/tests/utils/utils.py/random_lower_string().    # password = random_lower_string()
+backend/tests/api/routes/test_login.py:159 calls py backend/app/core/security.py/verify_password().    # verified, updated_hash = verify_password(password, user.hashed_passwor
+backend/tests/api/routes/test_login.py:159 references py backend/app/models.py/User#hashed_password.    # verified, updated_hash = verify_password(password, user.hashed_passwor
+backend/tests/api/routes/test_login.py:168 calls py backend/tests/utils/utils.py/random_lower_string().    # password = random_lower_string()
+backend/tests/api/routes/test_login.py:175 calls py backend/app/models.py/User#    # user = User(email=email, hashed_password=argon2_hash, is_active=True)
+backend/tests/api/routes/test_users.py:18 calls external_symbol py:fastapi.testclient/TestClient.get    # r = client.get(f"{settings.API_V1_STR}/users/me", headers=superuser_to
+backend/tests/api/routes/test_users.py:18 references py backend/app/core/config.py/Settings#API_V1_STR.    # r = client.get(f"{settings.API_V1_STR}/users/me", headers=superuser_to
+backend/tests/api/routes/test_users.py:46 calls py backend/tests/utils/utils.py/random_lower_string().    # password = random_lower_string()
+backend/tests/api/routes/test_users.py:63 calls py backend/tests/utils/utils.py/random_email().    # username = random_email()
+backend/tests/api/routes/test_users.py:65 calls py backend/app/models.py/UserCreate#    # user_in = UserCreate(email=username, password=password)
+backend/tests/api/routes/test_users.py:67 references py backend/app/models.py/User#id.    # user_id = user.id
+backend/tests/api/routes/test_users.py:74 calls py backend/app/crud.py/get_user_by_email().    # existing_user = crud.get_user_by_email(session=db, email=username)
+backend/tests/api/routes/test_users.py:92 calls py backend/tests/utils/utils.py/random_lower_string().    # password = random_lower_string()
+backend/tests/api/routes/test_users.py:94 calls py backend/app/crud.py/create_user().    # user = crud.create_user(session=db, user_create=user_in)
+backend/tests/api/routes/test_users.py:107 references py backend/app/core/config.py/Settings#API_V1_STR.    # f"{settings.API_V1_STR}/users/{user_id}",
+backend/tests/api/routes/test_users.py:122 calls py backend/tests/utils/user.py/create_random_user().    # user = create_random_user(db)
+backend/tests/api/routes/test_users.py:133 references external_symbol py:fastapi.testclient/TestClient    # client: TestClient,
+backend/tests/api/routes/test_users.py:151 calls py backend/tests/utils/utils.py/random_lower_string().    # password = random_lower_string()
+backend/tests/api/routes/test_users.py:153 calls py backend/app/crud.py/create_user().    # crud.create_user(session=db, user_create=user_in)
+backend/tests/api/routes/test_users.py:169 calls py backend/tests/utils/utils.py/random_lower_string().    # password = random_lower_string()
+backend/tests/api/routes/test_users.py:171 calls external_symbol py:fastapi.testclient/TestClient.post    # r = client.post(
+backend/tests/api/routes/test_users.py:183 calls py backend/tests/utils/utils.py/random_lower_string().    # password = random_lower_string()
+backend/tests/api/routes/test_users.py:185 calls py backend/app/crud.py/create_user().    # crud.create_user(session=db, user_create=user_in)
+backend/tests/api/routes/test_users.py:188 calls py backend/tests/utils/utils.py/random_lower_string().    # password2 = random_lower_string()
+backend/tests/api/routes/test_users.py:190 calls py backend/app/crud.py/create_user().    # crud.create_user(session=db, user_create=user_in2)
+backend/tests/api/routes/test_users.py:192 references py backend/app/core/config.py/Settings#API_V1_STR.    # r = client.get(f"{settings.API_V1_STR}/users/", headers=superuser_toke
+backend/tests/api/routes/test_users.py:227 calls py backend/tests/utils/utils.py/random_lower_string().    # new_password = random_lower_string()
+backend/tests/api/routes/test_users.py:244 references py backend/app/core/config.py/Settings#FIRST_SUPERUSER.    # assert user_db.email == settings.FIRST_SUPERUSER
+backend/tests/api/routes/test_users.py:261 calls py backend/app/core/security.py/verify_password().    # verified, _ = verify_password(
+backend/tests/api/routes/test_users.py:285 calls py backend/tests/utils/utils.py/random_email().    # username = random_email()
+backend/tests/api/routes/test_users.py:287 calls py backend/app/models.py/UserCreate#    # user_in = UserCreate(email=username, password=password)
+backend/tests/api/routes/test_users.py:292 references py backend/app/core/config.py/Settings#API_V1_STR.    # f"{settings.API_V1_STR}/users/me",
+backend/tests/api/routes/test_users.py:320 calls py backend/tests/utils/utils.py/random_email().    # username = random_email()
+backend/tests/api/routes/test_users.py:322 calls py backend/tests/utils/utils.py/random_lower_string().    # full_name = random_lower_string()
+backend/tests/api/routes/test_users.py:334 calls external_symbol py:sqlmodel/Session.exec    # user_db = db.exec(user_query).first()
+backend/tests/api/routes/test_users.py:343 calls py backend/tests/utils/utils.py/random_lower_string().    # password = random_lower_string()
+backend/tests/api/routes/test_users.py:346 references py backend/app/core/config.py/Settings#FIRST_SUPERUSER.    # "email": settings.FIRST_SUPERUSER,
+backend/tests/api/routes/test_users.py:361 calls py backend/tests/utils/utils.py/random_email().    # username = random_email()
+backend/tests/api/routes/test_users.py:363 calls py backend/app/models.py/UserCreate#    # user_in = UserCreate(email=username, password=password)
+backend/tests/api/routes/test_users.py:400 calls py backend/tests/utils/utils.py/random_email().    # username = random_email()
+backend/tests/api/routes/test_users.py:402 calls py backend/app/models.py/UserCreate#    # user_in = UserCreate(email=username, password=password)
+backend/tests/api/routes/test_users.py:405 calls py backend/tests/utils/utils.py/random_email().    # username2 = random_email()
+backend/tests/api/routes/test_users.py:407 calls py backend/app/models.py/UserCreate#    # user_in2 = UserCreate(email=username2, password=password2)
+backend/tests/api/routes/test_users.py:412 references py backend/app/core/config.py/Settings#API_V1_STR.    # f"{settings.API_V1_STR}/users/{user.id}",
+backend/tests/api/routes/test_users.py:412 references py backend/app/models.py/User#id.    # f"{settings.API_V1_STR}/users/{user.id}",
+backend/tests/api/routes/test_users.py:421 calls py backend/tests/utils/utils.py/random_email().    # username = random_email()
+backend/tests/api/routes/test_users.py:423 calls py backend/app/models.py/UserCreate#    # user_in = UserCreate(email=username, password=password)
+backend/tests/api/routes/test_users.py:455 references py backend/app/core/config.py/Settings#API_V1_STR.    # f"{settings.API_V1_STR}/users/me",
+backend/tests/api/routes/test_users.py:466 calls py backend/tests/utils/utils.py/random_email().    # username = random_email()
+backend/tests/api/routes/test_users.py:468 calls py backend/app/models.py/UserCreate#    # user_in = UserCreate(email=username, password=password)
+backend/tests/api/routes/test_users.py:471 calls external_symbol py:fastapi.testclient/TestClient.delete    # r = client.delete(
+backend/tests/api/routes/test_users.py:494 references external_symbol py:fastapi.testclient/TestClient    # client: TestClient, superuser_token_headers: dict[str, str], db: Sessi
+backend/tests/api/routes/test_users.py:494 references external_symbol py:sqlmodel/Session    # client: TestClient, superuser_token_headers: dict[str, str], db: Sessi
+backend/tests/api/routes/test_users.py:496 calls py backend/app/crud.py/get_user_by_email().    # super_user = crud.get_user_by_email(session=db, email=settings.FIRST_S
+backend/tests/api/routes/test_users.py:498 references py backend/app/models.py/User#id.    # user_id = super_user.id
+backend/tests/api/routes/test_users.py:512 calls py backend/tests/utils/utils.py/random_lower_string().    # password = random_lower_string()
+backend/tests/api/routes/test_users.py:514 calls py backend/app/crud.py/create_user().    # user = crud.create_user(session=db, user_create=user_in)
+backend/tests/conftest.py:29 references py backend/app/main.py/app.    # with TestClient(app) as c:
+backend/tests/conftest.py:33 calls external_symbol py:pytest/fixture    # @pytest.fixture(scope="module")
+backend/tests/conftest.py:35 calls py backend/tests/utils/utils.py/get_superuser_token_headers().    # return get_superuser_token_headers(client)
+backend/tests/crud/test_user.py:12 calls py backend/tests/utils/utils.py/random_email().    # email = random_email()
+backend/tests/crud/test_user.py:14 calls py backend/app/models.py/UserCreate#    # user_in = UserCreate(email=email, password=password)
+backend/tests/crud/test_user.py:21 calls py backend/tests/utils/utils.py/random_email().    # email = random_email()
+backend/tests/crud/test_user.py:23 calls py backend/app/models.py/UserCreate#    # user_in = UserCreate(email=email, password=password)
+backend/tests/crud/test_user.py:25 calls py backend/app/crud.py/authenticate().    # authenticated_user = crud.authenticate(session=db, email=email, passwo
+backend/tests/crud/test_user.py:32 calls py backend/tests/utils/utils.py/random_lower_string().    # password = random_lower_string()
+backend/tests/crud/test_user.py:38 calls py backend/tests/utils/utils.py/random_email().    # email = random_email()
+backend/tests/crud/test_user.py:40 calls py backend/app/models.py/UserCreate#    # user_in = UserCreate(email=email, password=password)
+backend/tests/crud/test_user.py:46 calls py backend/tests/utils/utils.py/random_email().    # email = random_email()
+backend/tests/crud/test_user.py:48 calls py backend/app/models.py/UserCreate#    # user_in = UserCreate(email=email, password=password, is_active=False)
+backend/tests/crud/test_user.py:54 calls py backend/tests/utils/utils.py/random_email().    # email = random_email()
+backend/tests/crud/test_user.py:58 references py backend/app/models.py/UserBase#is_superuser.    # assert user.is_superuser is True
+backend/tests/crud/test_user.py:91 references py backend/app/models.py/UserBase#email.    # assert user.email == user_2.email
+backend/tests/utils/user.py:22 references external_symbol py:sqlmodel/Session    # def create_random_user(db: Session) -> User:
+backend/tests/utils/user.py:22 references py backend/app/models.py/User#    # def create_random_user(db: Session) -> User:
+hooks/post_gen_project.py:6 calls external_symbol py:pathlib/Path.read_bytes    # data = path.read_bytes()
+scripts/prepare_release.py:96 calls external_symbol py:pathlib/Path.write_text    # release_notes_file.write_text(

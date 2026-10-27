@@ -1,5 +1,6 @@
 """What a language's graph resolver knows of the snapshot (Phase 3): its files, the config files
-that shape resolution (``pyproject.toml``, ``tsconfig.json``, ``package.json``, ...), and the
+that shape resolution (``pyproject.toml``, ``tsconfig.json``, ``package.json``,
+``pnpm-workspace.yaml``, ...), and the
 definitions the symbols stage extracted, by file.
 
 Each language resolves its files' facts (imports, calls, ...) against a :class:`Project` into
@@ -22,6 +23,7 @@ CONFIG_PATTERNS = (
     "package.json",
     "tsconfig*.json",
     "jsconfig*.json",
+    "pnpm-workspace.yaml",  # a pnpm monorepo's workspaces (3.3)
 )
 
 

@@ -264,6 +264,10 @@ class Resolver:
         rest = source[dots:]
         return ".".join([*kept, rest] if rest else kept)
 
+    def module_name(self, path: str) -> str | None:
+        """The file's dotted module name."""
+        return self._modules.names.get(path)
+
     def module(self, dotted: str) -> Target | None:
         path = self._modules.path(dotted)
         if path is None:
@@ -403,11 +407,11 @@ def import_tables(project: Project, facts: Mapping[str, PyFacts]) -> dict[str, d
 
 
 def resolve(
-    project: Project, facts: Mapping[str, PyFacts]
+    project: Project, facts: Mapping[str, PyFacts], resolver: Resolver | None = None
 ) -> tuple[list[GraphNode], list[GraphEdge], ImportStats]:
     """The project's Python import graph: external nodes, ``IMPORTS`` edges (each owned by the
     importing file), and how many imports resolved."""
-    resolver = Resolver(project, facts)
+    resolver = resolver or Resolver(project, facts)
     nodes: dict[str, GraphNode] = {}
     edges: list[GraphEdge] = []
     for path in sorted(facts):
@@ -416,7 +420,7 @@ def resolve(
             continue
         for item, target in resolver.edges(path):
             if target.external:
-                nodes.setdefault(target.key, _external_node(target.key))
+                nodes.setdefault(target.key, external_node(target.key))
             edges.append(
                 GraphEdge(
                     source_key,
@@ -431,7 +435,8 @@ def resolve(
     return list(nodes.values()), edges, resolver.stats
 
 
-def _external_node(key: str) -> GraphNode:
+def external_node(key: str) -> GraphNode:
+    """The node of an external: ``package py:x``, or ``external_symbol py:<module>/<name>``."""
     kind_name, _, rest = key.partition(" ")
     if kind_name == "package":
         package = rest.removeprefix("py:")
