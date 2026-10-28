@@ -8,12 +8,21 @@ from pathlib import Path
 
 import pytest
 from asyncpg.exceptions import InsufficientPrivilegeError
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from sensei_core.db.tenancy import set_org_context
 from sensei_core.mail import MemoryMailer
-from sensei_core.models import CodeNode, Repo, RepoFile, RepoSource, Snapshot
+from sensei_core.models import (
+    CodeEdge,
+    CodeNode,
+    EdgeType,
+    Provenance,
+    Repo,
+    RepoFile,
+    RepoSource,
+    Snapshot,
+)
 from sensei_core.orgs.service import OrgService
 from sensei_engine.ingest.discover import discover
 from sensei_engine.ingest.store import save_discovery
@@ -172,6 +181,58 @@ async def test_saving_again_replaces_the_symbols(db_session: AsyncSession, tmp_p
         "py app/models.py/",
         "py app/models.py/make_item().",
     ]
+
+
+async def test_an_incremental_save_keeps_what_points_at_the_symbols_it_keeps(
+    db_session: AsyncSession, tmp_path: Path
+) -> None:
+    """A definition still there keeps its id: an edge to it from a file not re-extracted (the
+    graph's) survives; one that is gone goes, with its edges; a file with none left has none."""
+    snapshot, file_ids = await _indexed(db_session, tmp_path)
+    service = "py app/items_service.py/ItemsService#"
+    item = "py app/models.py/Item#"
+    ids = {
+        n.symbol_key: n.id
+        for n in await db_session.scalars(
+            select(CodeNode).where(CodeNode.snapshot_id == snapshot.id)
+        )
+    }
+    db_session.add(
+        CodeEdge(
+            org_id=snapshot.org_id,
+            repo_id=snapshot.repo_id,
+            snapshot_id=snapshot.id,
+            src_id=ids[service],
+            dst_id=ids[item],
+            type=EdgeType.REFERENCES,
+            confidence=0.9,
+            provenance=Provenance.IMPORT_RESOLVED,
+            owner_file_id=file_ids["app/items_service.py"],
+        )
+    )
+    await db_session.flush()
+    changed = {"app/models.py": FILES["app/models.py"] + "\n\ndef remove_item():\n    pass\n"}
+    await save_symbols(db_session, snapshot, file_ids, _extracted(changed), replace_all=False)
+    kept = await db_session.scalar(select(CodeNode.id).where(CodeNode.symbol_key == item))
+    assert kept == ids[item]
+    assert await db_session.scalar(select(func.count()).select_from(CodeEdge)) == 1
+
+    emptied = {"app/models.py": "# moved\n"}  # Item is gone: its edge goes with it
+    await save_symbols(db_session, snapshot, file_ids, _extracted(emptied), replace_all=False)
+    keys = await _keys(db_session, snapshot)
+    assert [k for k in keys if k.startswith("py app/models.py")] == ["py app/models.py/"]
+    assert await db_session.scalar(select(func.count()).select_from(CodeEdge)) == 0
+    assert service in keys
+
+    await save_symbols(
+        db_session,
+        snapshot,
+        file_ids,
+        [FileSymbols("app/models.py", "python", [])],
+        replace_all=False,
+    )
+    assert not [k for k in await _keys(db_session, snapshot) if k.startswith("py app/models.py")]
+    assert service in await _keys(db_session, snapshot)
 
 
 async def test_nul_characters_are_replaced(db_session: AsyncSession, tmp_path: Path) -> None:

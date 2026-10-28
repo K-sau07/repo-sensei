@@ -3,10 +3,10 @@
 Rows go in with ``COPY`` into a temporary table, then ``INSERT … SELECT … ON CONFLICT`` (the
 ``nodes`` row-level security policy checks every row: they can only land in the session's org;
 ``COPY`` itself isn't allowed into a table with a policy). Saving again replaces rather than adds.
-For a full index, a symbol the snapshot already had (by its key) is updated in place and keeps
-its id, so what points at it (chunks, the glossary) still does while a reindex of the same
-commit runs; the snapshot's other symbols are deleted. An incremental run passes only the files
-it re-extracted, whose old rows go first.
+A symbol the snapshot already had (by its key) is updated in place and keeps its id, so what
+points at it (chunks, the glossary, graph edges from other files) still does. For a full index
+the snapshot's other symbols are then deleted; an incremental run passes only the files it
+re-extracted, and only their symbols that are gone are deleted.
 """
 
 from __future__ import annotations
@@ -105,18 +105,14 @@ async def save_symbols(
                     file_id,
                 )
 
-    if not replace_all and owners:
-        await db.execute(
-            delete(CodeNode).where(
-                CodeNode.owner_file_id.in_(owners), CodeNode.kind.in_(SYMBOL_KINDS)
-            )
+    if not written:  # nothing to keep: the files' symbols (or the snapshot's) all go
+        scope = (
+            CodeNode.snapshot_id == snapshot.id
+            if replace_all
+            else CodeNode.owner_file_id.in_(owners)
         )
-    if replace_all and not written:
-        await db.execute(
-            delete(CodeNode).where(
-                CodeNode.snapshot_id == snapshot.id, CodeNode.kind.in_(SYMBOL_KINDS)
-            )
-        )
+        if replace_all or owners:
+            await db.execute(delete(CodeNode).where(scope, CodeNode.kind.in_(SYMBOL_KINDS)))
     if written:
         connection = await db.connection()
         raw = await connection.get_raw_connection()
@@ -137,12 +133,13 @@ async def save_symbols(
             f"INSERT INTO public.nodes AS n ({columns}) SELECT {columns} FROM {STAGING_TABLE} "  # noqa: S608 - constant names
             f"ON CONFLICT (snapshot_id, symbol_key) DO UPDATE SET {updates} WHERE {changed}"
         )
-        if replace_all:
-            await driver.execute(
-                f"DELETE FROM public.nodes n WHERE n.snapshot_id = $1 AND n.kind = ANY($2) "  # noqa: S608 - constant names
-                f"AND NOT EXISTS (SELECT FROM {STAGING_TABLE} s WHERE s.symbol_key = n.symbol_key)",
-                snapshot.id,
-                list(SYMBOL_KINDS),  # the graph's nodes are the graph writer's
-            )
+        # The symbols that are gone: the snapshot's (a full index) or the files' (incremental).
+        scope = "n.snapshot_id = $1" if replace_all else "n.owner_file_id = ANY($1::uuid[])"
+        await driver.execute(
+            f"DELETE FROM public.nodes n WHERE {scope} AND n.kind = ANY($2) "  # noqa: S608 - constant names
+            f"AND NOT EXISTS (SELECT FROM {STAGING_TABLE} s WHERE s.symbol_key = n.symbol_key)",
+            snapshot.id if replace_all else owners,
+            list(SYMBOL_KINDS),  # the graph's nodes are the graph writer's
+        )
         await driver.execute(f"DROP TABLE {STAGING_TABLE}")
     return written
