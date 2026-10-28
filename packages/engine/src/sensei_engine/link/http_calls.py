@@ -23,8 +23,11 @@ call inside the function is found where it is, in the component or hook around i
 **URLs** (``url_template``): string literals, template literals (a value that isn't a constant
 becomes ``{}``), ``+`` concatenation, ``a ?? b``/``a || b`` (the first that's known), constants
 of the file or imported from another (resolved as 3.3 resolves imports), properties of a
-constant object, and ``import.meta.env.X``/``process.env.X``: the value in the project's
-``.env`` files, else an ``{env:X}`` segment. A URL with nothing literal in it is ``dynamic``.
+constant object, ``import.meta.env.X``/``process.env.X`` (the value in the project's ``.env``
+files, else an ``{env:X}`` segment), and calls to a **URL helper**, a function of the file or
+imported that returns a URL (``getURL("API_KEY")``, ``getBaseUrl()``), evaluated with the call's
+arguments (:mod:`sensei_engine.link.url_helpers`). A URL with nothing literal in it is
+``dynamic``.
 
 **Not calls:** a ``.get("/x")`` on what is plainly not an HTTP client (a ``Map``,
 ``URLSearchParams``, ``headers``, ``localStorage``), and anything in a server file (one
@@ -57,12 +60,31 @@ from sensei_engine.graph.project import Definition, Project
 from sensei_engine.graph.writer import GraphEdge, GraphNode
 from sensei_engine.imports.ecma.config import ProjectConfig
 from sensei_engine.imports.ecma.resolve import ModuleResolver, ResolutionKind
+from sensei_engine.link import url_helpers
 from sensei_engine.link.pytree import ancestors, walk
+from sensei_engine.link.url_helpers import (
+    Call,
+    Choice,
+    Concat,
+    Either,
+    Expr,
+    Flag,
+    Helper,
+    HelperCall,
+    KeyValue,
+    Lookup,
+    ObjectLiteral,
+    Param,
+    PerKey,
+    Text,
+    Undefined,
+)
 from sensei_engine.parse.parser import ParseResult
 
 ECMA_LANGUAGES = ("javascript", "jsx", "typescript", "tsx")
 HTTP_VERBS = ("get", "post", "put", "patch", "delete", "head", "options")
 MAX_WRAPPER_DEPTH = 3
+MAX_RESOLVE_DEPTH = 8  # imports of imports, helpers calling helpers
 MAX_URL = 500
 ENV_FILES = (".env", ".env.development", ".env.local", ".env.example", ".env.sample")
 HOLE = "{}"
@@ -73,9 +95,32 @@ _NOT_CLIENTS = re.compile(
     re.IGNORECASE,
 )
 _SERVER_PACKAGES = frozenset({"express", "koa", "fastify", "hono", "@hono/node-server"})
+_FUNCTIONS = frozenset({
+    "function_declaration", "function_expression", "arrow_function", "method_definition",
+    "function", "generator_function_declaration",
+})  # fmt: skip
+
+
+@dataclass(frozen=True, slots=True)
+class _ExprContext:
+    """Where a helper's expression is read: ``caller``, a call's argument (the parameters are
+    then the calling function's, not known at the call); ``extended``, the helper's local
+    variables extended per key (:func:`_extended`); ``key``, inside one's extension, its loop
+    variable."""
+
+    caller: bool = False
+    extended: Mapping[str, tuple[int, Node, str]] = field(
+        default_factory=dict[str, tuple[int, Node, str]]
+    )
+    key: str | None = None
+
+
+_PLAIN = _ExprContext()
+_CALLER = _ExprContext(caller=True)
 _PARAM_TOKEN = "\x00p{}\x00"  # noqa: S105 - a wrapper's parameter inside a URL template
 _MARK = "\x00p"
 _MARK_RE = re.compile(r"\x00p(\d+)\x00")
+_PLACEHOLDER_RE = re.compile(r"\{(?:import|helper):[^}]*\}")
 
 
 @dataclass(frozen=True, slots=True)
@@ -141,11 +186,20 @@ class FileCalls:
     calls: list[CallSite] = field(default_factory=list[CallSite])
     wrappers: dict[str, Wrapper] = field(default_factory=dict[str, Wrapper])
     pending: list[PendingWrapper] = field(default_factory=list[PendingWrapper])
+    helpers: dict[str, Helper] = field(default_factory=dict[str, Helper])  # URL helpers
+    helper_calls: list[HelperCall] = field(default_factory=list[HelperCall])  # {helper:N}'s
     server: bool = False
 
     @property
     def empty(self) -> bool:
-        return not (self.calls or self.constants or self.instances or self.wrappers)
+        return not (
+            self.calls
+            or self.constants
+            or self.objects
+            or self.instances
+            or self.wrappers
+            or self.helpers
+        )
 
 
 def _text(node: Node | None) -> str:
@@ -206,6 +260,7 @@ class _Scanner:
         self.result = result
         self.env = env
         self.out = FileCalls(result.path)
+        self._module_objects: dict[str, Node] = {}  # the module's object constants, as written
         module = next((d for d in definitions if d.kind == "module"), None)
         self.module_key = module.symbol_key if module else f"{result.language} {result.path}/"
         self._scopes = sorted(
@@ -248,6 +303,11 @@ class _Scanner:
             if inner is not None:
                 self.top_level(inner)
             return
+        if node.type == "function_declaration":
+            name = node.child_by_field_name("name")
+            if name is not None:
+                self.helper(node, _text(name))
+            return
         if node.type in ("lexical_declaration", "variable_declaration"):
             for declarator in node.named_children:
                 if declarator.type == "variable_declarator":
@@ -284,8 +344,12 @@ class _Scanner:
             return
         value = _unwrap(value)
         if value.type == "object":
+            self._module_objects[_text(name)] = value
             props = {k: self.url(v) for k, v in _object(value).items()}
             self.out.objects[_text(name)] = {k: v for k, v in props.items() if v is not None}
+            return
+        if value.type in ("arrow_function", "function_expression", "function"):
+            self.helper(value, _text(name))
             return
         if value.type == "call_expression":
             function = value.child_by_field_name("function")
@@ -294,7 +358,7 @@ class _Scanner:
                 config = _object(_unwrap(args[0])) if args else {}
                 base = config.get("baseURL") or config.get("prefixUrl") or config.get("baseUrl")
                 self.out.instances[_text(name)] = (self.url(base) or "") if base else ""
-            return
+                return
         url = self.url(value)
         if url is not None and _looks_like_url(url):
             self.out.constants[_text(name)] = url
@@ -311,6 +375,8 @@ class _Scanner:
             return _string(node)
         if node.type == "member_expression":
             return self.member(node)
+        if node.type == "call_expression":
+            return self.helper_call(node, params, depth)
         readers = {
             "template_string": self.template,
             "binary_expression": self.binary,
@@ -392,6 +458,175 @@ class _Scanner:
             return self.out.objects[head][prop]
         if head in self.out.imports and "." not in head:
             return "{import:" + text + "}"
+        return None
+
+    # URL helpers (see :mod:`sensei_engine.link.url_helpers`)
+
+    def helper(self, node: Node, name: str) -> None:
+        """``node``, a function named ``name``, as a URL helper when it returns a URL from one
+        ``return`` (or an arrow's expression): its value over its parameters, each local
+        variable it extends per key of an object parameter followed, any other reassignment of
+        one making it no helper."""
+        params, defaults = self.helper_params(node)
+        body = node.child_by_field_name("body")
+        if body is None:
+            return
+        if body.type != "statement_block":
+            value: Node | None = body
+        else:
+            returns = [n for n in _own(body) if n.type == "return_statement"]
+            if len(returns) != 1 or not returns[0].named_children:
+                return
+            value = returns[0].named_children[0]
+        extended = _extended(body, params)
+        if extended is None:
+            return
+        found = self.expr(value, params, context=_ExprContext(extended=extended))
+        if found is not None and url_helpers.urlish(found):
+            self.out.helpers[name] = Helper(name, found, defaults)
+
+    def helper_params(self, node: Node) -> tuple[list[str], tuple[Expr | None, ...]]:
+        """A function's parameter names, and their defaults (``= false``, ``= {}``)."""
+        names: list[str] = []
+        defaults: list[Expr | None] = []
+        params = node.child_by_field_name("parameters")
+        if params is None:
+            single = node.child_by_field_name("parameter")
+            return ([_text(single)], (None,)) if single is not None else ([], ())
+        for param in params.named_children:
+            if param.type == "comment":
+                continue
+            pattern = param.child_by_field_name("pattern") or param.child_by_field_name("left")
+            default = param.child_by_field_name("value") or param.child_by_field_name("right")
+            ident = param if param.type == "identifier" else pattern
+            names.append(_text(ident) if ident is not None and ident.type == "identifier" else "")
+            defaults.append(self.expr(default, ()) if default is not None else None)
+        return names, tuple(defaults)
+
+    def helper_call(self, node: Node, params: Sequence[str], depth: int) -> str | None:
+        """A call in a URL: a ``{helper:N}`` placeholder the join evaluates (a hole when the
+        function turns out to be no URL helper)."""
+        function = node.child_by_field_name("function")
+        if function is None or depth > 8:
+            return None
+        function = _unwrap(function)
+        if function.type not in ("identifier", "member_expression"):
+            return None
+        args, _ = self.arguments(node)
+        values = tuple(self.expr(a, params, context=_CALLER) for a in args[:6])
+        self.out.helper_calls.append(HelperCall(_text(function), values))
+        return "{helper:" + str(len(self.out.helper_calls) - 1) + "}"
+
+    def expr(  # noqa: PLR0911, PLR0912 - one case per kind of expression
+        self,
+        node: Node | None,
+        params: Sequence[str],
+        depth: int = 0,
+        context: _ExprContext | None = None,
+    ) -> Expr | None:
+        """``node`` as a helper's expression over ``params`` (see
+        :mod:`~sensei_engine.link.url_helpers`), in ``context`` (:class:`_ExprContext`)."""
+        if node is None or depth > 8:
+            return None
+        node = _unwrap(node)
+        context = context or _PLAIN
+
+        def again(inner: Node | None) -> Expr | None:
+            return self.expr(inner, params, depth + 1, context)
+
+        kind = node.type
+        if kind == "string":
+            text = _string(node)
+            return Text(text) if text is not None else None
+        if kind in ("true", "false"):
+            return Flag(kind == "true")
+        if kind == "undefined":
+            return Undefined()
+        if kind == "template_string":
+            parts: list[Expr | None] = []
+            for child in node.named_children:
+                if child.type == "string_fragment":
+                    parts.append(Text(_text(child)))
+                elif child.type == "escape_sequence":
+                    parts.append(Text(_escape(_text(child))))
+                elif child.type == "template_substitution":
+                    parts.append(again(child.named_children[0] if child.named_children else None))
+            return Concat(tuple(parts))
+        if kind == "binary_expression":
+            op = _text(node.child_by_field_name("operator"))
+            left = again(node.child_by_field_name("left"))
+            right = again(node.child_by_field_name("right"))
+            if op in ("??", "||"):
+                return Either(left, right)
+            if op == "+" and (left is not None or right is not None):
+                return Concat((left, right))
+            return None
+        if kind == "ternary_expression":
+            condition = _unwrap_opt(node.child_by_field_name("condition"))
+            then = again(node.child_by_field_name("consequence"))
+            otherwise = again(node.child_by_field_name("alternative"))
+            name = _text(condition) if condition is not None else ""
+            if condition is not None and condition.type == "identifier" and name in params:
+                if context.caller:
+                    return None  # the calling function's parameter: not known at the call
+                return Choice(list(params).index(name), then, otherwise)
+            return then if then == otherwise else None
+        if kind == "object":
+            return ObjectLiteral(tuple((k, again(v)) for k, v in _object(node).items()))
+        if kind == "identifier":
+            return self.expr_name(node, params, depth, context)
+        if kind == "member_expression":
+            value = self.member(node)
+            return Text(value) if value is not None else None
+        if kind == "subscript_expression":
+            return self.expr_subscript(node, params, context.key)
+        if kind == "call_expression":
+            function = _unwrap_opt(node.child_by_field_name("function"))
+            if function is None or function.type not in ("identifier", "member_expression"):
+                return None
+            args, _ = self.arguments(node)
+            return Call(_text(function), tuple(again(a) for a in args[:6]))
+        return None
+
+    def expr_name(  # noqa: PLR0911 - one return per kind of name
+        self, node: Node, params: Sequence[str], depth: int, context: _ExprContext
+    ) -> Expr | None:
+        name = _text(node)
+        if name == "undefined":
+            return Undefined()
+        if name in params:
+            return None if context.caller else Param(list(params).index(name))
+        local = self.local(node, name)
+        if local is not None:
+            value = self.expr(local, params, depth + 1, context)
+            if name in context.extended:
+                param, each, loop = context.extended[name]
+                inner = _ExprContext(key=loop)
+                return PerKey(value, param, self.expr(each, params, depth + 1, inner))
+            return value
+        if name in self.out.constants:
+            return Text(self.out.constants[name])
+        if name in self.out.imports:
+            return Text("{import:" + name + "}")
+        return None
+
+    def expr_subscript(self, node: Node, params: Sequence[str], key: str | None) -> Expr | None:
+        """``URLs[key]`` (a constant object by a parameter), ``params[k]`` (inside an
+        extension, the value of the key it is at), ``URLs["X"]``."""
+        table = _unwrap_opt(node.child_by_field_name("object"))
+        index = _unwrap_opt(node.child_by_field_name("index"))
+        if table is None or index is None or table.type != "identifier":
+            return None
+        name = _text(table)
+        if index.type == "identifier" and key is not None and _text(index) == key:
+            return KeyValue()
+        known = name in self.out.objects or name in self.out.imports
+        if index.type == "identifier" and _text(index) in params and known:
+            return Lookup(name, list(params).index(_text(index)))
+        literal = _string(index) if index.type == "string" else None
+        if literal is not None and name in self.out.objects:
+            value = self.out.objects[name].get(literal)
+            return Text(value) if value is not None else None
         return None
 
     # calls
@@ -520,7 +755,7 @@ class _Scanner:
         else:
             url_node = first
             if 0 < options < len(args):
-                config = _object(_unwrap(args[options]))
+                config = self.config_object(args[options])
         if url_node is None:
             return
         url = self.url(url_node, params)
@@ -548,6 +783,17 @@ class _Scanner:
                 operation=self.operation(around),
             )
         )
+
+    def config_object(self, node: Node) -> dict[str, Node]:
+        """A call's options: an object literal, or a ``const`` holding one (of the function
+        around the call, or of the module): ``fetch(url, options)``."""
+        node = _unwrap(node)
+        if node.type == "identifier":
+            name = _text(node)
+            local = self.local(node, name)
+            found = _unwrap(local) if local is not None else self._module_objects.get(name)
+            return _object(found) if found is not None and found.type == "object" else {}
+        return _object(node)
 
     def operation(self, around: Node | None) -> str | None:
         """The operation a generated SDK's method is for: its options type's ``<op>Data``."""
@@ -625,8 +871,62 @@ _GENERATED_RE = re.compile(r"\.gen\.[cm]?[jt]sx?$")
 _OPERATION_RE = re.compile(r"(?<![\w$])([A-Za-z_$][\w$]*?)Data\b")
 
 
+def _unwrap_opt(node: Node | None) -> Node | None:
+    return _unwrap(node) if node is not None else None
+
+
+def _own(node: Node) -> Iterable[Node]:
+    """The nodes under ``node``, not those of the functions in it."""
+    stack = list(node.named_children)
+    while stack:
+        here = stack.pop()
+        yield here
+        if here.type not in _FUNCTIONS:
+            stack.extend(here.named_children)
+
+
+def _extended(body: Node, params: Sequence[str]) -> dict[str, tuple[int, Node, str]] | None:
+    """A helper's local variables extended per key of an object parameter: ``name ->
+    (parameter, what each key adds, the loop variable)`` (``for (const k of Object.keys(p))
+    url += ...``). None: a local variable is assigned some other way (no helper)."""
+    found: dict[str, tuple[int, Node, str]] = {}
+    for node in _own(body):
+        if node.type not in ("assignment_expression", "augmented_assignment_expression"):
+            continue
+        target = node.child_by_field_name("left")
+        loop = next((a for a in ancestors(node) if a.type == "for_in_statement"), None)
+        if (
+            node.type != "augmented_assignment_expression"
+            or _text(node.child_by_field_name("operator")) != "+="
+            or target is None
+            or target.type != "identifier"
+            or loop is None
+        ):
+            return None
+        right = _unwrap_opt(loop.child_by_field_name("right"))
+        variable = loop.child_by_field_name("left")
+        keys = right.child_by_field_name("function") if right is not None else None
+        args = right.child_by_field_name("arguments") if right is not None else None
+        over = args.named_children if args is not None else []
+        if (
+            right is None
+            or right.type != "call_expression"
+            or _text(keys) != "Object.keys"
+            or len(over) != 1
+            or _text(over[0]) not in params
+            or variable is None
+            or variable.type != "identifier"
+        ):
+            return None
+        each = node.child_by_field_name("right")
+        if each is None:
+            return None
+        found[_text(target)] = (list(params).index(_text(over[0])), each, _text(variable))
+    return found
+
+
 def _looks_like_url(text: str) -> bool:
-    return text.startswith(("/", "http://", "https://", "{env:", "{import:", "//")) or (
+    return text.startswith(("/", "http://", "https://", "{env:", "{import:", "{helper:", "//")) or (
         text.startswith(HOLE + "/")
     )
 
@@ -702,8 +1002,22 @@ class _Joiner:
         return (other, source[1]) if other is not None else None
 
     def resolve(self, path: str, url: str | None, depth: int = 0) -> str | None:
-        """``url`` with its ``{import:X}`` parts filled in from the files they come from."""
-        if url is None or "{import:" not in url or depth > 3:
+        """``url`` with its ``{helper:N}`` parts evaluated (:mod:`~sensei_engine.link.
+        url_helpers`) and its ``{import:X}`` parts filled in from the files they come from."""
+        if url is None:
+            return None
+        if depth > MAX_RESOLVE_DEPTH:
+            return _PLACEHOLDER_RE.sub(HOLE, url)
+        if "{helper:" in url:
+            f = self.files.get(path)
+
+            def evaluate(index: int) -> str | None:
+                if f is None or index >= len(f.helper_calls):
+                    return None
+                return url_helpers.call(self, path, f.helper_calls[index], depth)
+
+            url = url_helpers.fill(url, evaluate)
+        if "{import:" not in url:
             return url
 
         def fill(found: re.Match[str]) -> str:
@@ -721,6 +1035,37 @@ class _Joiner:
             return resolved if resolved is not None else HOLE
 
         return re.sub(r"\{import:([^}]+)\}", fill, url)
+
+    # what URL helpers read (url_helpers.Scope)
+
+    def text(self, path: str, value: str, depth: int) -> str | None:
+        return self.resolve(path, value, depth)
+
+    def table(self, path: str, name: str) -> tuple[str, Mapping[str, str]] | None:
+        f = self.files.get(path)
+        if f is None:
+            return None
+        if name in f.objects:
+            return path, f.objects[name]
+        source = self.imported(path, name)
+        if source is None or source[1] not in source[0].objects:
+            return None
+        return source[0].path, source[0].objects[source[1]]
+
+    def helper(self, path: str, name: str) -> tuple[str, Helper] | None:
+        f = self.files.get(path)
+        if f is None:
+            return None
+        if name in f.helpers:
+            return path, f.helpers[name]
+        head, _, prop = name.partition(".")
+        source = self.imported(path, head)
+        if source is None:
+            return None
+        other, original = source
+        wanted = prop if original == "*" and prop else original
+        found = other.helpers.get(wanted)
+        return (other.path, found) if found is not None else None
 
     def base(self, path: str, instance: str | None) -> str | None:
         """The baseURL of the axios instance ``instance`` names in ``path`` (None: not one)."""

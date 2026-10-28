@@ -5,8 +5,10 @@
 dropped; a known base path applied (an ``axios.create({baseURL})``, a Vite proxy or Next
 rewrite, FastAPI's ``root_path``); every parameter syntax (``{id}``, ``:id``, ``<int:pk>``,
 ``[id]``, ``${x}``) becomes ``{}`` and a catch-all (``[...slug]``, ``{x:path}``, ``*``) ``{*}``;
-no trailing slash. An endpoint is keyed by the same form (:func:`sensei_engine.link.fastapi.
-normalize_path`).
+no trailing slash. What comes before the first slash when it is an environment value
+(``{env:API_URL}/items``) or a value not worked out (``${base}/items``: an origin, a base path
+read at run time) is an unknown base, dropped. An endpoint is keyed by the same form
+(:func:`sensei_engine.link.fastapi.normalize_path`).
 
 **Matching** (:class:`EndpointTrie`): per method, segment by segment, each endpoint at its path
 and, when its app has a ``root_path`` (a proxy's prefix), under it as well. A literal segment of the
@@ -84,7 +86,10 @@ def normalize(method: str, url: str, *, base: str = "") -> Normalized:
         text = parts.path or "/"
     text = re.split(r"[?#]", text, maxsplit=1)[0]
     raw_segments = [s for s in text.split("/") if s]
-    base_unknown = bool(raw_segments) and bool(_ENV_RE.match(raw_segments[0]))
+    # An environment value, or a value nobody worked out, before the first slash: the base.
+    base_unknown = bool(raw_segments) and (
+        bool(_ENV_RE.match(raw_segments[0])) or text.startswith(PARAM + "/")
+    )
     if base_unknown:
         raw_segments = raw_segments[1:]
     base_segments = [s for s in base.split("/") if s] if base else []

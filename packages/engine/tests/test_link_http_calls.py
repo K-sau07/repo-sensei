@@ -163,6 +163,106 @@ def test_a_wrapper_calling_a_wrapper_is_followed() -> None:
     assert [c.url for c in graph.calls] == ["/api/v1/deep"]
 
 
+# URL helpers, as Langflow builds its URLs: a base read from the page at run time, a helper
+# returning it, and one looking a path up by key, extending it per key of an object.
+HELPERS = {
+    "web/src/config.ts": """
+        const documentBase = document.querySelector("base")?.getAttribute("href")
+        export const BASENAME = documentBase?.startsWith("/") ? documentBase : ""
+        export const BASE_URL_API = `${BASENAME}/api/v1/`
+        export const BASE_URL_API_V2 = `${BASENAME}/api/v2/`
+    """,
+    "web/src/urls.ts": """
+        import { BASE_URL_API } from "./config"
+
+        export function getBaseUrl(): string {
+          return BASE_URL_API || "/api/v1/"
+        }
+    """,
+    "web/src/constants.ts": """
+        import { BASE_URL_API_V2 } from "./config"
+        import { getBaseUrl } from "./urls"
+
+        export const URLs = { API_KEY: `api_key`, FLOWS: "flows", MIGRATION: "migration" }
+
+        export function getURL(
+          key: keyof typeof URLs,
+          params: Record<string, unknown> = {},
+          v2: boolean = false,
+        ) {
+          let url = URLs[key]
+          for (const paramKey of Object.keys(params)) {
+            url += `/${params[paramKey]}`
+          }
+          return `${v2 ? BASE_URL_API_V2 : getBaseUrl()}${url}`
+        }
+
+        export const flowUrl = (id: string) => `${getURL("FLOWS")}/${id}`
+    """,
+    "web/src/api.ts": """
+        import axios from "axios"
+        export const api = axios.create({})
+    """,
+    "web/src/queries.ts": """
+        import { api } from "./api"
+        import * as constants from "./constants"
+        import { getURL } from "./constants"
+        import { getBaseUrl } from "./urls"
+
+        export async function createApiKey(name: string) {
+          return api.post(`${getBaseUrl()}api_key/`, { name })
+        }
+        export function deleteKey(key: { id: string }) {
+          return api.delete(`${getURL("API_KEY")}/${key.id}`)
+        }
+        export const listV2 = () => api.get(getURL("FLOWS", {}, true))
+        export const pause = () => api.post(getURL("MIGRATION", { path: "pause" }))
+        export const one = (id: string) => api.get(constants.flowUrl(id))
+        export const some = (params: object) => api.get(getURL("FLOWS", params))
+        export const nope = () => api.get(getURL("NOPE"))
+    """,
+}
+
+
+def test_a_url_helper_is_evaluated_where_it_is_called() -> None:
+    """Each call's URL is the helper's value with its arguments: the base it can't know a hole
+    in front (an unknown base, 3.10), the key looked up, the flag's branch, the object's values
+    appended; what depends on an argument it can't know is unknown, not wrong."""
+    graph = _graph({path: textwrap.dedent(text).lstrip() for path, text in HELPERS.items()})
+    found = {(c.method, c.url, c.dynamic) for c in graph.calls}
+    assert found == {
+        ("POST", "{}/api/v1/api_key/", False),
+        ("DELETE", "{}/api/v1/api_key/{}", False),
+        ("GET", "{}/api/v2/flows", False),  # v2: true
+        ("POST", "{}/api/v1/migration/pause", False),  # { path: "pause" } appended
+        ("GET", "{}/api/v1/flows/{}", False),  # a helper calling a helper, through a namespace
+        ("GET", "{}", True),  # params: how many keys, and which, isn't known
+        ("GET", "{}", True),  # no such key
+    }
+
+
+def test_the_options_of_a_call_may_be_a_constant() -> None:
+    graph = _graph(
+        {
+            "a.js": textwrap.dedent(
+                """
+                const shared = { method: "DELETE" }
+                export function run() {
+                  const id = window.flowId
+                  const options = { method: "POST", headers: {} }
+                  fetch(`/api/v1/run/${id}`, options)
+                  fetch("/api/v1/items", shared)
+                }
+                """
+            )
+        }
+    )
+    assert {(c.method, c.url) for c in graph.calls} == {
+        ("POST", "/api/v1/run/{}"),
+        ("DELETE", "/api/v1/items"),
+    }
+
+
 def test_the_template_generated_client(tmp_path: Path) -> None:
     with tarfile.open(FIXTURE) as tar:
         tar.extractall(tmp_path, filter="data")

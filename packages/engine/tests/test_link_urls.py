@@ -63,13 +63,15 @@ RECORDED_ROUTES = Path(__file__).parent / "fixtures" / "fastapi-template-routes.
         ("/items/${id}/edit", "/items/{}/edit", False),
         ("/items/v${n}", "/items/{}", False),  # part literal, part value
         ("{env:VITE_API}/items", "/items", True),
+        ("{}/api/v1/api_key/{}", "/api/v1/api_key/{}", False),  # a base read at run time
+        ("/{}/items", "/{}/items", False),  # a path parameter, not a base
         ("", "/", True),
     ],
 )
 def test_urls_normalize(url: str, path: str, literal: bool) -> None:
     normalized = normalize("get", url)
     assert (normalized.method, normalized.path, normalized.literal) == ("GET", path, literal)
-    assert normalized.base_unknown == url.startswith("{env:")
+    assert normalized.base_unknown == url.startswith(("{env:", "{}/"))
 
 
 def test_a_base_goes_in_front() -> None:
