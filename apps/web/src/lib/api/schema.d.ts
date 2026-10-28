@@ -908,6 +908,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/orgs/{org}/repos/{repo}/trace": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Trace Link
+         * @description ``POST …/trace`` for a deep link (``?from=``).
+         */
+        get: operations["trace_link_api_v1_orgs__org__repos__repo__trace_get"];
+        put?: never;
+        /**
+         * Trace
+         * @description The surest paths from ``from`` across the layers to the data (or to ``to``), at most
+         *     three, best first.
+         */
+        post: operations["trace_api_v1_orgs__org__repos__repo__trace_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/orgs/{org}/repos/{repo}/tree": {
         parameters: {
             query?: never;
@@ -2292,6 +2317,118 @@ export interface components {
             query: string;
             /** Results */
             results: components["schemas"]["SymbolOut"][];
+        };
+        /** TraceBreakOut */
+        TraceBreakOut: {
+            /** After Hop */
+            after_hop: number;
+            /** Detail */
+            detail?: string | null;
+            /** Reason */
+            reason: string;
+        };
+        /** TraceEdgeOut */
+        TraceEdgeOut: {
+            /** Alternatives */
+            alternatives: number;
+            /** Confidence */
+            confidence: number;
+            evidence: components["schemas"]["TraceEvidence"] | null;
+            provenance: components["schemas"]["Provenance"];
+            type: components["schemas"]["EdgeType"];
+        };
+        /** TraceEvidence */
+        TraceEvidence: {
+            /** Line */
+            line: number | null;
+            /** Path */
+            path: string;
+        };
+        /** TraceHopOut */
+        TraceHopOut: {
+            edge: components["schemas"]["TraceEdgeOut"] | null;
+            /**
+             * Layer
+             * @enum {string}
+             */
+            layer: "ui" | "state" | "client" | "route" | "handler" | "service" | "db" | "other";
+            node: components["schemas"]["TraceNodeOut"];
+        };
+        /**
+         * TraceModelOut
+         * @description The class a table is mapped from.
+         */
+        TraceModelOut: {
+            /** Lines */
+            lines: [
+                number,
+                number
+            ];
+            /** Path */
+            path: string;
+            /** Symbol Key */
+            symbol_key: string;
+        };
+        /** TraceNodeOut */
+        TraceNodeOut: {
+            /** Kind */
+            kind: string;
+            lane: components["schemas"]["Lane"];
+            /** Lines */
+            lines: [
+                number,
+                number
+            ] | null;
+            model?: components["schemas"]["TraceModelOut"] | null;
+            /** Name */
+            name: string;
+            /** Path */
+            path: string | null;
+            /** Qualified Name */
+            qualified_name: string;
+            /** Symbol Key */
+            symbol_key: string;
+        };
+        /** TraceOut */
+        TraceOut: {
+            /** Entries */
+            entries: components["schemas"]["TraceNodeOut"][];
+            goal: components["schemas"]["TraceNodeOut"] | null;
+            /** Linked */
+            linked: boolean;
+            /** Paths */
+            paths: components["schemas"]["TracePathOut"][];
+        };
+        /** TracePathOut */
+        TracePathOut: {
+            /** Breaks */
+            breaks: components["schemas"]["TraceBreakOut"][];
+            /** Hops */
+            hops: components["schemas"]["TraceHopOut"][];
+            /** Layers */
+            layers: ("ui" | "state" | "client" | "route" | "handler" | "service" | "db" | "other")[];
+            /** Path Confidence */
+            path_confidence: number;
+            /** Reaches Goal */
+            reaches_goal: boolean;
+        };
+        /** TraceRequest */
+        TraceRequest: {
+            /** From */
+            from: string;
+            /**
+             * Kind
+             * @default auto
+             * @enum {string}
+             */
+            kind: "auto" | "ui" | "route" | "symbol";
+            /**
+             * Min Conf
+             * @default 0
+             */
+            min_conf: number;
+            /** To */
+            to?: string | null;
         };
         /** TreeEntry */
         TreeEntry: {
@@ -4243,6 +4380,134 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
+            };
+        };
+    };
+    trace_link_api_v1_orgs__org__repos__repo__trace_get: {
+        parameters: {
+            query: {
+                from: string;
+                kind?: "auto" | "ui" | "route" | "symbol";
+                to?: string | null;
+                min_conf?: number;
+                /** @description Branch or commit (or its first 7+ characters). */
+                ref?: string | null;
+            };
+            header?: never;
+            path: {
+                /** @description Organization slug */
+                org: string;
+                /** @description Repository slug */
+                repo: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    /** @description The commit the response was read from. */
+                    "X-Commit-Sha"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TraceOut"];
+                };
+            };
+            /** @description Nothing in the graph is the entry (``trace_entry_not_found``) */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The graph isn't built yet (``graph_not_ready``) */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Too many graph requests (``rate_limited``, with ``Retry-After``) */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    trace_api_v1_orgs__org__repos__repo__trace_post: {
+        parameters: {
+            query?: {
+                /** @description Branch or commit (or its first 7+ characters). */
+                ref?: string | null;
+            };
+            header?: never;
+            path: {
+                /** @description Organization slug */
+                org: string;
+                /** @description Repository slug */
+                repo: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TraceRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    /** @description The commit the response was read from. */
+                    "X-Commit-Sha"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TraceOut"];
+                };
+            };
+            /** @description Nothing in the graph is the entry (``trace_entry_not_found``) */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The graph isn't built yet (``graph_not_ready``) */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Too many graph requests (``rate_limited``, with ``Retry-After``) */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

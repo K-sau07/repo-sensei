@@ -37,6 +37,33 @@ WEB = {
     ),
 }
 
+# stack/ in the fourth commit (the "stack" branch, from the second): a page's call, the FastAPI
+# route it reaches, and the table its handler reads, for the links stage.
+STACK = {
+    "stack/api.py": (
+        "from fastapi import FastAPI\n"
+        "from sqlmodel import Field, Session, SQLModel, select\n"
+        "\n"
+        "app = FastAPI()\n"
+        "\n"
+        "\n"
+        "class Item(SQLModel, table=True):\n"
+        "    id: int | None = Field(default=None, primary_key=True)\n"
+        "    title: str\n"
+        "\n"
+        "\n"
+        '@app.get("/items")\n'
+        "def read_items(session: Session):\n"
+        "    return session.exec(select(Item)).all()\n"
+    ),
+    "stack/page.ts": (
+        "export async function loadItems() {\n"
+        '  const response = await fetch("/items")\n'
+        "  return response.json()\n"
+        "}\n"
+    ),
+}
+
 
 @dataclass(frozen=True)
 class BareRepo:
@@ -46,6 +73,7 @@ class BareRepo:
     second: str
     third: str  # the second and web/ (on the "web" branch: main stays at the second)
     app: str  # src/app.py in the second commit
+    fourth: str  # the second and stack/ (on the "stack" branch)
 
 
 def _git(*args: str, cwd: Path) -> str:
@@ -99,6 +127,14 @@ def bare_repo(tmp_path_factory: pytest.TempPathFactory) -> BareRepo:
     _git("commit", "--quiet", "-m", "third", cwd=work)
     third = _git("rev-parse", "HEAD", cwd=work)
     _git("checkout", "--quiet", "main", cwd=work)
+    _git("checkout", "--quiet", "-b", "stack", cwd=work)
+    (work / "stack").mkdir()
+    for path, content in STACK.items():
+        (work / path).write_text(content)
+    _git("add", "-A", cwd=work)
+    _git("commit", "--quiet", "-m", "fourth", cwd=work)
+    fourth = _git("rev-parse", "HEAD", cwd=work)
+    _git("checkout", "--quiet", "main", cwd=work)
 
     web_root = root / "github"
     bare = web_root / "acme-gh" / "demo.git"
@@ -106,4 +142,12 @@ def bare_repo(tmp_path_factory: pytest.TempPathFactory) -> BareRepo:
     _git("clone", "--quiet", "--bare", str(work), str(bare), cwd=root)
     # GitHub lets clients fetch any reachable commit by id; a local bare repo must be told to.
     _git("config", "uploadpack.allowAnySHA1InWant", "true", cwd=bare)
-    return BareRepo(path=bare, web_root=web_root, first=first, second=second, third=third, app=APP)
+    return BareRepo(
+        path=bare,
+        web_root=web_root,
+        first=first,
+        second=second,
+        third=third,
+        app=APP,
+        fourth=fourth,
+    )

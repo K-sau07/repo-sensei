@@ -3418,6 +3418,383 @@
         "title": "SymbolsOut",
         "type": "object"
       },
+      "TraceBreakOut": {
+        "properties": {
+          "after_hop": {
+            "title": "After Hop",
+            "type": "integer"
+          },
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detail"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "after_hop",
+          "reason"
+        ],
+        "title": "TraceBreakOut",
+        "type": "object"
+      },
+      "TraceEdgeOut": {
+        "properties": {
+          "alternatives": {
+            "title": "Alternatives",
+            "type": "integer"
+          },
+          "confidence": {
+            "title": "Confidence",
+            "type": "number"
+          },
+          "evidence": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TraceEvidence"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "provenance": {
+            "$ref": "#/components/schemas/Provenance"
+          },
+          "type": {
+            "$ref": "#/components/schemas/EdgeType"
+          }
+        },
+        "required": [
+          "type",
+          "confidence",
+          "provenance",
+          "evidence",
+          "alternatives"
+        ],
+        "title": "TraceEdgeOut",
+        "type": "object"
+      },
+      "TraceEvidence": {
+        "properties": {
+          "line": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Line"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "line"
+        ],
+        "title": "TraceEvidence",
+        "type": "object"
+      },
+      "TraceHopOut": {
+        "properties": {
+          "edge": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TraceEdgeOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "layer": {
+            "enum": [
+              "ui",
+              "state",
+              "client",
+              "route",
+              "handler",
+              "service",
+              "db",
+              "other"
+            ],
+            "title": "Layer",
+            "type": "string"
+          },
+          "node": {
+            "$ref": "#/components/schemas/TraceNodeOut"
+          }
+        },
+        "required": [
+          "layer",
+          "node",
+          "edge"
+        ],
+        "title": "TraceHopOut",
+        "type": "object"
+      },
+      "TraceModelOut": {
+        "description": "The class a table is mapped from.",
+        "properties": {
+          "lines": {
+            "maxItems": 2,
+            "minItems": 2,
+            "prefixItems": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "integer"
+              }
+            ],
+            "title": "Lines",
+            "type": "array"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "symbol_key": {
+            "title": "Symbol Key",
+            "type": "string"
+          }
+        },
+        "required": [
+          "symbol_key",
+          "path",
+          "lines"
+        ],
+        "title": "TraceModelOut",
+        "type": "object"
+      },
+      "TraceNodeOut": {
+        "properties": {
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "lane": {
+            "$ref": "#/components/schemas/Lane"
+          },
+          "lines": {
+            "anyOf": [
+              {
+                "maxItems": 2,
+                "minItems": 2,
+                "prefixItems": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "integer"
+                  }
+                ],
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lines"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TraceModelOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Path"
+          },
+          "qualified_name": {
+            "title": "Qualified Name",
+            "type": "string"
+          },
+          "symbol_key": {
+            "title": "Symbol Key",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "name",
+          "qualified_name",
+          "symbol_key",
+          "path",
+          "lines",
+          "lane"
+        ],
+        "title": "TraceNodeOut",
+        "type": "object"
+      },
+      "TraceOut": {
+        "properties": {
+          "entries": {
+            "items": {
+              "$ref": "#/components/schemas/TraceNodeOut"
+            },
+            "title": "Entries",
+            "type": "array"
+          },
+          "goal": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TraceNodeOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "linked": {
+            "title": "Linked",
+            "type": "boolean"
+          },
+          "paths": {
+            "items": {
+              "$ref": "#/components/schemas/TracePathOut"
+            },
+            "title": "Paths",
+            "type": "array"
+          }
+        },
+        "required": [
+          "entries",
+          "goal",
+          "linked",
+          "paths"
+        ],
+        "title": "TraceOut",
+        "type": "object"
+      },
+      "TracePathOut": {
+        "properties": {
+          "breaks": {
+            "items": {
+              "$ref": "#/components/schemas/TraceBreakOut"
+            },
+            "title": "Breaks",
+            "type": "array"
+          },
+          "hops": {
+            "items": {
+              "$ref": "#/components/schemas/TraceHopOut"
+            },
+            "title": "Hops",
+            "type": "array"
+          },
+          "layers": {
+            "items": {
+              "enum": [
+                "ui",
+                "state",
+                "client",
+                "route",
+                "handler",
+                "service",
+                "db",
+                "other"
+              ],
+              "type": "string"
+            },
+            "title": "Layers",
+            "type": "array"
+          },
+          "path_confidence": {
+            "title": "Path Confidence",
+            "type": "number"
+          },
+          "reaches_goal": {
+            "title": "Reaches Goal",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "hops",
+          "path_confidence",
+          "layers",
+          "reaches_goal",
+          "breaks"
+        ],
+        "title": "TracePathOut",
+        "type": "object"
+      },
+      "TraceRequest": {
+        "properties": {
+          "from": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "From",
+            "type": "string"
+          },
+          "kind": {
+            "default": "auto",
+            "enum": [
+              "auto",
+              "ui",
+              "route",
+              "symbol"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "min_conf": {
+            "default": 0.0,
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Min Conf",
+            "type": "number"
+          },
+          "to": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "To"
+          }
+        },
+        "required": [
+          "from"
+        ],
+        "title": "TraceRequest",
+        "type": "object"
+      },
       "TreeEntry": {
         "properties": {
           "child_count": {
@@ -6896,6 +7273,257 @@
         "summary": "Symbol Outline",
         "tags": [
           "symbols"
+        ]
+      }
+    },
+    "/api/v1/orgs/{org}/repos/{repo}/trace": {
+      "get": {
+        "description": "``POST \u2026/trace`` for a deep link (``?from=``).",
+        "operationId": "trace_link_api_v1_orgs__org__repos__repo__trace_get",
+        "parameters": [
+          {
+            "description": "Organization slug",
+            "in": "path",
+            "name": "org",
+            "required": true,
+            "schema": {
+              "description": "Organization slug",
+              "title": "Org",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Repository slug",
+            "in": "path",
+            "name": "repo",
+            "required": true,
+            "schema": {
+              "description": "Repository slug",
+              "maxLength": 201,
+              "title": "Repo",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "from",
+            "required": true,
+            "schema": {
+              "maxLength": 2000,
+              "minLength": 1,
+              "title": "From",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "kind",
+            "required": false,
+            "schema": {
+              "default": "auto",
+              "enum": [
+                "auto",
+                "ui",
+                "route",
+                "symbol"
+              ],
+              "title": "Kind",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "to",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 2000,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "To"
+            }
+          },
+          {
+            "in": "query",
+            "name": "min_conf",
+            "required": false,
+            "schema": {
+              "default": 0.0,
+              "maximum": 1,
+              "minimum": 0,
+              "title": "Min Conf",
+              "type": "number"
+            }
+          },
+          {
+            "description": "Branch or commit (or its first 7+ characters).",
+            "in": "query",
+            "name": "ref",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 255,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Branch or commit (or its first 7+ characters).",
+              "title": "Ref"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TraceOut"
+                }
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "X-Commit-Sha": {
+                "description": "The commit the response was read from.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Nothing in the graph is the entry (``trace_entry_not_found``)"
+          },
+          "409": {
+            "description": "The graph isn't built yet (``graph_not_ready``)"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "429": {
+            "description": "Too many graph requests (``rate_limited``, with ``Retry-After``)"
+          }
+        },
+        "summary": "Trace Link",
+        "tags": [
+          "trace"
+        ]
+      },
+      "post": {
+        "description": "The surest paths from ``from`` across the layers to the data (or to ``to``), at most\nthree, best first.",
+        "operationId": "trace_api_v1_orgs__org__repos__repo__trace_post",
+        "parameters": [
+          {
+            "description": "Organization slug",
+            "in": "path",
+            "name": "org",
+            "required": true,
+            "schema": {
+              "description": "Organization slug",
+              "title": "Org",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Repository slug",
+            "in": "path",
+            "name": "repo",
+            "required": true,
+            "schema": {
+              "description": "Repository slug",
+              "maxLength": 201,
+              "title": "Repo",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Branch or commit (or its first 7+ characters).",
+            "in": "query",
+            "name": "ref",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 255,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Branch or commit (or its first 7+ characters).",
+              "title": "Ref"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TraceRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TraceOut"
+                }
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "X-Commit-Sha": {
+                "description": "The commit the response was read from.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Nothing in the graph is the entry (``trace_entry_not_found``)"
+          },
+          "409": {
+            "description": "The graph isn't built yet (``graph_not_ready``)"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "429": {
+            "description": "Too many graph requests (``rate_limited``, with ``Retry-After``)"
+          }
+        },
+        "summary": "Trace",
+        "tags": [
+          "trace"
         ]
       }
     },

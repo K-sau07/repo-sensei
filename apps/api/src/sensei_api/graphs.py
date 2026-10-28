@@ -1,10 +1,11 @@
 """Snapshots' code graphs in memory (3.6), for the graph endpoints and the search's graph leg.
 
 A snapshot's graph is ready once an index job for it finished its graph stage; that run's
-details name the graph's ``version``. The graph is read from the snapshot's ``graph.bin``
-artifact when it carries that version, else built from the database (an artifact that is missing,
-or older than the rows, or unreadable). Graphs are kept by (snapshot, version), least recently
-used out first within a memory budget (each graph's estimate,
+details name the graph's ``version``, or the links stage's once it has finished too (it writes
+the artifact again with the cross-layer links in it, 3.12). The graph is read from the
+snapshot's ``graph.bin`` artifact when it carries that version, else built from the database (an
+artifact that is missing, or older than the rows, or unreadable). Graphs are kept by (snapshot,
+version), least recently used out first within a memory budget (each graph's estimate,
 :meth:`~sensei_engine.graph.snapshot.GraphSnapshot.memory_bytes`, its nodes counted as well as
 its edges): a snapshot indexed again is read anew, never served stale.
 """
@@ -15,7 +16,7 @@ import asyncio
 import uuid
 from collections import OrderedDict
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from sensei_core.errors import ConflictError
@@ -33,15 +34,41 @@ Key = tuple[uuid.UUID, str]
 
 
 async def graph_version(db: AsyncSession, snapshot: Snapshot) -> str | None:
-    """The version of the snapshot's latest finished graph (None: no graph yet)."""
+    """The version of the snapshot's latest finished graph: its links' when that job's links
+    stage finished (with or without the code graph), else its graph stage's (None: no graph
+    yet)."""
     graph = IndexJob.stages[Stage.GRAPH.value]
-    version = await db.scalar(
-        select(graph["details"]["version"].astext)
-        .where(IndexJob.snapshot_id == snapshot.id, graph["status"].astext == "done")
-        .order_by(IndexJob.created_at.desc())
+    links = IndexJob.stages[Stage.LINKS.value]
+    row = (
+        await db.execute(
+            select(
+                graph["details"]["version"].astext,
+                links["status"].astext,
+                links["details"]["version"].astext,
+            )
+            .where(
+                IndexJob.snapshot_id == snapshot.id,
+                or_(graph["status"].astext == "done", links["status"].astext == "done"),
+            )
+            .order_by(IndexJob.created_at.desc())
+            .limit(1)
+        )
+    ).first()
+    if row is None:
+        return None
+    graph_built, links_status, linked = row
+    return (linked if links_status == "done" and linked else graph_built) or None
+
+
+async def links_done(db: AsyncSession, snapshot: Snapshot) -> bool:
+    """Whether an index job for the snapshot finished its links stage (its graph has them)."""
+    links = IndexJob.stages[Stage.LINKS.value]
+    found = await db.scalar(
+        select(IndexJob.id)
+        .where(IndexJob.snapshot_id == snapshot.id, links["status"].astext == "done")
         .limit(1)
     )
-    return version or None
+    return found is not None
 
 
 class GraphStore:

@@ -651,10 +651,18 @@ class AnswersTracer:
         return paths_from_trace(answer) if answer is not None else []
 
 
+def _trace(context: TracerContext) -> Tracer:
+    """``trace_feature`` itself, on the checkout (:mod:`sensei_evals.tracing`)."""
+    from sensei_evals.tracing import TraceTracer  # noqa: PLC0415 - imports this module
+
+    return TraceTracer.build(context)
+
+
 TracerFactory = Callable[[TracerContext], Tracer]
 TRACERS: dict[str, TracerFactory] = {
     "gold": lambda _context: GoldTracer(),
     "answers": AnswersTracer.build,
+    "trace": _trace,
 }
 
 

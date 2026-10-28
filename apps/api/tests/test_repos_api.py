@@ -82,6 +82,13 @@ from sensei_engine.ingest.constellation import (
 from sensei_engine.ingest.discover import discover
 from sensei_engine.ingest.merkle import ARTIFACT_NAME, Leaf, build_tree
 from sensei_engine.ingest.store import save_discovery
+from sensei_engine.link.stage import (
+    FileLinks,
+    LinkRequest,
+    extract_request,
+    resolve_links,
+    write_links,
+)
 from sensei_engine.parse.parser import parse_file
 from sensei_engine.search.grep import ExactSearch
 from sensei_engine.search.route import Lane
@@ -2130,6 +2137,222 @@ async def test_the_graph_is_rate_limited_per_user(
     member, _ = await _member(app, client, db_session)
     fake.user_can_read[f"ghu_{member.login}"] = {101}
     assert (await client.get(f"{url}/neighbors", params={"symbol": create})).status_code == 200
+
+
+# ------------------------------------------------------------------ trace
+
+# A page's calls (one to a route, one to nothing), the FastAPI route, and the table its handler
+# reads: the links stage's facts, for the trace.
+STACK_FILES = {
+    "stack/api.py": (
+        b"from fastapi import FastAPI\n"
+        b"from sqlmodel import Field, Session, SQLModel, select\n"
+        b"\n"
+        b"app = FastAPI()\n"
+        b"\n"
+        b"\n"
+        b"class Item(SQLModel, table=True):\n"
+        b"    id: int | None = Field(default=None, primary_key=True)\n"
+        b"    title: str\n"
+        b"\n"
+        b"\n"
+        b'@app.get("/items")\n'
+        b"def read_items(session: Session):\n"
+        b"    return session.exec(select(Item)).all()\n"
+    ),
+    "stack/page.ts": (
+        b"export async function loadItems() {\n"
+        b'  const response = await fetch("/items")\n'
+        b"  return response.json()\n"
+        b"}\n"
+        b"\n"
+        b"export async function loadMissing() {\n"
+        b'  return fetch("/nothing")\n'
+        b"}\n"
+    ),
+}
+
+
+async def _build_links(db: AsyncSession, store: ObjectStorage, tmp_path: Path, sha: str) -> None:
+    """The graph and links stages, on the snapshot ``_index`` left at ``sha`` with
+    ``STACK_FILES`` (both done, the links' version naming the artifact)."""
+    snapshot = await db.scalar(select(Snapshot).where(Snapshot.commit_sha == sha))
+    assert snapshot is not None
+    root = tmp_path / sha
+    project = await load_project(db, snapshot.id, root)
+    facts: dict[str, Any] = {}
+    linked: dict[str, FileLinks] = {}
+    for path, data in STACK_FILES.items():
+        parsed = parse_file(path, data)
+        assert parsed.language is not None
+        if (found := python_graph.extract(parsed)) is not None:
+            facts[path] = found
+        linked[path] = extract_request(LinkRequest(str(root), path, parsed.language))
+    await write_graph(db, snapshot, resolve_graph(project, {"python": facts}))
+    await write_links(db, snapshot, resolve_links(project, linked))
+    version = uuid.uuid4().hex
+    graph = await GraphSnapshot.build(db, snapshot.id, version=version)
+    key = artifact_key(snapshot.org_id, snapshot.repo_id, sha, GRAPH_ARTIFACT)
+    await store.put_bytes(Bucket.ARTIFACTS, key, graph.dumps())
+    job = await db.scalar(select(IndexJob).where(IndexJob.snapshot_id == snapshot.id))
+    assert job is not None
+    job.stages = {
+        **job.stages,
+        "graph": {"status": "done", "details": {"version": uuid.uuid4().hex}},
+        "links": {"status": "done", "details": {"version": version}},
+    }
+    await db.flush()
+
+
+async def test_a_feature_traces_from_its_page_to_the_table(
+    app: FastAPI,
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    fake: FakeGitHub,
+    storage: ObjectStorage,
+    tmp_path: Path,
+) -> None:
+    _, headers, _ = await _connected(app, client, db_session, fake)
+    await _index(app, db_session, storage, tmp_path, STACK_FILES, SHA_ONE)
+    await _extract_symbols(db_session, STACK_FILES, SHA_ONE)
+    url = f"{API}/orgs/acme/repos/api/trace"
+    not_yet = await client.post(url, json={"from": "stack/page.ts"}, headers=headers)
+    assert (not_yet.status_code, not_yet.json()["error"]["code"]) == (409, "graph_not_ready")
+
+    await _build_links(db_session, storage, tmp_path, SHA_ONE)
+    traced = await client.post(url, json={"from": "loadItems"}, headers=headers)
+    assert traced.status_code == 200, traced.text
+    assert traced.headers["x-commit-sha"] == SHA_ONE
+    body = traced.json()
+    assert body["linked"] is True
+    assert [e["symbol_key"] for e in body["entries"]] == ["ts stack/page.ts/loadItems()."]
+    best = body["paths"][0]
+    assert best["reaches_goal"] is True
+    assert best["breaks"] == []
+    assert [(h["layer"], h["node"]["symbol_key"]) for h in best["hops"]] == [
+        ("service", "ts stack/page.ts/loadItems()."),  # its file's lane: no frontend folder
+        ("client", "http_client_call GET /items stack/page.ts:2"),
+        ("route", "api_endpoint GET /items"),
+        ("handler", "py stack/api.py/read_items()."),
+        ("db", "table item"),
+    ]
+    assert best["hops"][0]["edge"] is None
+    assert best["hops"][1]["edge"] == {
+        "type": "issues_request",
+        "confidence": 1.0,
+        "provenance": "contract",
+        "evidence": {"path": "stack/page.ts", "line": 2},
+        "alternatives": 1,
+    }
+    assert [h["edge"]["type"] for h in best["hops"][2:]] == ["targets", "handled_by", "reads"]
+    # The table's hop names the model it is mapped from.
+    assert best["hops"][-1]["node"]["model"] == {
+        "symbol_key": "py stack/api.py/Item#",
+        "path": "stack/api.py",
+        "lines": [7, 9],
+    }
+    assert best["path_confidence"] == pytest.approx(
+        math.prod(h["edge"]["confidence"] for h in best["hops"][1:]), abs=1e-4
+    )
+    # The deep link answers the same.
+    linked = await client.get(url, params={"from": "loadItems"})
+    assert linked.json() == body
+
+
+async def test_a_trace_says_where_it_breaks_and_why(
+    app: FastAPI,
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    fake: FakeGitHub,
+    storage: ObjectStorage,
+    tmp_path: Path,
+) -> None:
+    await _connected(app, client, db_session, fake)
+    await _index(app, db_session, storage, tmp_path, STACK_FILES, SHA_ONE)
+    await _extract_symbols(db_session, STACK_FILES, SHA_ONE)
+    await _build_links(db_session, storage, tmp_path, SHA_ONE)
+    url = f"{API}/orgs/acme/repos/api/trace"
+    broken = (await client.get(url, params={"from": "loadMissing"})).json()
+    [path] = broken["paths"]
+    assert path["reaches_goal"] is False
+    [stop] = path["breaks"]
+    assert (stop["after_hop"], stop["reason"]) == (1, "client call has no matching endpoint")
+    assert stop["detail"]  # 3.10's reason, kept on the call's node
+    assert path["hops"][1]["node"]["symbol_key"] == "http_client_call GET /nothing stack/page.ts:7"
+
+    to = await client.get(url, params={"from": "GET /items", "to": "py stack/api.py/read_items()."})
+    assert to.json()["goal"]["symbol_key"] == "py stack/api.py/read_items()."
+    assert [h["layer"] for h in to.json()["paths"][0]["hops"]] == ["route", "handler"]
+
+    missing = await client.get(url, params={"from": "nothing_here"})
+    assert (missing.status_code, missing.json()["error"]["code"]) == (404, "trace_entry_not_found")
+    empty = await client.get(url, params={"from": ""})
+    assert empty.status_code == 422
+
+
+async def test_the_trace_needs_access(
+    app: FastAPI,
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    fake: FakeGitHub,
+    storage: ObjectStorage,
+    tmp_path: Path,
+) -> None:
+    """A POST needs the CSRF token; a member who can't read the repository on GitHub, a user
+    of no org and another org see nothing of its trace; in another org's context the links'
+    rows don't exist."""
+    await _connected(app, client, db_session, fake)
+    await _index(app, db_session, storage, tmp_path, STACK_FILES, SHA_ONE)
+    await _extract_symbols(db_session, STACK_FILES, SHA_ONE)
+    await _build_links(db_session, storage, tmp_path, SHA_ONE)
+    url = f"{API}/orgs/acme/repos/api/trace"
+    assert (await client.get(url, params={"from": "loadItems"})).status_code == 200
+    no_csrf = await client.post(url, json={"from": "loadItems"})
+    assert no_csrf.json()["error"]["code"] == "csrf_failed"
+
+    member, _ = await _member(app, client, db_session)
+    fake.user_can_read[f"ghu_{member.login}"] = set()
+    hidden = await client.get(url, params={"from": "loadItems"})
+    assert hidden.json()["error"]["code"] == "repo_not_found_or_no_access"
+    assert "x-commit-sha" not in hidden.headers
+
+    outsider = await make_user(db_session)
+    await _give_token(app, db_session, outsider, f"ghu_{outsider.login}")
+    await sign_in(app, client, db_session, outsider)
+    fake.user_can_read[f"ghu_{outsider.login}"] = {101}
+    hidden = await client.get(url, params={"from": "loadItems"})
+    assert hidden.json()["error"]["code"] == "org_not_found"
+
+    await _admin_org(app, client, db_session, "rival")
+    rival = await client.get(f"{API}/orgs/rival/repos/api/trace", params={"from": "loadItems"})
+    assert rival.status_code == 404
+    await set_org_context(db_session, await _org_id(db_session, "rival"))
+    assert (await db_session.scalars(select(CodeEdge))).all() == []
+
+
+async def test_a_trace_counts_against_the_users_graph_requests(
+    app: FastAPI,
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    fake: FakeGitHub,
+    storage: ObjectStorage,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    await _connected(app, client, db_session, fake)
+    await _index(app, db_session, storage, tmp_path, STACK_FILES, SHA_ONE)
+    await _extract_symbols(db_session, STACK_FILES, SHA_ONE)
+    await _build_links(db_session, storage, tmp_path, SHA_ONE)
+    monkeypatch.setattr(app.state.settings.api, "graph_rate_per_minute", 2)
+    api = f"{API}/orgs/acme/repos/api"
+    assert (await client.get(f"{api}/trace", params={"from": "loadItems"})).status_code == 200
+    neighbors = await client.get(
+        f"{api}/graph/neighbors", params={"symbol": "ts stack/page.ts/loadItems()."}
+    )
+    assert neighbors.status_code == 200, neighbors.text
+    limited = await client.get(f"{api}/trace", params={"from": "loadItems"})
+    assert (limited.status_code, limited.json()["error"]["code"]) == (429, "rate_limited")
+    assert 1 <= int(limited.headers["retry-after"]) <= 60
 
 
 # ------------------------------------------------------------------ search

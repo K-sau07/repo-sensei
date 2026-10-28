@@ -52,7 +52,7 @@ from sensei_engine.chunk.store import ChunkWriter, FileChunks, make_live, new_ge
 from sensei_engine.embed.provider import EmbeddingUsage, InputType, UsageSink
 from sensei_engine.embed.voyage import VoyageError
 from sensei_engine.graph import stage as graph_stage
-from sensei_engine.graph.snapshot import ARTIFACT_NAME
+from sensei_engine.graph.snapshot import ARTIFACT_NAME, GraphSnapshot
 from sensei_engine.ingest.store import file_ids
 from sensei_engine.llm import rollups, summaries
 from sensei_engine.search.bm25 import chunk_partition, keyword_search
@@ -64,6 +64,7 @@ from sensei_workers.runtime import Runtime, set_runtime
 from sensei_workers.tasks import chunk as chunk_task
 from sensei_workers.tasks import embed as embed_task
 from sensei_workers.tasks import graph as graph_task
+from sensei_workers.tasks import links as links_task
 from sensei_workers.tasks import maintenance, orchestrate
 from sensei_workers.tasks.merkle import build_merkle
 from sensei_workers.tasks.orchestrate import run_index_job
@@ -244,9 +245,12 @@ def test_a_full_run_streams_its_stages_in_order(
     graph = job.stages["graph"]["details"]
     assert (graph["files"], graph["extracted"], graph["edges"]) == (1, 1, 2)
     assert graph["resolvers"]["python"]["imports"]["unresolved"] == 0
-    # The stages this phase doesn't have yet are recorded as skipped; so are summaries, with no
-    # Anthropic key.
-    assert job.stages["embeddings"]["status"] == job.stages["links"]["status"] == "skipped"
+    # No Voyage or Anthropic key: embeddings and summaries are recorded as skipped. The links ran
+    # (a Python file, nothing in it to link).
+    assert job.stages["embeddings"]["status"] == "skipped"
+    links = job.stages["links"]
+    assert links["status"] == "done"
+    assert (links["details"]["files"], links["details"]["edges"]) == (1, 0)
     assert job.stages["summaries"] == {"status": "skipped"}
 
     events = runtime.run(_events(runtime, job_stream(job_id)))
@@ -271,6 +275,9 @@ def test_a_full_run_streams_its_stages_in_order(
         ("stage_started", "graph"),
         ("stage_done", "graph"),
         ("unlock", "graph"),
+        ("stage_started", "links"),
+        ("stage_done", "links"),
+        ("unlock", "links"),
         ("stage_started", "finalize"),
         ("stage_done", "finalize"),
         ("done", "finalize"),
@@ -278,6 +285,7 @@ def test_a_full_run_streams_its_stages_in_order(
     unlocks = [e["unlocks"] for e in events if e["type"] == "unlock"]
     assert unlocks == [
         ["code_browser"], ["goto_definition"], ["keyword_search"], ["graph_view", "callers"],
+        ["trace", "diagrams", "fixes", "changes"],
     ]  # fmt: skip
     progress = [e for e in events if e["type"] == "progress"]
     assert progress
@@ -894,8 +902,8 @@ def test_files_are_summarized_and_the_wiki_unlocked(
         ("unlock", "summaries"),
         ("stage_started", "graph"),  # then the code graph
     ]
-    assert [e["unlocks"] for e in events if e["type"] == "unlock"][-2:] == [
-        ["wiki"], ["graph_view", "callers"],
+    assert [e["unlocks"] for e in events if e["type"] == "unlock"][-3:] == [
+        ["wiki"], ["graph_view", "callers"], ["trace", "diagrams", "fixes", "changes"],
     ]  # fmt: skip
     progress = [(e["done"], e["total"]) for e in events if e["type"] == "progress"]
     assert (0, 1) in progress
@@ -1501,14 +1509,85 @@ def test_a_chain_sent_without_the_graph_stage_gets_it_from_finalize(
     """A job whose chain was sent before the deploy that added the graph stage."""
     org_id, repo_id, job_id = ids
     kwargs = {"job_id": str(job_id), "org_id": str(org_id), "repo_id": str(repo_id)}
-    old = [stage for stage in orchestrate.STAGES if stage is not graph_task.build_graph]
+    old = [
+        stage
+        for stage in orchestrate.STAGES
+        if stage not in (graph_task.build_graph, links_task.build_links)
+    ]
     chain(*(stage.si(**kwargs) for stage in old)).apply().get()
 
     repo, job = runtime.run(_state(runtime.system_database, repo_id, job_id))
     assert (job.status, repo.status) == (JobStatus.SUCCEEDED, RepoStatus.READY)
-    assert job.stages["graph"]["status"] == "done"
+    assert job.stages["graph"]["status"] == job.stages["links"]["status"] == "done"
     assert job.snapshot_id is not None
     assert len(runtime.run(_graph(runtime.system_database, job.snapshot_id))) == 2
+
+
+def test_a_chain_sent_without_the_links_stage_gets_it_from_finalize(
+    runtime: Runtime,
+    ids: tuple[uuid.UUID, uuid.UUID, uuid.UUID],
+    github: respx.MockRouter,
+) -> None:
+    """A job whose chain was sent before the deploy that added the links stage."""
+    org_id, repo_id, job_id = ids
+    kwargs = {"job_id": str(job_id), "org_id": str(org_id), "repo_id": str(repo_id)}
+    old = [stage for stage in orchestrate.STAGES if stage is not links_task.build_links]
+    chain(*(stage.si(**kwargs) for stage in old)).apply().get()
+
+    repo, job = runtime.run(_state(runtime.system_database, repo_id, job_id))
+    assert (job.status, repo.status) == (JobStatus.SUCCEEDED, RepoStatus.READY)
+    assert job.stages["links"]["status"] == "done"
+
+
+# ---------------------------------------------------------------- the links
+
+
+async def _artifact(
+    runtime: Runtime, org_id: uuid.UUID, repo_id: uuid.UUID, sha: str
+) -> GraphSnapshot:
+    storage = await runtime.storage()
+    data = await storage.get_bytes(
+        Bucket.ARTIFACTS, artifact_key(org_id, repo_id, sha, ARTIFACT_NAME), max_bytes=1 << 26
+    )
+    assert data is not None
+    return GraphSnapshot.loads(data)
+
+
+def test_the_links_stage_joins_a_page_its_route_and_the_table(
+    runtime: Runtime,
+    ids: tuple[uuid.UUID, uuid.UUID, uuid.UUID],
+    github: respx.MockRouter,
+    bare_repo: Any,
+) -> None:
+    """The page's fetch targets the route, the route is handled by its function, which reads
+    the model's table; and the graph artifact the API reads has both layers, under the links'
+    version."""
+    github.get(COMMITS_URL).mock(return_value=httpx.Response(200, json={"sha": bare_repo.fourth}))
+    org_id, repo_id, job_id = ids
+    _run(org_id, repo_id, job_id)
+
+    repo, job = runtime.run(_state(runtime.system_database, repo_id, job_id))
+    assert (job.status, repo.last_indexed_sha) == (JobStatus.SUCCEEDED, bare_repo.fourth)
+    assert job.snapshot_id is not None
+    call = "http_client_call GET /items stack/page.ts:2"
+    assert {
+        edge
+        for edge in runtime.run(_graph(runtime.system_database, job.snapshot_id))
+        if edge[2] in ("issues_request", "targets", "handled_by", "reads", "writes")
+    } == {
+        ("ts stack/page.ts/loadItems().", call, "issues_request"),
+        (call, "api_endpoint GET /items", "targets"),
+        ("api_endpoint GET /items", "py stack/api.py/read_items().", "handled_by"),
+        ("py stack/api.py/read_items().", "table item", "reads"),
+    }
+    details = job.stages["links"]["details"]
+    assert details["linkers"]["routes"]["endpoints"] == 1
+    assert details["linkers"]["urls"]["linked"] == 1
+    assert details["introspected"] is False
+    assert "Tracing is ready" in str(runtime.run(_events(runtime, job_stream(job_id))))
+    artifact = runtime.run(_artifact(runtime, org_id, repo_id, bare_repo.fourth))
+    assert artifact.version == details["version"] != job.stages["graph"]["details"]["version"]
+    assert artifact.node("table item") is not None
 
 
 def test_storage_failing_as_the_graph_is_written_retries_the_stage_instead_of_skipping_it(
@@ -1538,6 +1617,57 @@ def test_storage_failing_as_the_graph_is_written_retries_the_stage_instead_of_sk
     assert job.stages["graph"]["status"] == "done"
     assert job.snapshot_id is not None
     assert runtime.run(_graph(runtime.system_database, job.snapshot_id))
+
+
+def test_storage_failing_as_the_links_are_written_retries_the_stage_instead_of_skipping_it(
+    runtime: Runtime,
+    ids: tuple[uuid.UUID, uuid.UUID, uuid.UUID],
+    github: respx.MockRouter,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Only a linker's failure costs the links: storage failing for a moment as the links'
+    artifact is written (the graph stage's is the first) is retried, and the links are built."""
+    org_id, repo_id, job_id = ids
+    storage = runtime.run(runtime.storage())
+    real = storage.put_bytes
+    writes: list[str] = []
+    stops = [RetryableError("storage went away")]
+
+    async def put_bytes(bucket: Bucket, key: str, data: bytes, **kwargs: Any) -> Any:
+        if key.endswith(ARTIFACT_NAME):
+            writes.append(key)
+            if len(writes) == 2 and stops:
+                raise stops.pop()
+        return await real(bucket, key, data, **kwargs)
+
+    monkeypatch.setattr(storage, "put_bytes", put_bytes)
+    _run(org_id, repo_id, job_id)
+
+    repo, job = runtime.run(_state(runtime.system_database, repo_id, job_id))
+    assert not stops  # it failed once
+    assert (job.status, repo.status) == (JobStatus.SUCCEEDED, RepoStatus.READY)
+    assert job.stages["graph"]["status"] == job.stages["links"]["status"] == "done"
+
+
+def test_a_linker_that_fails_skips_the_links_and_the_index_still_finishes(
+    runtime: Runtime,
+    ids: tuple[uuid.UUID, uuid.UUID, uuid.UUID],
+    github: respx.MockRouter,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    org_id, repo_id, job_id = ids
+
+    def broken(*_: Any, **__: Any) -> None:
+        raise RuntimeError("a linker bug")
+
+    monkeypatch.setattr(links_task, "resolve_links", broken)
+    _run(org_id, repo_id, job_id)
+
+    repo, job = runtime.run(_state(runtime.system_database, repo_id, job_id))
+    assert (job.status, repo.status) == (JobStatus.SUCCEEDED, RepoStatus.READY)
+    assert job.stages["links"]["status"] == "skipped"
+    assert job.stages["links"]["details"]["reason"] == "links_failed"
+    assert job.stages["graph"]["status"] == "done"
 
 
 def test_a_resolver_that_fails_skips_the_graph_and_the_index_still_finishes(

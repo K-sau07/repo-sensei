@@ -1,21 +1,20 @@
 """Running an index job: its stages as a Celery chain, and the stage that finishes it.
 
 ``run_index_job`` turns a queued job into the chain clone → discover → merkle → parse (with
-symbols) → chunks → embeddings → summaries → graph → finalize (links, a later phase, goes
-between graph and finalize). Each stage is its own task (parse and symbols
-share one: the symbols come out of the parse), so a failure retries only that stage. Every
+symbols) → chunks → embeddings → summaries → graph → links → finalize. Each stage is its own
+task (parse and symbols share one: the symbols come out of the parse), so a failure retries only
+that stage. Every
 stage checks the job first: a cancelled or failed job makes the rest of the chain do nothing.
 The stage task ids are kept in Redis so cancelling can revoke the ones still queued.
 
-``finalize_index`` ends the run: stages this phase doesn't have yet are recorded as skipped (so
-are embeddings and summaries when the server has no Voyage or Anthropic key: those stages pass
-themselves over), the
-repository becomes ``ready`` at the indexed commit, and the job succeeds. The chunks of the
-repository's other snapshots are pruned in the same transaction (search serves the indexed
+``finalize_index`` ends the run (embeddings and summaries are recorded as skipped when the
+server has no Voyage or Anthropic key: those stages pass themselves over): the repository
+becomes ``ready`` at the indexed commit, and the job succeeds. The chunks of the repository's
+other snapshots are pruned in the same transaction (search serves the indexed
 commit), with its own rows outside the live generation; its chunks partition is vacuumed after
 (a task of its own). A job that reaches finalize straight from symbols (its chain was sent
 before the chunks stage existed) gets the rest of the chain sent; so does one that reaches it
-before the graph stage (sent before that stage existed).
+before the graph stage or the links stage (sent before that stage existed).
 """
 
 from __future__ import annotations
@@ -45,6 +44,7 @@ from sensei_workers.tasks.discover import discover_files
 from sensei_workers.tasks.embed import embed_snapshot
 from sensei_workers.tasks.graph import build_graph, previous_done
 from sensei_workers.tasks.ingest import IngestTask, clone_snapshot
+from sensei_workers.tasks.links import build_links, graph_over
 from sensei_workers.tasks.maintenance import request_vacuum
 from sensei_workers.tasks.merkle import build_merkle
 from sensei_workers.tasks.parse import parse_snapshot
@@ -102,16 +102,7 @@ def finalize_index(self: IngestTask, *, job_id: str, org_id: str, repo_id: str) 
             ready = _ready_to_finalize(job)
             resuming = job.stage is Stage.FINALIZE
             if not ready and not resuming:
-                stages = job.stages or {}
-                symbols = stages.get("symbols", {})
-                if job.stage is Stage.SYMBOLS and symbols.get("status") == "done":
-                    raise _MissingStageError("chunks")  # its chain has none (see below)
-                if previous_done(job) and not _waits_for_more(job):
-                    raise _MissingStageError("graph")
-                if job.stage is None or STAGE_ORDER.index(job.stage) <= STAGE_ORDER.index(
-                    Stage.GRAPH
-                ):
-                    raise NotYetError("the stages before finalize haven't finished")
+                _require_stages(job)
                 return None
             repo = await scope.db.get(Repo, job.repo_id)
             snapshot = await scope.db.get(Snapshot, job.snapshot_id) if job.snapshot_id else None
@@ -122,7 +113,7 @@ def finalize_index(self: IngestTask, *, job_id: str, org_id: str, repo_id: str) 
             if snapshot is None:
                 raise NotYetError("the job has no snapshot")
             if ready:
-                machine.advance(Stage.FINALIZE)  # later phases' stages: skipped for now
+                machine.advance(Stage.FINALIZE)
             repo.last_indexed_sha = snapshot.commit_sha
             pruned = await prune_chunks(scope.db, repo.id, keep=snapshot.id)
             settle_repo(repo, JobStatus.SUCCEEDED)
@@ -167,6 +158,20 @@ def finalize_index(self: IngestTask, *, job_id: str, org_id: str, repo_id: str) 
     return sha
 
 
+def _require_stages(job: IndexJob) -> None:
+    """Why a job that isn't at finalize can't finish yet: a stage its chain doesn't have
+    (``_MissingStageError``), or one still to run (``NotYetError``). Returns for a job past it."""
+    symbols = (job.stages or {}).get("symbols", {})
+    if job.stage is Stage.SYMBOLS and symbols.get("status") == "done":
+        raise _MissingStageError("chunks")  # its chain has none (see below)
+    if previous_done(job) and not _waits_for_more(job):
+        raise _MissingStageError("graph")
+    if graph_over(job):
+        raise _MissingStageError("links")
+    if job.stage is None or STAGE_ORDER.index(job.stage) <= STAGE_ORDER.index(Stage.LINKS):
+        raise NotYetError("the stages before finalize haven't finished")
+
+
 def _cost_line(cost: Decimal) -> str:
     if cost >= Decimal("0.01"):
         return f" This index cost ${cost:.2f}."
@@ -200,9 +205,9 @@ def _waits_for_more(job: IndexJob) -> bool:
 
 
 def _ready_to_finalize(job: IndexJob) -> bool:
-    """The last stage before finalize is over: the graph, done or skipped."""
+    """The last stage before finalize is over: the links, done or skipped."""
     status = (job.stages or {}).get(job.stage.value if job.stage else "", {}).get("status")
-    return job.stage is Stage.GRAPH and status in {"done", "skipped"}
+    return job.stage is Stage.LINKS and status in {"done", "skipped"}
 
 
 STAGES = (
@@ -214,10 +219,11 @@ STAGES = (
     embed_snapshot,
     summarize_snapshot,
     build_graph,
+    build_links,
     finalize_index,
 )
 # The stages a chain sent before they existed may lack (see _send_missing).
-MISSING_STAGES = {"chunks": chunk_snapshot, "graph": build_graph}
+MISSING_STAGES = {"chunks": chunk_snapshot, "graph": build_graph, "links": build_links}
 
 
 @celery_app.task(

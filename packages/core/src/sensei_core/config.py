@@ -384,6 +384,9 @@ class SandboxSettings(BaseSettings):
     install_timeout_seconds: float = Field(default=600.0, gt=0)
     max_output_bytes: int = Field(default=1024 * 1024, gt=0)  # of stdout, and of stderr
     max_concurrent: int = Field(default=2, ge=1)
+    # The links stage imports a FastAPI app in the sandbox to read its routes (3.8): off, routes
+    # come from static analysis alone (no Docker needed: dev, tests, hosts without it).
+    introspect: bool = False
 
 
 class Settings(BaseSettings):

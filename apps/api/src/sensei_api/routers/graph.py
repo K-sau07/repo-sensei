@@ -146,7 +146,8 @@ def _types(raw: str | None) -> frozenset[EdgeType] | None:
     return frozenset(EdgeType(name) for name in names)
 
 
-async def _limit(request: Request, redis: RedisClient, access: OrgAccessDep) -> None:
+async def limit_graph(request: Request, redis: RedisClient, access: OrgAccessDep) -> None:
+    """The user's graph requests (these and the trace's) within their bucket's per minute."""
     settings: Settings = request.app.state.settings
     bucket = TokenBucket(redis, name="graph", per_minute=settings.api.graph_rate_per_minute)
     wait = await bucket.take(str(access.user.id))
@@ -198,7 +199,7 @@ async def neighbors(
     """What ``symbol`` reaches (``out``: its callees, imports, ...), what reaches it (``in``:
     its callers, ...) or both, nearest first, each node once."""
     wanted = _types(types)
-    await _limit(request, redis, access)
+    await limit_graph(request, redis, access)
     graph = await _graph(request, response, repo, db, ref)
     root = _known(graph, symbol)
     hops, truncated = await asyncio.to_thread(
@@ -235,7 +236,7 @@ async def path(
     """The surest path from ``from`` to ``to`` along the edges (the highest product of
     confidences)."""
     wanted = _types(types)
-    await _limit(request, redis, access)
+    await limit_graph(request, redis, access)
     graph = await _graph(request, response, repo, db, ref)
     _known(graph, source)
     _known(graph, target)
