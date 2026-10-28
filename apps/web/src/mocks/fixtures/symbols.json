@@ -2353,6 +2353,326 @@
       "signature": "def test_delete_item_not_enough_permissions(client: TestClient, normal_user_token_headers: dict[str, str], db: Session) -> None"
     },
     {
+      "symbol_key": "ts frontend/src/client/sdk.gen.ts/",
+      "name": "sdk.gen",
+      "qualified_name": "frontend.src.client.sdk.gen",
+      "kind": "module",
+      "path": "frontend/src/client/sdk.gen.ts",
+      "start_line": 1,
+      "end_line": 384,
+      "signature": null
+    },
+    {
+      "symbol_key": "ts frontend/src/client/sdk.gen.ts/Options#",
+      "name": "Options",
+      "qualified_name": "Options",
+      "kind": "class",
+      "path": "frontend/src/client/sdk.gen.ts",
+      "start_line": 7,
+      "end_line": 19,
+      "signature": "type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {…"
+    },
+    {
+      "symbol_key": "ts frontend/src/client/sdk.gen.ts/Options#client.",
+      "name": "client",
+      "qualified_name": "Options.client",
+      "kind": "variable",
+      "path": "frontend/src/client/sdk.gen.ts",
+      "start_line": 13,
+      "end_line": 13,
+      "signature": "client?: Client"
+    },
+    {
+      "symbol_key": "ts frontend/src/client/sdk.gen.ts/Options#meta.",
+      "name": "meta",
+      "qualified_name": "Options.meta",
+      "kind": "variable",
+      "path": "frontend/src/client/sdk.gen.ts",
+      "start_line": 18,
+      "end_line": 18,
+      "signature": "meta?: Record<string, unknown>"
+    },
+    {
+      "symbol_key": "ts frontend/src/client/sdk.gen.ts/LoginService#",
+      "name": "LoginService",
+      "qualified_name": "LoginService",
+      "kind": "class",
+      "path": "frontend/src/client/sdk.gen.ts",
+      "start_line": 21,
+      "end_line": 97,
+      "signature": "class LoginService"
+    },
+    {
+      "symbol_key": "ts frontend/src/client/sdk.gen.ts/LoginService#loginAccessToken().",
+      "name": "loginAccessToken",
+      "qualified_name": "LoginService.loginAccessToken",
+      "kind": "method",
+      "path": "frontend/src/client/sdk.gen.ts",
+      "start_line": 27,
+      "end_line": 38,
+      "signature": "public static loginAccessToken<ThrowOnError extends boolean = true>(options: Options<loginLoginAccessTokenData, ThrowOnError>)"
+    },
+    {
+      "symbol_key": "ts frontend/src/client/sdk.gen.ts/LoginService#testToken().",
+      "name": "testToken",
+      "qualified_name": "LoginService.testToken",
+      "kind": "method",
+      "path": "frontend/src/client/sdk.gen.ts",
+      "start_line": 45,
+      "end_line": 52,
+      "signature": "public static testToken<ThrowOnError extends boolean = true>(options?: Options<loginTestTokenData, ThrowOnError>)"
+    },
+    {
+      "symbol_key": "ts frontend/src/client/sdk.gen.ts/LoginService#recoverPassword().",
+      "name": "recoverPassword",
+      "qualified_name": "LoginService.recoverPassword",
+      "kind": "method",
+      "path": "frontend/src/client/sdk.gen.ts",
+      "start_line": 59,
+      "end_line": 65,
+      "signature": "public static recoverPassword<ThrowOnError extends boolean = true>(options: Options<loginRecoverPasswordData, ThrowOnError>)"
+    },
+    {
+      "symbol_key": "ts frontend/src/client/sdk.gen.ts/LoginService#resetPassword().",
+      "name": "resetPassword",
+      "qualified_name": "LoginService.resetPassword",
+      "kind": "method",
+      "path": "frontend/src/client/sdk.gen.ts",
+      "start_line": 72,
+      "end_line": 82,
+      "signature": "public static resetPassword<ThrowOnError extends boolean = true>(options: Options<loginResetPasswordData, ThrowOnError>)"
+    },
+    {
+      "symbol_key": "ts frontend/src/client/sdk.gen.ts/LoginService#recoverPasswordHtmlContent().",
+      "name": "recoverPasswordHtmlContent",
+      "qualified_name": "LoginService.recoverPasswordHtmlContent",
+      "kind": "method",
+      "path": "frontend/src/client/sdk.gen.ts",
+      "start_line": 89,
+      "end_line": 96,
+      "signature": "public static recoverPasswordHtmlContent<ThrowOnError extends boolean = true>(options: Options<loginRecoverPasswordHtmlContentData, ThrowOnError>)"
+    },
+    {
+      "symbol_key": "ts frontend/src/client/sdk.gen.ts/UsersService#",
+      "name": "UsersService",
+      "qualified_name": "UsersService",
+      "kind": "class",
+      "path": "frontend/src/client/sdk.gen.ts",
+      "start_line": 99,
+      "end_line": 258,
+      "signature": "class UsersService"
+    },
+    {
+      "symbol_key": "ts frontend/src/client/sdk.gen.ts/UsersService#readUsers().",
+      "name": "readUsers",
+      "qualified_name": "UsersService.readUsers",
+      "kind": "method",
+      "path": "frontend/src/client/sdk.gen.ts",
+      "start_line": 105,
+      "end_line": 112,
+      "signature": "public static readUsers<ThrowOnError extends boolean = true>(options?: Options<usersReadUsersData, ThrowOnError>)"
+    },
+    {
+      "symbol_key": "ts frontend/src/client/sdk.gen.ts/UsersService#createUser().",
+      "name": "createUser",
+      "qualified_name": "UsersService.createUser",
+      "kind": "method",
+      "path": "frontend/src/client/sdk.gen.ts",
+      "start_line": 119,
+      "end_line": 130,
+      "signature": "public static createUser<ThrowOnError extends boolean = true>(options: Options<usersCreateUserData, ThrowOnError>)"
+    },
+    {
+      "symbol_key": "ts frontend/src/client/sdk.gen.ts/UsersService#deleteUserMe().",
+      "name": "deleteUserMe",
+      "qualified_name": "UsersService.deleteUserMe",
+      "kind": "method",
+      "path": "frontend/src/client/sdk.gen.ts",
+      "start_line": 137,
+      "end_line": 144,
+      "signature": "public static deleteUserMe<ThrowOnError extends boolean = true>(options?: Options<usersDeleteUserMeData, ThrowOnError>)"
+    },
+    {
+      "symbol_key": "ts frontend/src/client/sdk.gen.ts/UsersService#readUserMe().",
+      "name": "readUserMe",
+      "qualified_name": "UsersService.readUserMe",
+      "kind": "method",
+      "path": "frontend/src/client/sdk.gen.ts",
+      "start_line": 151,
+      "end_line": 158,
+      "signature": "public static readUserMe<ThrowOnError extends boolean = true>(options?: Options<usersReadUserMeData, ThrowOnError>)"
+    },
+    {
+      "symbol_key": "ts frontend/src/client/sdk.gen.ts/UsersService#updateUserMe().",
+      "name": "updateUserMe",
+      "qualified_name": "UsersService.updateUserMe",
+      "kind": "method",
+      "path": "frontend/src/client/sdk.gen.ts",
+      "start_line": 165,
+      "end_line": 176,
+      "signature": "public static updateUserMe<ThrowOnError extends boolean = true>(options: Options<usersUpdateUserMeData, ThrowOnError>)"
+    },
+    {
+      "symbol_key": "ts frontend/src/client/sdk.gen.ts/UsersService#updatePasswordMe().",
+      "name": "updatePasswordMe",
+      "qualified_name": "UsersService.updatePasswordMe",
+      "kind": "method",
+      "path": "frontend/src/client/sdk.gen.ts",
+      "start_line": 183,
+      "end_line": 194,
+      "signature": "public static updatePasswordMe<ThrowOnError extends boolean = true>(options: Options<usersUpdatePasswordMeData, ThrowOnError>)"
+    },
+    {
+      "symbol_key": "ts frontend/src/client/sdk.gen.ts/UsersService#registerUser().",
+      "name": "registerUser",
+      "qualified_name": "UsersService.registerUser",
+      "kind": "method",
+      "path": "frontend/src/client/sdk.gen.ts",
+      "start_line": 201,
+      "end_line": 211,
+      "signature": "public static registerUser<ThrowOnError extends boolean = true>(options: Options<usersRegisterUserData, ThrowOnError>)"
+    },
+    {
+      "symbol_key": "ts frontend/src/client/sdk.gen.ts/UsersService#deleteUser().",
+      "name": "deleteUser",
+      "qualified_name": "UsersService.deleteUser",
+      "kind": "method",
+      "path": "frontend/src/client/sdk.gen.ts",
+      "start_line": 218,
+      "end_line": 225,
+      "signature": "public static deleteUser<ThrowOnError extends boolean = true>(options: Options<usersDeleteUserData, ThrowOnError>)"
+    },
+    {
+      "symbol_key": "ts frontend/src/client/sdk.gen.ts/UsersService#readUserById().",
+      "name": "readUserById",
+      "qualified_name": "UsersService.readUserById",
+      "kind": "method",
+      "path": "frontend/src/client/sdk.gen.ts",
+      "start_line": 232,
+      "end_line": 239,
+      "signature": "public static readUserById<ThrowOnError extends boolean = true>(options: Options<usersReadUserByIdData, ThrowOnError>)"
+    },
+    {
+      "symbol_key": "ts frontend/src/client/sdk.gen.ts/UsersService#updateUser().",
+      "name": "updateUser",
+      "qualified_name": "UsersService.updateUser",
+      "kind": "method",
+      "path": "frontend/src/client/sdk.gen.ts",
+      "start_line": 246,
+      "end_line": 257,
+      "signature": "public static updateUser<ThrowOnError extends boolean = true>(options: Options<usersUpdateUserData, ThrowOnError>)"
+    },
+    {
+      "symbol_key": "ts frontend/src/client/sdk.gen.ts/UtilsService#",
+      "name": "UtilsService",
+      "qualified_name": "UtilsService",
+      "kind": "class",
+      "path": "frontend/src/client/sdk.gen.ts",
+      "start_line": 260,
+      "end_line": 285,
+      "signature": "class UtilsService"
+    },
+    {
+      "symbol_key": "ts frontend/src/client/sdk.gen.ts/UtilsService#testEmail().",
+      "name": "testEmail",
+      "qualified_name": "UtilsService.testEmail",
+      "kind": "method",
+      "path": "frontend/src/client/sdk.gen.ts",
+      "start_line": 266,
+      "end_line": 273,
+      "signature": "public static testEmail<ThrowOnError extends boolean = true>(options: Options<utilsTestEmailData, ThrowOnError>)"
+    },
+    {
+      "symbol_key": "ts frontend/src/client/sdk.gen.ts/UtilsService#healthCheck().",
+      "name": "healthCheck",
+      "qualified_name": "UtilsService.healthCheck",
+      "kind": "method",
+      "path": "frontend/src/client/sdk.gen.ts",
+      "start_line": 278,
+      "end_line": 284,
+      "signature": "public static healthCheck<ThrowOnError extends boolean = true>(options?: Options<utilsHealthCheckData, ThrowOnError>)"
+    },
+    {
+      "symbol_key": "ts frontend/src/client/sdk.gen.ts/ItemsService#",
+      "name": "ItemsService",
+      "qualified_name": "ItemsService",
+      "kind": "class",
+      "path": "frontend/src/client/sdk.gen.ts",
+      "start_line": 287,
+      "end_line": 365,
+      "signature": "class ItemsService"
+    },
+    {
+      "symbol_key": "ts frontend/src/client/sdk.gen.ts/ItemsService#readItems().",
+      "name": "readItems",
+      "qualified_name": "ItemsService.readItems",
+      "kind": "method",
+      "path": "frontend/src/client/sdk.gen.ts",
+      "start_line": 293,
+      "end_line": 300,
+      "signature": "public static readItems<ThrowOnError extends boolean = true>(options?: Options<itemsReadItemsData, ThrowOnError>)"
+    },
+    {
+      "symbol_key": "ts frontend/src/client/sdk.gen.ts/ItemsService#createItem().",
+      "name": "createItem",
+      "qualified_name": "ItemsService.createItem",
+      "kind": "method",
+      "path": "frontend/src/client/sdk.gen.ts",
+      "start_line": 307,
+      "end_line": 318,
+      "signature": "public static createItem<ThrowOnError extends boolean = true>(options: Options<itemsCreateItemData, ThrowOnError>)"
+    },
+    {
+      "symbol_key": "ts frontend/src/client/sdk.gen.ts/ItemsService#deleteItem().",
+      "name": "deleteItem",
+      "qualified_name": "ItemsService.deleteItem",
+      "kind": "method",
+      "path": "frontend/src/client/sdk.gen.ts",
+      "start_line": 325,
+      "end_line": 332,
+      "signature": "public static deleteItem<ThrowOnError extends boolean = true>(options: Options<itemsDeleteItemData, ThrowOnError>)"
+    },
+    {
+      "symbol_key": "ts frontend/src/client/sdk.gen.ts/ItemsService#readItem().",
+      "name": "readItem",
+      "qualified_name": "ItemsService.readItem",
+      "kind": "method",
+      "path": "frontend/src/client/sdk.gen.ts",
+      "start_line": 339,
+      "end_line": 346,
+      "signature": "public static readItem<ThrowOnError extends boolean = true>(options: Options<itemsReadItemData, ThrowOnError>)"
+    },
+    {
+      "symbol_key": "ts frontend/src/client/sdk.gen.ts/ItemsService#updateItem().",
+      "name": "updateItem",
+      "qualified_name": "ItemsService.updateItem",
+      "kind": "method",
+      "path": "frontend/src/client/sdk.gen.ts",
+      "start_line": 353,
+      "end_line": 364,
+      "signature": "public static updateItem<ThrowOnError extends boolean = true>(options: Options<itemsUpdateItemData, ThrowOnError>)"
+    },
+    {
+      "symbol_key": "ts frontend/src/client/sdk.gen.ts/PrivateService#",
+      "name": "PrivateService",
+      "qualified_name": "PrivateService",
+      "kind": "class",
+      "path": "frontend/src/client/sdk.gen.ts",
+      "start_line": 367,
+      "end_line": 384,
+      "signature": "class PrivateService"
+    },
+    {
+      "symbol_key": "ts frontend/src/client/sdk.gen.ts/PrivateService#createUser().",
+      "name": "createUser",
+      "qualified_name": "PrivateService.createUser",
+      "kind": "method",
+      "path": "frontend/src/client/sdk.gen.ts",
+      "start_line": 373,
+      "end_line": 383,
+      "signature": "public static createUser<ThrowOnError extends boolean = true>(options: Options<privateCreateUserData, ThrowOnError>)"
+    },
+    {
       "symbol_key": "ts frontend/src/client/types.gen.ts/",
       "name": "types.gen",
       "qualified_name": "frontend.src.client.types.gen",

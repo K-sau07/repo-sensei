@@ -48,22 +48,37 @@ const SEARCH_STAGES: { stage: Stage; unlocks: IndexJob["features"] }[] = [
   { stage: "chunks", unlocks: ["keyword_search"] },
 ];
 
-function withSearchStages(events: Recorded[]): Recorded[] {
+/**
+ * It serves the code graph (3.14) and traces (3.15) too, so the graph and links stages are played
+ * the same way, just before finalize (where the pipeline runs them), unlocking the trace: the other
+ * pages they unlock (the graph, diagrams, fixes, changes) aren't built.
+ */
+const GRAPH_STAGES: { stage: Stage; unlocks: IndexJob["features"] }[] = [
+  { stage: "graph", unlocks: [] },
+  { stage: "links", unlocks: ["trace"] },
+];
+
+const played = (stages: typeof SEARCH_STAGES, atMs: number, progress: unknown): Recorded[] =>
+  stages.flatMap(({ stage, unlocks }) => [
+    { type: "stage_started", stage, progress, at_ms: atMs },
+    { type: "stage_done", stage, progress, at_ms: atMs },
+    ...(unlocks.length > 0 ? [{ type: "unlock", stage, unlocks, at_ms: atMs }] : []),
+  ]);
+
+function withPlayedStages(events: Recorded[]): Recorded[] {
   return events.flatMap((event) => {
-    if (event.type !== "stage_done" || event.stage !== "merkle") return [event];
     const { at_ms: atMs, progress } = event;
-    return [
-      event,
-      ...SEARCH_STAGES.flatMap(({ stage, unlocks }) => [
-        { type: "stage_started", stage, progress, at_ms: atMs },
-        { type: "stage_done", stage, progress, at_ms: atMs },
-        { type: "unlock", stage, unlocks, at_ms: atMs },
-      ]),
-    ];
+    if (event.type === "stage_done" && event.stage === "merkle") {
+      return [event, ...played(SEARCH_STAGES, atMs, progress)];
+    }
+    if (event.type === "stage_started" && event.stage === "finalize") {
+      return [...played(GRAPH_STAGES, atMs, progress), event];
+    }
+    return [event];
   });
 }
 
-const RECORDED = withSearchStages(recording.events as unknown as Recorded[]);
+const RECORDED = withPlayedStages(recording.events as unknown as Recorded[]);
 export const RUN_DETAILS = recording.stages as unknown as Record<string, Record<string, unknown>>;
 /** The run's constellation, complete (`GET …/constellation` from the start). */
 export const SKY = sky as unknown as ConstellationPage;

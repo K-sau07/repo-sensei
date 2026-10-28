@@ -77,6 +77,12 @@ export const queryKeys = {
     symbol: string,
     query: object,
   ) => ["code", "neighbors", slug, repo, ref ?? version, symbol, query] as const,
+  /** A trace from an entry (a node's key, a route, a file or a name), at the snapshot as above. */
+  trace: (slug: string, repo: string, ref: string | null, version: string | null, entry: string) =>
+    ["trace", slug, repo, ref ?? version, entry] as const,
+  /** The trace page's entry picker: the symbols named like `q`. */
+  traceEntries: (slug: string, repo: string, ref: string | null, q: string) =>
+    ["trace-entries", slug, repo, ref, q] as const,
   /** A search's first page, and one lane's further pages from that page's cursor (POST bodies,
    * so not `$api` queries). */
   search: (slug: string, repo: string, body: object) => ["search", slug, repo, body] as const,

@@ -15,6 +15,7 @@ import {
   reach,
   stagger,
   syntheticSky,
+  traceStars,
 } from "./constellation";
 
 const page = (fields: Partial<ConstellationPage>): ConstellationPage => ({
@@ -145,6 +146,21 @@ describe("links and made-up skies", () => {
     expect(files).toBe(50_000);
     expect(sky.points.every((p) => sky.dirs[p.dir_cluster]?.files)).toBe(true);
     expect(syntheticSky(100, 3)).toEqual(syntheticSky(100, 3));
+  });
+});
+
+describe("traceStars", () => {
+  it("is the stars of a trace's files in its order, each once, without files it lacks", () => {
+    const sky = syntheticSky(30, 2);
+    const [a, b, c] = sky.points;
+    if (!a || !b || !c) throw new Error("no stars");
+    const at = (path: string) => sky.points.findIndex((p) => p.path === path);
+    expect(traceStars(sky, [c.path, "nope.ts", a.path, c.path, b.path])).toEqual([
+      at(c.path),
+      at(a.path),
+      at(b.path),
+    ]);
+    expect(traceStars(sky, [])).toEqual([]);
   });
 });
 

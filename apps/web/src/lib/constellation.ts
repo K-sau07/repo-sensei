@@ -124,6 +124,18 @@ export function reach(sky: Sky): number {
   return far;
 }
 
+/** The stars of a trace's files (`files` in its order), each once; a file without a star (not
+ * in this sky) is left out. */
+export function traceStars(sky: Sky, files: readonly string[]): number[] {
+  const at = new Map(sky.points.map((point, i) => [point.path, i]));
+  const stars: number[] = [];
+  for (const file of files) {
+    const star = at.get(file);
+    if (star !== undefined && !stars.includes(star)) stars.push(star);
+  }
+  return stars;
+}
+
 // ------------------------------------------------------------------ the static view
 
 /** The angle the static (SVG) view looks from, the same as the 3D view's starting camera. */

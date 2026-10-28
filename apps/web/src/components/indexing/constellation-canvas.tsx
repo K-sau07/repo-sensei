@@ -3,7 +3,7 @@
 /**
  * The constellation in WebGL (React Three Fiber), loaded only in the browser (see
  * `constellation.tsx`): one `InstancedMesh` holds every star, colored by layer; one
- * `LineSegments` holds the directory links.
+ * `LineSegments` holds the directory links; one `Line` a trace's code edges (its stars lit).
  *
  * With live motion, a new star scales in over `--dur-slow` and glows in `--signal`, fading to
  * its layer's color over about 1.2 s; the glow is brighter than white, so it alone passes the
@@ -57,7 +57,17 @@ interface StarsProps extends Omit<SceneProps, "label" | "onHover" | "onSelect"> 
   register: (picker: Picker | null) => void;
 }
 
-function Stars({ sky, colors, motion, drift, active, highlight, onFrame, register }: StarsProps) {
+function Stars({
+  sky,
+  colors,
+  motion,
+  drift,
+  active,
+  highlight,
+  trace,
+  onFrame,
+  register,
+}: StarsProps) {
   const invalidate = useThree((state) => state.invalidate);
   const camera = useThree((state) => state.camera);
   const spin = useRef<THREE.Group>(null);
@@ -145,6 +155,30 @@ function Stars({ sky, colors, motion, drift, active, highlight, onFrame, registe
 
   const scratch = useMemo(() => ({ matrix: new THREE.Matrix4(), color: new THREE.Color() }), []);
 
+  // A trace's stars are lit; its code edges join them, in its order, in the signal color.
+  const traced = useMemo(() => new Set(trace), [trace]);
+  const traceLine = useMemo(() => {
+    const positions = trace.flatMap((i) => {
+      const point = sky.points[i];
+      return point ? [point.x, point.y, point.z] : [];
+    });
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute("position", new THREE.BufferAttribute(new Float32Array(positions), 3));
+    const line = new THREE.Line(
+      geo,
+      new THREE.LineBasicMaterial({ color: linear(colors.signal), toneMapped: false }),
+    );
+    line.visible = positions.length >= 6;
+    return line;
+  }, [trace, sky.points, colors.signal]);
+  useEffect(
+    () => () => {
+      traceLine.geometry.dispose();
+      (traceLine.material as THREE.Material).dispose();
+    },
+    [traceLine],
+  );
+
   /** Star `i`'s matrix and color `now` (ms); true while it is still changing. */
   const paint = (i: number, now: number): boolean => {
     const target = mesh.current;
@@ -154,7 +188,8 @@ function Stars({ sky, colors, motion, drift, active, highlight, onFrame, registe
     const age = live ? now - (s.appear[i] ?? 0) : Infinity;
     const grow = live ? easeOut(clamp01(age / APPEAR_MS)) : 1;
     const glow = live ? 1 - clamp01(age / GLOW_MS) : 0;
-    const scale = (s.scales[i] ?? 1) * STAR * grow * (highlight === point.dir_cluster ? 1.8 : 1);
+    const lit = highlight === point.dir_cluster || traced.has(i);
+    const scale = (s.scales[i] ?? 1) * STAR * grow * (lit ? 1.8 : 1);
     scratch.matrix.makeScale(scale, scale, scale);
     scratch.matrix.setPosition(
       s.positions[3 * i] ?? 0,
@@ -162,7 +197,7 @@ function Stars({ sky, colors, motion, drift, active, highlight, onFrame, registe
       s.positions[3 * i + 2] ?? 0,
     );
     target.setMatrixAt(i, scratch.matrix);
-    const base = highlight === point.dir_cluster ? palette.lit : palette.layers[point.layer];
+    const base = lit ? palette.lit : palette.layers[point.layer];
     scratch.color.copy(base).lerp(palette.glow, glow);
     target.setColorAt(i, scratch.color);
     return age < GLOW_MS;
@@ -254,7 +289,7 @@ function Stars({ sky, colors, motion, drift, active, highlight, onFrame, registe
     state.current.linksDrawing = paintLinks(now);
     invalidate();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [highlight, palette, live]);
+  }, [highlight, traced, palette, live]);
 
   useEffect(() => {
     if (active) invalidate(); // back on screen: draw (and carry on moving)
@@ -340,6 +375,7 @@ function Stars({ sky, colors, motion, drift, active, highlight, onFrame, registe
     <group rotation={[VIEW.pitch, 0, 0]} scale={[scale, scale, scale]}>
       <group ref={spin} rotation={[0, VIEW.yaw, 0]}>
         <lineSegments ref={links} geometry={linkGeometry} material={linkMaterial} />
+        <primitive object={traceLine} />
         {/* A new generation (discovery started over) gets a new mesh, so the old one's GPU
             buffers are freed with it instead of replaced on it. */}
         <instancedMesh

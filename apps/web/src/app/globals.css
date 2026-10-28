@@ -123,6 +123,31 @@
   }
 }
 
+/* The Trace Beam (components/trace/trace-beam.tsx): its path draws in behind a pulse that runs
+ * along it once. Paths are measured as 1 (pathLength), so these fit any trace. */
+@keyframes trace-beam-draw {
+  from {
+    stroke-dashoffset: 1;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+@keyframes trace-beam-pulse {
+  0% {
+    stroke-dashoffset: 0.12;
+    opacity: 1;
+  }
+  80% {
+    opacity: 1;
+  }
+  100% {
+    stroke-dashoffset: -1;
+    opacity: 0;
+  }
+}
+
 /* Glass is reserved for the command palette and floating canvas toolbars. */
 @utility glass {
   background-color: color-mix(in oklch, var(--surface-2) 80%, transparent);

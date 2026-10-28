@@ -4,7 +4,8 @@
  * The constellation without WebGL: a static 2D scatter, the 3D layout seen from the 3D view's
  * starting angle. Each layer is drawn as a few `<path>`s of zero-length round-capped segments
  * (one per star size), so tens of thousands of stars stay a handful of elements. Directory links
- * are one path. The pointer picks the nearest star, as in the 3D view.
+ * are one path. The pointer picks the nearest star, as in the 3D view. A trace's stars are lit
+ * and joined, in its order, by one path of its code edges.
  */
 import { useMemo, useRef } from "react";
 
@@ -46,7 +47,7 @@ export function litDirs(sky: SceneProps["sky"]): Set<number> {
   return lit;
 }
 
-export function ConstellationSvg({ sky, highlight, label, onHover, onSelect }: SceneProps) {
+export function ConstellationSvg({ sky, highlight, trace, label, onHover, onSelect }: SceneProps) {
   const svg = useRef<SVGSVGElement>(null);
   const far = useMemo(() => reach(sky), [sky]);
   // Scaled to fill the view, like the 3D one.
@@ -100,6 +101,18 @@ export function ConstellationSvg({ sky, highlight, label, onHover, onSelect }: S
       )
       .join("");
   }, [flat, highlight, sky.points]);
+
+  // The trace: its edges star to star, and its stars.
+  const traced = useMemo(() => {
+    const spots = trace.flatMap((i) => {
+      const spot = flat[i];
+      return spot ? [`${String(r4(spot[0]))} ${String(r4(spot[1]))}`] : [];
+    });
+    return {
+      edges: spots.length > 1 ? `M${spots.join("L")}` : "",
+      stars: spots.map((spot) => `M${spot}h0`).join(""),
+    };
+  }, [flat, trace]);
 
   const pick = (event: { clientX: number; clientY: number }): Hit | null => {
     const box = svg.current?.getBoundingClientRect();
@@ -169,6 +182,27 @@ export function ConstellationSvg({ sky, highlight, label, onHover, onSelect }: S
             />
           ) : null;
         }),
+      )}
+      {traced.edges && (
+        <path
+          d={traced.edges}
+          fill="none"
+          stroke="var(--signal)"
+          strokeOpacity={0.8}
+          strokeWidth={0.006}
+          strokeLinejoin="round"
+          data-trace="edges"
+        />
+      )}
+      {traced.stars && (
+        <path
+          d={traced.stars}
+          fill="none"
+          stroke="var(--signal)"
+          strokeWidth={DOT * 2.4}
+          strokeLinecap="round"
+          data-trace="stars"
+        />
       )}
       {lit && (
         <path

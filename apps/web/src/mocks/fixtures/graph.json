@@ -5583,6 +5583,390 @@
       "docstring": null
     },
     {
+      "symbol_key": "ts frontend/src/client/sdk.gen.ts/",
+      "kind": "module",
+      "name": "sdk.gen",
+      "qualified_name": "frontend.src.client.sdk.gen",
+      "path": "frontend/src/client/sdk.gen.ts",
+      "start_line": 1,
+      "end_line": 384,
+      "lang": "typescript",
+      "lane": "ui",
+      "docstring": null
+    },
+    {
+      "symbol_key": "ts frontend/src/client/sdk.gen.ts/ItemsService#",
+      "kind": "class",
+      "name": "ItemsService",
+      "qualified_name": "ItemsService",
+      "path": "frontend/src/client/sdk.gen.ts",
+      "start_line": 287,
+      "end_line": 365,
+      "lang": "typescript",
+      "lane": "ui",
+      "docstring": null
+    },
+    {
+      "symbol_key": "ts frontend/src/client/sdk.gen.ts/ItemsService#createItem().",
+      "kind": "method",
+      "name": "createItem",
+      "qualified_name": "ItemsService.createItem",
+      "path": "frontend/src/client/sdk.gen.ts",
+      "start_line": 307,
+      "end_line": 318,
+      "lang": "typescript",
+      "lane": "ui",
+      "docstring": "Create Item\n\nCreate new item."
+    },
+    {
+      "symbol_key": "ts frontend/src/client/sdk.gen.ts/ItemsService#deleteItem().",
+      "kind": "method",
+      "name": "deleteItem",
+      "qualified_name": "ItemsService.deleteItem",
+      "path": "frontend/src/client/sdk.gen.ts",
+      "start_line": 325,
+      "end_line": 332,
+      "lang": "typescript",
+      "lane": "ui",
+      "docstring": "Delete Item\n\nDelete an item."
+    },
+    {
+      "symbol_key": "ts frontend/src/client/sdk.gen.ts/ItemsService#readItem().",
+      "kind": "method",
+      "name": "readItem",
+      "qualified_name": "ItemsService.readItem",
+      "path": "frontend/src/client/sdk.gen.ts",
+      "start_line": 339,
+      "end_line": 346,
+      "lang": "typescript",
+      "lane": "ui",
+      "docstring": "Read Item\n\nGet item by ID."
+    },
+    {
+      "symbol_key": "ts frontend/src/client/sdk.gen.ts/ItemsService#readItems().",
+      "kind": "method",
+      "name": "readItems",
+      "qualified_name": "ItemsService.readItems",
+      "path": "frontend/src/client/sdk.gen.ts",
+      "start_line": 293,
+      "end_line": 300,
+      "lang": "typescript",
+      "lane": "ui",
+      "docstring": "Read Items\n\nRetrieve items."
+    },
+    {
+      "symbol_key": "ts frontend/src/client/sdk.gen.ts/ItemsService#updateItem().",
+      "kind": "method",
+      "name": "updateItem",
+      "qualified_name": "ItemsService.updateItem",
+      "path": "frontend/src/client/sdk.gen.ts",
+      "start_line": 353,
+      "end_line": 364,
+      "lang": "typescript",
+      "lane": "ui",
+      "docstring": "Update Item\n\nUpdate an item."
+    },
+    {
+      "symbol_key": "ts frontend/src/client/sdk.gen.ts/LoginService#",
+      "kind": "class",
+      "name": "LoginService",
+      "qualified_name": "LoginService",
+      "path": "frontend/src/client/sdk.gen.ts",
+      "start_line": 21,
+      "end_line": 97,
+      "lang": "typescript",
+      "lane": "ui",
+      "docstring": null
+    },
+    {
+      "symbol_key": "ts frontend/src/client/sdk.gen.ts/LoginService#loginAccessToken().",
+      "kind": "method",
+      "name": "loginAccessToken",
+      "qualified_name": "LoginService.loginAccessToken",
+      "path": "frontend/src/client/sdk.gen.ts",
+      "start_line": 27,
+      "end_line": 38,
+      "lang": "typescript",
+      "lane": "ui",
+      "docstring": "Login Access Token\n\nOAuth2 compatible token login, get an access token for future requests"
+    },
+    {
+      "symbol_key": "ts frontend/src/client/sdk.gen.ts/LoginService#recoverPassword().",
+      "kind": "method",
+      "name": "recoverPassword",
+      "qualified_name": "LoginService.recoverPassword",
+      "path": "frontend/src/client/sdk.gen.ts",
+      "start_line": 59,
+      "end_line": 65,
+      "lang": "typescript",
+      "lane": "ui",
+      "docstring": "Recover Password\n\nPassword Recovery"
+    },
+    {
+      "symbol_key": "ts frontend/src/client/sdk.gen.ts/LoginService#recoverPasswordHtmlContent().",
+      "kind": "method",
+      "name": "recoverPasswordHtmlContent",
+      "qualified_name": "LoginService.recoverPasswordHtmlContent",
+      "path": "frontend/src/client/sdk.gen.ts",
+      "start_line": 89,
+      "end_line": 96,
+      "lang": "typescript",
+      "lane": "ui",
+      "docstring": "Recover Password Html Content\n\nHTML Content for Password Recovery"
+    },
+    {
+      "symbol_key": "ts frontend/src/client/sdk.gen.ts/LoginService#resetPassword().",
+      "kind": "method",
+      "name": "resetPassword",
+      "qualified_name": "LoginService.resetPassword",
+      "path": "frontend/src/client/sdk.gen.ts",
+      "start_line": 72,
+      "end_line": 82,
+      "lang": "typescript",
+      "lane": "ui",
+      "docstring": "Reset Password\n\nReset password"
+    },
+    {
+      "symbol_key": "ts frontend/src/client/sdk.gen.ts/LoginService#testToken().",
+      "kind": "method",
+      "name": "testToken",
+      "qualified_name": "LoginService.testToken",
+      "path": "frontend/src/client/sdk.gen.ts",
+      "start_line": 45,
+      "end_line": 52,
+      "lang": "typescript",
+      "lane": "ui",
+      "docstring": "Test Token\n\nTest access token"
+    },
+    {
+      "symbol_key": "ts frontend/src/client/sdk.gen.ts/Options#",
+      "kind": "class",
+      "name": "Options",
+      "qualified_name": "Options",
+      "path": "frontend/src/client/sdk.gen.ts",
+      "start_line": 7,
+      "end_line": 19,
+      "lang": "typescript",
+      "lane": "ui",
+      "docstring": null
+    },
+    {
+      "symbol_key": "ts frontend/src/client/sdk.gen.ts/Options#client.",
+      "kind": "variable",
+      "name": "client",
+      "qualified_name": "Options.client",
+      "path": "frontend/src/client/sdk.gen.ts",
+      "start_line": 13,
+      "end_line": 13,
+      "lang": "typescript",
+      "lane": "ui",
+      "docstring": "You can provide a client instance returned by `createClient()` instead of\nindividual options. This might be also useful if you want to implement a\ncustom client."
+    },
+    {
+      "symbol_key": "ts frontend/src/client/sdk.gen.ts/Options#meta.",
+      "kind": "variable",
+      "name": "meta",
+      "qualified_name": "Options.meta",
+      "path": "frontend/src/client/sdk.gen.ts",
+      "start_line": 18,
+      "end_line": 18,
+      "lang": "typescript",
+      "lane": "ui",
+      "docstring": "You can pass arbitrary values through the `meta` object. This can be\nused to access values that aren't defined as part of the SDK function."
+    },
+    {
+      "symbol_key": "ts frontend/src/client/sdk.gen.ts/PrivateService#",
+      "kind": "class",
+      "name": "PrivateService",
+      "qualified_name": "PrivateService",
+      "path": "frontend/src/client/sdk.gen.ts",
+      "start_line": 367,
+      "end_line": 384,
+      "lang": "typescript",
+      "lane": "ui",
+      "docstring": null
+    },
+    {
+      "symbol_key": "ts frontend/src/client/sdk.gen.ts/PrivateService#createUser().",
+      "kind": "method",
+      "name": "createUser",
+      "qualified_name": "PrivateService.createUser",
+      "path": "frontend/src/client/sdk.gen.ts",
+      "start_line": 373,
+      "end_line": 383,
+      "lang": "typescript",
+      "lane": "ui",
+      "docstring": "Create User\n\nCreate a new user."
+    },
+    {
+      "symbol_key": "ts frontend/src/client/sdk.gen.ts/UsersService#",
+      "kind": "class",
+      "name": "UsersService",
+      "qualified_name": "UsersService",
+      "path": "frontend/src/client/sdk.gen.ts",
+      "start_line": 99,
+      "end_line": 258,
+      "lang": "typescript",
+      "lane": "ui",
+      "docstring": null
+    },
+    {
+      "symbol_key": "ts frontend/src/client/sdk.gen.ts/UsersService#createUser().",
+      "kind": "method",
+      "name": "createUser",
+      "qualified_name": "UsersService.createUser",
+      "path": "frontend/src/client/sdk.gen.ts",
+      "start_line": 119,
+      "end_line": 130,
+      "lang": "typescript",
+      "lane": "ui",
+      "docstring": "Create User\n\nCreate new user."
+    },
+    {
+      "symbol_key": "ts frontend/src/client/sdk.gen.ts/UsersService#deleteUser().",
+      "kind": "method",
+      "name": "deleteUser",
+      "qualified_name": "UsersService.deleteUser",
+      "path": "frontend/src/client/sdk.gen.ts",
+      "start_line": 218,
+      "end_line": 225,
+      "lang": "typescript",
+      "lane": "ui",
+      "docstring": "Delete User\n\nDelete a user."
+    },
+    {
+      "symbol_key": "ts frontend/src/client/sdk.gen.ts/UsersService#deleteUserMe().",
+      "kind": "method",
+      "name": "deleteUserMe",
+      "qualified_name": "UsersService.deleteUserMe",
+      "path": "frontend/src/client/sdk.gen.ts",
+      "start_line": 137,
+      "end_line": 144,
+      "lang": "typescript",
+      "lane": "ui",
+      "docstring": "Delete User Me\n\nDelete own user."
+    },
+    {
+      "symbol_key": "ts frontend/src/client/sdk.gen.ts/UsersService#readUserById().",
+      "kind": "method",
+      "name": "readUserById",
+      "qualified_name": "UsersService.readUserById",
+      "path": "frontend/src/client/sdk.gen.ts",
+      "start_line": 232,
+      "end_line": 239,
+      "lang": "typescript",
+      "lane": "ui",
+      "docstring": "Read User By Id\n\nGet a specific user by id."
+    },
+    {
+      "symbol_key": "ts frontend/src/client/sdk.gen.ts/UsersService#readUserMe().",
+      "kind": "method",
+      "name": "readUserMe",
+      "qualified_name": "UsersService.readUserMe",
+      "path": "frontend/src/client/sdk.gen.ts",
+      "start_line": 151,
+      "end_line": 158,
+      "lang": "typescript",
+      "lane": "ui",
+      "docstring": "Read User Me\n\nGet current user."
+    },
+    {
+      "symbol_key": "ts frontend/src/client/sdk.gen.ts/UsersService#readUsers().",
+      "kind": "method",
+      "name": "readUsers",
+      "qualified_name": "UsersService.readUsers",
+      "path": "frontend/src/client/sdk.gen.ts",
+      "start_line": 105,
+      "end_line": 112,
+      "lang": "typescript",
+      "lane": "ui",
+      "docstring": "Read Users\n\nRetrieve users."
+    },
+    {
+      "symbol_key": "ts frontend/src/client/sdk.gen.ts/UsersService#registerUser().",
+      "kind": "method",
+      "name": "registerUser",
+      "qualified_name": "UsersService.registerUser",
+      "path": "frontend/src/client/sdk.gen.ts",
+      "start_line": 201,
+      "end_line": 211,
+      "lang": "typescript",
+      "lane": "ui",
+      "docstring": "Register User\n\nCreate new user without the need to be logged in."
+    },
+    {
+      "symbol_key": "ts frontend/src/client/sdk.gen.ts/UsersService#updatePasswordMe().",
+      "kind": "method",
+      "name": "updatePasswordMe",
+      "qualified_name": "UsersService.updatePasswordMe",
+      "path": "frontend/src/client/sdk.gen.ts",
+      "start_line": 183,
+      "end_line": 194,
+      "lang": "typescript",
+      "lane": "ui",
+      "docstring": "Update Password Me\n\nUpdate own password."
+    },
+    {
+      "symbol_key": "ts frontend/src/client/sdk.gen.ts/UsersService#updateUser().",
+      "kind": "method",
+      "name": "updateUser",
+      "qualified_name": "UsersService.updateUser",
+      "path": "frontend/src/client/sdk.gen.ts",
+      "start_line": 246,
+      "end_line": 257,
+      "lang": "typescript",
+      "lane": "ui",
+      "docstring": "Update User\n\nUpdate a user."
+    },
+    {
+      "symbol_key": "ts frontend/src/client/sdk.gen.ts/UsersService#updateUserMe().",
+      "kind": "method",
+      "name": "updateUserMe",
+      "qualified_name": "UsersService.updateUserMe",
+      "path": "frontend/src/client/sdk.gen.ts",
+      "start_line": 165,
+      "end_line": 176,
+      "lang": "typescript",
+      "lane": "ui",
+      "docstring": "Update User Me\n\nUpdate own user."
+    },
+    {
+      "symbol_key": "ts frontend/src/client/sdk.gen.ts/UtilsService#",
+      "kind": "class",
+      "name": "UtilsService",
+      "qualified_name": "UtilsService",
+      "path": "frontend/src/client/sdk.gen.ts",
+      "start_line": 260,
+      "end_line": 285,
+      "lang": "typescript",
+      "lane": "ui",
+      "docstring": null
+    },
+    {
+      "symbol_key": "ts frontend/src/client/sdk.gen.ts/UtilsService#healthCheck().",
+      "kind": "method",
+      "name": "healthCheck",
+      "qualified_name": "UtilsService.healthCheck",
+      "path": "frontend/src/client/sdk.gen.ts",
+      "start_line": 278,
+      "end_line": 284,
+      "lang": "typescript",
+      "lane": "ui",
+      "docstring": "Health Check"
+    },
+    {
+      "symbol_key": "ts frontend/src/client/sdk.gen.ts/UtilsService#testEmail().",
+      "kind": "method",
+      "name": "testEmail",
+      "qualified_name": "UtilsService.testEmail",
+      "path": "frontend/src/client/sdk.gen.ts",
+      "start_line": 266,
+      "end_line": 273,
+      "lang": "typescript",
+      "lane": "ui",
+      "docstring": "Test Email\n\nTest emails."
+    },
+    {
       "symbol_key": "ts frontend/src/client/types.gen.ts/",
       "kind": "module",
       "name": "types.gen",
@@ -22502,6 +22886,721 @@
       "evidence": {
         "path": "backend/app/alembic/versions/d98dd8ec85a3_edit_replace_id_integers_in_all_models_.py",
         "line": 72
+      }
+    },
+    {
+      "src": "ts frontend/src/client/sdk.gen.ts/",
+      "dst": "ts frontend/src/client/types.gen.ts/itemsCreateItemData#",
+      "type": "imports",
+      "provenance": "import_resolved",
+      "confidence": 0.9,
+      "evidence": {
+        "path": "frontend/src/client/sdk.gen.ts",
+        "line": 5
+      }
+    },
+    {
+      "src": "ts frontend/src/client/sdk.gen.ts/",
+      "dst": "ts frontend/src/client/types.gen.ts/itemsCreateItemErrors#",
+      "type": "imports",
+      "provenance": "import_resolved",
+      "confidence": 0.9,
+      "evidence": {
+        "path": "frontend/src/client/sdk.gen.ts",
+        "line": 5
+      }
+    },
+    {
+      "src": "ts frontend/src/client/sdk.gen.ts/",
+      "dst": "ts frontend/src/client/types.gen.ts/itemsCreateItemResponses#",
+      "type": "imports",
+      "provenance": "import_resolved",
+      "confidence": 0.9,
+      "evidence": {
+        "path": "frontend/src/client/sdk.gen.ts",
+        "line": 5
+      }
+    },
+    {
+      "src": "ts frontend/src/client/sdk.gen.ts/",
+      "dst": "ts frontend/src/client/types.gen.ts/itemsDeleteItemData#",
+      "type": "imports",
+      "provenance": "import_resolved",
+      "confidence": 0.9,
+      "evidence": {
+        "path": "frontend/src/client/sdk.gen.ts",
+        "line": 5
+      }
+    },
+    {
+      "src": "ts frontend/src/client/sdk.gen.ts/",
+      "dst": "ts frontend/src/client/types.gen.ts/itemsDeleteItemErrors#",
+      "type": "imports",
+      "provenance": "import_resolved",
+      "confidence": 0.9,
+      "evidence": {
+        "path": "frontend/src/client/sdk.gen.ts",
+        "line": 5
+      }
+    },
+    {
+      "src": "ts frontend/src/client/sdk.gen.ts/",
+      "dst": "ts frontend/src/client/types.gen.ts/itemsDeleteItemResponses#",
+      "type": "imports",
+      "provenance": "import_resolved",
+      "confidence": 0.9,
+      "evidence": {
+        "path": "frontend/src/client/sdk.gen.ts",
+        "line": 5
+      }
+    },
+    {
+      "src": "ts frontend/src/client/sdk.gen.ts/",
+      "dst": "ts frontend/src/client/types.gen.ts/itemsReadItemData#",
+      "type": "imports",
+      "provenance": "import_resolved",
+      "confidence": 0.9,
+      "evidence": {
+        "path": "frontend/src/client/sdk.gen.ts",
+        "line": 5
+      }
+    },
+    {
+      "src": "ts frontend/src/client/sdk.gen.ts/",
+      "dst": "ts frontend/src/client/types.gen.ts/itemsReadItemErrors#",
+      "type": "imports",
+      "provenance": "import_resolved",
+      "confidence": 0.9,
+      "evidence": {
+        "path": "frontend/src/client/sdk.gen.ts",
+        "line": 5
+      }
+    },
+    {
+      "src": "ts frontend/src/client/sdk.gen.ts/",
+      "dst": "ts frontend/src/client/types.gen.ts/itemsReadItemResponses#",
+      "type": "imports",
+      "provenance": "import_resolved",
+      "confidence": 0.9,
+      "evidence": {
+        "path": "frontend/src/client/sdk.gen.ts",
+        "line": 5
+      }
+    },
+    {
+      "src": "ts frontend/src/client/sdk.gen.ts/",
+      "dst": "ts frontend/src/client/types.gen.ts/itemsReadItemsData#",
+      "type": "imports",
+      "provenance": "import_resolved",
+      "confidence": 0.9,
+      "evidence": {
+        "path": "frontend/src/client/sdk.gen.ts",
+        "line": 5
+      }
+    },
+    {
+      "src": "ts frontend/src/client/sdk.gen.ts/",
+      "dst": "ts frontend/src/client/types.gen.ts/itemsReadItemsErrors#",
+      "type": "imports",
+      "provenance": "import_resolved",
+      "confidence": 0.9,
+      "evidence": {
+        "path": "frontend/src/client/sdk.gen.ts",
+        "line": 5
+      }
+    },
+    {
+      "src": "ts frontend/src/client/sdk.gen.ts/",
+      "dst": "ts frontend/src/client/types.gen.ts/itemsReadItemsResponses#",
+      "type": "imports",
+      "provenance": "import_resolved",
+      "confidence": 0.9,
+      "evidence": {
+        "path": "frontend/src/client/sdk.gen.ts",
+        "line": 5
+      }
+    },
+    {
+      "src": "ts frontend/src/client/sdk.gen.ts/",
+      "dst": "ts frontend/src/client/types.gen.ts/itemsUpdateItemData#",
+      "type": "imports",
+      "provenance": "import_resolved",
+      "confidence": 0.9,
+      "evidence": {
+        "path": "frontend/src/client/sdk.gen.ts",
+        "line": 5
+      }
+    },
+    {
+      "src": "ts frontend/src/client/sdk.gen.ts/",
+      "dst": "ts frontend/src/client/types.gen.ts/itemsUpdateItemErrors#",
+      "type": "imports",
+      "provenance": "import_resolved",
+      "confidence": 0.9,
+      "evidence": {
+        "path": "frontend/src/client/sdk.gen.ts",
+        "line": 5
+      }
+    },
+    {
+      "src": "ts frontend/src/client/sdk.gen.ts/",
+      "dst": "ts frontend/src/client/types.gen.ts/itemsUpdateItemResponses#",
+      "type": "imports",
+      "provenance": "import_resolved",
+      "confidence": 0.9,
+      "evidence": {
+        "path": "frontend/src/client/sdk.gen.ts",
+        "line": 5
+      }
+    },
+    {
+      "src": "ts frontend/src/client/sdk.gen.ts/",
+      "dst": "ts frontend/src/client/types.gen.ts/loginLoginAccessTokenData#",
+      "type": "imports",
+      "provenance": "import_resolved",
+      "confidence": 0.9,
+      "evidence": {
+        "path": "frontend/src/client/sdk.gen.ts",
+        "line": 5
+      }
+    },
+    {
+      "src": "ts frontend/src/client/sdk.gen.ts/",
+      "dst": "ts frontend/src/client/types.gen.ts/loginLoginAccessTokenErrors#",
+      "type": "imports",
+      "provenance": "import_resolved",
+      "confidence": 0.9,
+      "evidence": {
+        "path": "frontend/src/client/sdk.gen.ts",
+        "line": 5
+      }
+    },
+    {
+      "src": "ts frontend/src/client/sdk.gen.ts/",
+      "dst": "ts frontend/src/client/types.gen.ts/loginLoginAccessTokenResponses#",
+      "type": "imports",
+      "provenance": "import_resolved",
+      "confidence": 0.9,
+      "evidence": {
+        "path": "frontend/src/client/sdk.gen.ts",
+        "line": 5
+      }
+    },
+    {
+      "src": "ts frontend/src/client/sdk.gen.ts/",
+      "dst": "ts frontend/src/client/types.gen.ts/loginRecoverPasswordData#",
+      "type": "imports",
+      "provenance": "import_resolved",
+      "confidence": 0.9,
+      "evidence": {
+        "path": "frontend/src/client/sdk.gen.ts",
+        "line": 5
+      }
+    },
+    {
+      "src": "ts frontend/src/client/sdk.gen.ts/",
+      "dst": "ts frontend/src/client/types.gen.ts/loginRecoverPasswordErrors#",
+      "type": "imports",
+      "provenance": "import_resolved",
+      "confidence": 0.9,
+      "evidence": {
+        "path": "frontend/src/client/sdk.gen.ts",
+        "line": 5
+      }
+    },
+    {
+      "src": "ts frontend/src/client/sdk.gen.ts/",
+      "dst": "ts frontend/src/client/types.gen.ts/loginRecoverPasswordHtmlContentData#",
+      "type": "imports",
+      "provenance": "import_resolved",
+      "confidence": 0.9,
+      "evidence": {
+        "path": "frontend/src/client/sdk.gen.ts",
+        "line": 5
+      }
+    },
+    {
+      "src": "ts frontend/src/client/sdk.gen.ts/",
+      "dst": "ts frontend/src/client/types.gen.ts/loginRecoverPasswordHtmlContentErrors#",
+      "type": "imports",
+      "provenance": "import_resolved",
+      "confidence": 0.9,
+      "evidence": {
+        "path": "frontend/src/client/sdk.gen.ts",
+        "line": 5
+      }
+    },
+    {
+      "src": "ts frontend/src/client/sdk.gen.ts/",
+      "dst": "ts frontend/src/client/types.gen.ts/loginRecoverPasswordHtmlContentResponses#",
+      "type": "imports",
+      "provenance": "import_resolved",
+      "confidence": 0.9,
+      "evidence": {
+        "path": "frontend/src/client/sdk.gen.ts",
+        "line": 5
+      }
+    },
+    {
+      "src": "ts frontend/src/client/sdk.gen.ts/",
+      "dst": "ts frontend/src/client/types.gen.ts/loginRecoverPasswordResponses#",
+      "type": "imports",
+      "provenance": "import_resolved",
+      "confidence": 0.9,
+      "evidence": {
+        "path": "frontend/src/client/sdk.gen.ts",
+        "line": 5
+      }
+    },
+    {
+      "src": "ts frontend/src/client/sdk.gen.ts/",
+      "dst": "ts frontend/src/client/types.gen.ts/loginResetPasswordData#",
+      "type": "imports",
+      "provenance": "import_resolved",
+      "confidence": 0.9,
+      "evidence": {
+        "path": "frontend/src/client/sdk.gen.ts",
+        "line": 5
+      }
+    },
+    {
+      "src": "ts frontend/src/client/sdk.gen.ts/",
+      "dst": "ts frontend/src/client/types.gen.ts/loginResetPasswordErrors#",
+      "type": "imports",
+      "provenance": "import_resolved",
+      "confidence": 0.9,
+      "evidence": {
+        "path": "frontend/src/client/sdk.gen.ts",
+        "line": 5
+      }
+    },
+    {
+      "src": "ts frontend/src/client/sdk.gen.ts/",
+      "dst": "ts frontend/src/client/types.gen.ts/loginResetPasswordResponses#",
+      "type": "imports",
+      "provenance": "import_resolved",
+      "confidence": 0.9,
+      "evidence": {
+        "path": "frontend/src/client/sdk.gen.ts",
+        "line": 5
+      }
+    },
+    {
+      "src": "ts frontend/src/client/sdk.gen.ts/",
+      "dst": "ts frontend/src/client/types.gen.ts/loginTestTokenData#",
+      "type": "imports",
+      "provenance": "import_resolved",
+      "confidence": 0.9,
+      "evidence": {
+        "path": "frontend/src/client/sdk.gen.ts",
+        "line": 5
+      }
+    },
+    {
+      "src": "ts frontend/src/client/sdk.gen.ts/",
+      "dst": "ts frontend/src/client/types.gen.ts/loginTestTokenResponses#",
+      "type": "imports",
+      "provenance": "import_resolved",
+      "confidence": 0.9,
+      "evidence": {
+        "path": "frontend/src/client/sdk.gen.ts",
+        "line": 5
+      }
+    },
+    {
+      "src": "ts frontend/src/client/sdk.gen.ts/",
+      "dst": "ts frontend/src/client/types.gen.ts/privateCreateUserData#",
+      "type": "imports",
+      "provenance": "import_resolved",
+      "confidence": 0.9,
+      "evidence": {
+        "path": "frontend/src/client/sdk.gen.ts",
+        "line": 5
+      }
+    },
+    {
+      "src": "ts frontend/src/client/sdk.gen.ts/",
+      "dst": "ts frontend/src/client/types.gen.ts/privateCreateUserErrors#",
+      "type": "imports",
+      "provenance": "import_resolved",
+      "confidence": 0.9,
+      "evidence": {
+        "path": "frontend/src/client/sdk.gen.ts",
+        "line": 5
+      }
+    },
+    {
+      "src": "ts frontend/src/client/sdk.gen.ts/",
+      "dst": "ts frontend/src/client/types.gen.ts/privateCreateUserResponses#",
+      "type": "imports",
+      "provenance": "import_resolved",
+      "confidence": 0.9,
+      "evidence": {
+        "path": "frontend/src/client/sdk.gen.ts",
+        "line": 5
+      }
+    },
+    {
+      "src": "ts frontend/src/client/sdk.gen.ts/",
+      "dst": "ts frontend/src/client/types.gen.ts/usersCreateUserData#",
+      "type": "imports",
+      "provenance": "import_resolved",
+      "confidence": 0.9,
+      "evidence": {
+        "path": "frontend/src/client/sdk.gen.ts",
+        "line": 5
+      }
+    },
+    {
+      "src": "ts frontend/src/client/sdk.gen.ts/",
+      "dst": "ts frontend/src/client/types.gen.ts/usersCreateUserErrors#",
+      "type": "imports",
+      "provenance": "import_resolved",
+      "confidence": 0.9,
+      "evidence": {
+        "path": "frontend/src/client/sdk.gen.ts",
+        "line": 5
+      }
+    },
+    {
+      "src": "ts frontend/src/client/sdk.gen.ts/",
+      "dst": "ts frontend/src/client/types.gen.ts/usersCreateUserResponses#",
+      "type": "imports",
+      "provenance": "import_resolved",
+      "confidence": 0.9,
+      "evidence": {
+        "path": "frontend/src/client/sdk.gen.ts",
+        "line": 5
+      }
+    },
+    {
+      "src": "ts frontend/src/client/sdk.gen.ts/",
+      "dst": "ts frontend/src/client/types.gen.ts/usersDeleteUserData#",
+      "type": "imports",
+      "provenance": "import_resolved",
+      "confidence": 0.9,
+      "evidence": {
+        "path": "frontend/src/client/sdk.gen.ts",
+        "line": 5
+      }
+    },
+    {
+      "src": "ts frontend/src/client/sdk.gen.ts/",
+      "dst": "ts frontend/src/client/types.gen.ts/usersDeleteUserErrors#",
+      "type": "imports",
+      "provenance": "import_resolved",
+      "confidence": 0.9,
+      "evidence": {
+        "path": "frontend/src/client/sdk.gen.ts",
+        "line": 5
+      }
+    },
+    {
+      "src": "ts frontend/src/client/sdk.gen.ts/",
+      "dst": "ts frontend/src/client/types.gen.ts/usersDeleteUserMeData#",
+      "type": "imports",
+      "provenance": "import_resolved",
+      "confidence": 0.9,
+      "evidence": {
+        "path": "frontend/src/client/sdk.gen.ts",
+        "line": 5
+      }
+    },
+    {
+      "src": "ts frontend/src/client/sdk.gen.ts/",
+      "dst": "ts frontend/src/client/types.gen.ts/usersDeleteUserMeResponses#",
+      "type": "imports",
+      "provenance": "import_resolved",
+      "confidence": 0.9,
+      "evidence": {
+        "path": "frontend/src/client/sdk.gen.ts",
+        "line": 5
+      }
+    },
+    {
+      "src": "ts frontend/src/client/sdk.gen.ts/",
+      "dst": "ts frontend/src/client/types.gen.ts/usersDeleteUserResponses#",
+      "type": "imports",
+      "provenance": "import_resolved",
+      "confidence": 0.9,
+      "evidence": {
+        "path": "frontend/src/client/sdk.gen.ts",
+        "line": 5
+      }
+    },
+    {
+      "src": "ts frontend/src/client/sdk.gen.ts/",
+      "dst": "ts frontend/src/client/types.gen.ts/usersReadUserByIdData#",
+      "type": "imports",
+      "provenance": "import_resolved",
+      "confidence": 0.9,
+      "evidence": {
+        "path": "frontend/src/client/sdk.gen.ts",
+        "line": 5
+      }
+    },
+    {
+      "src": "ts frontend/src/client/sdk.gen.ts/",
+      "dst": "ts frontend/src/client/types.gen.ts/usersReadUserByIdErrors#",
+      "type": "imports",
+      "provenance": "import_resolved",
+      "confidence": 0.9,
+      "evidence": {
+        "path": "frontend/src/client/sdk.gen.ts",
+        "line": 5
+      }
+    },
+    {
+      "src": "ts frontend/src/client/sdk.gen.ts/",
+      "dst": "ts frontend/src/client/types.gen.ts/usersReadUserByIdResponses#",
+      "type": "imports",
+      "provenance": "import_resolved",
+      "confidence": 0.9,
+      "evidence": {
+        "path": "frontend/src/client/sdk.gen.ts",
+        "line": 5
+      }
+    },
+    {
+      "src": "ts frontend/src/client/sdk.gen.ts/",
+      "dst": "ts frontend/src/client/types.gen.ts/usersReadUserMeData#",
+      "type": "imports",
+      "provenance": "import_resolved",
+      "confidence": 0.9,
+      "evidence": {
+        "path": "frontend/src/client/sdk.gen.ts",
+        "line": 5
+      }
+    },
+    {
+      "src": "ts frontend/src/client/sdk.gen.ts/",
+      "dst": "ts frontend/src/client/types.gen.ts/usersReadUserMeResponses#",
+      "type": "imports",
+      "provenance": "import_resolved",
+      "confidence": 0.9,
+      "evidence": {
+        "path": "frontend/src/client/sdk.gen.ts",
+        "line": 5
+      }
+    },
+    {
+      "src": "ts frontend/src/client/sdk.gen.ts/",
+      "dst": "ts frontend/src/client/types.gen.ts/usersReadUsersData#",
+      "type": "imports",
+      "provenance": "import_resolved",
+      "confidence": 0.9,
+      "evidence": {
+        "path": "frontend/src/client/sdk.gen.ts",
+        "line": 5
+      }
+    },
+    {
+      "src": "ts frontend/src/client/sdk.gen.ts/",
+      "dst": "ts frontend/src/client/types.gen.ts/usersReadUsersErrors#",
+      "type": "imports",
+      "provenance": "import_resolved",
+      "confidence": 0.9,
+      "evidence": {
+        "path": "frontend/src/client/sdk.gen.ts",
+        "line": 5
+      }
+    },
+    {
+      "src": "ts frontend/src/client/sdk.gen.ts/",
+      "dst": "ts frontend/src/client/types.gen.ts/usersReadUsersResponses#",
+      "type": "imports",
+      "provenance": "import_resolved",
+      "confidence": 0.9,
+      "evidence": {
+        "path": "frontend/src/client/sdk.gen.ts",
+        "line": 5
+      }
+    },
+    {
+      "src": "ts frontend/src/client/sdk.gen.ts/",
+      "dst": "ts frontend/src/client/types.gen.ts/usersRegisterUserData#",
+      "type": "imports",
+      "provenance": "import_resolved",
+      "confidence": 0.9,
+      "evidence": {
+        "path": "frontend/src/client/sdk.gen.ts",
+        "line": 5
+      }
+    },
+    {
+      "src": "ts frontend/src/client/sdk.gen.ts/",
+      "dst": "ts frontend/src/client/types.gen.ts/usersRegisterUserErrors#",
+      "type": "imports",
+      "provenance": "import_resolved",
+      "confidence": 0.9,
+      "evidence": {
+        "path": "frontend/src/client/sdk.gen.ts",
+        "line": 5
+      }
+    },
+    {
+      "src": "ts frontend/src/client/sdk.gen.ts/",
+      "dst": "ts frontend/src/client/types.gen.ts/usersRegisterUserResponses#",
+      "type": "imports",
+      "provenance": "import_resolved",
+      "confidence": 0.9,
+      "evidence": {
+        "path": "frontend/src/client/sdk.gen.ts",
+        "line": 5
+      }
+    },
+    {
+      "src": "ts frontend/src/client/sdk.gen.ts/",
+      "dst": "ts frontend/src/client/types.gen.ts/usersUpdatePasswordMeData#",
+      "type": "imports",
+      "provenance": "import_resolved",
+      "confidence": 0.9,
+      "evidence": {
+        "path": "frontend/src/client/sdk.gen.ts",
+        "line": 5
+      }
+    },
+    {
+      "src": "ts frontend/src/client/sdk.gen.ts/",
+      "dst": "ts frontend/src/client/types.gen.ts/usersUpdatePasswordMeErrors#",
+      "type": "imports",
+      "provenance": "import_resolved",
+      "confidence": 0.9,
+      "evidence": {
+        "path": "frontend/src/client/sdk.gen.ts",
+        "line": 5
+      }
+    },
+    {
+      "src": "ts frontend/src/client/sdk.gen.ts/",
+      "dst": "ts frontend/src/client/types.gen.ts/usersUpdatePasswordMeResponses#",
+      "type": "imports",
+      "provenance": "import_resolved",
+      "confidence": 0.9,
+      "evidence": {
+        "path": "frontend/src/client/sdk.gen.ts",
+        "line": 5
+      }
+    },
+    {
+      "src": "ts frontend/src/client/sdk.gen.ts/",
+      "dst": "ts frontend/src/client/types.gen.ts/usersUpdateUserData#",
+      "type": "imports",
+      "provenance": "import_resolved",
+      "confidence": 0.9,
+      "evidence": {
+        "path": "frontend/src/client/sdk.gen.ts",
+        "line": 5
+      }
+    },
+    {
+      "src": "ts frontend/src/client/sdk.gen.ts/",
+      "dst": "ts frontend/src/client/types.gen.ts/usersUpdateUserErrors#",
+      "type": "imports",
+      "provenance": "import_resolved",
+      "confidence": 0.9,
+      "evidence": {
+        "path": "frontend/src/client/sdk.gen.ts",
+        "line": 5
+      }
+    },
+    {
+      "src": "ts frontend/src/client/sdk.gen.ts/",
+      "dst": "ts frontend/src/client/types.gen.ts/usersUpdateUserMeData#",
+      "type": "imports",
+      "provenance": "import_resolved",
+      "confidence": 0.9,
+      "evidence": {
+        "path": "frontend/src/client/sdk.gen.ts",
+        "line": 5
+      }
+    },
+    {
+      "src": "ts frontend/src/client/sdk.gen.ts/",
+      "dst": "ts frontend/src/client/types.gen.ts/usersUpdateUserMeErrors#",
+      "type": "imports",
+      "provenance": "import_resolved",
+      "confidence": 0.9,
+      "evidence": {
+        "path": "frontend/src/client/sdk.gen.ts",
+        "line": 5
+      }
+    },
+    {
+      "src": "ts frontend/src/client/sdk.gen.ts/",
+      "dst": "ts frontend/src/client/types.gen.ts/usersUpdateUserMeResponses#",
+      "type": "imports",
+      "provenance": "import_resolved",
+      "confidence": 0.9,
+      "evidence": {
+        "path": "frontend/src/client/sdk.gen.ts",
+        "line": 5
+      }
+    },
+    {
+      "src": "ts frontend/src/client/sdk.gen.ts/",
+      "dst": "ts frontend/src/client/types.gen.ts/usersUpdateUserResponses#",
+      "type": "imports",
+      "provenance": "import_resolved",
+      "confidence": 0.9,
+      "evidence": {
+        "path": "frontend/src/client/sdk.gen.ts",
+        "line": 5
+      }
+    },
+    {
+      "src": "ts frontend/src/client/sdk.gen.ts/",
+      "dst": "ts frontend/src/client/types.gen.ts/utilsHealthCheckData#",
+      "type": "imports",
+      "provenance": "import_resolved",
+      "confidence": 0.9,
+      "evidence": {
+        "path": "frontend/src/client/sdk.gen.ts",
+        "line": 5
+      }
+    },
+    {
+      "src": "ts frontend/src/client/sdk.gen.ts/",
+      "dst": "ts frontend/src/client/types.gen.ts/utilsHealthCheckResponses#",
+      "type": "imports",
+      "provenance": "import_resolved",
+      "confidence": 0.9,
+      "evidence": {
+        "path": "frontend/src/client/sdk.gen.ts",
+        "line": 5
+      }
+    },
+    {
+      "src": "ts frontend/src/client/sdk.gen.ts/",
+      "dst": "ts frontend/src/client/types.gen.ts/utilsTestEmailData#",
+      "type": "imports",
+      "provenance": "import_resolved",
+      "confidence": 0.9,
+      "evidence": {
+        "path": "frontend/src/client/sdk.gen.ts",
+        "line": 5
+      }
+    },
+    {
+      "src": "ts frontend/src/client/sdk.gen.ts/",
+      "dst": "ts frontend/src/client/types.gen.ts/utilsTestEmailErrors#",
+      "type": "imports",
+      "provenance": "import_resolved",
+      "confidence": 0.9,
+      "evidence": {
+        "path": "frontend/src/client/sdk.gen.ts",
+        "line": 5
+      }
+    },
+    {
+      "src": "ts frontend/src/client/sdk.gen.ts/",
+      "dst": "ts frontend/src/client/types.gen.ts/utilsTestEmailResponses#",
+      "type": "imports",
+      "provenance": "import_resolved",
+      "confidence": 0.9,
+      "evidence": {
+        "path": "frontend/src/client/sdk.gen.ts",
+        "line": 5
       }
     },
     {

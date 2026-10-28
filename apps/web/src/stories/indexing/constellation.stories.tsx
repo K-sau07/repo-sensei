@@ -4,6 +4,7 @@ import { expect, fireEvent, waitFor, within } from "storybook/test";
 
 import { Constellation, ConstellationView } from "@/components/indexing/constellation";
 import { project, reach, syntheticSky, type Sky } from "@/lib/constellation";
+import { traceHref } from "@/lib/trace/url-state";
 import { API_REPO_ID, db, resetMockDb, saveDb } from "@/mocks/db";
 import { SKY } from "@/mocks/index-run";
 import { RUN_LENGTH_MS } from "@/mocks/jobs";
@@ -126,6 +127,41 @@ export const AsAList: Story = {
       "aria-expanded",
       "true",
     );
+  },
+};
+
+/** A trace's path (3.15): its files' stars lit and joined by its code edges, and listed. */
+export const WithTrace: Story = {
+  args: {
+    trace: {
+      title: "Login → user",
+      files: [
+        "frontend/src/routes/login.tsx",
+        "frontend/src/hooks/useAuth.ts",
+        "frontend/src/client/sdk.gen.ts",
+        "backend/app/api/routes/login.py",
+        "backend/app/crud.py",
+        "backend/app/models.py",
+        "not/in/the/sky.py",
+      ],
+      href: traceHref("acme", "api", { from: "Login" }),
+    },
+  },
+  play: async ({ canvas, canvasElement }) => {
+    const caption = await canvas.findByRole("region", { name: "Trace on the constellation" });
+    await expect(caption).toHaveTextContent("across 6 files");
+    const files = within(caption).getByRole("list", { name: "Its files, in order" });
+    await expect(within(files).getAllByRole("listitem")).toHaveLength(6);
+    await expect(within(caption).getByRole("link", { name: "Open the trace" })).toHaveAttribute(
+      "href",
+      "/acme/api/trace?from=Login",
+    );
+    await waitFor(async () => {
+      await expect(canvasElement.querySelector("path[data-trace=edges]")).not.toBeNull();
+    });
+    // Five edges join six stars.
+    const edges = canvasElement.querySelector("path[data-trace=edges]")?.getAttribute("d") ?? "";
+    await expect(edges.split("L")).toHaveLength(6);
   },
 };
 

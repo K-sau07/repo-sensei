@@ -172,5 +172,14 @@ test.describe("code intelligence", () => {
     await expect(page).toHaveURL(
       `/acme/api/trace?from=${encodeURIComponent("py backend/app/api/deps.py/get_db().")}`,
     );
+    // The trace renders: get_db is a dependency, which calls nothing the trace follows.
+    const view = page.getByTestId("trace-view");
+    await expect(view.getByRole("heading", { name: /Trace from\s*get_db/ })).toBeVisible();
+    await expect(
+      view.getByRole("button", { name: /^Step 1 of 1, Handler, function get_db/ }),
+    ).toBeVisible();
+    await expect(view.getByRole("group", { name: "Gap in the trace" })).toContainText(
+      "get_db calls nothing the trace follows further",
+    );
   });
 });

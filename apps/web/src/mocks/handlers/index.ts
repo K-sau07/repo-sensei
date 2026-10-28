@@ -8,6 +8,7 @@ import { orgHandlers } from "./orgs";
 import { repoHandlers } from "./repos";
 import { searchHandlers } from "./search";
 import { symbolHandlers } from "./symbols";
+import { traceHandlers } from "./trace";
 
 export { apiError } from "./errors";
 
@@ -18,6 +19,7 @@ export const handlers = [
   ...browseHandlers,
   ...symbolHandlers,
   ...graphHandlers,
+  ...traceHandlers,
   ...searchHandlers,
   ...repoHandlers,
   ...orgHandlers,

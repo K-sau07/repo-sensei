@@ -18,8 +18,10 @@
 import { cn } from "cn";
 import { Pause, Play, X } from "lucide-react";
 import { useReducedMotion } from "motion/react";
+import type { Route } from "next";
 import dynamic from "next/dynamic";
 import Link from "next/link";
+import { useQueryStates } from "nuqs";
 import {
   createContext,
   useContext,
@@ -32,6 +34,7 @@ import {
 } from "react";
 
 import { LAYERS } from "@/components/primitives/layer-badge";
+import { useTrace } from "@/components/trace/use-trace";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
@@ -42,6 +45,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { pathFiles, pathTitle } from "@/lib/api/trace";
 import {
   clusters,
   codeSection,
@@ -50,11 +54,13 @@ import {
   formatBytes,
   isLowPower,
   isSoftwareRenderer,
+  traceStars,
   type Layer,
   type MotionMode,
   type Sky,
 } from "@/lib/constellation";
 import { repoPath } from "@/lib/routes";
+import { overviewTraceParsers, pathIndex, traceHref } from "@/lib/trace/url-state";
 
 import { useSkyColors, type Hit } from "./constellation-scene";
 import { ConstellationSvg } from "./constellation-svg";
@@ -184,7 +190,56 @@ interface ViewProps {
   renderer?: Renderer;
   /** Called for every frame the 3D view draws (ms since the last), for the FPS meter. */
   onFrame?: (ms: number) => void;
+  /** A trace path to draw: its stars lit and joined by its code edges (3.15). */
+  trace?: ShownTrace | null;
   className?: string;
+}
+
+/** A trace path on the constellation: what it's called, its files in order, and where it is. */
+export interface ShownTrace {
+  title: string;
+  files: readonly string[];
+  href: Route;
+  /** Take it off the picture. */
+  onClear?: () => void;
+}
+
+const NO_STARS: readonly number[] = [];
+
+/** The trace drawn, in words and as a list of its files (what the picture shows, for everyone). */
+function TraceCaption({ trace, files }: { trace: ShownTrace; files: readonly string[] }) {
+  return (
+    <section
+      aria-label="Trace on the constellation"
+      className="flex flex-col gap-1.5 rounded-md border border-signal/30 bg-signal/6 px-3 py-2 text-xs"
+    >
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+        <p className="text-fg">
+          <span aria-hidden className="text-signal">
+            ●{" "}
+          </span>
+          Trace <span className="font-mono">{trace.title}</span>, across {files.length}{" "}
+          {files.length === 1 ? "file" : "files"}
+        </p>
+        <Link href={trace.href} className="underline underline-offset-4">
+          Open the trace
+        </Link>
+        {trace.onClear && (
+          <Button variant="ghost" size="xs" onClick={trace.onClear}>
+            Clear
+          </Button>
+        )}
+      </div>
+      <ol aria-label="Its files, in order" className="flex flex-wrap items-center gap-1">
+        {files.map((file, i) => (
+          <li key={file} className="flex items-center gap-1 font-mono text-fg-muted">
+            {i > 0 && <span aria-hidden>→</span>}
+            {fileName(file)}
+          </li>
+        ))}
+      </ol>
+    </section>
+  );
 }
 
 /** The constellation of `sky` (no data fetching: stories use this directly). */
@@ -195,6 +250,7 @@ export function ConstellationView({
   live = false,
   renderer: asked,
   onFrame,
+  trace = null,
   className,
 }: ViewProps) {
   const preferred = useContext(ConstellationRenderer);
@@ -223,6 +279,15 @@ export function ConstellationView({
   // O(points): once per sky, not on every hover.
   const label = useMemo(() => summary(sky, groups.size), [sky, groups.size]);
   const drift = live && motion === "live" && !paused;
+  const traceFiles = trace?.files;
+  const stars = useMemo(
+    () => (traceFiles ? traceStars(sky, traceFiles) : NO_STARS),
+    [sky, traceFiles],
+  );
+  const shownFiles = useMemo(
+    () => stars.flatMap((i) => sky.points[i]?.path ?? []),
+    [stars, sky.points],
+  );
 
   const hovered = hover ? sky.points[hover.index] : undefined;
   const hoveredCluster = hovered ? groups.get(hovered.dir_cluster) : undefined;
@@ -253,6 +318,7 @@ export function ConstellationView({
     drift,
     active,
     highlight: hovered?.dir_cluster ?? null,
+    trace: stars,
     label,
     // A new hover only when it's another star: pointer moves over the same one change nothing.
     onHover: (hit: Hit | null) => {
@@ -401,6 +467,7 @@ export function ConstellationView({
           </li>
         ))}
       </ul>
+      {trace && shownFiles.length > 0 && <TraceCaption trace={trace} files={shownFiles} />}
       {listOpen && <DirectoryTable sky={sky} groups={groups} org={org} repo={repo} />}
     </figure>
   );
@@ -464,9 +531,28 @@ function DirectoryTable({
   );
 }
 
+/** The trace the overview's URL asks for (`?trace=<entry>&path=<n>`, from the trace page), as
+ * its constellation draws it; null while there's none, or it isn't read yet. */
+function useShownTrace(org: string, repo: string): ShownTrace | null {
+  const [{ trace: entry, path }, setQuery] = useQueryStates(overviewTraceParsers, {
+    history: "replace",
+    scroll: false,
+  });
+  const trace = useTrace(entry);
+  const paths = trace.data?.paths ?? [];
+  const shown = paths[pathIndex(path, paths.length)];
+  if (!entry || !shown) return null;
+  return {
+    title: pathTitle(shown),
+    files: pathFiles(shown),
+    href: traceHref(org, repo, { from: entry, path }),
+    onClear: () => void setQuery({ trace: null, path: null }),
+  };
+}
+
 /**
  * The constellation of an index run (`job`, forming while discovery runs) or, without one, of
- * the last index.
+ * the last index (with the trace the URL asks for, if any).
  */
 export function Constellation({
   org,
@@ -482,6 +568,7 @@ export function Constellation({
   className?: string;
 }) {
   const query = useConstellation(org, repo, job);
+  const trace = useShownTrace(org, repo);
   if (query.isPending) {
     return (
       <div role="status" aria-label="Loading the constellation" className={className}>
@@ -505,6 +592,7 @@ export function Constellation({
       org={org}
       repo={repo}
       live={live}
+      trace={trace}
       {...(className ? { className } : {})}
     />
   );

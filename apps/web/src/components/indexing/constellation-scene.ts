@@ -52,6 +52,8 @@ export interface SceneProps {
   active: boolean;
   /** A directory whose cluster to light up. */
   highlight: number | null;
+  /** A trace's stars, in its order (3.15): lit, and joined by its code edges. */
+  trace: readonly number[];
   label: string;
   onHover: (hit: Hit | null) => void;
   onSelect: (hit: Hit | null) => void;

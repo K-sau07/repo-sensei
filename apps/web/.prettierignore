@@ -3,6 +3,8 @@
 src/lib/api/schema.d.ts
 src/lib/api/openapi.json
 public/mockServiceWorker.js
+# Written by scripts/mock_trace.py, as it writes it (also in the root .prettierignore).
+src/mocks/fixtures/trace.json
 next-env.d.ts
 .next/
 storybook-static/

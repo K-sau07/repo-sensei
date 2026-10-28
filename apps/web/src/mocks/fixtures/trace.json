@@ -1,0 +1,2334 @@
+{
+  "source": "fastapi/full-stack-fastapi-template@b1125d8",
+  "note": "GET /trace's answers for the mock snapshot, from the engine's trace_feature over the template linked in-process by scripts/mock_trace.py, keyed by entry (aliases: other ways to name the same entry). ItemsReport.tsx and reports.py are not in the template: the script adds them to its copy to show a gap and an ambiguous hop. 'unlinked' is traced before the links stage. Lines are 1-based and inclusive.",
+  "aliases": {
+    "DailyReport": "tsx frontend/src/components/Items/ItemsReport.tsx/DailyReport().",
+    "ExportItems": "tsx frontend/src/components/Items/ItemsReport.tsx/ExportItems().",
+    "Login": "tsx frontend/src/routes/login.tsx/Login().",
+    "frontend/src/components/Items/AddItem.tsx": "tsx frontend/src/components/Items/AddItem.tsx/AddItem().",
+    "frontend/src/routes/login.tsx": "tsx frontend/src/routes/login.tsx/Login()."
+  },
+  "traces": {
+    "tsx frontend/src/routes/login.tsx/Login().": {
+      "entries": [
+        {
+          "kind": "component",
+          "name": "Login",
+          "qualified_name": "Login",
+          "symbol_key": "tsx frontend/src/routes/login.tsx/Login().",
+          "path": "frontend/src/routes/login.tsx",
+          "lines": [
+            53,
+            142
+          ],
+          "lane": "ui",
+          "model": null
+        }
+      ],
+      "goal": null,
+      "linked": true,
+      "paths": [
+        {
+          "hops": [
+            {
+              "layer": "ui",
+              "node": {
+                "kind": "component",
+                "name": "Login",
+                "qualified_name": "Login",
+                "symbol_key": "tsx frontend/src/routes/login.tsx/Login().",
+                "path": "frontend/src/routes/login.tsx",
+                "lines": [
+                  53,
+                  142
+                ],
+                "lane": "ui",
+                "model": null
+              },
+              "edge": null
+            },
+            {
+              "layer": "state",
+              "node": {
+                "kind": "hook",
+                "name": "useAuth",
+                "qualified_name": "useAuth",
+                "symbol_key": "ts frontend/src/hooks/useAuth.ts/useAuth().",
+                "path": "frontend/src/hooks/useAuth.ts",
+                "lines": [
+                  18,
+                  67
+                ],
+                "lane": "ui",
+                "model": null
+              },
+              "edge": {
+                "type": "uses_hook",
+                "confidence": 0.9,
+                "provenance": "import_resolved",
+                "evidence": {
+                  "path": "frontend/src/routes/login.tsx",
+                  "line": 54
+                },
+                "alternatives": 1
+              }
+            },
+            {
+              "layer": "ui",
+              "node": {
+                "kind": "method",
+                "name": "loginAccessToken",
+                "qualified_name": "LoginService.loginAccessToken",
+                "symbol_key": "ts frontend/src/client/sdk.gen.ts/LoginService#loginAccessToken().",
+                "path": "frontend/src/client/sdk.gen.ts",
+                "lines": [
+                  27,
+                  38
+                ],
+                "lane": "ui",
+                "model": null
+              },
+              "edge": {
+                "type": "calls",
+                "confidence": 0.9,
+                "provenance": "import_resolved",
+                "evidence": {
+                  "path": "frontend/src/hooks/useAuth.ts",
+                  "line": 42
+                },
+                "alternatives": 1
+              }
+            },
+            {
+              "layer": "client",
+              "node": {
+                "kind": "http_client_call",
+                "name": "POST /api/v1/login/access-token",
+                "qualified_name": "POST /api/v1/login/access-token",
+                "symbol_key": "http_client_call POST /api/v1/login/access-token frontend/src/client/sdk.gen.ts:28",
+                "path": "frontend/src/client/sdk.gen.ts",
+                "lines": [
+                  28,
+                  28
+                ],
+                "lane": "ui",
+                "model": null
+              },
+              "edge": {
+                "type": "issues_request",
+                "confidence": 1.0,
+                "provenance": "contract",
+                "evidence": {
+                  "path": "frontend/src/client/sdk.gen.ts",
+                  "line": 28
+                },
+                "alternatives": 1
+              }
+            },
+            {
+              "layer": "route",
+              "node": {
+                "kind": "api_endpoint",
+                "name": "POST /api/v1/login/access-token",
+                "qualified_name": "POST /api/v1/login/access-token",
+                "symbol_key": "api_endpoint POST /api/v1/login/access-token",
+                "path": "backend/app/api/routes/login.py",
+                "lines": [
+                  23,
+                  42
+                ],
+                "lane": "api",
+                "model": null
+              },
+              "edge": {
+                "type": "targets",
+                "confidence": 0.9,
+                "provenance": "url_literal",
+                "evidence": {
+                  "path": "frontend/src/client/sdk.gen.ts",
+                  "line": 28
+                },
+                "alternatives": 1
+              }
+            },
+            {
+              "layer": "handler",
+              "node": {
+                "kind": "function",
+                "name": "login_access_token",
+                "qualified_name": "login_access_token",
+                "symbol_key": "py backend/app/api/routes/login.py/login_access_token().",
+                "path": "backend/app/api/routes/login.py",
+                "lines": [
+                  23,
+                  42
+                ],
+                "lane": "api",
+                "model": null
+              },
+              "edge": {
+                "type": "handled_by",
+                "confidence": 0.9,
+                "provenance": "import_resolved",
+                "evidence": {
+                  "path": "backend/app/api/routes/login.py",
+                  "line": 23
+                },
+                "alternatives": 1
+              }
+            },
+            {
+              "layer": "db",
+              "node": {
+                "kind": "function",
+                "name": "authenticate",
+                "qualified_name": "authenticate",
+                "symbol_key": "py backend/app/crud.py/authenticate().",
+                "path": "backend/app/crud.py",
+                "lines": [
+                  45,
+                  60
+                ],
+                "lane": "db",
+                "model": null
+              },
+              "edge": {
+                "type": "calls",
+                "confidence": 0.9,
+                "provenance": "import_resolved",
+                "evidence": {
+                  "path": "backend/app/api/routes/login.py",
+                  "line": 30
+                },
+                "alternatives": 1
+              }
+            },
+            {
+              "layer": "db",
+              "node": {
+                "kind": "function",
+                "name": "get_user_by_email",
+                "qualified_name": "get_user_by_email",
+                "symbol_key": "py backend/app/crud.py/get_user_by_email().",
+                "path": "backend/app/crud.py",
+                "lines": [
+                  34,
+                  37
+                ],
+                "lane": "db",
+                "model": null
+              },
+              "edge": {
+                "type": "calls",
+                "confidence": 0.9,
+                "provenance": "import_resolved",
+                "evidence": {
+                  "path": "backend/app/crud.py",
+                  "line": 46
+                },
+                "alternatives": 1
+              }
+            },
+            {
+              "layer": "db",
+              "node": {
+                "kind": "table",
+                "name": "user",
+                "qualified_name": "user",
+                "symbol_key": "table user",
+                "path": "backend/app/models.py",
+                "lines": [
+                  51,
+                  51
+                ],
+                "lane": "db",
+                "model": {
+                  "symbol_key": "py backend/app/models.py/User#",
+                  "path": "backend/app/models.py",
+                  "lines": [
+                    51,
+                    55
+                  ]
+                }
+              },
+              "edge": {
+                "type": "reads",
+                "confidence": 0.9,
+                "provenance": "import_resolved",
+                "evidence": {
+                  "path": "backend/app/crud.py",
+                  "line": 35
+                },
+                "alternatives": 1
+              }
+            }
+          ],
+          "path_confidence": 0.4783,
+          "layers": [
+            "ui",
+            "state",
+            "client",
+            "route",
+            "handler",
+            "db"
+          ],
+          "reaches_goal": true,
+          "breaks": []
+        },
+        {
+          "hops": [
+            {
+              "layer": "ui",
+              "node": {
+                "kind": "component",
+                "name": "Login",
+                "qualified_name": "Login",
+                "symbol_key": "tsx frontend/src/routes/login.tsx/Login().",
+                "path": "frontend/src/routes/login.tsx",
+                "lines": [
+                  53,
+                  142
+                ],
+                "lane": "ui",
+                "model": null
+              },
+              "edge": null
+            },
+            {
+              "layer": "state",
+              "node": {
+                "kind": "hook",
+                "name": "useAuth",
+                "qualified_name": "useAuth",
+                "symbol_key": "ts frontend/src/hooks/useAuth.ts/useAuth().",
+                "path": "frontend/src/hooks/useAuth.ts",
+                "lines": [
+                  18,
+                  67
+                ],
+                "lane": "ui",
+                "model": null
+              },
+              "edge": {
+                "type": "uses_hook",
+                "confidence": 0.9,
+                "provenance": "import_resolved",
+                "evidence": {
+                  "path": "frontend/src/routes/login.tsx",
+                  "line": 54
+                },
+                "alternatives": 1
+              }
+            },
+            {
+              "layer": "ui",
+              "node": {
+                "kind": "method",
+                "name": "loginAccessToken",
+                "qualified_name": "LoginService.loginAccessToken",
+                "symbol_key": "ts frontend/src/client/sdk.gen.ts/LoginService#loginAccessToken().",
+                "path": "frontend/src/client/sdk.gen.ts",
+                "lines": [
+                  27,
+                  38
+                ],
+                "lane": "ui",
+                "model": null
+              },
+              "edge": {
+                "type": "calls",
+                "confidence": 0.9,
+                "provenance": "import_resolved",
+                "evidence": {
+                  "path": "frontend/src/hooks/useAuth.ts",
+                  "line": 42
+                },
+                "alternatives": 1
+              }
+            },
+            {
+              "layer": "client",
+              "node": {
+                "kind": "http_client_call",
+                "name": "POST /api/v1/login/access-token",
+                "qualified_name": "POST /api/v1/login/access-token",
+                "symbol_key": "http_client_call POST /api/v1/login/access-token frontend/src/client/sdk.gen.ts:28",
+                "path": "frontend/src/client/sdk.gen.ts",
+                "lines": [
+                  28,
+                  28
+                ],
+                "lane": "ui",
+                "model": null
+              },
+              "edge": {
+                "type": "issues_request",
+                "confidence": 1.0,
+                "provenance": "contract",
+                "evidence": {
+                  "path": "frontend/src/client/sdk.gen.ts",
+                  "line": 28
+                },
+                "alternatives": 1
+              }
+            },
+            {
+              "layer": "route",
+              "node": {
+                "kind": "api_endpoint",
+                "name": "POST /api/v1/login/access-token",
+                "qualified_name": "POST /api/v1/login/access-token",
+                "symbol_key": "api_endpoint POST /api/v1/login/access-token",
+                "path": "backend/app/api/routes/login.py",
+                "lines": [
+                  23,
+                  42
+                ],
+                "lane": "api",
+                "model": null
+              },
+              "edge": {
+                "type": "targets",
+                "confidence": 0.9,
+                "provenance": "url_literal",
+                "evidence": {
+                  "path": "frontend/src/client/sdk.gen.ts",
+                  "line": 28
+                },
+                "alternatives": 1
+              }
+            },
+            {
+              "layer": "handler",
+              "node": {
+                "kind": "function",
+                "name": "login_access_token",
+                "qualified_name": "login_access_token",
+                "symbol_key": "py backend/app/api/routes/login.py/login_access_token().",
+                "path": "backend/app/api/routes/login.py",
+                "lines": [
+                  23,
+                  42
+                ],
+                "lane": "api",
+                "model": null
+              },
+              "edge": {
+                "type": "handled_by",
+                "confidence": 0.9,
+                "provenance": "import_resolved",
+                "evidence": {
+                  "path": "backend/app/api/routes/login.py",
+                  "line": 23
+                },
+                "alternatives": 1
+              }
+            },
+            {
+              "layer": "db",
+              "node": {
+                "kind": "function",
+                "name": "authenticate",
+                "qualified_name": "authenticate",
+                "symbol_key": "py backend/app/crud.py/authenticate().",
+                "path": "backend/app/crud.py",
+                "lines": [
+                  45,
+                  60
+                ],
+                "lane": "db",
+                "model": null
+              },
+              "edge": {
+                "type": "calls",
+                "confidence": 0.9,
+                "provenance": "import_resolved",
+                "evidence": {
+                  "path": "backend/app/api/routes/login.py",
+                  "line": 30
+                },
+                "alternatives": 1
+              }
+            },
+            {
+              "layer": "db",
+              "node": {
+                "kind": "table",
+                "name": "user",
+                "qualified_name": "user",
+                "symbol_key": "table user",
+                "path": "backend/app/models.py",
+                "lines": [
+                  51,
+                  51
+                ],
+                "lane": "db",
+                "model": {
+                  "symbol_key": "py backend/app/models.py/User#",
+                  "path": "backend/app/models.py",
+                  "lines": [
+                    51,
+                    55
+                  ]
+                }
+              },
+              "edge": {
+                "type": "writes",
+                "confidence": 0.7,
+                "provenance": "receiver_heuristic",
+                "evidence": {
+                  "path": "backend/app/crud.py",
+                  "line": 57
+                },
+                "alternatives": 1
+              }
+            }
+          ],
+          "path_confidence": 0.4133,
+          "layers": [
+            "ui",
+            "state",
+            "client",
+            "route",
+            "handler",
+            "db"
+          ],
+          "reaches_goal": true,
+          "breaks": []
+        },
+        {
+          "hops": [
+            {
+              "layer": "ui",
+              "node": {
+                "kind": "component",
+                "name": "Login",
+                "qualified_name": "Login",
+                "symbol_key": "tsx frontend/src/routes/login.tsx/Login().",
+                "path": "frontend/src/routes/login.tsx",
+                "lines": [
+                  53,
+                  142
+                ],
+                "lane": "ui",
+                "model": null
+              },
+              "edge": null
+            },
+            {
+              "layer": "state",
+              "node": {
+                "kind": "hook",
+                "name": "useAuth",
+                "qualified_name": "useAuth",
+                "symbol_key": "ts frontend/src/hooks/useAuth.ts/useAuth().",
+                "path": "frontend/src/hooks/useAuth.ts",
+                "lines": [
+                  18,
+                  67
+                ],
+                "lane": "ui",
+                "model": null
+              },
+              "edge": {
+                "type": "uses_hook",
+                "confidence": 0.9,
+                "provenance": "import_resolved",
+                "evidence": {
+                  "path": "frontend/src/routes/login.tsx",
+                  "line": 54
+                },
+                "alternatives": 1
+              }
+            },
+            {
+              "layer": "ui",
+              "node": {
+                "kind": "method",
+                "name": "registerUser",
+                "qualified_name": "UsersService.registerUser",
+                "symbol_key": "ts frontend/src/client/sdk.gen.ts/UsersService#registerUser().",
+                "path": "frontend/src/client/sdk.gen.ts",
+                "lines": [
+                  201,
+                  211
+                ],
+                "lane": "ui",
+                "model": null
+              },
+              "edge": {
+                "type": "calls",
+                "confidence": 0.9,
+                "provenance": "import_resolved",
+                "evidence": {
+                  "path": "frontend/src/hooks/useAuth.ts",
+                  "line": 31
+                },
+                "alternatives": 1
+              }
+            },
+            {
+              "layer": "client",
+              "node": {
+                "kind": "http_client_call",
+                "name": "POST /api/v1/users/signup",
+                "qualified_name": "POST /api/v1/users/signup",
+                "symbol_key": "http_client_call POST /api/v1/users/signup frontend/src/client/sdk.gen.ts:202",
+                "path": "frontend/src/client/sdk.gen.ts",
+                "lines": [
+                  202,
+                  202
+                ],
+                "lane": "ui",
+                "model": null
+              },
+              "edge": {
+                "type": "issues_request",
+                "confidence": 1.0,
+                "provenance": "contract",
+                "evidence": {
+                  "path": "frontend/src/client/sdk.gen.ts",
+                  "line": 202
+                },
+                "alternatives": 1
+              }
+            },
+            {
+              "layer": "route",
+              "node": {
+                "kind": "api_endpoint",
+                "name": "POST /api/v1/users/signup",
+                "qualified_name": "POST /api/v1/users/signup",
+                "symbol_key": "api_endpoint POST /api/v1/users/signup",
+                "path": "backend/app/api/routes/users.py",
+                "lines": [
+                  146,
+                  159
+                ],
+                "lane": "api",
+                "model": null
+              },
+              "edge": {
+                "type": "targets",
+                "confidence": 0.9,
+                "provenance": "url_literal",
+                "evidence": {
+                  "path": "frontend/src/client/sdk.gen.ts",
+                  "line": 202
+                },
+                "alternatives": 1
+              }
+            },
+            {
+              "layer": "handler",
+              "node": {
+                "kind": "function",
+                "name": "register_user",
+                "qualified_name": "register_user",
+                "symbol_key": "py backend/app/api/routes/users.py/register_user().",
+                "path": "backend/app/api/routes/users.py",
+                "lines": [
+                  146,
+                  159
+                ],
+                "lane": "api",
+                "model": null
+              },
+              "edge": {
+                "type": "handled_by",
+                "confidence": 0.9,
+                "provenance": "import_resolved",
+                "evidence": {
+                  "path": "backend/app/api/routes/users.py",
+                  "line": 146
+                },
+                "alternatives": 1
+              }
+            },
+            {
+              "layer": "db",
+              "node": {
+                "kind": "function",
+                "name": "get_user_by_email",
+                "qualified_name": "get_user_by_email",
+                "symbol_key": "py backend/app/crud.py/get_user_by_email().",
+                "path": "backend/app/crud.py",
+                "lines": [
+                  34,
+                  37
+                ],
+                "lane": "db",
+                "model": null
+              },
+              "edge": {
+                "type": "calls",
+                "confidence": 0.9,
+                "provenance": "import_resolved",
+                "evidence": {
+                  "path": "backend/app/api/routes/users.py",
+                  "line": 151
+                },
+                "alternatives": 1
+              }
+            },
+            {
+              "layer": "db",
+              "node": {
+                "kind": "table",
+                "name": "user",
+                "qualified_name": "user",
+                "symbol_key": "table user",
+                "path": "backend/app/models.py",
+                "lines": [
+                  51,
+                  51
+                ],
+                "lane": "db",
+                "model": {
+                  "symbol_key": "py backend/app/models.py/User#",
+                  "path": "backend/app/models.py",
+                  "lines": [
+                    51,
+                    55
+                  ]
+                }
+              },
+              "edge": {
+                "type": "reads",
+                "confidence": 0.9,
+                "provenance": "import_resolved",
+                "evidence": {
+                  "path": "backend/app/crud.py",
+                  "line": 35
+                },
+                "alternatives": 1
+              }
+            }
+          ],
+          "path_confidence": 0.5314,
+          "layers": [
+            "ui",
+            "state",
+            "client",
+            "route",
+            "handler",
+            "db"
+          ],
+          "reaches_goal": true,
+          "breaks": []
+        }
+      ]
+    },
+    "py backend/app/api/deps.py/get_db().": {
+      "entries": [
+        {
+          "kind": "function",
+          "name": "get_db",
+          "qualified_name": "get_db",
+          "symbol_key": "py backend/app/api/deps.py/get_db().",
+          "path": "backend/app/api/deps.py",
+          "lines": [
+            21,
+            23
+          ],
+          "lane": "api",
+          "model": null
+        }
+      ],
+      "goal": null,
+      "linked": true,
+      "paths": [
+        {
+          "hops": [
+            {
+              "layer": "handler",
+              "node": {
+                "kind": "function",
+                "name": "get_db",
+                "qualified_name": "get_db",
+                "symbol_key": "py backend/app/api/deps.py/get_db().",
+                "path": "backend/app/api/deps.py",
+                "lines": [
+                  21,
+                  23
+                ],
+                "lane": "api",
+                "model": null
+              },
+              "edge": null
+            }
+          ],
+          "path_confidence": 1.0,
+          "layers": [
+            "handler"
+          ],
+          "reaches_goal": false,
+          "breaks": [
+            {
+              "after_hop": 0,
+              "reason": "get_db calls nothing the trace follows further",
+              "detail": null
+            }
+          ]
+        }
+      ]
+    },
+    "tsx frontend/src/components/Items/AddItem.tsx/AddItem().": {
+      "entries": [
+        {
+          "kind": "component",
+          "name": "AddItem",
+          "qualified_name": "AddItem",
+          "symbol_key": "tsx frontend/src/components/Items/AddItem.tsx/AddItem().",
+          "path": "frontend/src/components/Items/AddItem.tsx",
+          "lines": [
+            40,
+            141
+          ],
+          "lane": "ui",
+          "model": null
+        }
+      ],
+      "goal": null,
+      "linked": true,
+      "paths": [
+        {
+          "hops": [
+            {
+              "layer": "ui",
+              "node": {
+                "kind": "component",
+                "name": "AddItem",
+                "qualified_name": "AddItem",
+                "symbol_key": "tsx frontend/src/components/Items/AddItem.tsx/AddItem().",
+                "path": "frontend/src/components/Items/AddItem.tsx",
+                "lines": [
+                  40,
+                  141
+                ],
+                "lane": "ui",
+                "model": null
+              },
+              "edge": null
+            },
+            {
+              "layer": "ui",
+              "node": {
+                "kind": "method",
+                "name": "createItem",
+                "qualified_name": "ItemsService.createItem",
+                "symbol_key": "ts frontend/src/client/sdk.gen.ts/ItemsService#createItem().",
+                "path": "frontend/src/client/sdk.gen.ts",
+                "lines": [
+                  307,
+                  318
+                ],
+                "lane": "ui",
+                "model": null
+              },
+              "edge": {
+                "type": "calls",
+                "confidence": 0.9,
+                "provenance": "import_resolved",
+                "evidence": {
+                  "path": "frontend/src/components/Items/AddItem.tsx",
+                  "line": 56
+                },
+                "alternatives": 1
+              }
+            },
+            {
+              "layer": "client",
+              "node": {
+                "kind": "http_client_call",
+                "name": "POST /api/v1/items/",
+                "qualified_name": "POST /api/v1/items/",
+                "symbol_key": "http_client_call POST /api/v1/items/ frontend/src/client/sdk.gen.ts:308",
+                "path": "frontend/src/client/sdk.gen.ts",
+                "lines": [
+                  308,
+                  308
+                ],
+                "lane": "ui",
+                "model": null
+              },
+              "edge": {
+                "type": "issues_request",
+                "confidence": 1.0,
+                "provenance": "contract",
+                "evidence": {
+                  "path": "frontend/src/client/sdk.gen.ts",
+                  "line": 308
+                },
+                "alternatives": 1
+              }
+            },
+            {
+              "layer": "route",
+              "node": {
+                "kind": "api_endpoint",
+                "name": "POST /api/v1/items/",
+                "qualified_name": "POST /api/v1/items/",
+                "symbol_key": "api_endpoint POST /api/v1/items",
+                "path": "backend/app/api/routes/items.py",
+                "lines": [
+                  61,
+                  72
+                ],
+                "lane": "api",
+                "model": null
+              },
+              "edge": {
+                "type": "targets",
+                "confidence": 0.9,
+                "provenance": "url_literal",
+                "evidence": {
+                  "path": "frontend/src/client/sdk.gen.ts",
+                  "line": 308
+                },
+                "alternatives": 1
+              }
+            },
+            {
+              "layer": "handler",
+              "node": {
+                "kind": "function",
+                "name": "create_item",
+                "qualified_name": "create_item",
+                "symbol_key": "py backend/app/api/routes/items.py/create_item().",
+                "path": "backend/app/api/routes/items.py",
+                "lines": [
+                  61,
+                  72
+                ],
+                "lane": "api",
+                "model": null
+              },
+              "edge": {
+                "type": "handled_by",
+                "confidence": 0.9,
+                "provenance": "import_resolved",
+                "evidence": {
+                  "path": "backend/app/api/routes/items.py",
+                  "line": 61
+                },
+                "alternatives": 1
+              }
+            },
+            {
+              "layer": "db",
+              "node": {
+                "kind": "table",
+                "name": "item",
+                "qualified_name": "item",
+                "symbol_key": "table item",
+                "path": "backend/app/models.py",
+                "lines": [
+                  87,
+                  87
+                ],
+                "lane": "db",
+                "model": {
+                  "symbol_key": "py backend/app/models.py/Item#",
+                  "path": "backend/app/models.py",
+                  "lines": [
+                    87,
+                    93
+                  ]
+                }
+              },
+              "edge": {
+                "type": "writes",
+                "confidence": 0.7,
+                "provenance": "receiver_heuristic",
+                "evidence": {
+                  "path": "backend/app/api/routes/items.py",
+                  "line": 69
+                },
+                "alternatives": 1
+              }
+            }
+          ],
+          "path_confidence": 0.5103,
+          "layers": [
+            "ui",
+            "client",
+            "route",
+            "handler",
+            "db"
+          ],
+          "reaches_goal": true,
+          "breaks": []
+        },
+        {
+          "hops": [
+            {
+              "layer": "ui",
+              "node": {
+                "kind": "component",
+                "name": "AddItem",
+                "qualified_name": "AddItem",
+                "symbol_key": "tsx frontend/src/components/Items/AddItem.tsx/AddItem().",
+                "path": "frontend/src/components/Items/AddItem.tsx",
+                "lines": [
+                  40,
+                  141
+                ],
+                "lane": "ui",
+                "model": null
+              },
+              "edge": null
+            },
+            {
+              "layer": "ui",
+              "node": {
+                "kind": "method",
+                "name": "createItem",
+                "qualified_name": "ItemsService.createItem",
+                "symbol_key": "ts frontend/src/client/sdk.gen.ts/ItemsService#createItem().",
+                "path": "frontend/src/client/sdk.gen.ts",
+                "lines": [
+                  307,
+                  318
+                ],
+                "lane": "ui",
+                "model": null
+              },
+              "edge": {
+                "type": "calls",
+                "confidence": 0.9,
+                "provenance": "import_resolved",
+                "evidence": {
+                  "path": "frontend/src/components/Items/AddItem.tsx",
+                  "line": 56
+                },
+                "alternatives": 1
+              }
+            },
+            {
+              "layer": "client",
+              "node": {
+                "kind": "http_client_call",
+                "name": "POST /api/v1/items/",
+                "qualified_name": "POST /api/v1/items/",
+                "symbol_key": "http_client_call POST /api/v1/items/ frontend/src/client/sdk.gen.ts:308",
+                "path": "frontend/src/client/sdk.gen.ts",
+                "lines": [
+                  308,
+                  308
+                ],
+                "lane": "ui",
+                "model": null
+              },
+              "edge": {
+                "type": "issues_request",
+                "confidence": 1.0,
+                "provenance": "contract",
+                "evidence": {
+                  "path": "frontend/src/client/sdk.gen.ts",
+                  "line": 308
+                },
+                "alternatives": 1
+              }
+            },
+            {
+              "layer": "route",
+              "node": {
+                "kind": "api_endpoint",
+                "name": "POST /api/v1/items/",
+                "qualified_name": "POST /api/v1/items/",
+                "symbol_key": "api_endpoint POST /api/v1/items",
+                "path": "backend/app/api/routes/items.py",
+                "lines": [
+                  61,
+                  72
+                ],
+                "lane": "api",
+                "model": null
+              },
+              "edge": {
+                "type": "targets",
+                "confidence": 0.9,
+                "provenance": "url_literal",
+                "evidence": {
+                  "path": "frontend/src/client/sdk.gen.ts",
+                  "line": 308
+                },
+                "alternatives": 1
+              }
+            },
+            {
+              "layer": "handler",
+              "node": {
+                "kind": "function",
+                "name": "create_item",
+                "qualified_name": "create_item",
+                "symbol_key": "py backend/app/api/routes/items.py/create_item().",
+                "path": "backend/app/api/routes/items.py",
+                "lines": [
+                  61,
+                  72
+                ],
+                "lane": "api",
+                "model": null
+              },
+              "edge": {
+                "type": "handled_by",
+                "confidence": 0.9,
+                "provenance": "import_resolved",
+                "evidence": {
+                  "path": "backend/app/api/routes/items.py",
+                  "line": 61
+                },
+                "alternatives": 1
+              }
+            },
+            {
+              "layer": "handler",
+              "node": {
+                "kind": "function",
+                "name": "get_current_user",
+                "qualified_name": "get_current_user",
+                "symbol_key": "py backend/app/api/deps.py/get_current_user().",
+                "path": "backend/app/api/deps.py",
+                "lines": [
+                  30,
+                  46
+                ],
+                "lane": "api",
+                "model": null
+              },
+              "edge": {
+                "type": "injects",
+                "confidence": 0.9,
+                "provenance": "import_resolved",
+                "evidence": {
+                  "path": "backend/app/api/routes/items.py",
+                  "line": 63
+                },
+                "alternatives": 1
+              }
+            },
+            {
+              "layer": "db",
+              "node": {
+                "kind": "table",
+                "name": "user",
+                "qualified_name": "user",
+                "symbol_key": "table user",
+                "path": "backend/app/models.py",
+                "lines": [
+                  51,
+                  51
+                ],
+                "lane": "db",
+                "model": {
+                  "symbol_key": "py backend/app/models.py/User#",
+                  "path": "backend/app/models.py",
+                  "lines": [
+                    51,
+                    55
+                  ]
+                }
+              },
+              "edge": {
+                "type": "reads",
+                "confidence": 0.9,
+                "provenance": "import_resolved",
+                "evidence": {
+                  "path": "backend/app/api/deps.py",
+                  "line": 41
+                },
+                "alternatives": 1
+              }
+            }
+          ],
+          "path_confidence": 0.5905,
+          "layers": [
+            "ui",
+            "client",
+            "route",
+            "handler",
+            "db"
+          ],
+          "reaches_goal": true,
+          "breaks": []
+        },
+        {
+          "hops": [
+            {
+              "layer": "ui",
+              "node": {
+                "kind": "component",
+                "name": "AddItem",
+                "qualified_name": "AddItem",
+                "symbol_key": "tsx frontend/src/components/Items/AddItem.tsx/AddItem().",
+                "path": "frontend/src/components/Items/AddItem.tsx",
+                "lines": [
+                  40,
+                  141
+                ],
+                "lane": "ui",
+                "model": null
+              },
+              "edge": null
+            },
+            {
+              "layer": "ui",
+              "node": {
+                "kind": "component",
+                "name": "FormItem",
+                "qualified_name": "FormItem",
+                "symbol_key": "tsx frontend/src/components/ui/form.tsx/FormItem().",
+                "path": "frontend/src/components/ui/form.tsx",
+                "lines": [
+                  74,
+                  86
+                ],
+                "lane": "ui",
+                "model": null
+              },
+              "edge": {
+                "type": "renders",
+                "confidence": 0.9,
+                "provenance": "import_resolved",
+                "evidence": {
+                  "path": "frontend/src/components/Items/AddItem.tsx",
+                  "line": 94
+                },
+                "alternatives": 1
+              }
+            },
+            {
+              "layer": "ui",
+              "node": {
+                "kind": "function",
+                "name": "cn",
+                "qualified_name": "cn",
+                "symbol_key": "ts frontend/src/lib/utils.ts/cn().",
+                "path": "frontend/src/lib/utils.ts",
+                "lines": [
+                  4,
+                  6
+                ],
+                "lane": "ui",
+                "model": null
+              },
+              "edge": {
+                "type": "calls",
+                "confidence": 0.9,
+                "provenance": "import_resolved",
+                "evidence": {
+                  "path": "frontend/src/components/ui/form.tsx",
+                  "line": 81
+                },
+                "alternatives": 1
+              }
+            }
+          ],
+          "path_confidence": 0.81,
+          "layers": [
+            "ui"
+          ],
+          "reaches_goal": false,
+          "breaks": [
+            {
+              "after_hop": 2,
+              "reason": "cn calls nothing the trace follows further",
+              "detail": null
+            }
+          ]
+        }
+      ]
+    },
+    "POST /api/v1/items/": {
+      "entries": [
+        {
+          "kind": "api_endpoint",
+          "name": "POST /api/v1/items/",
+          "qualified_name": "POST /api/v1/items/",
+          "symbol_key": "api_endpoint POST /api/v1/items",
+          "path": "backend/app/api/routes/items.py",
+          "lines": [
+            61,
+            72
+          ],
+          "lane": "api",
+          "model": null
+        }
+      ],
+      "goal": null,
+      "linked": true,
+      "paths": [
+        {
+          "hops": [
+            {
+              "layer": "route",
+              "node": {
+                "kind": "api_endpoint",
+                "name": "POST /api/v1/items/",
+                "qualified_name": "POST /api/v1/items/",
+                "symbol_key": "api_endpoint POST /api/v1/items",
+                "path": "backend/app/api/routes/items.py",
+                "lines": [
+                  61,
+                  72
+                ],
+                "lane": "api",
+                "model": null
+              },
+              "edge": null
+            },
+            {
+              "layer": "handler",
+              "node": {
+                "kind": "function",
+                "name": "create_item",
+                "qualified_name": "create_item",
+                "symbol_key": "py backend/app/api/routes/items.py/create_item().",
+                "path": "backend/app/api/routes/items.py",
+                "lines": [
+                  61,
+                  72
+                ],
+                "lane": "api",
+                "model": null
+              },
+              "edge": {
+                "type": "handled_by",
+                "confidence": 0.9,
+                "provenance": "import_resolved",
+                "evidence": {
+                  "path": "backend/app/api/routes/items.py",
+                  "line": 61
+                },
+                "alternatives": 1
+              }
+            },
+            {
+              "layer": "db",
+              "node": {
+                "kind": "table",
+                "name": "item",
+                "qualified_name": "item",
+                "symbol_key": "table item",
+                "path": "backend/app/models.py",
+                "lines": [
+                  87,
+                  87
+                ],
+                "lane": "db",
+                "model": {
+                  "symbol_key": "py backend/app/models.py/Item#",
+                  "path": "backend/app/models.py",
+                  "lines": [
+                    87,
+                    93
+                  ]
+                }
+              },
+              "edge": {
+                "type": "writes",
+                "confidence": 0.7,
+                "provenance": "receiver_heuristic",
+                "evidence": {
+                  "path": "backend/app/api/routes/items.py",
+                  "line": 69
+                },
+                "alternatives": 1
+              }
+            }
+          ],
+          "path_confidence": 0.63,
+          "layers": [
+            "route",
+            "handler",
+            "db"
+          ],
+          "reaches_goal": true,
+          "breaks": []
+        },
+        {
+          "hops": [
+            {
+              "layer": "route",
+              "node": {
+                "kind": "api_endpoint",
+                "name": "POST /api/v1/items/",
+                "qualified_name": "POST /api/v1/items/",
+                "symbol_key": "api_endpoint POST /api/v1/items",
+                "path": "backend/app/api/routes/items.py",
+                "lines": [
+                  61,
+                  72
+                ],
+                "lane": "api",
+                "model": null
+              },
+              "edge": null
+            },
+            {
+              "layer": "handler",
+              "node": {
+                "kind": "function",
+                "name": "create_item",
+                "qualified_name": "create_item",
+                "symbol_key": "py backend/app/api/routes/items.py/create_item().",
+                "path": "backend/app/api/routes/items.py",
+                "lines": [
+                  61,
+                  72
+                ],
+                "lane": "api",
+                "model": null
+              },
+              "edge": {
+                "type": "handled_by",
+                "confidence": 0.9,
+                "provenance": "import_resolved",
+                "evidence": {
+                  "path": "backend/app/api/routes/items.py",
+                  "line": 61
+                },
+                "alternatives": 1
+              }
+            },
+            {
+              "layer": "handler",
+              "node": {
+                "kind": "function",
+                "name": "get_current_user",
+                "qualified_name": "get_current_user",
+                "symbol_key": "py backend/app/api/deps.py/get_current_user().",
+                "path": "backend/app/api/deps.py",
+                "lines": [
+                  30,
+                  46
+                ],
+                "lane": "api",
+                "model": null
+              },
+              "edge": {
+                "type": "injects",
+                "confidence": 0.9,
+                "provenance": "import_resolved",
+                "evidence": {
+                  "path": "backend/app/api/routes/items.py",
+                  "line": 63
+                },
+                "alternatives": 1
+              }
+            },
+            {
+              "layer": "db",
+              "node": {
+                "kind": "table",
+                "name": "user",
+                "qualified_name": "user",
+                "symbol_key": "table user",
+                "path": "backend/app/models.py",
+                "lines": [
+                  51,
+                  51
+                ],
+                "lane": "db",
+                "model": {
+                  "symbol_key": "py backend/app/models.py/User#",
+                  "path": "backend/app/models.py",
+                  "lines": [
+                    51,
+                    55
+                  ]
+                }
+              },
+              "edge": {
+                "type": "reads",
+                "confidence": 0.9,
+                "provenance": "import_resolved",
+                "evidence": {
+                  "path": "backend/app/api/deps.py",
+                  "line": 41
+                },
+                "alternatives": 1
+              }
+            }
+          ],
+          "path_confidence": 0.729,
+          "layers": [
+            "route",
+            "handler",
+            "db"
+          ],
+          "reaches_goal": true,
+          "breaks": []
+        },
+        {
+          "hops": [
+            {
+              "layer": "route",
+              "node": {
+                "kind": "api_endpoint",
+                "name": "POST /api/v1/items/",
+                "qualified_name": "POST /api/v1/items/",
+                "symbol_key": "api_endpoint POST /api/v1/items",
+                "path": "backend/app/api/routes/items.py",
+                "lines": [
+                  61,
+                  72
+                ],
+                "lane": "api",
+                "model": null
+              },
+              "edge": null
+            },
+            {
+              "layer": "handler",
+              "node": {
+                "kind": "function",
+                "name": "create_item",
+                "qualified_name": "create_item",
+                "symbol_key": "py backend/app/api/routes/items.py/create_item().",
+                "path": "backend/app/api/routes/items.py",
+                "lines": [
+                  61,
+                  72
+                ],
+                "lane": "api",
+                "model": null
+              },
+              "edge": {
+                "type": "handled_by",
+                "confidence": 0.9,
+                "provenance": "import_resolved",
+                "evidence": {
+                  "path": "backend/app/api/routes/items.py",
+                  "line": 61
+                },
+                "alternatives": 1
+              }
+            },
+            {
+              "layer": "handler",
+              "node": {
+                "kind": "function",
+                "name": "get_db",
+                "qualified_name": "get_db",
+                "symbol_key": "py backend/app/api/deps.py/get_db().",
+                "path": "backend/app/api/deps.py",
+                "lines": [
+                  21,
+                  23
+                ],
+                "lane": "api",
+                "model": null
+              },
+              "edge": {
+                "type": "injects",
+                "confidence": 0.9,
+                "provenance": "import_resolved",
+                "evidence": {
+                  "path": "backend/app/api/routes/items.py",
+                  "line": 63
+                },
+                "alternatives": 1
+              }
+            }
+          ],
+          "path_confidence": 0.81,
+          "layers": [
+            "route",
+            "handler"
+          ],
+          "reaches_goal": false,
+          "breaks": [
+            {
+              "after_hop": 2,
+              "reason": "get_db calls nothing the trace follows further",
+              "detail": null
+            }
+          ]
+        }
+      ]
+    },
+    "tsx frontend/src/components/Items/ItemsReport.tsx/ExportItems().": {
+      "entries": [
+        {
+          "kind": "component",
+          "name": "ExportItems",
+          "qualified_name": "ExportItems",
+          "symbol_key": "tsx frontend/src/components/Items/ItemsReport.tsx/ExportItems().",
+          "path": "frontend/src/components/Items/ItemsReport.tsx",
+          "lines": [
+            10,
+            13
+          ],
+          "lane": "ui",
+          "model": null
+        }
+      ],
+      "goal": null,
+      "linked": true,
+      "paths": [
+        {
+          "hops": [
+            {
+              "layer": "ui",
+              "node": {
+                "kind": "component",
+                "name": "ExportItems",
+                "qualified_name": "ExportItems",
+                "symbol_key": "tsx frontend/src/components/Items/ItemsReport.tsx/ExportItems().",
+                "path": "frontend/src/components/Items/ItemsReport.tsx",
+                "lines": [
+                  10,
+                  13
+                ],
+                "lane": "ui",
+                "model": null
+              },
+              "edge": null
+            },
+            {
+              "layer": "state",
+              "node": {
+                "kind": "hook",
+                "name": "useExportItems",
+                "qualified_name": "useExportItems",
+                "symbol_key": "tsx frontend/src/components/Items/ItemsReport.tsx/useExportItems().",
+                "path": "frontend/src/components/Items/ItemsReport.tsx",
+                "lines": [
+                  5,
+                  8
+                ],
+                "lane": "ui",
+                "model": null
+              },
+              "edge": {
+                "type": "uses_hook",
+                "confidence": 0.9,
+                "provenance": "import_resolved",
+                "evidence": {
+                  "path": "frontend/src/components/Items/ItemsReport.tsx",
+                  "line": 11
+                },
+                "alternatives": 1
+              }
+            },
+            {
+              "layer": "client",
+              "node": {
+                "kind": "http_client_call",
+                "name": "POST /api/v1/items/export",
+                "qualified_name": "POST /api/v1/items/export",
+                "symbol_key": "http_client_call POST /api/v1/items/export frontend/src/components/Items/ItemsReport.tsx:7",
+                "path": "frontend/src/components/Items/ItemsReport.tsx",
+                "lines": [
+                  7,
+                  7
+                ],
+                "lane": "ui",
+                "model": null
+              },
+              "edge": {
+                "type": "issues_request",
+                "confidence": 1.0,
+                "provenance": "contract",
+                "evidence": {
+                  "path": "frontend/src/components/Items/ItemsReport.tsx",
+                  "line": 7
+                },
+                "alternatives": 1
+              }
+            }
+          ],
+          "path_confidence": 0.9,
+          "layers": [
+            "ui",
+            "state",
+            "client"
+          ],
+          "reaches_goal": false,
+          "breaks": [
+            {
+              "after_hop": 2,
+              "reason": "client call has no matching endpoint",
+              "detail": "no POST endpoint at /api/v1/items/export (it has DELETE, GET, PUT)"
+            }
+          ]
+        }
+      ]
+    },
+    "tsx frontend/src/components/Items/ItemsReport.tsx/DailyReport().": {
+      "entries": [
+        {
+          "kind": "component",
+          "name": "DailyReport",
+          "qualified_name": "DailyReport",
+          "symbol_key": "tsx frontend/src/components/Items/ItemsReport.tsx/DailyReport().",
+          "path": "frontend/src/components/Items/ItemsReport.tsx",
+          "lines": [
+            15,
+            21
+          ],
+          "lane": "ui",
+          "model": null
+        }
+      ],
+      "goal": null,
+      "linked": true,
+      "paths": [
+        {
+          "hops": [
+            {
+              "layer": "ui",
+              "node": {
+                "kind": "component",
+                "name": "DailyReport",
+                "qualified_name": "DailyReport",
+                "symbol_key": "tsx frontend/src/components/Items/ItemsReport.tsx/DailyReport().",
+                "path": "frontend/src/components/Items/ItemsReport.tsx",
+                "lines": [
+                  15,
+                  21
+                ],
+                "lane": "ui",
+                "model": null
+              },
+              "edge": null
+            },
+            {
+              "layer": "client",
+              "node": {
+                "kind": "http_client_call",
+                "name": "GET /api/v1/reports/daily/latest",
+                "qualified_name": "GET /api/v1/reports/daily/latest",
+                "symbol_key": "http_client_call GET /api/v1/reports/daily/latest frontend/src/components/Items/ItemsReport.tsx:18",
+                "path": "frontend/src/components/Items/ItemsReport.tsx",
+                "lines": [
+                  18,
+                  18
+                ],
+                "lane": "ui",
+                "model": null
+              },
+              "edge": {
+                "type": "issues_request",
+                "confidence": 1.0,
+                "provenance": "contract",
+                "evidence": {
+                  "path": "frontend/src/components/Items/ItemsReport.tsx",
+                  "line": 18
+                },
+                "alternatives": 1
+              }
+            },
+            {
+              "layer": "route",
+              "node": {
+                "kind": "api_endpoint",
+                "name": "GET /api/v1/reports/daily/{day}",
+                "qualified_name": "GET /api/v1/reports/daily/{day}",
+                "symbol_key": "api_endpoint GET /api/v1/reports/daily/{}",
+                "path": "backend/app/api/routes/reports.py",
+                "lines": [
+                  20,
+                  22
+                ],
+                "lane": "api",
+                "model": null
+              },
+              "edge": {
+                "type": "targets",
+                "confidence": 0.25,
+                "provenance": "url_literal",
+                "evidence": {
+                  "path": "frontend/src/components/Items/ItemsReport.tsx",
+                  "line": 18
+                },
+                "alternatives": 2
+              }
+            },
+            {
+              "layer": "handler",
+              "node": {
+                "kind": "function",
+                "name": "read_daily_report",
+                "qualified_name": "read_daily_report",
+                "symbol_key": "py backend/app/api/routes/reports.py/read_daily_report().",
+                "path": "backend/app/api/routes/reports.py",
+                "lines": [
+                  20,
+                  22
+                ],
+                "lane": "api",
+                "model": null
+              },
+              "edge": {
+                "type": "handled_by",
+                "confidence": 0.9,
+                "provenance": "import_resolved",
+                "evidence": {
+                  "path": "backend/app/api/routes/reports.py",
+                  "line": 20
+                },
+                "alternatives": 1
+              }
+            },
+            {
+              "layer": "db",
+              "node": {
+                "kind": "table",
+                "name": "item",
+                "qualified_name": "item",
+                "symbol_key": "table item",
+                "path": "backend/app/models.py",
+                "lines": [
+                  87,
+                  87
+                ],
+                "lane": "db",
+                "model": {
+                  "symbol_key": "py backend/app/models.py/Item#",
+                  "path": "backend/app/models.py",
+                  "lines": [
+                    87,
+                    93
+                  ]
+                }
+              },
+              "edge": {
+                "type": "reads",
+                "confidence": 0.9,
+                "provenance": "import_resolved",
+                "evidence": {
+                  "path": "backend/app/api/routes/reports.py",
+                  "line": 22
+                },
+                "alternatives": 1
+              }
+            }
+          ],
+          "path_confidence": 0.2025,
+          "layers": [
+            "ui",
+            "client",
+            "route",
+            "handler",
+            "db"
+          ],
+          "reaches_goal": true,
+          "breaks": []
+        },
+        {
+          "hops": [
+            {
+              "layer": "ui",
+              "node": {
+                "kind": "component",
+                "name": "DailyReport",
+                "qualified_name": "DailyReport",
+                "symbol_key": "tsx frontend/src/components/Items/ItemsReport.tsx/DailyReport().",
+                "path": "frontend/src/components/Items/ItemsReport.tsx",
+                "lines": [
+                  15,
+                  21
+                ],
+                "lane": "ui",
+                "model": null
+              },
+              "edge": null
+            },
+            {
+              "layer": "client",
+              "node": {
+                "kind": "http_client_call",
+                "name": "GET /api/v1/reports/daily/latest",
+                "qualified_name": "GET /api/v1/reports/daily/latest",
+                "symbol_key": "http_client_call GET /api/v1/reports/daily/latest frontend/src/components/Items/ItemsReport.tsx:18",
+                "path": "frontend/src/components/Items/ItemsReport.tsx",
+                "lines": [
+                  18,
+                  18
+                ],
+                "lane": "ui",
+                "model": null
+              },
+              "edge": {
+                "type": "issues_request",
+                "confidence": 1.0,
+                "provenance": "contract",
+                "evidence": {
+                  "path": "frontend/src/components/Items/ItemsReport.tsx",
+                  "line": 18
+                },
+                "alternatives": 1
+              }
+            },
+            {
+              "layer": "route",
+              "node": {
+                "kind": "api_endpoint",
+                "name": "GET /api/v1/reports/{period}/latest",
+                "qualified_name": "GET /api/v1/reports/{period}/latest",
+                "symbol_key": "api_endpoint GET /api/v1/reports/{}/latest",
+                "path": "backend/app/api/routes/reports.py",
+                "lines": [
+                  15,
+                  17
+                ],
+                "lane": "api",
+                "model": null
+              },
+              "edge": {
+                "type": "targets",
+                "confidence": 0.25,
+                "provenance": "url_literal",
+                "evidence": {
+                  "path": "frontend/src/components/Items/ItemsReport.tsx",
+                  "line": 18
+                },
+                "alternatives": 2
+              }
+            },
+            {
+              "layer": "handler",
+              "node": {
+                "kind": "function",
+                "name": "read_latest_report",
+                "qualified_name": "read_latest_report",
+                "symbol_key": "py backend/app/api/routes/reports.py/read_latest_report().",
+                "path": "backend/app/api/routes/reports.py",
+                "lines": [
+                  15,
+                  17
+                ],
+                "lane": "api",
+                "model": null
+              },
+              "edge": {
+                "type": "handled_by",
+                "confidence": 0.9,
+                "provenance": "import_resolved",
+                "evidence": {
+                  "path": "backend/app/api/routes/reports.py",
+                  "line": 15
+                },
+                "alternatives": 1
+              }
+            },
+            {
+              "layer": "db",
+              "node": {
+                "kind": "table",
+                "name": "item",
+                "qualified_name": "item",
+                "symbol_key": "table item",
+                "path": "backend/app/models.py",
+                "lines": [
+                  87,
+                  87
+                ],
+                "lane": "db",
+                "model": {
+                  "symbol_key": "py backend/app/models.py/Item#",
+                  "path": "backend/app/models.py",
+                  "lines": [
+                    87,
+                    93
+                  ]
+                }
+              },
+              "edge": {
+                "type": "reads",
+                "confidence": 0.9,
+                "provenance": "import_resolved",
+                "evidence": {
+                  "path": "backend/app/api/routes/reports.py",
+                  "line": 17
+                },
+                "alternatives": 1
+              }
+            }
+          ],
+          "path_confidence": 0.2025,
+          "layers": [
+            "ui",
+            "client",
+            "route",
+            "handler",
+            "db"
+          ],
+          "reaches_goal": true,
+          "breaks": []
+        },
+        {
+          "hops": [
+            {
+              "layer": "ui",
+              "node": {
+                "kind": "component",
+                "name": "DailyReport",
+                "qualified_name": "DailyReport",
+                "symbol_key": "tsx frontend/src/components/Items/ItemsReport.tsx/DailyReport().",
+                "path": "frontend/src/components/Items/ItemsReport.tsx",
+                "lines": [
+                  15,
+                  21
+                ],
+                "lane": "ui",
+                "model": null
+              },
+              "edge": null
+            },
+            {
+              "layer": "client",
+              "node": {
+                "kind": "http_client_call",
+                "name": "GET /api/v1/reports/daily/latest",
+                "qualified_name": "GET /api/v1/reports/daily/latest",
+                "symbol_key": "http_client_call GET /api/v1/reports/daily/latest frontend/src/components/Items/ItemsReport.tsx:18",
+                "path": "frontend/src/components/Items/ItemsReport.tsx",
+                "lines": [
+                  18,
+                  18
+                ],
+                "lane": "ui",
+                "model": null
+              },
+              "edge": {
+                "type": "issues_request",
+                "confidence": 1.0,
+                "provenance": "contract",
+                "evidence": {
+                  "path": "frontend/src/components/Items/ItemsReport.tsx",
+                  "line": 18
+                },
+                "alternatives": 1
+              }
+            },
+            {
+              "layer": "route",
+              "node": {
+                "kind": "api_endpoint",
+                "name": "GET /api/v1/reports/daily/{day}",
+                "qualified_name": "GET /api/v1/reports/daily/{day}",
+                "symbol_key": "api_endpoint GET /api/v1/reports/daily/{}",
+                "path": "backend/app/api/routes/reports.py",
+                "lines": [
+                  20,
+                  22
+                ],
+                "lane": "api",
+                "model": null
+              },
+              "edge": {
+                "type": "targets",
+                "confidence": 0.25,
+                "provenance": "url_literal",
+                "evidence": {
+                  "path": "frontend/src/components/Items/ItemsReport.tsx",
+                  "line": 18
+                },
+                "alternatives": 2
+              }
+            },
+            {
+              "layer": "handler",
+              "node": {
+                "kind": "function",
+                "name": "read_daily_report",
+                "qualified_name": "read_daily_report",
+                "symbol_key": "py backend/app/api/routes/reports.py/read_daily_report().",
+                "path": "backend/app/api/routes/reports.py",
+                "lines": [
+                  20,
+                  22
+                ],
+                "lane": "api",
+                "model": null
+              },
+              "edge": {
+                "type": "handled_by",
+                "confidence": 0.9,
+                "provenance": "import_resolved",
+                "evidence": {
+                  "path": "backend/app/api/routes/reports.py",
+                  "line": 20
+                },
+                "alternatives": 1
+              }
+            },
+            {
+              "layer": "handler",
+              "node": {
+                "kind": "function",
+                "name": "get_db",
+                "qualified_name": "get_db",
+                "symbol_key": "py backend/app/api/deps.py/get_db().",
+                "path": "backend/app/api/deps.py",
+                "lines": [
+                  21,
+                  23
+                ],
+                "lane": "api",
+                "model": null
+              },
+              "edge": {
+                "type": "injects",
+                "confidence": 0.9,
+                "provenance": "import_resolved",
+                "evidence": {
+                  "path": "backend/app/api/routes/reports.py",
+                  "line": 21
+                },
+                "alternatives": 1
+              }
+            }
+          ],
+          "path_confidence": 0.2025,
+          "layers": [
+            "ui",
+            "client",
+            "route",
+            "handler"
+          ],
+          "reaches_goal": false,
+          "breaks": [
+            {
+              "after_hop": 4,
+              "reason": "get_db calls nothing the trace follows further",
+              "detail": null
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "unlinked": {
+    "tsx frontend/src/routes/login.tsx/Login().": {
+      "entries": [
+        {
+          "kind": "component",
+          "name": "Login",
+          "qualified_name": "Login",
+          "symbol_key": "tsx frontend/src/routes/login.tsx/Login().",
+          "path": "frontend/src/routes/login.tsx",
+          "lines": [
+            53,
+            142
+          ],
+          "lane": "ui",
+          "model": null
+        }
+      ],
+      "goal": null,
+      "linked": false,
+      "paths": [
+        {
+          "hops": [
+            {
+              "layer": "ui",
+              "node": {
+                "kind": "component",
+                "name": "Login",
+                "qualified_name": "Login",
+                "symbol_key": "tsx frontend/src/routes/login.tsx/Login().",
+                "path": "frontend/src/routes/login.tsx",
+                "lines": [
+                  53,
+                  142
+                ],
+                "lane": "ui",
+                "model": null
+              },
+              "edge": null
+            },
+            {
+              "layer": "state",
+              "node": {
+                "kind": "hook",
+                "name": "useAuth",
+                "qualified_name": "useAuth",
+                "symbol_key": "ts frontend/src/hooks/useAuth.ts/useAuth().",
+                "path": "frontend/src/hooks/useAuth.ts",
+                "lines": [
+                  18,
+                  67
+                ],
+                "lane": "ui",
+                "model": null
+              },
+              "edge": {
+                "type": "uses_hook",
+                "confidence": 0.9,
+                "provenance": "import_resolved",
+                "evidence": {
+                  "path": "frontend/src/routes/login.tsx",
+                  "line": 54
+                },
+                "alternatives": 1
+              }
+            },
+            {
+              "layer": "ui",
+              "node": {
+                "kind": "method",
+                "name": "loginAccessToken",
+                "qualified_name": "LoginService.loginAccessToken",
+                "symbol_key": "ts frontend/src/client/sdk.gen.ts/LoginService#loginAccessToken().",
+                "path": "frontend/src/client/sdk.gen.ts",
+                "lines": [
+                  27,
+                  38
+                ],
+                "lane": "ui",
+                "model": null
+              },
+              "edge": {
+                "type": "calls",
+                "confidence": 0.9,
+                "provenance": "import_resolved",
+                "evidence": {
+                  "path": "frontend/src/hooks/useAuth.ts",
+                  "line": 42
+                },
+                "alternatives": 1
+              }
+            }
+          ],
+          "path_confidence": 0.81,
+          "layers": [
+            "ui",
+            "state"
+          ],
+          "reaches_goal": false,
+          "breaks": [
+            {
+              "after_hop": 2,
+              "reason": "LoginService.loginAccessToken calls nothing the trace follows further",
+              "detail": null
+            }
+          ]
+        },
+        {
+          "hops": [
+            {
+              "layer": "ui",
+              "node": {
+                "kind": "component",
+                "name": "Login",
+                "qualified_name": "Login",
+                "symbol_key": "tsx frontend/src/routes/login.tsx/Login().",
+                "path": "frontend/src/routes/login.tsx",
+                "lines": [
+                  53,
+                  142
+                ],
+                "lane": "ui",
+                "model": null
+              },
+              "edge": null
+            },
+            {
+              "layer": "ui",
+              "node": {
+                "kind": "variable",
+                "name": "Form",
+                "qualified_name": "Form",
+                "symbol_key": "tsx frontend/src/components/ui/form.tsx/Form.",
+                "path": "frontend/src/components/ui/form.tsx",
+                "lines": [
+                  17,
+                  17
+                ],
+                "lane": "ui",
+                "model": null
+              },
+              "edge": {
+                "type": "renders",
+                "confidence": 0.9,
+                "provenance": "import_resolved",
+                "evidence": {
+                  "path": "frontend/src/routes/login.tsx",
+                  "line": 72
+                },
+                "alternatives": 1
+              }
+            }
+          ],
+          "path_confidence": 0.9,
+          "layers": [
+            "ui"
+          ],
+          "reaches_goal": false,
+          "breaks": [
+            {
+              "after_hop": 1,
+              "reason": "Form calls nothing the trace follows further",
+              "detail": null
+            }
+          ]
+        },
+        {
+          "hops": [
+            {
+              "layer": "ui",
+              "node": {
+                "kind": "component",
+                "name": "Login",
+                "qualified_name": "Login",
+                "symbol_key": "tsx frontend/src/routes/login.tsx/Login().",
+                "path": "frontend/src/routes/login.tsx",
+                "lines": [
+                  53,
+                  142
+                ],
+                "lane": "ui",
+                "model": null
+              },
+              "edge": null
+            },
+            {
+              "layer": "ui",
+              "node": {
+                "kind": "component",
+                "name": "FormField",
+                "qualified_name": "FormField",
+                "symbol_key": "tsx frontend/src/components/ui/form.tsx/FormField().",
+                "path": "frontend/src/components/ui/form.tsx",
+                "lines": [
+                  30,
+                  41
+                ],
+                "lane": "ui",
+                "model": null
+              },
+              "edge": {
+                "type": "renders",
+                "confidence": 0.9,
+                "provenance": "import_resolved",
+                "evidence": {
+                  "path": "frontend/src/routes/login.tsx",
+                  "line": 82
+                },
+                "alternatives": 1
+              }
+            }
+          ],
+          "path_confidence": 0.9,
+          "layers": [
+            "ui"
+          ],
+          "reaches_goal": false,
+          "breaks": [
+            {
+              "after_hop": 1,
+              "reason": "FormField calls nothing the trace follows further",
+              "detail": null
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

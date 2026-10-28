@@ -1,14 +1,14 @@
 import type { Metadata } from "next";
 import { Suspense } from "react";
 
-import { TabPlaceholder } from "@/components/repo/tab-placeholder";
+import { TracePage } from "@/components/trace/trace-page";
 
 export const metadata: Metadata = { title: "Trace" };
 
-export default function TracePage() {
+export default function RepoTracePage() {
   return (
     <Suspense>
-      <TabPlaceholder tab="trace" />
+      <TracePage />
     </Suspense>
   );
 }

@@ -42,8 +42,9 @@ function number(raw: string | null, fallback: number): number {
   return raw === null ? fallback : Number(raw);
 }
 
-/** The repository's graph, or why there's none to read. */
-async function graphFor(params: Params, request: Request) {
+/** The repository's snapshot, once its graph is built, or why there's none to read (the trace
+ * endpoint's checks too). */
+export function graphReady(params: Params, request: Request) {
   const found = target(params, request);
   if (found instanceof Response) return found;
   if (!found.repo.last_indexed_sha) {
@@ -53,6 +54,13 @@ async function graphFor(params: Params, request: Request) {
       "The code graph appears once this commit's indexing has linked its files.",
     );
   }
+  return found;
+}
+
+/** The repository's graph, or why there's none to read. */
+async function graphFor(params: Params, request: Request) {
+  const found = graphReady(params, request);
+  if (found instanceof Response) return found;
   return { ...found, graph: await mockGraph() };
 }
 

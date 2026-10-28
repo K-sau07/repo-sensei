@@ -75,7 +75,6 @@ export const PRIMARY_TABS: RepoTab[] = [
     section: "trace",
     icon: RouteIcon,
     feature: "trace",
-    phase: 3,
     shortcut: "repo-trace",
   },
   {

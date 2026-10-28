@@ -6,8 +6,19 @@ import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import type { ApiError } from "@/lib/api/errors";
 
-/** 429: when to try again, counted down; Retry waits for it. */
-export function RateLimited({ error, onRetry }: { error: ApiError; onRetry: () => void }) {
+/** 429: when to try again, counted down; Retry waits for it. `title` and `verb` say what was
+ * limited (searches by default). */
+export function RateLimited({
+  error,
+  onRetry,
+  title = "Too many searches for now",
+  verb = "search",
+}: {
+  error: ApiError;
+  onRetry: () => void;
+  title?: string;
+  verb?: string;
+}) {
   const [counted, setCounted] = useState(error);
   const [left, setLeft] = useState(error.retryAfter ?? 0);
   // Each 429 counts down from its own Retry-After (a retry can get another).
@@ -31,16 +42,16 @@ export function RateLimited({ error, onRetry }: { error: ApiError; onRetry: () =
     >
       <div className="flex items-center gap-2 text-warn">
         <Clock aria-hidden className="size-4" />
-        <h3 className="text-sm font-semibold">Too many searches for now</h3>
+        <h3 className="text-sm font-semibold">{title}</h3>
       </div>
       <p className="text-sm text-fg-muted">
         {left > 0 ? (
           <>
-            You can search again in <span className="tabular-nums">{left}</span>{" "}
+            You can {verb} again in <span className="tabular-nums">{left}</span>{" "}
             {left === 1 ? "second" : "seconds"}.
           </>
         ) : (
-          "You can search again now."
+          `You can ${verb} again now.`
         )}
       </p>
       <Button variant="outline" size="sm" disabled={left > 0} onClick={onRetry}>

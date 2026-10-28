@@ -66,7 +66,7 @@ export const Empty: Story = {
     // The repository's tabs, once its index state says they're unlocked.
     await expect(await within(go).findByRole("option", { name: /^Code/ })).toBeVisible();
     await expect(within(go).getByRole("option", { name: /^Search/ })).toBeVisible();
-    await expect(within(go).getByRole("option", { name: /Home/ })).toBeVisible();
+    await expect(within(go).getByRole("option", { name: /^Trace/ })).toBeVisible();
     const actions = await group("Do");
     await expect(within(actions).getByRole("option", { name: /Reindex api/ })).toBeVisible();
     const ask = await group("Ask");

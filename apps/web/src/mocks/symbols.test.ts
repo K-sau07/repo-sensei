@@ -59,12 +59,13 @@ describe("the mock symbols", () => {
         continue;
       }
       // The name is defined at the start (after any decorators): a definition, an assignment or
-      // a field.
+      // a field (a class member after its modifiers: `public static loginAccessToken(`).
       const head = lines.slice(symbol.start_line - 1, symbol.start_line + 5).join("\n");
       const name = symbol.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const modifiers = "(?:(?:public|private|protected|static|readonly|async|override)\\s+)*";
       expect(head, symbol.symbol_key).toMatch(
         new RegExp(
-          `(def|class|function|const|let|var|interface|type|module)\\s+${name}(?!\\w)|^\\s*${name}(?!\\w)`,
+          `(def|class|function|const|let|var|interface|type|module)\\s+${name}(?!\\w)|^\\s*${modifiers}${name}(?!\\w)`,
           "m",
         ),
       );
