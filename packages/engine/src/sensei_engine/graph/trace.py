@@ -40,7 +40,7 @@ from dataclasses import dataclass, field
 from math import prod
 from typing import Literal
 
-from sensei_core.models import EdgeType, NodeKind
+from sensei_core.models import EdgeType, NodeKind, Provenance
 from sensei_engine.graph.snapshot import Edge, GraphSnapshot, Node
 from sensei_engine.link.fastapi import normalize_path
 
@@ -84,7 +84,7 @@ class TraceHop:
     layer: Layer
     edge: Edge | None  # how it was reached (None: the entry)
     edge_type: EdgeType | None = None  # the edge's, or IMPLEMENTS for an override step
-    alternatives: int = 1  # the edges of that type the previous node had (2+: ambiguous)
+    alternatives: int = 1  # the targets its call site has (2+: ambiguous)
 
 
 @dataclass(frozen=True, slots=True)
@@ -221,22 +221,44 @@ def _override(index: _Index, here: int) -> list[_Step]:
 
 
 def _steps(index: _Index, here: int, min_conf: float) -> list[_Step]:
-    """The ways on from ``here``: each neighbour once, by its surest edge."""
+    """The ways on from ``here``: each neighbour once, by its surest edge, with how many
+    targets its call site has (:func:`_site`: a call two endpoints match, a method name several
+    classes have, is ambiguous; several calls, or a handler's dependencies, aren't)."""
     nodes = index.graph.nodes
     best: dict[int, Edge] = {}
-    by_type: dict[EdgeType, int] = {}
+    by_site: dict[tuple[EdgeType, str, int | None], int] = {}
     own = {here, *index.nested.get(here, ())}
     for there, edge in (e for at in own for e in index.out[at]):
         if there in own or edge.confidence < min_conf or nodes[there].kind in OUTSIDE_KINDS:
             continue
-        by_type[edge.type] = by_type.get(edge.type, 0) + 1
+        if (site := _site(edge)) is not None:
+            by_site[site] = by_site.get(site, 0) + 1
         held = best.get(there)
         if held is None or edge.confidence > held.confidence:
             best[there] = edge
-    steps = [_Step(t, e, e.type, by_type[e.type]) for t, e in best.items()]
+    steps = [
+        _Step(t, e, e.type, by_site[site] if (site := _site(e)) is not None else 1)
+        for t, e in best.items()
+    ]
     if not steps:
         steps = [s for s in _override(index, here) if s.edge.confidence >= min_conf]
     return steps
+
+
+# Edges one place in the code may have many of, each certain: a signature's dependencies, the
+# tables a query joins. They are never alternatives to each other.
+MANY_PER_SITE = frozenset({EdgeType.INJECTS, EdgeType.READS, EdgeType.WRITES})
+
+
+def _site(edge: Edge) -> tuple[EdgeType, str, int | None] | None:
+    """The call site an edge is one of the possible targets of (its type and evidence line), or
+    None when it can't be one of several: the kinds a site has many of, a call the resolver was
+    sure of (only ``name_ambiguous`` calls are guesses among candidates), no evidence."""
+    if edge.evidence_path is None or edge.type in MANY_PER_SITE:
+        return None
+    if edge.type is EdgeType.CALLS and edge.provenance is not Provenance.NAME_AMBIGUOUS:
+        return None
+    return (edge.type, edge.evidence_path, edge.evidence_line)
 
 
 def _distances(index: _Index, goals: Sequence[int], min_conf: float) -> dict[int, int]:

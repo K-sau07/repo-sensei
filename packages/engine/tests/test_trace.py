@@ -296,6 +296,50 @@ def test_an_ambiguous_call_gives_a_path_per_endpoint_with_its_share() -> None:
     assert second.breaks[0].reason == "endpoint has no handler in the repository"
 
 
+def test_a_method_name_several_classes_have_is_ambiguous() -> None:
+    """``repo.save()`` on a receiver of no known type: the resolver's guesses (``name_ambiguous``)
+    at one call site are its alternatives."""
+    a = _node("py a.py/A#save().", NodeKind.METHOD)
+    b = _node("py b.py/B#save().", NodeKind.METHOD)
+    guess = Edge(EdgeType.CALLS, 0.1, Provenance.NAME_AMBIGUOUS, "a.py", 5)
+    graph = _graph(
+        [HANDLER, a, b],
+        [(HANDLER.symbol_key, a.symbol_key, guess), (HANDLER.symbol_key, b.symbol_key, guess)],
+    )
+    paths = trace_feature(graph, HANDLER.symbol_key).paths
+    assert {p.hops[1].node.symbol_key for p in paths} == {a.symbol_key, b.symbol_key}
+    assert all(p.hops[1].alternatives == 2 for p in paths)
+
+
+def test_calls_on_their_own_lines_are_not_ambiguous() -> None:
+    """A hook making two calls makes two, each certain of its target: neither is ambiguous."""
+    hook = _node("ts h.ts/useItems().", NodeKind.HOOK, path="h.ts")
+    other = _node("http_client_call GET /y ui.tsx:4", NodeKind.HTTP_CLIENT_CALL, path="ui.tsx")
+    graph = _graph(
+        [PAGE, hook, CALL, other],
+        [
+            (PAGE.symbol_key, hook.symbol_key, _edge(EdgeType.USES_HOOK)),
+            (hook.symbol_key, CALL.symbol_key, _edge(EdgeType.ISSUES_REQUEST, 1.0, line=3)),
+            (hook.symbol_key, other.symbol_key, _edge(EdgeType.ISSUES_REQUEST, 1.0, line=4)),
+        ],
+    )
+    paths = trace_feature(graph, PAGE.symbol_key).paths
+    assert {p.hops[2].node.symbol_key for p in paths} == {CALL.symbol_key, other.symbol_key}
+    assert all(h.alternatives == 1 for p in paths for h in p.hops)
+    # Nor are a handler's dependencies, declared on one line.
+    session = _node("py a.py/get_db().", NodeKind.FUNCTION)
+    user = _node("py a.py/current_user().", NodeKind.FUNCTION)
+    handler = _graph(
+        [HANDLER, session, user],
+        [
+            (HANDLER.symbol_key, session.symbol_key, _edge(EdgeType.INJECTS, line=7)),
+            (HANDLER.symbol_key, user.symbol_key, _edge(EdgeType.INJECTS, line=7)),
+        ],
+    )
+    hops = [h for p in trace_feature(handler, HANDLER.symbol_key).paths for h in p.hops]
+    assert all(h.alternatives == 1 for h in hops)
+
+
 def test_min_conf_drops_what_is_less_sure() -> None:
     graph = _graph(
         [HANDLER, TABLE], [(HANDLER.symbol_key, TABLE.symbol_key, _edge(EdgeType.READS, 0.4))]

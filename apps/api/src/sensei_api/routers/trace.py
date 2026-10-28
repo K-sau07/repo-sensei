@@ -100,7 +100,7 @@ class TraceEdgeOut(BaseModel):
     confidence: float
     provenance: Provenance
     evidence: TraceEvidence | None
-    alternatives: int  # the edges of its type the hop before had (2+: ambiguous)
+    alternatives: int  # the targets its call site has (2+: ambiguous)
 
 
 class TraceHopOut(BaseModel):
