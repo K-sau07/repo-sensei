@@ -52,6 +52,31 @@ export const queryKeys = {
     version: string | null,
     path: string,
   ) => ["code", "file", slug, repo, ref ?? version, path] as const,
+  /** The code viewer's symbols: those around a line, a file's outline, and a node's neighbours
+   * in the graph (`query`: direction, types, depth, limit), at the snapshot as above. */
+  symbolsAt: (
+    slug: string,
+    repo: string,
+    ref: string | null,
+    version: string | null,
+    path: string,
+    line: number,
+  ) => ["code", "symbols-at", slug, repo, ref ?? version, path, line] as const,
+  symbolOutline: (
+    slug: string,
+    repo: string,
+    ref: string | null,
+    version: string | null,
+    path: string,
+  ) => ["code", "outline", slug, repo, ref ?? version, path] as const,
+  graphNeighbors: (
+    slug: string,
+    repo: string,
+    ref: string | null,
+    version: string | null,
+    symbol: string,
+    query: object,
+  ) => ["code", "neighbors", slug, repo, ref ?? version, symbol, query] as const,
   /** A search's first page, and one lane's further pages from that page's cursor (POST bodies,
    * so not `$api` queries). */
   search: (slug: string, repo: string, body: object) => ["search", slug, repo, body] as const,

@@ -3345,6 +3345,32 @@
         "title": "SymbolOut",
         "type": "object"
       },
+      "SymbolOutlineOut": {
+        "properties": {
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "symbols": {
+            "items": {
+              "$ref": "#/components/schemas/SymbolAt"
+            },
+            "title": "Symbols",
+            "type": "array"
+          },
+          "truncated": {
+            "title": "Truncated",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "path",
+          "symbols",
+          "truncated"
+        ],
+        "title": "SymbolOutlineOut",
+        "type": "object"
+      },
       "SymbolsAtOut": {
         "properties": {
           "line": {
@@ -6773,6 +6799,101 @@
           }
         },
         "summary": "Symbol At",
+        "tags": [
+          "symbols"
+        ]
+      }
+    },
+    "/api/v1/orgs/{org}/repos/{repo}/symbols/outline": {
+      "get": {
+        "description": "A file's definitions in the order they appear (its outline).",
+        "operationId": "symbol_outline_api_v1_orgs__org__repos__repo__symbols_outline_get",
+        "parameters": [
+          {
+            "description": "Repository slug",
+            "in": "path",
+            "name": "repo",
+            "required": true,
+            "schema": {
+              "description": "Repository slug",
+              "maxLength": 201,
+              "title": "Repo",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Organization slug",
+            "in": "path",
+            "name": "org",
+            "required": true,
+            "schema": {
+              "description": "Organization slug",
+              "title": "Org",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "path",
+            "required": true,
+            "schema": {
+              "maxLength": 4096,
+              "minLength": 1,
+              "title": "Path",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Branch or commit (or its first 7+ characters).",
+            "in": "query",
+            "name": "ref",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 255,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Branch or commit (or its first 7+ characters).",
+              "title": "Ref"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SymbolOutlineOut"
+                }
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "X-Commit-Sha": {
+                "description": "The commit the response was read from.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Symbol Outline",
         "tags": [
           "symbols"
         ]

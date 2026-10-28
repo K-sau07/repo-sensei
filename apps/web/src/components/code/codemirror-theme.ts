@@ -102,6 +102,17 @@ export const viewerTheme = EditorView.theme({
     color: token("text"),
     border: `1px solid ${token("line-strong")}`,
   },
+  // A symbol's hover card draws its own box (symbol-hover-card.tsx).
+  ".cm-tooltip.cm-tooltip-hover": {
+    backgroundColor: "transparent",
+    border: "none",
+    zIndex: "40",
+  },
+  ".cm-symbol-hover": {
+    textDecoration: `underline ${token("text-muted")}`,
+    textUnderlineOffset: "3px",
+    cursor: "pointer",
+  },
 });
 
 /** Syntax colors from the tokens: one hue per kind of thing, comments quiet. Shared with the

@@ -40,6 +40,7 @@ from sensei_core.mail import MemoryMailer
 from sensei_core.models import (
     AuditEvent,
     CodeEdge,
+    CodeNode,
     GitHubInstallation,
     IndexJob,
     JobKind,
@@ -1785,6 +1786,54 @@ async def test_the_symbols_at_a_line(
     assert (await client.get(url, params={"path": "src/app.py", "line": 0})).status_code == 422
 
 
+async def test_a_files_outline(
+    app: FastAPI,
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    fake: FakeGitHub,
+    storage: ObjectStorage,
+    tmp_path: Path,
+) -> None:
+    files = {
+        **FILES,
+        "src/shop.py": (
+            b"class Cart:\n"
+            b'    """Items to buy."""\n'
+            b"\n"
+            b"    def add(self, item):\n"
+            b"        return item\n"
+            b"\n"
+            b"\n"
+            b"def checkout(cart):\n"
+            b"    return cart\n"
+        ),
+    }
+    await _connected(app, client, db_session, fake)
+    await _index(app, db_session, storage, tmp_path, files, SHA_ONE)
+    url = f"{API}/orgs/acme/repos/api/symbols/outline"
+    not_yet = await client.get(url, params={"path": "src/shop.py"})
+    assert (not_yet.status_code, not_yet.json()["error"]["code"]) == (409, "not_indexed")
+
+    await _extract_symbols(db_session, files, SHA_ONE)
+    response = await client.get(url, params={"path": "src/shop.py"})
+    assert response.status_code == 200, response.text
+    assert response.headers["x-commit-sha"] == SHA_ONE
+    body = response.json()
+    assert (body["path"], body["truncated"]) == ("src/shop.py", False)
+    # In the order they appear, the module left out; a method after its class.
+    assert [(s["name"], s["kind"], s["start_line"], s["end_line"]) for s in body["symbols"]] == [
+        ("Cart", "class", 1, 5),
+        ("add", "method", 4, 5),
+        ("checkout", "function", 8, 9),
+    ]
+    assert body["symbols"][0]["docstring"] == "Items to buy."
+    readme = await client.get(url, params={"path": "README.md"})
+    assert readme.json()["symbols"] == []
+    missing = await client.get(url, params={"path": "src/nope.py"})
+    assert (missing.status_code, missing.json()["error"]["code"]) == (404, "path_not_found")
+    assert (await client.get(url, params={"path": "../etc/passwd"})).status_code == 400
+
+
 async def test_symbols_need_access(
     app: FastAPI,
     client: httpx.AsyncClient,
@@ -1801,10 +1850,34 @@ async def test_symbols_need_access(
     for path, params in (
         ("symbols", {"q": "main"}),
         ("symbols/at", {"path": "src/app.py", "line": 1}),
+        ("symbols/outline", {"path": "src/app.py"}),
     ):
         hidden = await client.get(f"{API}/orgs/acme/repos/api/{path}", params=params)
         assert hidden.json()["error"]["code"] == "repo_not_found_or_no_access", path
         assert "x-commit-sha" not in hidden.headers
+
+
+async def test_other_orgs_never_see_a_files_symbols(
+    app: FastAPI,
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    fake: FakeGitHub,
+    storage: ObjectStorage,
+    tmp_path: Path,
+) -> None:
+    await _connected(app, client, db_session, fake)
+    await _index(app, db_session, storage, tmp_path, FILES, SHA_ONE)
+    await _extract_symbols(db_session, FILES, SHA_ONE)
+    assert (await db_session.scalars(select(CodeNode))).all() != []
+    await _admin_org(app, client, db_session, "rival")  # signed in as rival's admin now
+    params = {"path": "src/app.py"}
+    for org in ("acme", "rival"):
+        response = await client.get(f"{API}/orgs/{org}/repos/api/symbols/outline", params=params)
+        assert response.status_code == 404, org
+        assert "x-commit-sha" not in response.headers
+    # Row-level security: in rival's context acme's symbols don't exist at all.
+    await set_org_context(db_session, await _org_id(db_session, "rival"))
+    assert (await db_session.scalars(select(CodeNode))).all() == []
 
 
 # ------------------------------------------------------------------ the code graph

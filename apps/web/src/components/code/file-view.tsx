@@ -33,6 +33,7 @@ import { formatBytes } from "@/lib/constellation";
 import { codePath } from "@/lib/routes";
 import { shortcut } from "@/lib/shortcut-registry";
 
+import { useCodeIntel } from "./code-intel";
 import type { CodeViewerHandle } from "./code-viewer";
 import { PathHeader } from "./path-header";
 import { useCodeLocation, useFile } from "./use-code";
@@ -191,6 +192,7 @@ export function FileView({ path }: { path: string }) {
   const [wrap, setWrap] = useState(false);
   const [selection, setSelection] = useState<LineRange | null>(null);
   const viewer = useRef<CodeViewerHandle>(null);
+  const { intel, card, picker } = useCodeIntel(path, file.data !== undefined);
   const error = file.error instanceof ApiError ? file.error : null;
   const details = fileDetails(error?.details);
   const commit = file.data?.commit ?? details?.commit_sha ?? ref ?? null;
@@ -228,6 +230,7 @@ export function FileView({ path }: { path: string }) {
         onLinesChange={(next) => void setLines(next)}
         onSelectionLines={setSelection}
         wrap={wrap}
+        intel={intel}
         handle={viewer}
       />
     );
@@ -383,6 +386,8 @@ export function FileView({ path }: { path: string }) {
         data-code-view={file.data ? codeViewKey(path, lines) : undefined}
       >
         {body}
+        {card}
+        {picker}
       </div>
     </div>
   );

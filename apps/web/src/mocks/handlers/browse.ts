@@ -59,7 +59,7 @@ export function resolveCommit(repo: MockRepo, ref: string | null): string | Resp
 }
 
 /** `check_path`: relative and normal ("" or "/" is the root; a trailing slash is dropped). */
-function checkPath(raw: string): string | Response {
+export function checkPath(raw: string): string | Response {
   if (raw.length > MAX_PATH)
     return validationFailed("path", "String should have at most 4096 characters");
   if (raw === "" || raw === "/") return "";

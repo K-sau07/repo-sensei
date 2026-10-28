@@ -1,4 +1,5 @@
-"""Finding symbols: by name (go to symbol, ⌘K) and by position (the symbol under the cursor).
+"""Finding symbols: by name (go to symbol, ⌘K), by position (the symbol under the cursor) and by
+file (the code viewer's outline).
 
 :func:`find_symbols` matches, best first:
 
@@ -186,5 +187,20 @@ async def symbols_at(db: AsyncSession, file_id: uuid.UUID, line: int) -> list[Co
             (CodeNode.end_line - CodeNode.start_line).asc(),
             CodeNode.start_line.desc(),
         )
+    )
+    return list(rows)
+
+
+async def symbols_in(db: AsyncSession, file_id: uuid.UUID, *, limit: int) -> list[CodeNode]:
+    """A file's definitions in the order they appear (the module left out), at most ``limit``."""
+    rows = await db.scalars(
+        select(CodeNode)
+        .where(
+            CodeNode.file_id == file_id,
+            CodeNode.kind.in_(SYMBOL_KINDS),
+            CodeNode.kind != SymbolKind.MODULE.value,
+        )
+        .order_by(CodeNode.start_line, CodeNode.end_line.desc(), CodeNode.symbol_key)
+        .limit(limit)
     )
     return list(rows)

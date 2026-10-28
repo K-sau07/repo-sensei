@@ -888,6 +888,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/orgs/{org}/repos/{repo}/symbols/outline": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Symbol Outline
+         * @description A file's definitions in the order they appear (its outline).
+         */
+        get: operations["symbol_outline_api_v1_orgs__org__repos__repo__symbols_outline_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/orgs/{org}/repos/{repo}/tree": {
         parameters: {
             query?: never;
@@ -2247,6 +2267,15 @@ export interface components {
             start_line: number;
             /** Symbol Key */
             symbol_key: string;
+        };
+        /** SymbolOutlineOut */
+        SymbolOutlineOut: {
+            /** Path */
+            path: string;
+            /** Symbols */
+            symbols: components["schemas"]["SymbolAt"][];
+            /** Truncated */
+            truncated: boolean;
         };
         /** SymbolsAtOut */
         SymbolsAtOut: {
@@ -4164,6 +4193,46 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SymbolsAtOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    symbol_outline_api_v1_orgs__org__repos__repo__symbols_outline_get: {
+        parameters: {
+            query: {
+                path: string;
+                /** @description Branch or commit (or its first 7+ characters). */
+                ref?: string | null;
+            };
+            header?: never;
+            path: {
+                /** @description Repository slug */
+                repo: string;
+                /** @description Organization slug */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    /** @description The commit the response was read from. */
+                    "X-Commit-Sha"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SymbolOutlineOut"];
                 };
             };
             /** @description Validation Error */

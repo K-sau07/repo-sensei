@@ -4,7 +4,9 @@
  * The read-only code viewer (CodeMirror 6). Loaded only in the browser (see `file-view.tsx`), and
  * each language's grammar only when a file needs it. Lines picked in the gutter (click, then
  * Shift+click to extend) become the URL's `?L=`; a range arriving from the URL (a deep link, Back
- * or Forward) is lit and scrolled to.
+ * or Forward) is lit and scrolled to. With `intel`, a word naming a symbol gets a card on hover
+ * (rendered by the page into the tooltip's element) and ⌘/Ctrl-click goes to its definition; the
+ * cursor's line and word are reported for the keyboard's `g d`, `g r` and `t`.
  */
 import { defaultKeymap } from "@codemirror/commands";
 import {
@@ -29,6 +31,7 @@ import {
   type Extension,
 } from "@codemirror/state";
 import {
+  closeHoverTooltips,
   Decoration,
   drawSelection,
   EditorView,
@@ -36,6 +39,7 @@ import {
   gutterLineClass,
   highlightActiveLineGutter,
   highlightSpecialChars,
+  hoverTooltip,
   keymap,
   lineNumbers,
   type DecorationSet,
@@ -46,6 +50,7 @@ import { clampLines, extendLines, sameLines, type LineRange } from "@/lib/code/l
 
 import { viewerHighlight, viewerTheme } from "./codemirror-theme";
 import { FILE_RECEIVED_MARK } from "./use-code";
+import type { CodeSymbol } from "./use-intel";
 
 /** Measured from the file's arrival to the first frame showing it (the budget is 300 ms). */
 export const PAINT_MEASURE = "code-viewer:paint";
@@ -53,6 +58,20 @@ export const PAINT_MEASURE = "code-viewer:paint";
 export interface CodeViewerHandle {
   /** Open the search panel (⌘F inside the viewer does the same). */
   openSearch: () => void;
+}
+
+/** What the viewer asks of the page for its symbols (see the module). */
+export interface ViewerIntel {
+  /** What `word` on `line` names (null: nothing, so no card). */
+  resolve: (line: number, word: string) => Promise<CodeSymbol | null>;
+  /** A card is showing: render it into `dom`. */
+  onCardOpen: (dom: HTMLElement, symbol: CodeSymbol) => void;
+  /** The card in `dom` closed. */
+  onCardClose: (dom: HTMLElement) => void;
+  /** ⌘/Ctrl-click on `word`. */
+  onGoTo: (line: number, word: string) => void;
+  /** The cursor moved to another line or word. */
+  onCursor: (line: number, word: string | null) => void;
 }
 
 export interface CodeViewerProps {
@@ -65,6 +84,7 @@ export interface CodeViewerProps {
   /** The lines the text selection spans, or null when nothing is selected. */
   onSelectionLines?: (lines: LineRange | null) => void;
   wrap: boolean;
+  intel?: ViewerIntel;
   handle?: Ref<CodeViewerHandle>;
 }
 
@@ -111,6 +131,108 @@ const rangeGutterMarks = gutterLineClass.compute([rangeField], (state) => {
   return RangeSet.of<GutterMarker>(marks);
 });
 
+const setHover = StateEffect.define<{ from: number; to: number } | null>();
+const hoverMark = Decoration.mark({ class: "cm-symbol-hover" });
+
+// The word whose card is showing, underlined.
+const hoverField = StateField.define<DecorationSet>({
+  create: () => Decoration.none,
+  update: (value, transaction) => {
+    for (const effect of transaction.effects) {
+      if (effect.is(setHover)) {
+        const range = effect.value;
+        return range ? Decoration.set([hoverMark.range(range.from, range.to)]) : Decoration.none;
+      }
+    }
+    return value;
+  },
+  provide: (field) => EditorView.decorations.from(field),
+});
+
+const IDENTIFIER = /^[A-Za-z_$][\w$]*$/;
+
+/** The identifier at `pos`, if there is one. */
+function identifierAt(state: EditorState, pos: number) {
+  const range = state.wordAt(pos);
+  if (!range) return null;
+  const word = state.sliceDoc(range.from, range.to);
+  if (!IDENTIFIER.test(word)) return null;
+  return { from: range.from, to: range.to, word, line: state.doc.lineAt(pos).number };
+}
+
+/** Hover cards, ⌘-click and the cursor's word, asking `intel()` (the latest props) each time. */
+function intelExtensions(intel: () => ViewerIntel | undefined): Extension {
+  let cursor = "";
+  return [
+    hoverField,
+    hoverTooltip(
+      async (editor, pos) => {
+        const found = identifierAt(editor.state, pos);
+        const ask = intel();
+        if (!found || !ask) return null;
+        const symbol = await ask.resolve(found.line, found.word);
+        if (!symbol) return null;
+        return {
+          pos: found.from,
+          end: found.to,
+          above: false,
+          create: () => {
+            const dom = document.createElement("div");
+            // Not dispatched inside the update that shows or hides the tooltip.
+            const mark = (range: { from: number; to: number } | null) => {
+              queueMicrotask(() => {
+                if (editor.dom.isConnected) editor.dispatch({ effects: setHover.of(range) });
+              });
+            };
+            return {
+              dom,
+              mount: () => {
+                mark(found);
+                intel()?.onCardOpen(dom, symbol);
+              },
+              destroy: () => {
+                mark(null);
+                intel()?.onCardClose(dom);
+              },
+            };
+          },
+        };
+      },
+      { hoverTime: 350 },
+    ),
+    EditorView.domEventHandlers({
+      // A key typed in the text (`g r`, `t`) hides the card, as a move away would: what it
+      // opens isn't covered. Keys in the card itself (Tab through its actions) keep it.
+      keydown: (event, editor) => {
+        if (event.target instanceof Node && editor.contentDOM.contains(event.target)) {
+          editor.dispatch({ effects: closeHoverTooltips });
+        }
+        return false;
+      },
+      mousedown: (event, editor) => {
+        if (event.button !== 0 || !(event.metaKey || event.ctrlKey)) return false;
+        const pos = editor.posAtCoords({ x: event.clientX, y: event.clientY });
+        const found = pos === null ? null : identifierAt(editor.state, pos);
+        const ask = intel();
+        if (!found || !ask) return false;
+        event.preventDefault();
+        ask.onGoTo(found.line, found.word);
+        return true;
+      },
+    }),
+    EditorView.updateListener.of((update) => {
+      if (!update.selectionSet) return;
+      const { head } = update.state.selection.main;
+      const found = identifierAt(update.state, head);
+      const line = update.state.doc.lineAt(head).number;
+      const here = `${String(line)}:${found?.word ?? ""}`;
+      if (here === cursor) return;
+      cursor = here;
+      intel()?.onCursor(line, found?.word ?? null);
+    }),
+  ];
+}
+
 function scrollTo(view: EditorView, range: LineRange) {
   const shown = clampLines(range, view.state.doc.lines);
   if (!shown) return;
@@ -156,6 +278,7 @@ export function CodeViewer({
   onLinesChange,
   onSelectionLines,
   wrap,
+  intel,
   handle,
 }: CodeViewerProps) {
   const host = useRef<HTMLDivElement>(null);
@@ -163,14 +286,14 @@ export function CodeViewer({
   const languageSlot = useRef(new Compartment());
   const wrapSlot = useRef(new Compartment());
   // The latest props for CodeMirror's handlers, which are created once per document.
-  const latest = useRef({ lines, onLinesChange, onSelectionLines, wrap });
+  const latest = useRef({ lines, onLinesChange, onSelectionLines, wrap, intel });
   // The range this viewer last put in the URL: when it comes back as a prop, don't scroll.
   const emitted = useRef<LineRange | null>(null);
   // When this file arrived; kept across a remount of the editor (Strict Mode mounts twice).
   const arrival = useRef<number | null>(null);
 
   useEffect(() => {
-    latest.current = { lines, onLinesChange, onSelectionLines, wrap };
+    latest.current = { lines, onLinesChange, onSelectionLines, wrap, intel };
   });
 
   useImperativeHandle(handle, () => ({
@@ -226,6 +349,7 @@ export function CodeViewer({
           rangeGutterMarks,
           languageSlot.current.of([]),
           wrapSlot.current.of(initial.wrap ? EditorView.lineWrapping : []),
+          intelExtensions(() => latest.current.intel),
           viewerTheme,
           viewerHighlight,
           EditorView.updateListener.of((update) => {

@@ -1,5 +1,5 @@
-"""Symbols of an indexed snapshot: lookup by name (go to symbol, ⌘K) and the symbol under the
-cursor (the code viewer).
+"""Symbols of an indexed snapshot: lookup by name (go to symbol, ⌘K), the symbol under the cursor
+and a file's outline (the code viewer).
 
 ``ref`` picks the snapshot as in browsing; the commit read is in ``X-Commit-Sha``. A snapshot
 whose symbols aren't extracted yet answers ``409 not_indexed``.
@@ -7,6 +7,7 @@ whose symbols aren't extracted yet answers ``409 not_indexed``.
 
 from __future__ import annotations
 
+import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, Query, Response
@@ -18,15 +19,16 @@ from sensei_api.repos import RepoDep
 from sensei_api.routers.browse import COMMIT_HEADER, BadPathError, RefParam
 from sensei_core.errors import ConflictError, InvalidError, NotFoundError
 from sensei_core.indexing.snapshots import resolve_snapshot
-from sensei_core.models import RepoFile, Snapshot
+from sensei_core.models import CodeNode, RepoFile, Snapshot
 from sensei_engine.snapshots import UnsafePathError, check_path
 from sensei_engine.symbols.extract import SymbolKind
-from sensei_engine.symbols.lookup import find_symbols, symbols_at
+from sensei_engine.symbols.lookup import find_symbols, symbols_at, symbols_in
 
 router = APIRouter(prefix="/orgs/{org}/repos/{repo}", tags=["symbols"])
 
 MAX_LIMIT = 50
 DEFAULT_LIMIT = 20
+OUTLINE_LIMIT = 2000  # a generated file's thousands of types: the first ones, and ``truncated``
 _COMMIT_HEADER_DOC = {
     COMMIT_HEADER: {
         "description": "The commit the response was read from.",
@@ -67,6 +69,12 @@ class SymbolsAtOut(BaseModel):
     path: str
     line: int
     symbols: list[SymbolAt]  # innermost first; the module last
+
+
+class SymbolOutlineOut(BaseModel):
+    path: str
+    symbols: list[SymbolAt]  # in the order they appear; a nested one after its parent
+    truncated: bool  # the file has more than ``OUTLINE_LIMIT``
 
 
 def _require_symbols(snapshot: Snapshot) -> None:
@@ -125,6 +133,41 @@ async def symbol_at(
     ref: RefParam = None,
 ) -> SymbolsAtOut:
     """The definitions around a line of a file, innermost first."""
+    snapshot, file_id, relative = await _file(db, repo, path, ref)
+    nodes = await symbols_at(db, file_id, line)
+    response.headers[COMMIT_HEADER] = snapshot.commit_sha
+    return SymbolsAtOut(path=relative, line=line, symbols=[_symbol_at(n) for n in nodes])
+
+
+@router.get(
+    "/symbols/outline",
+    response_model=SymbolOutlineOut,
+    responses={200: {"headers": _COMMIT_HEADER_DOC}},
+)
+async def symbol_outline(
+    *,
+    response: Response,
+    repo: RepoDep,
+    db: DbSession,
+    path: Annotated[str, Query(min_length=1, max_length=4096)],
+    ref: RefParam = None,
+) -> SymbolOutlineOut:
+    """A file's definitions in the order they appear (its outline)."""
+    snapshot, file_id, relative = await _file(db, repo, path, ref)
+    nodes = await symbols_in(db, file_id, limit=OUTLINE_LIMIT + 1)
+    response.headers[COMMIT_HEADER] = snapshot.commit_sha
+    return SymbolOutlineOut(
+        path=relative,
+        symbols=[_symbol_at(n) for n in nodes[:OUTLINE_LIMIT]],
+        truncated=len(nodes) > OUTLINE_LIMIT,
+    )
+
+
+async def _file(
+    db: DbSession, repo: RepoDep, path: str, ref: str | None
+) -> tuple[Snapshot, uuid.UUID, str]:
+    """The snapshot ``ref`` picks, its file at ``path`` (its symbols extracted) and the path
+    checked."""
     try:
         relative = check_path(path)
     except UnsafePathError:
@@ -136,19 +179,17 @@ async def symbol_at(
     )
     if file_id is None:
         raise NotFoundError("No such file in this snapshot.", code="path_not_found")
-    nodes = await symbols_at(db, file_id, line)
-    response.headers[COMMIT_HEADER] = snapshot.commit_sha
-    symbols = [
-        SymbolAt(
-            symbol_key=n.symbol_key,
-            name=n.name,
-            qualified_name=n.qualified_name,
-            kind=SymbolKind(n.kind),
-            start_line=n.start_line,
-            end_line=n.end_line,
-            signature=n.signature,
-            docstring=n.docstring,
-        )
-        for n in nodes
-    ]
-    return SymbolsAtOut(path=relative, line=line, symbols=symbols)
+    return snapshot, file_id, relative
+
+
+def _symbol_at(node: CodeNode) -> SymbolAt:
+    return SymbolAt(
+        symbol_key=node.symbol_key,
+        name=node.name,
+        qualified_name=node.qualified_name,
+        kind=SymbolKind(node.kind),
+        start_line=node.start_line,
+        end_line=node.end_line,
+        signature=node.signature,
+        docstring=node.docstring,
+    )

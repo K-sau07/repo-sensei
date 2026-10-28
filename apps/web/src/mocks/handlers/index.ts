@@ -1,5 +1,6 @@
 import { browseHandlers } from "./browse";
 import { constellationHandlers } from "./constellation";
+import { graphHandlers } from "./graph";
 import { invitationHandlers } from "./invitations";
 import { meHandlers } from "./me";
 import { memberHandlers } from "./members";
@@ -16,6 +17,7 @@ export const handlers = [
   ...constellationHandlers,
   ...browseHandlers,
   ...symbolHandlers,
+  ...graphHandlers,
   ...searchHandlers,
   ...repoHandlers,
   ...orgHandlers,

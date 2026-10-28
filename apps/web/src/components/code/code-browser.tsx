@@ -3,12 +3,13 @@
 import { FileQuestion, Hourglass } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import type { ReactNode } from "react";
+import { useMemo, type ReactNode } from "react";
 
 import { EmptyState } from "@/components/feedback/empty-state";
 import { ErrorState } from "@/components/feedback/error-state";
 import { LockedState } from "@/components/feedback/locked-state";
 import { useRepoFeatures } from "@/components/repo/use-repo";
+import { useRightRail } from "@/components/shell/right-rail";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ApiError } from "@/lib/api/errors";
@@ -19,6 +20,8 @@ import { codePath, repoPath } from "@/lib/routes";
 import { DirectoryView } from "./directory-view";
 import { FileTree } from "./file-tree";
 import { FileView } from "./file-view";
+import { ReferencesDrawer } from "./references-drawer";
+import { SymbolRail } from "./symbol-rail";
 import { useCodeLocation, useListing } from "./use-code";
 
 /** Nothing to browse yet: the first index hasn't got to its files, or never ran. */
@@ -64,6 +67,11 @@ export function CodeBrowser({ children }: { children: ReactNode }) {
   const router = useRouter();
   const root = useListing("");
   const error = root.error instanceof ApiError ? root.error : null;
+  // The rail reads where it is itself, so its element never changes.
+  useRightRail(
+    "Symbol",
+    useMemo(() => <SymbolRail />, []),
+  );
 
   let content: ReactNode;
   if (error?.code === "repo_not_indexed") {
@@ -112,7 +120,10 @@ export function CodeBrowser({ children }: { children: ReactNode }) {
         </ResizablePanel>
         <ResizableHandle />
         <ResizablePanel minSize="30%">
-          <div className="flex h-full min-w-0 flex-col">{children}</div>
+          <div className="flex h-full min-w-0 flex-col">
+            {children}
+            <ReferencesDrawer />
+          </div>
         </ResizablePanel>
       </ResizablePanelGroup>
     </div>

@@ -70,3 +70,19 @@ export function openCode(go: () => void, source: HTMLElement, key: string): void
       if (viewer) viewer.style.viewTransitionName = "";
     });
 }
+
+/** Navigate (`go`) to the viewer showing `key` with a cross-fade: going to a definition, or back
+ * from one. */
+export function crossToCode(go: () => void, key: string): void {
+  if (!canTransition()) {
+    go();
+    return;
+  }
+  const transition = document.startViewTransition(async () => {
+    go();
+    await viewerShown(key);
+  });
+  transition.finished.catch(() => {
+    // Skipped: the page is there all the same.
+  });
+}
