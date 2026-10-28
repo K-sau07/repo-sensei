@@ -463,12 +463,15 @@ def validate_suite(
     suite: Suite,
     pinned: Mapping[str, PinnedRepo],
     checkout_for: Callable[[str], Path | None],
+    *,
+    mix: bool = True,
 ) -> list[Problem]:
     """Every problem with ``suite``: commits that don't match the pinned ones, checkouts at the
     wrong commit or with local changes, gold targets that don't exist at the commit (or that the
-    indexer skips), and, as warnings, a class mix other than the plan's. ``checkout_for`` may
-    raise :class:`CheckoutError`, reported once for that repository."""
-    problems: list[Problem] = check_mix(name, suite)
+    indexer skips), and, as warnings, a class mix other than the plan's (unless not ``mix``: a
+    suite of one class). ``checkout_for`` may raise :class:`CheckoutError`, reported once for
+    that repository."""
+    problems: list[Problem] = check_mix(name, suite) if mix else []
     checked: dict[str, tuple[Path, frozenset[str]] | None] = {}
     for item in suite.items:
         repo = pinned.get(item.repo)

@@ -9,6 +9,7 @@
         --class symbol
     sensei-eval route --suite fastapi-template --suite langflow \\
         --extra evals/private/router/queries.yaml
+    sensei-eval run --suite crosslayerbench-v0 --repo fastapi-template --retriever gold
 
 Runs are written to ``evals/private/reports/<id>.json`` and ``.md`` (private) and stored in
 ``eval_runs`` unless ``--no-store``. A run is named by its id (looked up in the reports folder,
@@ -31,7 +32,7 @@ from sensei_core.db import make_system_database
 from sensei_core.usage import CostCalculator
 from sensei_engine.llm.anthropic_client import AnthropicClient
 from sensei_engine.search.route import QueryRouter
-from sensei_evals import paths, routing
+from sensei_evals import crosslayer, paths, routing
 from sensei_evals import rename as rename_mod
 from sensei_evals.reports import compare, read_run, render_comparison, render_run, write_run
 from sensei_evals.repos import mapping_path, valid_repo_id
@@ -184,8 +185,23 @@ def run(
     reports_dir: Annotated[Path | None, typer.Option(help="Where reports go.")] = None,
     store: Annotated[bool, typer.Option(help="Also store the run in eval_runs.")] = True,
 ) -> None:
-    """Run a suite against a retriever, write the reports and store the run."""
+    """Run a suite against a retriever, write the reports and store the run. A CrossLayerBench
+    (``--suite crosslayerbench-v0``) runs its flows for one repository (or a renamed copy of
+    one) against a tracer instead (``--retriever gold``, ``answers``, ...)."""
     root = paths.repo_root()
+    bench_file = crosslayer.bench_path(root, suite)
+    if bench_file is not None:
+        _run_bench(
+            root,
+            bench_file,
+            tracer=retriever,
+            repo=repo,
+            checkout=checkout,
+            options=_options(opt or []),
+            reports=reports_dir or paths.reports_dir(root),
+            store=store,
+        )
+        return
     ks = parse_ks(k)
     factory = RETRIEVERS.get(retriever)
     if factory is None:
@@ -220,6 +236,60 @@ def run(
         run_suite(loaded, items, built, ref, ks=ks, config=config, git_sha=paths.head_sha(root))
     )
     json_path, md_path = write_run(record, reports_dir or paths.reports_dir(root))
+    if store:
+        try:
+            asyncio.run(_store(record))
+        except (OSError, SQLAlchemyError) as error:
+            raise _fail(
+                f"reports written, but storing the run failed ({_db_error(error)}); use --no-store"
+            ) from None
+    typer.echo(render_run(record))
+    typer.echo(f"run {record.id}: {json_path} and {md_path}" + (" (stored)" if store else ""))
+
+
+def _run_bench(
+    root: Path,
+    bench_file: Path,
+    *,
+    tracer: str,
+    repo: str | None,
+    checkout: Path | None,
+    options: dict[str, str],
+    reports: Path,
+    store: bool,
+) -> None:
+    factory = crosslayer.TRACERS.get(tracer)
+    if factory is None:
+        raise _fail(f"unknown tracer {tracer!r}; known: {', '.join(crosslayer.TRACERS)}")
+    try:
+        bench = crosslayer.load_bench(bench_file)
+    except FileNotFoundError as error:
+        raise _fail(str(error)) from None
+    except SuiteError as error:
+        raise _fail(f"invalid bench:\n{error}") from None
+    if repo is not None and repo not in bench.repos:  # a renamed copy's: derive its flows
+        folder = checkout.parent if checkout is not None else paths.checkouts_dir(root)
+        bench, problems = crosslayer.with_renamed(bench, folder)
+        for problem in problems:
+            typer.echo(f"warning: renamed flows: {problem}", err=True)
+    repo_id, sha, items = select_items(crosslayer.as_suite(bench), repo)
+    wanted = {item.id for item in items}
+    flows = [flow for flow in bench.flows if flow.id in wanted]
+    ref = _checkout(root, repo_id, sha, checkout)
+    try:
+        built = factory(crosslayer.TracerContext(repo_id, sha, ref, options))
+    except ValueError as error:
+        raise _fail(str(error)) from None
+    config = {
+        "options": options,
+        "items": len(flows),
+        "dirty": paths.has_uncommitted_changes(root),
+        "suite_sha256": hashlib.sha256(bench_file.read_bytes()).hexdigest(),
+    }
+    record = crosslayer.run_bench(
+        bench, built, flows, repo_sha=sha, config=config, git_sha=paths.head_sha(root)
+    )
+    json_path, md_path = write_run(record, reports)
     if store:
         try:
             asyncio.run(_store(record))

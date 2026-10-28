@@ -7,10 +7,12 @@
         [--root DIR] [--checkouts DIR]
 
 ``<repo>`` is a pinned repository id (evals/private/repos.yaml), read from its checkout in
-.cache/eval-repos/<repo>. ``validate`` checks every suite (default: all of them) against the
-pinned commits and exits 1 on any error; with no private files (CI) it says so and exits 0.
-A renamed copy's suite is also checked against its source suite and the copy's mapping (a
-stale one says to re-run ``sensei-eval rename``). ``--root`` reads the private files and
+.cache/eval-repos/<repo>. ``validate`` checks every suite and CrossLayerBench file (default:
+all of them, evals/private/golden/ and evals/private/crosslayerbench/) against the pinned
+commits and exits 1 on any error; with no private files (CI) it says so and exits 0. A renamed
+copy's suite is also checked against its source suite and the copy's mapping (a stale one says
+to re-run ``sensei-eval rename``); a bench's flows are checked on every renamed copy made from
+their repository too, as ``sensei-eval run`` derives them. ``--root`` reads the private files and
 checkouts of another checkout of this repository; ``--checkouts`` looks for checkouts and
 renamed copies (with their mappings) in another folder, such as a ``rename --out`` parent.
 """
@@ -22,7 +24,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from sensei_evals import paths
+from sensei_evals import crosslayer, paths
 from sensei_evals.golden import (
     CheckoutError,
     find_symbol,
@@ -33,7 +35,7 @@ from sensei_evals.golden import (
 )
 from sensei_evals.rename import check_renamed
 from sensei_evals.repos import fetch_checkout, load_pinned, load_renamed
-from sensei_evals.schema import SuiteError, load_suite
+from sensei_evals.schema import Suite, SuiteError, SuiteProblem, load_suite
 
 ROOT = paths.repo_root(Path(__file__).parent)
 
@@ -69,6 +71,15 @@ def symbols(repo: str, path: str, name: str | None) -> None:
         print(f"{span.lines[0]:>5}-{span.lines[1]:<5} {span.name}{tag}")
 
 
+def _bench_suite(path: Path, checkouts: Path) -> Suite:
+    bench, problems = crosslayer.with_renamed(crosslayer.load_bench(path), checkouts)
+    if problems:
+        raise SuiteError(
+            str(path), [SuiteProblem(line=None, where="renamed", message=p) for p in problems]
+        )
+    return crosslayer.as_suite(bench)
+
+
 def validate(
     suites: list[Path],
     fetch: bool,
@@ -80,7 +91,10 @@ def validate(
     # Renamed copies pin themselves; a pinned repository of the same id wins.
     renamed = load_renamed(checkouts)
     pinned = renamed | load_pinned(paths.repos_file(root))
-    suites = suites or sorted(paths.golden_dir(root).glob("*.yaml"))
+    suites = suites or [
+        *sorted(paths.golden_dir(root).glob("*.yaml")),
+        *sorted((paths.private_dir(root) / crosslayer.BENCH).glob("*.yaml")),
+    ]
     if not suites:
         print("no golden suites (the private files aren't here); skipping")
         return 0
@@ -96,15 +110,17 @@ def validate(
 
     errors = warnings = items = 0
     for path in suites:
+        bench = path.parent.name == crosslayer.BENCH
         try:
-            suite = load_suite(path)
+            suite = _bench_suite(path, checkouts) if bench else load_suite(path)
         except SuiteError as error:
             print(error)
             errors += len(error.problems)
             continue
         items += len(suite.items)
-        problems = validate_suite(path.name, suite, pinned, checkout_for)
-        problems += check_renamed(path.name, path, suite, checkouts, renamed)
+        problems = validate_suite(path.name, suite, pinned, checkout_for, mix=not bench)
+        if not bench:
+            problems += check_renamed(path.name, path, suite, checkouts, renamed)
         for problem in problems:
             print(problem.render())
             warnings += problem.warning

@@ -104,7 +104,7 @@ def _averages(results: Sequence[ItemResult]) -> dict[str, float | None]:
     return averages
 
 
-def _percentile(values: Sequence[float], q: float) -> float | None:
+def percentile(values: Sequence[float], q: float) -> float | None:
     if not values:
         return None
     ordered = sorted(values)
@@ -125,7 +125,7 @@ def aggregate(results: Sequence[ItemResult]) -> dict[str, Any]:
             "answerable": sum(result.answerable for result in results),
             "by_class": {name: len(group) for name, group in sorted(by_class.items())},
         },
-        "latency_ms": {"p50": _percentile(latencies, 0.5), "p95": _percentile(latencies, 0.95)},
+        "latency_ms": {"p50": percentile(latencies, 0.5), "p95": percentile(latencies, 0.95)},
     }
 
 

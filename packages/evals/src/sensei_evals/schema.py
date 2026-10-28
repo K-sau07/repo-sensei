@@ -273,8 +273,9 @@ def _node_at(root: yaml.Node | None, loc: tuple[int | str, ...]) -> yaml.Node | 
     return node
 
 
-def parse_suite(text: str, source: str = "<suite>") -> Suite:
-    """Validate a suite from YAML text. Raises :class:`SuiteError`."""
+def parse_yaml[M: BaseModel](text: str, source: str, model: type[M]) -> M:
+    """Validate ``model`` from YAML text (keys given twice are refused). Raises
+    :class:`SuiteError` with each problem's line."""
     try:
         # The stubs leave compose's return type unknown; it is the document's root node.
         root = cast("yaml.Node | None", yaml.compose(text, Loader=yaml.SafeLoader))  # pyright: ignore[reportUnknownMemberType]
@@ -288,7 +289,7 @@ def parse_suite(text: str, source: str = "<suite>") -> Suite:
     except yaml.YAMLError as error:
         raise SuiteError(source, [SuiteProblem(line=None, where="", message=str(error))]) from None
     try:
-        return Suite.model_validate(data)
+        return model.model_validate(data)
     except ValidationError as error:
         problems: list[SuiteProblem] = []
         for detail in error.errors(include_url=False):
@@ -303,6 +304,11 @@ def parse_suite(text: str, source: str = "<suite>") -> Suite:
                 )
             )
         raise SuiteError(source, problems) from None
+
+
+def parse_suite(text: str, source: str = "<suite>") -> Suite:
+    """Validate a suite from YAML text. Raises :class:`SuiteError`."""
+    return parse_yaml(text, source, Suite)
 
 
 def load_suite(path: Path) -> Suite:

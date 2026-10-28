@@ -64,6 +64,10 @@ def _retriever_report(run: RunRecord) -> list[str]:
 
 
 def render_run(run: RunRecord) -> str:
+    if run.metrics.get("bench"):  # a CrossLayerBench run: flows and hops, not hits
+        from sensei_evals import crosslayer  # noqa: PLC0415 - it imports the renamer's engine
+
+        return crosslayer.render_run(run)
     k = _headline_k(run)
     overall: dict[str, Any] = run.metrics.get("overall", {})
     counts: dict[str, Any] = run.metrics.get("counts", {})
@@ -171,7 +175,7 @@ def compare(a: RunRecord, b: RunRecord) -> Comparison:
     unchanged = [c for c in changes if c not in regressions and c not in improvements]
 
     k = min(_headline_k(a), _headline_k(b))
-    metric = f"recall_symbol@{k}"
+    metric = "hop_recall" if a.metrics.get("bench") else f"recall_symbol@{k}"
     items_a = {item.id: item for item in a.per_item}
     worse: list[ItemChange] = []
     better: list[ItemChange] = []
