@@ -7,6 +7,7 @@ from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+import botocore.exceptions
 import fakeredis
 import httpx
 import pytest
@@ -108,6 +109,14 @@ def test_every_queue_has_a_route(app: Celery) -> None:
 NOW = datetime(2026, 10, 19, 12, 0, tzinfo=UTC)
 
 
+def _storage_error(status: int, code: str) -> botocore.exceptions.ClientError:
+    response: Any = {
+        "Error": {"Code": code, "Message": code},
+        "ResponseMetadata": {"HTTPStatusCode": status},
+    }
+    return botocore.exceptions.ClientError(response, "PutObject")
+
+
 @pytest.mark.parametrize(
     ("exc", "retryable"),
     [
@@ -120,6 +129,17 @@ NOW = datetime(2026, 10, 19, 12, 0, tzinfo=UTC)
         (GitHubError(429, "slow down"), True),
         (RateLimited(NOW), True),
         (sqlalchemy.exc.OperationalError("select 1", {}, Exception("server closed")), True),
+        (botocore.exceptions.EndpointConnectionError(endpoint_url="http://s3"), True),
+        (botocore.exceptions.ConnectTimeoutError(endpoint_url="http://s3"), True),
+        (botocore.exceptions.ReadTimeoutError(endpoint_url="http://s3"), True),
+        (botocore.exceptions.ConnectionClosedError(endpoint_url="http://s3"), True),
+        (_storage_error(503, "SlowDown"), True),
+        (_storage_error(500, "InternalError"), True),
+        (_storage_error(400, "RequestTimeout"), True),
+        (_storage_error(429, "TooManyRequests"), True),
+        (_storage_error(404, "NoSuchKey"), False),
+        (_storage_error(403, "AccessDenied"), False),
+        (botocore.exceptions.NoCredentialsError(), False),
         (GitHubError(404, "not found"), False),
         (GitHubError(403, "forbidden"), False),
         (ValueError("bad input"), False),

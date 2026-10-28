@@ -33,6 +33,7 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, NoReturn, cast
 
+import botocore.exceptions
 import httpx
 import redis
 import redis.exceptions
@@ -87,7 +88,16 @@ _TRANSIENT: tuple[type[BaseException], ...] = (
     redis.exceptions.TimeoutError,
     sqlalchemy.exc.OperationalError,
     sqlalchemy.exc.InterfaceError,
+    # Object storage (botocore's own, not the builtins): no connection, a connect or read
+    # timeout, a connection reset part way.
+    botocore.exceptions.ConnectionError,
+    botocore.exceptions.HTTPClientError,
 )
+# Object storage answering "slow down" or "not now" (S3, R2, MinIO), whatever the status.
+_STORAGE_THROTTLED = frozenset({
+    "SlowDown", "Throttling", "ThrottlingException", "RequestTimeout", "RequestTimeoutException",
+    "TooManyRequestsException", "RequestLimitExceeded", "ServiceUnavailable", "InternalError",
+})  # fmt: skip
 
 
 def is_retryable(exc: BaseException) -> bool:
@@ -95,6 +105,10 @@ def is_retryable(exc: BaseException) -> bool:
         return True
     if isinstance(exc, GitHubError):
         return exc.status >= 500 or exc.status == 429
+    if isinstance(exc, botocore.exceptions.ClientError):
+        error = exc.response.get("Error", {})
+        status = exc.response.get("ResponseMetadata", {}).get("HTTPStatusCode", 0)
+        return status >= 500 or status == 429 or error.get("Code") in _STORAGE_THROTTLED
     return isinstance(exc, sqlalchemy.exc.DBAPIError) and exc.connection_invalidated
 
 
