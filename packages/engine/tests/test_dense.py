@@ -351,6 +351,30 @@ async def _plan(system: AsyncEngine, statement: TextClause, params: dict[str, An
         return "\n".join(str(line) for line in lines)
 
 
+INDEX_WAIT_SECONDS = 30.0
+
+
+async def _oldest_transaction(engine: AsyncEngine, before: object) -> str | None:
+    """The oldest client transaction in the cluster that began before ``before`` and still
+    holds back the horizon, described (its database, pid, age and state), if any. Postgres's own
+    workers (autovacuum) are left out: they don't hold it for long, and one mustn't turn a
+    regression into a skip."""
+    async with engine.connect() as connection:
+        row = (
+            await connection.execute(
+                text(
+                    "SELECT datname, pid, now() - xact_start AS age, state "
+                    "FROM pg_stat_activity WHERE pid <> pg_backend_pid() "
+                    "AND backend_type = 'client backend' "
+                    "AND backend_xmin IS NOT NULL AND xact_start < :before "
+                    "ORDER BY xact_start LIMIT 1"
+                ),
+                {"before": before},
+            )
+        ).first()
+    return None if row is None else f"{row.datname} pid {row.pid}, open {row.age}, {row.state}"
+
+
 async def test_searches_walk_the_partitions_index_once_it_is_committed(
     committed: tuple[Snapshot, AsyncEngine],
 ) -> None:
@@ -360,19 +384,26 @@ async def test_searches_walk_the_partitions_index_once_it_is_committed(
         partition = await chunk_partition(db, rid)
         assert partition is not None
         await store.build_index(db, partition)
+        built = await db.scalar(text("SELECT clock_timestamp()"))
     statement, params = nearest_query(
         partition, repo_id=rid, snapshot_id=sid, vector=axis(2, lean=0), k=3
     )
     name = partition.rpartition(".")[2]  # as EXPLAIN shows it
     walk = f"Index Scan using {embedding_index(name)} on {name} c"
     # Built over rows just updated, the index waits for the transactions older than it (any
-    # in the cluster: other tests', other databases') before a search may use it.
+    # in the cluster: other tests', other databases') before a search may use it. One that
+    # stays open (an eval indexing a large repository next door) holds it for minutes: past
+    # the wait, the test is skipped naming it, and fails only when none is left to blame.
     plan = await _plan(system, statement, params)
-    for _ in range(100):
-        if walk in plan:
-            break
+    waited = 0.0
+    while walk not in plan and waited < INDEX_WAIT_SECONDS:
         await asyncio.sleep(0.1)
+        waited += 0.1
         plan = await _plan(system, statement, params)
+    if walk not in plan:
+        holder = await _oldest_transaction(system, built)
+        if holder is not None:
+            pytest.skip(f"the new index waits on a transaction older than it: {holder}")
     assert walk in plan
     async with AsyncSession(system) as db, db.begin():
         hits = await dense_search(db, repo_id=rid, snapshot_id=sid, vector=axis(2, lean=0), k=3)
