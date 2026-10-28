@@ -159,6 +159,28 @@ def test_scope_and_imports_bind_calls_at_import_resolved() -> None:
     }  # fetch is a global; missing.go has no method named go anywhere
 
 
+def test_an_awaited_call_with_type_arguments_is_a_call() -> None:
+    """``await f<T>(x)``: tree-sitter's TypeScript puts the ``await`` inside the call."""
+    _, edges = _graph(
+        {
+            "web/src/api.ts": "export async function load<T>(x: T) { return x }\n",
+            "web/src/a.ts": (
+                'import * as api from "./api";\n'
+                'import { load } from "./api";\n'
+                "export async function run() {\n"
+                '  await load<string>("x");\n'
+                "  await api.load<number>(1);\n"
+                "}\n"
+            ),
+        }
+    )
+    src, dst = "ts web/src/a.ts/run().", "ts web/src/api.ts/load()."
+    assert _edges(edges, EdgeType.CALLS) == {
+        (src, dst, EdgeType.CALLS, I, None, 4),
+        (src, dst, EdgeType.CALLS, I, None, 5),
+    }
+
+
 def test_an_object_literal_s_methods_are_called_through_its_name() -> None:
     _, edges = _graph(
         {

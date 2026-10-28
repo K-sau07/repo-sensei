@@ -263,6 +263,28 @@ def test_the_options_of_a_call_may_be_a_constant() -> None:
     }
 
 
+def test_an_awaited_call_with_type_arguments_is_a_call() -> None:
+    graph = _graph(
+        {
+            "a.ts": textwrap.dedent(
+                """
+                import axios from "axios"
+                const api = axios.create({ baseURL: "/api" })
+                export async function load() {
+                  const items = await api.get<Item[]>("/items")
+                  const one = await fetch<Item>("/one")
+                  return [items, one]
+                }
+                """
+            )
+        }
+    )
+    assert {(c.method, c.url, c.base) for c in graph.calls} == {
+        ("GET", "/items", "/api"),
+        ("GET", "/one", ""),
+    }
+
+
 def test_the_template_generated_client(tmp_path: Path) -> None:
     with tarfile.open(FIXTURE) as tar:
         tar.extractall(tmp_path, filter="data")

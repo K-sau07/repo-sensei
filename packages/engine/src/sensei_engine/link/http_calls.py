@@ -506,11 +506,10 @@ class _Scanner:
     def helper_call(self, node: Node, params: Sequence[str], depth: int) -> str | None:
         """A call in a URL: a ``{helper:N}`` placeholder the join evaluates (a hole when the
         function turns out to be no URL helper)."""
-        function = node.child_by_field_name("function")
-        if function is None or depth > 8:
+        function = _callee(node)
+        if function is None or function.type not in ("identifier", "member_expression"):
             return None
-        function = _unwrap(function)
-        if function.type not in ("identifier", "member_expression"):
+        if depth > 8:
             return None
         args, _ = self.arguments(node)
         values = tuple(self.expr(a, params, context=_CALLER) for a in args[:6])
@@ -581,7 +580,7 @@ class _Scanner:
         if kind == "subscript_expression":
             return self.expr_subscript(node, params, context.key)
         if kind == "call_expression":
-            function = _unwrap_opt(node.child_by_field_name("function"))
+            function = _callee(node)
             if function is None or function.type not in ("identifier", "member_expression"):
                 return None
             args, _ = self.arguments(node)
@@ -667,10 +666,9 @@ class _Scanner:
         return [], None
 
     def call(self, node: Node) -> None:
-        function = node.child_by_field_name("function")
+        function = _callee(node)
         if function is None:
             return
-        function = _unwrap(function)
         if function.type == "identifier":
             self.plain_call(node, _text(function))
         elif function.type == "member_expression":
@@ -869,6 +867,18 @@ class _Scanner:
 # A generated client's file, and the operation in its options type (``Options<xData, ...>``).
 _GENERATED_RE = re.compile(r"\.gen\.[cm]?[jt]sx?$")
 _OPERATION_RE = re.compile(r"(?<![\w$])([A-Za-z_$][\w$]*?)Data\b")
+
+
+def _callee(call: Node) -> Node | None:
+    """What a call calls, through parentheses and casts, and through the ``await`` tree-sitter's
+    TypeScript puts around it when the call has type arguments (``await api.get<T>(url)``)."""
+    function = call.child_by_field_name("function")
+    if function is None:
+        return None
+    function = _unwrap(function)
+    if function.type == "await_expression" and function.named_children:
+        function = _unwrap(function.named_children[0])
+    return function
 
 
 def _unwrap_opt(node: Node | None) -> Node | None:
