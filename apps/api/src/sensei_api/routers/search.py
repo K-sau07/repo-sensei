@@ -36,6 +36,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from sensei_api.deps import DbSession, RedisClient
+from sensei_api.graphs import GraphStore
 from sensei_api.orgs import OrgAccessDep
 from sensei_api.ratelimit import TokenBucket
 from sensei_api.repos import RepoDep
@@ -51,10 +52,12 @@ from sensei_core.indexing.snapshots import resolve_snapshot
 from sensei_core.logging import get_logger
 from sensei_core.models import Repo, Snapshot
 from sensei_core.orgs.service import OrgAccess
+from sensei_core.storage import ObjectStorage
 from sensei_core.usage import CostCalculator
 from sensei_engine.embed.provider import EmbeddingProvider
 from sensei_engine.embed.provider import usage_ledger as embedding_ledger
 from sensei_engine.embed.voyage import VoyageClient
+from sensei_engine.graph.snapshot import GraphSnapshot
 from sensei_engine.llm.anthropic_client import AnthropicClient
 from sensei_engine.llm.ledger import usage_ledger as llm_ledger
 from sensei_engine.search.bm25 import Filters
@@ -292,6 +295,22 @@ async def _semantic_legs(
     )
 
 
+async def _graph(request: Request, db: AsyncSession, snapshot: Snapshot) -> GraphSnapshot | None:
+    """The snapshot's graph, for the graph leg; None until its graph stage has run, or when it
+    can't be read (the search goes on without the leg)."""
+    store: GraphStore | None = getattr(request.app.state, "graph_store", None)
+    if store is None:
+        return None
+    storage: ObjectStorage = request.app.state.storage
+    try:
+        return await store.get(db, storage, snapshot)
+    except ConflictError:
+        return None
+    except Exception:  # the graph is a signal, not what a search stands on
+        log.exception("graph unavailable for search", snapshot_id=str(snapshot.id))
+        return None
+
+
 class _SnapshotGrep:
     """The plan's exact-text legs, on the unpacked snapshot (as ``/grep`` searches it), within
     the request's path prefix. A leg that can't run (search busy or unavailable) is left out of
@@ -398,6 +417,7 @@ async def _answer(
     repo: Repo,
     snapshot: Snapshot,
     dense: DenseLegs | None,
+    graph: GraphSnapshot | None,
     costs: CostCalculator,
     cache_key: str,
     cache_seconds: int,
@@ -417,6 +437,7 @@ async def _answer(
             scope=str(org_id),
             grep=grep,
             dense=dense,
+            graph=graph,
             on_llm_usage=llm_ledger(db, costs, org_id=org_id, user_id=user_id, ref_type=REF_TYPE),
             on_rerank_usage=rerank_ledger(
                 db, costs, org_id=org_id, user_id=user_id, ref_type=REF_TYPE
@@ -522,7 +543,11 @@ async def search(
             "Semantic search appears once this commit's embeddings are ready.",
             code="semantic_not_ready",
         )
-    cache_key = f"{CACHE_PREFIX}{snapshot.id}:{snapshot.chunk_generation}:{dense is not None}:{key}"
+    graph = await _graph(request, db, snapshot)
+    cache_key = (
+        f"{CACHE_PREFIX}{snapshot.id}:{snapshot.chunk_generation}:{dense is not None}:"
+        f"{graph.version if graph is not None else '-'}:{key}"
+    )
     answer = await _answer(
         request,
         db,
@@ -532,6 +557,7 @@ async def search(
         repo=repo,
         snapshot=snapshot,
         dense=dense,
+        graph=graph,
         costs=costs,
         cache_key=cache_key,
         cache_seconds=settings.search.cache_seconds,

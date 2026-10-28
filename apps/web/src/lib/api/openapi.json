@@ -581,6 +581,32 @@
         "title": "ConstellationPoint",
         "type": "object"
       },
+      "EdgeType": {
+        "enum": [
+          "contains",
+          "defines",
+          "imports",
+          "calls",
+          "references",
+          "inherits",
+          "implements",
+          "renders",
+          "uses_hook",
+          "injects",
+          "issues_request",
+          "targets",
+          "handled_by",
+          "resolves",
+          "publishes",
+          "consumes",
+          "maps_to",
+          "reads",
+          "writes",
+          "tests"
+        ],
+        "title": "EdgeType",
+        "type": "string"
+      },
       "EstimateOut": {
         "properties": {
           "cost_usd": {
@@ -962,6 +988,208 @@
           "content"
         ],
         "title": "FileOut",
+        "type": "object"
+      },
+      "GraphEdgeOut": {
+        "properties": {
+          "confidence": {
+            "title": "Confidence",
+            "type": "number"
+          },
+          "direction": {
+            "enum": [
+              "out",
+              "in"
+            ],
+            "title": "Direction",
+            "type": "string"
+          },
+          "evidence": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/GraphEvidence"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "provenance": {
+            "$ref": "#/components/schemas/Provenance"
+          },
+          "type": {
+            "$ref": "#/components/schemas/EdgeType"
+          }
+        },
+        "required": [
+          "type",
+          "confidence",
+          "provenance",
+          "evidence",
+          "direction"
+        ],
+        "title": "GraphEdgeOut",
+        "type": "object"
+      },
+      "GraphEvidence": {
+        "properties": {
+          "line": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Line"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "line"
+        ],
+        "title": "GraphEvidence",
+        "type": "object"
+      },
+      "GraphHopOut": {
+        "properties": {
+          "depth": {
+            "title": "Depth",
+            "type": "integer"
+          },
+          "edge": {
+            "$ref": "#/components/schemas/GraphEdgeOut"
+          },
+          "node": {
+            "$ref": "#/components/schemas/GraphNodeOut"
+          },
+          "via": {
+            "title": "Via",
+            "type": "string"
+          }
+        },
+        "required": [
+          "node",
+          "edge",
+          "depth",
+          "via"
+        ],
+        "title": "GraphHopOut",
+        "type": "object"
+      },
+      "GraphNeighborsOut": {
+        "properties": {
+          "hops": {
+            "items": {
+              "$ref": "#/components/schemas/GraphHopOut"
+            },
+            "title": "Hops",
+            "type": "array"
+          },
+          "root": {
+            "$ref": "#/components/schemas/GraphNodeOut"
+          },
+          "truncated": {
+            "title": "Truncated",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "root",
+          "hops",
+          "truncated"
+        ],
+        "title": "GraphNeighborsOut",
+        "type": "object"
+      },
+      "GraphNodeOut": {
+        "properties": {
+          "end_line": {
+            "title": "End Line",
+            "type": "integer"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "lane": {
+            "$ref": "#/components/schemas/Lane"
+          },
+          "lang": {
+            "title": "Lang",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Path"
+          },
+          "qualified_name": {
+            "title": "Qualified Name",
+            "type": "string"
+          },
+          "start_line": {
+            "title": "Start Line",
+            "type": "integer"
+          },
+          "symbol_key": {
+            "title": "Symbol Key",
+            "type": "string"
+          }
+        },
+        "required": [
+          "symbol_key",
+          "kind",
+          "name",
+          "qualified_name",
+          "path",
+          "start_line",
+          "end_line",
+          "lang",
+          "lane"
+        ],
+        "title": "GraphNodeOut",
+        "type": "object"
+      },
+      "GraphPathOut": {
+        "properties": {
+          "confidence": {
+            "title": "Confidence",
+            "type": "number"
+          },
+          "found": {
+            "title": "Found",
+            "type": "boolean"
+          },
+          "hops": {
+            "items": {
+              "$ref": "#/components/schemas/GraphHopOut"
+            },
+            "title": "Hops",
+            "type": "array"
+          }
+        },
+        "required": [
+          "found",
+          "hops",
+          "confidence"
+        ],
+        "title": "GraphPathOut",
         "type": "object"
       },
       "GrepHitOut": {
@@ -1916,6 +2144,23 @@
         },
         "title": "PartialOut",
         "type": "object"
+      },
+      "Provenance": {
+        "description": "How an edge is known, from a compiler's word to a model's guess.",
+        "enum": [
+          "scip",
+          "lsp",
+          "runtime",
+          "contract",
+          "import_resolved",
+          "receiver_heuristic",
+          "url_literal",
+          "name_unique",
+          "name_ambiguous",
+          "llm_inferred"
+        ],
+        "title": "Provenance",
+        "type": "string"
       },
       "ReadinessResponse": {
         "properties": {
@@ -5539,6 +5784,312 @@
         "summary": "Search Files",
         "tags": [
           "browse"
+        ]
+      }
+    },
+    "/api/v1/orgs/{org}/repos/{repo}/graph/neighbors": {
+      "get": {
+        "description": "What ``symbol`` reaches (``out``: its callees, imports, ...), what reaches it (``in``:\nits callers, ...) or both, nearest first, each node once.",
+        "operationId": "neighbors_api_v1_orgs__org__repos__repo__graph_neighbors_get",
+        "parameters": [
+          {
+            "description": "Organization slug",
+            "in": "path",
+            "name": "org",
+            "required": true,
+            "schema": {
+              "description": "Organization slug",
+              "title": "Org",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Repository slug",
+            "in": "path",
+            "name": "repo",
+            "required": true,
+            "schema": {
+              "description": "Repository slug",
+              "maxLength": 201,
+              "title": "Repo",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "symbol",
+            "required": true,
+            "schema": {
+              "maxLength": 2000,
+              "minLength": 1,
+              "title": "Symbol",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "direction",
+            "required": false,
+            "schema": {
+              "default": "out",
+              "enum": [
+                "out",
+                "in",
+                "both"
+              ],
+              "title": "Direction",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Edge types, comma-separated (none: all)",
+            "in": "query",
+            "name": "types",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 400,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Edge types, comma-separated (none: all)",
+              "title": "Types"
+            }
+          },
+          {
+            "in": "query",
+            "name": "depth",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "maximum": 3,
+              "minimum": 1,
+              "title": "Depth",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "min_conf",
+            "required": false,
+            "schema": {
+              "default": 0.0,
+              "maximum": 1,
+              "minimum": 0,
+              "title": "Min Conf",
+              "type": "number"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 500,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Branch or commit (or its first 7+ characters).",
+            "in": "query",
+            "name": "ref",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 255,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Branch or commit (or its first 7+ characters).",
+              "title": "Ref"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GraphNeighborsOut"
+                }
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "X-Commit-Sha": {
+                "description": "The commit the response was read from.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such symbol in the graph (``symbol_not_found``)"
+          },
+          "409": {
+            "description": "The graph isn't built yet (``graph_not_ready``)"
+          },
+          "422": {
+            "description": "``validation_failed`` or ``invalid_types``"
+          },
+          "429": {
+            "description": "Too many graph requests (``rate_limited``, with ``Retry-After``)"
+          }
+        },
+        "summary": "Neighbors",
+        "tags": [
+          "graph"
+        ]
+      }
+    },
+    "/api/v1/orgs/{org}/repos/{repo}/graph/path": {
+      "get": {
+        "description": "The surest path from ``from`` to ``to`` along the edges (the highest product of\nconfidences).",
+        "operationId": "path_api_v1_orgs__org__repos__repo__graph_path_get",
+        "parameters": [
+          {
+            "description": "Organization slug",
+            "in": "path",
+            "name": "org",
+            "required": true,
+            "schema": {
+              "description": "Organization slug",
+              "title": "Org",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Repository slug",
+            "in": "path",
+            "name": "repo",
+            "required": true,
+            "schema": {
+              "description": "Repository slug",
+              "maxLength": 201,
+              "title": "Repo",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "from",
+            "required": true,
+            "schema": {
+              "maxLength": 2000,
+              "minLength": 1,
+              "title": "From",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "to",
+            "required": true,
+            "schema": {
+              "maxLength": 2000,
+              "minLength": 1,
+              "title": "To",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Edge types, comma-separated (none: all)",
+            "in": "query",
+            "name": "types",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 400,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Edge types, comma-separated (none: all)",
+              "title": "Types"
+            }
+          },
+          {
+            "in": "query",
+            "name": "min_conf",
+            "required": false,
+            "schema": {
+              "default": 0.0,
+              "maximum": 1,
+              "minimum": 0,
+              "title": "Min Conf",
+              "type": "number"
+            }
+          },
+          {
+            "description": "Branch or commit (or its first 7+ characters).",
+            "in": "query",
+            "name": "ref",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 255,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Branch or commit (or its first 7+ characters).",
+              "title": "Ref"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GraphPathOut"
+                }
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "X-Commit-Sha": {
+                "description": "The commit the response was read from.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such symbol in the graph (``symbol_not_found``)"
+          },
+          "409": {
+            "description": "The graph isn't built yet (``graph_not_ready``)"
+          },
+          "422": {
+            "description": "``validation_failed`` or ``invalid_types``"
+          },
+          "429": {
+            "description": "Too many graph requests (``rate_limited``, with ``Retry-After``)"
+          }
+        },
+        "summary": "Path",
+        "tags": [
+          "graph"
         ]
       }
     },

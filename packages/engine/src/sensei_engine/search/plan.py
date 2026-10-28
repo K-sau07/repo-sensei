@@ -44,6 +44,7 @@ class Leg(enum.StrEnum):
     LEX_SUMMARY = "lex_summary"  # BM25 over summaries (weak)
     SYM = "sym"  # symbol names (trigram)
     GREP = "grep"  # exact text or a pattern (ripgrep)
+    PPR = "ppr"  # the code graph around the other legs' best (3.6): no text of its own
 
 
 # What searches text: the original query and each rewrite.

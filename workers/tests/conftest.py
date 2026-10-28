@@ -1,5 +1,6 @@
 """A local bare repository standing in for GitHub (no network): two commits, a submodule entry,
-an LFS pointer, a symlink pointing outside the repository and an executable script."""
+an LFS pointer, a symlink pointing outside the repository and an executable script; and a third
+commit, on a branch of its own, that adds TypeScript for the graph's resolvers."""
 
 from __future__ import annotations
 
@@ -28,6 +29,13 @@ APP = (
     "def main():\n"
     "    Greeter().greet('again')\n"
 )
+# web/ in the third commit: a module that imports another's function and calls it.
+WEB = {
+    "web/greet.ts": "export function greet(name: string): string {\n  return `hello, ${name}`\n}\n",
+    "web/main.ts": (
+        'import { greet } from "./greet"\n\nexport function main(): void {\n  greet("again")\n}\n'
+    ),
+}
 
 
 @dataclass(frozen=True)
@@ -36,6 +44,7 @@ class BareRepo:
     web_root: Path  # what github.web_url points at (file://<web_root>)
     first: str  # commit ids
     second: str
+    third: str  # the second and web/ (on the "web" branch: main stays at the second)
     app: str  # src/app.py in the second commit
 
 
@@ -82,6 +91,14 @@ def bare_repo(tmp_path_factory: pytest.TempPathFactory) -> BareRepo:
     _git("update-index", "--add", "--cacheinfo", f"160000,{first},vendor/lib", cwd=work)
     _git("commit", "--quiet", "-m", "second", cwd=work)
     second = _git("rev-parse", "HEAD", cwd=work)
+    _git("checkout", "--quiet", "-b", "web", cwd=work)
+    (work / "web").mkdir()
+    for path, content in WEB.items():
+        (work / path).write_text(content)
+    _git("add", "-A", cwd=work)
+    _git("commit", "--quiet", "-m", "third", cwd=work)
+    third = _git("rev-parse", "HEAD", cwd=work)
+    _git("checkout", "--quiet", "main", cwd=work)
 
     web_root = root / "github"
     bare = web_root / "acme-gh" / "demo.git"
@@ -89,4 +106,4 @@ def bare_repo(tmp_path_factory: pytest.TempPathFactory) -> BareRepo:
     _git("clone", "--quiet", "--bare", str(work), str(bare), cwd=root)
     # GitHub lets clients fetch any reachable commit by id; a local bare repo must be told to.
     _git("config", "uploadpack.allowAnySHA1InWant", "true", cwd=bare)
-    return BareRepo(path=bare, web_root=web_root, first=first, second=second, app=APP)
+    return BareRepo(path=bare, web_root=web_root, first=first, second=second, third=third, app=APP)

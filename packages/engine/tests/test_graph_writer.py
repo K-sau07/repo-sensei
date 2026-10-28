@@ -5,6 +5,7 @@ each other's facts."""
 
 from __future__ import annotations
 
+import dataclasses
 import uuid
 from pathlib import Path
 
@@ -27,6 +28,7 @@ from sensei_core.models import (
 )
 from sensei_core.orgs.service import OrgService
 from sensei_engine.graph.confidence import FLAGGED, confidence_of, path_confidence
+from sensei_engine.graph.snapshot import GraphSnapshot
 from sensei_engine.graph.writer import (
     CODE,
     LINKS,
@@ -316,6 +318,39 @@ async def test_the_graph_is_org_scoped(db_session: AsyncSession, tmp_path: Path)
     assert (
         await db_session.scalars(select(CodeNode).where(CodeNode.symbol_key == CALL))
     ).all() == []
+
+
+async def test_the_graph_in_memory_is_read_within_its_org(
+    db_session: AsyncSession, tmp_path: Path
+) -> None:
+    snapshot = await _snapshot(db_session, tmp_path)
+    nodes, edges = _client_facts()
+    await GraphWriter(db_session, snapshot).replace_file("web/client.ts", nodes, edges, layer=LINKS)
+    graph = await GraphSnapshot.build(db_session, snapshot.id)
+    assert graph.node(CALL) is not None
+    assert len(graph.edges) == 1
+    await set_org_context(db_session, uuid.uuid4())  # another org: nothing of it
+    elsewhere = await GraphSnapshot.build(db_session, snapshot.id)
+    assert (len(elsewhere), len(elsewhere.edges)) == (0, 0)
+
+
+async def test_a_graph_read_from_the_rows_answers_as_its_artifact_does(
+    db_session: AsyncSession, tmp_path: Path
+) -> None:
+    """Confidences are stored as REALs (0.9 reads back as 0.8999999761581421) and the artifact
+    rounds them: read either way, ``min_conf=0.9`` keeps the same edges."""
+    snapshot = await _snapshot(db_session, tmp_path)
+    nodes, edges = _client_facts()
+    sure = dataclasses.replace(edges[0], confidence=0.9)
+    writer = GraphWriter(db_session, snapshot)
+    await writer.replace_file("web/client.ts", nodes, [sure], layer=LINKS)
+    rows = await GraphSnapshot.build(db_session, snapshot.id)
+    artifact = GraphSnapshot.loads(rows.dumps())
+    for graph in (rows, artifact):
+        hops, _ = graph.neighbors(sure.src, min_conf=0.9)
+        assert [hop.node.symbol_key for hop in hops] == [CALL]
+        assert hops[0].edge.confidence == 0.9
+        assert graph.shortest_path(sure.src, CALL, min_conf=0.9) is not None
 
 
 async def test_definition_readers_never_see_the_graphs_nodes(

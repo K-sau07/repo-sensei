@@ -22,11 +22,12 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from fakeredis import FakeAsyncRedis
 from fastapi import FastAPI, Request
 from pydantic import SecretStr
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from sensei_api import streams
 from sensei_api.browse import TreeCache
+from sensei_api.graphs import GraphStore
 from sensei_api.routers import index_jobs
 from sensei_core.auth.github_login import store_tokens
 from sensei_core.config import GitHubSettings, Settings
@@ -38,6 +39,7 @@ from sensei_core.indexing.state import IndexJobStateMachine
 from sensei_core.mail import MemoryMailer
 from sensei_core.models import (
     AuditEvent,
+    CodeEdge,
     GitHubInstallation,
     IndexJob,
     JobKind,
@@ -64,6 +66,10 @@ from sensei_engine.chunk.files import chunk_file
 from sensei_engine.chunk.store import FileChunks, save_chunks
 from sensei_engine.embed import store as embed_store
 from sensei_engine.embed.provider import EmbeddingUsage, InputType, UsageSink
+from sensei_engine.graph import python as python_graph
+from sensei_engine.graph.snapshot import ARTIFACT_NAME as GRAPH_ARTIFACT
+from sensei_engine.graph.snapshot import GraphSnapshot
+from sensei_engine.graph.stage import load_project, resolve_graph, write_graph
 from sensei_engine.ingest.constellation import (
     LIVE_BATCH,
     Constellation,
@@ -1799,6 +1805,258 @@ async def test_symbols_need_access(
         hidden = await client.get(f"{API}/orgs/acme/repos/api/{path}", params=params)
         assert hidden.json()["error"]["code"] == "repo_not_found_or_no_access", path
         assert "x-commit-sha" not in hidden.headers
+
+
+# ------------------------------------------------------------------ the code graph
+
+GRAPH_FILES = {
+    "app/__init__.py": b"",
+    "app/crud.py": (
+        b"from app.db import save\n\n\ndef create_user(name):\n    return save(name)\n"
+    ),
+    "app/db.py": b"def save(row):\n    return row\n",
+    "app/routes.py": (
+        b"from app import crud\n\n\ndef register(name):\n    return crud.create_user(name)\n"
+    ),
+}
+
+
+async def _build_graph(
+    db: AsyncSession, store: ObjectStorage, tmp_path: Path, sha: str, *, artifact: bool = True
+) -> str:
+    """The graph stage, on the snapshot ``_index`` left at ``sha`` (its job's details name the
+    version); returns the version."""
+    snapshot = await db.scalar(select(Snapshot).where(Snapshot.commit_sha == sha))
+    assert snapshot is not None
+    facts: dict[str, Any] = {}
+    for path, data in GRAPH_FILES.items():
+        found = python_graph.extract(parse_file(path, data))
+        if found is not None:
+            facts[path] = found
+    project = await load_project(db, snapshot.id, tmp_path / sha)
+    await write_graph(db, snapshot, resolve_graph(project, {"python": facts}))
+    version = uuid.uuid4().hex
+    if artifact:
+        graph = await GraphSnapshot.build(db, snapshot.id, version=version)
+        key = artifact_key(snapshot.org_id, snapshot.repo_id, sha, GRAPH_ARTIFACT)
+        await store.put_bytes(Bucket.ARTIFACTS, key, graph.dumps())
+    job = await db.scalar(select(IndexJob).where(IndexJob.snapshot_id == snapshot.id))
+    assert job is not None
+    job.stages = {**job.stages, "graph": {"status": "done", "details": {"version": version}}}
+    await db.flush()
+    return version
+
+
+async def test_a_symbols_neighbours_and_paths_in_the_graph(
+    app: FastAPI,
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    fake: FakeGitHub,
+    storage: ObjectStorage,
+    tmp_path: Path,
+) -> None:
+    await _connected(app, client, db_session, fake)
+    await _index(app, db_session, storage, tmp_path, GRAPH_FILES, SHA_ONE)
+    await _extract_symbols(db_session, GRAPH_FILES, SHA_ONE)
+    url = f"{API}/orgs/acme/repos/api/graph"
+    create = "py app/crud.py/create_user()."
+    not_yet = await client.get(f"{url}/neighbors", params={"symbol": create})
+    assert (not_yet.status_code, not_yet.json()["error"]["code"]) == (409, "graph_not_ready")
+
+    await _build_graph(db_session, storage, tmp_path, SHA_ONE)
+    callees = await client.get(f"{url}/neighbors", params={"symbol": create, "types": "calls"})
+    assert callees.status_code == 200, callees.text
+    assert callees.headers["x-commit-sha"] == SHA_ONE
+    body = callees.json()
+    assert body["root"]["symbol_key"] == create
+    assert body["truncated"] is False
+    assert body["hops"] == [
+        {
+            "node": {
+                "symbol_key": "py app/db.py/save().",
+                "kind": "function",
+                "name": "save",
+                "qualified_name": "save",
+                "path": "app/db.py",
+                "start_line": 1,
+                "end_line": 2,
+                "lang": "python",
+                "lane": "db",  # app/db.py: the db role
+            },
+            "edge": {
+                "type": "calls",
+                "confidence": 0.9,
+                "provenance": "import_resolved",
+                "evidence": {"path": "app/crud.py", "line": 5},
+                "direction": "out",
+            },
+            "depth": 1,
+            "via": create,
+        }
+    ]
+    callers = await client.get(
+        f"{url}/neighbors",
+        params={"symbol": "py app/db.py/save().", "direction": "in", "types": "calls", "depth": 2},
+    )
+    assert [
+        (h["node"]["symbol_key"], h["depth"], h["edge"]["direction"], h["node"]["lane"])
+        for h in callers.json()["hops"]
+    ] == [
+        (create, 1, "in", "db"),  # crud.py: the db role
+        ("py app/routes.py/register().", 2, "in", "svc"),  # no framework: a service
+    ]
+    imports = await client.get(
+        f"{url}/neighbors", params={"symbol": "py app/routes.py/", "types": "imports"}
+    )
+    assert [h["node"]["symbol_key"] for h in imports.json()["hops"]] == ["py app/crud.py/"]
+
+    found = await client.get(
+        f"{url}/path", params={"from": "py app/routes.py/register().", "to": "py app/db.py/save()."}
+    )
+    assert found.status_code == 200, found.text
+    path = found.json()
+    assert path["found"] is True
+    assert [h["node"]["symbol_key"] for h in path["hops"]] == [create, "py app/db.py/save()."]
+    assert path["confidence"] == pytest.approx(0.81)
+    back = await client.get(
+        f"{url}/path", params={"from": "py app/db.py/save().", "to": "py app/routes.py/register()."}
+    )
+    assert back.json() == {"found": False, "hops": [], "confidence": 0.0}  # edges have a direction
+
+    for params, code in (
+        ({"symbol": "py app/nope.py/x()."}, "symbol_not_found"),
+        ({"symbol": create, "types": "calls,teleports"}, "invalid_types"),
+    ):
+        wrong = await client.get(f"{url}/neighbors", params=params)
+        assert wrong.json()["error"]["code"] == code, params
+    assert (
+        await client.get(f"{url}/neighbors", params={"symbol": create, "depth": 4})
+    ).status_code == 422
+
+
+async def test_the_graph_needs_access(
+    app: FastAPI,
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    fake: FakeGitHub,
+    storage: ObjectStorage,
+    tmp_path: Path,
+) -> None:
+    """A member who can't read the repository on GitHub, and a user of no org, see nothing of
+    its graph (its graph built and held: no 409 gives it away)."""
+    await _connected(app, client, db_session, fake)
+    await _index(app, db_session, storage, tmp_path, GRAPH_FILES, SHA_ONE)
+    await _extract_symbols(db_session, GRAPH_FILES, SHA_ONE)
+    await _build_graph(db_session, storage, tmp_path, SHA_ONE)
+    url = f"{API}/orgs/acme/repos/api/graph"
+    create = "py app/crud.py/create_user()."
+    asks = (
+        ("neighbors", {"symbol": create}),
+        ("path", {"from": "py app/routes.py/register().", "to": create}),
+    )
+    for path, params in asks:  # the admin reads it (and the store holds it)
+        assert (await client.get(f"{url}/{path}", params=params)).status_code == 200, path
+
+    member, _ = await _member(app, client, db_session)
+    fake.user_can_read[f"ghu_{member.login}"] = set()  # can't read acme-gh/api on GitHub
+    for path, params in asks:
+        hidden = await client.get(f"{url}/{path}", params=params)
+        assert hidden.json()["error"]["code"] == "repo_not_found_or_no_access", path
+        assert "x-commit-sha" not in hidden.headers
+
+    outsider = await make_user(db_session)  # a member of no org
+    await _give_token(app, db_session, outsider, f"ghu_{outsider.login}")
+    await sign_in(app, client, db_session, outsider)
+    fake.user_can_read[f"ghu_{outsider.login}"] = {101}  # even reading it on GitHub
+    for path, params in asks:
+        hidden = await client.get(f"{url}/{path}", params=params)
+        assert hidden.json()["error"]["code"] == "org_not_found", path
+        assert "x-commit-sha" not in hidden.headers
+
+
+async def test_a_graph_without_its_artifact_is_built_and_a_new_one_served(
+    app: FastAPI,
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    fake: FakeGitHub,
+    storage: ObjectStorage,
+    tmp_path: Path,
+) -> None:
+    """No artifact (or one of another run): the graph is read from the rows. The same commit
+    linked again is served anew, not from the cache."""
+    await _connected(app, client, db_session, fake)
+    await _index(app, db_session, storage, tmp_path, GRAPH_FILES, SHA_ONE)
+    await _extract_symbols(db_session, GRAPH_FILES, SHA_ONE)
+    await _build_graph(db_session, storage, tmp_path, SHA_ONE, artifact=False)
+    url = f"{API}/orgs/acme/repos/api/graph/neighbors"
+    params = {"symbol": "py app/routes.py/register().", "types": "calls"}
+    first = await client.get(url, params=params)
+    assert [h["node"]["name"] for h in first.json()["hops"]] == ["create_user"]
+
+    snapshot = await db_session.scalar(select(Snapshot).where(Snapshot.commit_sha == SHA_ONE))
+    assert snapshot is not None
+    await db_session.execute(delete(CodeEdge).where(CodeEdge.snapshot_id == snapshot.id))
+    await _build_graph(db_session, storage, tmp_path, SHA_ONE)  # linked again: a new version
+    again = await client.get(url, params=params)
+    assert [h["node"]["name"] for h in again.json()["hops"]] == ["create_user"]
+    store: GraphStore = app.state.graph_store
+    assert len(store) == 1
+
+
+async def test_a_truncated_artifact_is_read_from_the_rows(
+    app: FastAPI,
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    fake: FakeGitHub,
+    storage: ObjectStorage,
+    tmp_path: Path,
+) -> None:
+    """An artifact cut short (an interrupted upload, a bad disk) costs a read of the rows, not
+    a 500 on every call."""
+    await _connected(app, client, db_session, fake)
+    await _index(app, db_session, storage, tmp_path, GRAPH_FILES, SHA_ONE)
+    await _extract_symbols(db_session, GRAPH_FILES, SHA_ONE)
+    await _build_graph(db_session, storage, tmp_path, SHA_ONE)
+    snapshot = await db_session.scalar(select(Snapshot).where(Snapshot.commit_sha == SHA_ONE))
+    assert snapshot is not None
+    key = artifact_key(snapshot.org_id, snapshot.repo_id, SHA_ONE, GRAPH_ARTIFACT)
+    blob = await storage.get_bytes(Bucket.ARTIFACTS, key, max_bytes=1 << 20)
+    assert blob is not None
+    await storage.put_bytes(Bucket.ARTIFACTS, key, blob[: len(blob) // 2])
+    found = await client.get(
+        f"{API}/orgs/acme/repos/api/graph/neighbors",
+        params={"symbol": "py app/routes.py/register().", "types": "calls"},
+    )
+    assert found.status_code == 200, found.text
+    assert [h["node"]["name"] for h in found.json()["hops"]] == ["create_user"]
+
+
+async def test_the_graph_is_rate_limited_per_user(
+    app: FastAPI,
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    fake: FakeGitHub,
+    storage: ObjectStorage,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    await _connected(app, client, db_session, fake)
+    await _index(app, db_session, storage, tmp_path, GRAPH_FILES, SHA_ONE)
+    await _extract_symbols(db_session, GRAPH_FILES, SHA_ONE)
+    await _build_graph(db_session, storage, tmp_path, SHA_ONE)
+    monkeypatch.setattr(app.state.settings.api, "graph_rate_per_minute", 2)
+    url = f"{API}/orgs/acme/repos/api/graph"
+    create, register = "py app/crud.py/create_user().", "py app/routes.py/register()."
+    assert (await client.get(f"{url}/neighbors", params={"symbol": create})).status_code == 200
+    ok = await client.get(f"{url}/path", params={"from": register, "to": create})
+    assert ok.status_code == 200, ok.text
+    limited = await client.get(f"{url}/neighbors", params={"symbol": create})
+    assert (limited.status_code, limited.json()["error"]["code"]) == (429, "rate_limited")
+    assert 1 <= int(limited.headers["retry-after"]) <= 60
+    # Another user has a bucket of their own.
+    member, _ = await _member(app, client, db_session)
+    fake.user_can_read[f"ghu_{member.login}"] = {101}
+    assert (await client.get(f"{url}/neighbors", params={"symbol": create})).status_code == 200
 
 
 # ------------------------------------------------------------------ search

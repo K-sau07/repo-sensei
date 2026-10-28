@@ -44,6 +44,7 @@ class TaskName(enum.StrEnum):
     CHUNK_FILES = "sensei.parse.chunk_files"
     EMBED_CHUNKS = "sensei.embed.embed_chunks"
     SUMMARIZE_FILES = "sensei.llm.summarize_files"
+    BUILD_GRAPH = "sensei.graph.build_graph"
     FINALIZE_INDEX = "sensei.ingest.finalize_index"
     RUN_INDEX_JOB = "sensei.ingest.run_index_job"
     EVICT_REPO_CACHE = "sensei.maintenance.evict_repo_cache"

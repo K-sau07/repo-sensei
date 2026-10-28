@@ -1,8 +1,8 @@
 """Running an index job: its stages as a Celery chain, and the stage that finishes it.
 
 ``run_index_job`` turns a queued job into the chain clone → discover → merkle → parse (with
-symbols) → chunks → summaries → finalize (later phases add embeddings between chunks and
-summaries, then graph and links after them). Each stage is its own task (parse and symbols
+symbols) → chunks → embeddings → summaries → graph → finalize (links, a later phase, goes
+between graph and finalize). Each stage is its own task (parse and symbols
 share one: the symbols come out of the parse), so a failure retries only that stage. Every
 stage checks the job first: a cancelled or failed job makes the rest of the chain do nothing.
 The stage task ids are kept in Redis so cancelling can revoke the ones still queued.
@@ -14,7 +14,8 @@ repository becomes ``ready`` at the indexed commit, and the job succeeds. The ch
 repository's other snapshots are pruned in the same transaction (search serves the indexed
 commit), with its own rows outside the live generation; its chunks partition is vacuumed after
 (a task of its own). A job that reaches finalize straight from symbols (its chain was sent
-before the chunks stage existed) gets the rest of the chain sent.
+before the chunks stage existed) gets the rest of the chain sent; so does one that reaches it
+before the graph stage (sent before that stage existed).
 """
 
 from __future__ import annotations
@@ -42,6 +43,7 @@ from sensei_workers.runtime import get_runtime
 from sensei_workers.tasks.chunk import chunk_snapshot
 from sensei_workers.tasks.discover import discover_files
 from sensei_workers.tasks.embed import embed_snapshot
+from sensei_workers.tasks.graph import build_graph, previous_done
 from sensei_workers.tasks.ingest import IngestTask, clone_snapshot
 from sensei_workers.tasks.maintenance import request_vacuum
 from sensei_workers.tasks.merkle import build_merkle
@@ -63,8 +65,13 @@ RESEND_AFTER_SECONDS = 6 * 3600
 GIVE_UP_AFTER_SECONDS = 24 * 3600
 
 
-class _NoChunksStageError(Exception):
-    """The job went from symbols to finalize without a chunks stage."""
+class _MissingStageError(Exception):
+    """The job reached finalize without a stage its chain didn't have (sent before the stage
+    existed): from symbols without chunks, or from the stages before the graph without it."""
+
+    def __init__(self, what: str) -> None:
+        super().__init__(what)
+        self.what = what
 
 
 def _sent_once_key(job_id: str, what: str) -> str:
@@ -98,9 +105,11 @@ def finalize_index(self: IngestTask, *, job_id: str, org_id: str, repo_id: str) 
                 stages = job.stages or {}
                 symbols = stages.get("symbols", {})
                 if job.stage is Stage.SYMBOLS and symbols.get("status") == "done":
-                    raise _NoChunksStageError  # its chain has none (see below)
+                    raise _MissingStageError("chunks")  # its chain has none (see below)
+                if previous_done(job) and not _waits_for_more(job):
+                    raise _MissingStageError("graph")
                 if job.stage is None or STAGE_ORDER.index(job.stage) <= STAGE_ORDER.index(
-                    Stage.SUMMARIES
+                    Stage.GRAPH
                 ):
                     raise NotYetError("the stages before finalize haven't finished")
                 return None
@@ -135,18 +144,20 @@ def finalize_index(self: IngestTask, *, job_id: str, org_id: str, repo_id: str) 
     runtime = get_runtime()
     try:
         finished = runtime.run(_finalize())
-    except _NoChunksStageError:
+    except _MissingStageError as missing:
         eager = bool(self.request.is_eager)
-        _send_the_chunks_stage(job_id, org_id, repo_id, eager=eager)
+        _send_missing(job_id, org_id, repo_id, missing.what, eager=eager)
         if not eager:
-            raise NotYetError("the chunks stage was sent") from None  # its finalize finishes
+            raise NotYetError(
+                f"the {missing.what} stage was sent"
+            ) from None  # its finalize ends it
         # Run in place, that chain's finalize found this one holding the lock and skipped: the
-        # chunks are done now, so this one finishes (unless the chunks stage passed itself
-        # over: then it waits like any other).
+        # stage is done now, so this one finishes (unless the stage passed itself over: then it
+        # waits like any other).
         try:
             finished = runtime.run(_finalize())
-        except _NoChunksStageError:
-            raise NotYetError("the chunks stage hasn't run") from None
+        except _MissingStageError:
+            raise NotYetError(f"the {missing.what} stage hasn't run") from None
     if finished is None:
         return None
     sha, pruned = finished
@@ -162,28 +173,36 @@ def _cost_line(cost: Decimal) -> str:
     return " This index cost less than a cent." if cost > 0 else ""
 
 
-def _send_the_chunks_stage(job_id: str, org_id: str, repo_id: str, *, eager: bool) -> None:
-    """A chain sent before the chunks stage existed goes from symbols straight to finalize: the
-    stages from chunks on are sent, once (NotYetError for every delivery after the first)."""
-    if not _send_once(job_id, "chunks"):
-        raise NotYetError("the chunks stage hasn't run")
-    log.warning("index job without a chunks stage: sending it", job_id=job_id)
+def _send_missing(job_id: str, org_id: str, repo_id: str, what: str, *, eager: bool) -> None:
+    """A chain sent before a stage existed reaches finalize without it: the stages from it on
+    are sent, once (NotYetError for every delivery after the first)."""
+    stage = MISSING_STAGES[what]
+    if not _send_once(job_id, what):
+        raise NotYetError(f"the {what} stage hasn't run")
+    log.warning("index job without a stage: sending it", job_id=job_id, stage=what)
     try:
-        send_stages(job_id, org_id, repo_id, eager=eager, first=STAGES.index(chunk_snapshot))
+        send_stages(job_id, org_id, repo_id, eager=eager, first=STAGES.index(stage))
     except Exception:
         # Not sent: the next delivery (or the sweeper's resend) tries again.
-        get_runtime().sync_redis.delete(_sent_once_key(job_id, "chunks"))
+        get_runtime().sync_redis.delete(_sent_once_key(job_id, what))
         raise
 
 
+def _waits_for_more(job: IndexJob) -> bool:
+    """Whether a stage before the graph may still run: summaries or embeddings after the stage
+    the job is at, when the server can do them (they pass themselves over when it can't)."""
+    runtime = get_runtime()
+    if job.stage is Stage.CHUNKS:
+        return runtime.embeddings is not None or runtime.anthropic.configured
+    if job.stage is Stage.EMBEDDINGS:
+        return runtime.anthropic.configured
+    return False
+
+
 def _ready_to_finalize(job: IndexJob) -> bool:
-    """The last stage before finalize is over: summaries done or skipped; or, when the
-    summaries stage passed itself over (no Anthropic key), embeddings done or skipped; or chunks
-    done when the embeddings stage passed itself over too (no Voyage key)."""
+    """The last stage before finalize is over: the graph, done or skipped."""
     status = (job.stages or {}).get(job.stage.value if job.stage else "", {}).get("status")
-    if job.stage in (Stage.SUMMARIES, Stage.EMBEDDINGS):
-        return status in {"done", "skipped"}
-    return job.stage is Stage.CHUNKS and status == "done"
+    return job.stage is Stage.GRAPH and status in {"done", "skipped"}
 
 
 STAGES = (
@@ -194,8 +213,11 @@ STAGES = (
     chunk_snapshot,
     embed_snapshot,
     summarize_snapshot,
+    build_graph,
     finalize_index,
 )
+# The stages a chain sent before they existed may lack (see _send_missing).
+MISSING_STAGES = {"chunks": chunk_snapshot, "graph": build_graph}
 
 
 @celery_app.task(

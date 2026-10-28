@@ -314,6 +314,13 @@ def sweep_weights(
     ] = None,
     reports_dir: Annotated[Path | None, typer.Option(help="Where the report goes.")] = None,
     top: Annotated[int, typer.Option(help="Grid points listed.")] = 15,
+    grid: Annotated[
+        list[str] | None,
+        typer.Option(
+            help="A weight's values, name=v1,v2 (repeatable; replaces the default grid, the "
+            "other weights kept at --opt's or the defaults)."
+        ),
+    ] = None,
 ) -> None:
     """Weigh the hybrid retriever's legs (step 2.9.4) and compare it with each leg (2.9.5): the
     rankings are read once per question, then every grid point is fused in memory and scored."""
@@ -333,7 +340,12 @@ def sweep_weights(
 
         collected[loaded.name] = asyncio.run(sweep_mod.collect(built, items, ref))
         typer.echo(f"{loaded.name}: {len(collected[loaded.name])} questions read")
-    points = sweep_mod.sweep(collected, base)
+    values = sweep_mod.GRID
+    if grid:
+        values = {
+            name: [float(v) for v in setting.split(",")] for name, setting in _options(grid).items()
+        }
+    points = sweep_mod.sweep(collected, base, values=values)
     chosen = points[0].weights
     report = sweep_mod.render(sweep_mod.compare(collected, chosen), points[:top], chosen)
     folder = reports_dir or paths.reports_dir(root)

@@ -38,6 +38,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from sensei_core.logging import get_logger
 from sensei_core.models import CodeChunk
+from sensei_engine.graph.snapshot import GraphSnapshot, neighbourhood
 from sensei_engine.llm.anthropic_client import LLMUsageSink
 from sensei_engine.search.bm25 import Filters
 from sensei_engine.search.hybrid import (
@@ -69,6 +70,7 @@ WHY: Mapping[Leg, str] = {
     Leg.SYM: "symbol",
     Leg.SEM_CODE: "semantic",
     Leg.SEM_SUMMARY: "semantic",
+    Leg.PPR: "graph",
 }
 REWRITES = (Origin.STRUCTURAL, Origin.BEHAVIOURAL)
 _WORD = re.compile(r"[A-Za-z_$][A-Za-z0-9_$]{2,}")
@@ -199,15 +201,18 @@ class SearchService:
         scope: str,
         grep: GrepLegs | None = None,
         dense: DenseLegs | None = None,
+        graph: GraphSnapshot | None = None,
         on_llm_usage: LLMUsageSink | None = None,
         on_rerank_usage: RerankUsageSink | None = None,
     ) -> Answer:
         """Every result of ``query`` on the snapshot, by lane. ``scope`` is the org asking (the
         router caches per org); ``grep`` runs the exact-text legs, ``dense`` the semantic ones
-        (None: the snapshot has no embeddings yet)."""
+        (None: the snapshot has no embeddings yet), ``graph`` (the snapshot's) the graph leg,
+        except in semantic mode."""
         route = await self.route(query.text, scope=scope, on_llm_usage=on_llm_usage)
         found = narrow(plan(route), query.mode, semantic_ready=dense is not None)
-        retriever = HybridRetriever(weights=self.weights, grep=grep, dense=dense)
+        around = graph if query.mode is not SearchMode.SEMANTIC else None
+        retriever = HybridRetriever(weights=self.weights, grep=grep, dense=dense, graph=around)
         filters = Filters(languages=query.languages, path_prefix=query.path)
         rankings, _ = await retriever.rankings(
             db, found, repo_id=repo_id, snapshot_id=snapshot_id, filters=filters
@@ -216,7 +221,7 @@ class SearchService:
             db, found, rankings, repo_id=repo_id, snapshot_id=snapshot_id, filters=filters
         )
         ordered, scores, reranked = await self._rerank(
-            db, query.text, hits, repo_id=repo_id, on_usage=on_rerank_usage
+            db, query.text, hits, repo_id=repo_id, on_usage=on_rerank_usage, graph=graph
         )
         lanes: dict[Lane, list[Result]] = {lane: [] for lane in Lane}
         seen: set[str] = set()
@@ -244,6 +249,7 @@ class SearchService:
         *,
         repo_id: uuid.UUID,
         on_usage: RerankUsageSink | None,
+        graph: GraphSnapshot | None = None,
     ) -> tuple[list[SearchHit], list[float], bool]:
         top = hits[: self._rerank_candidates]
         if self._reranker is None or len(top) < 2:
@@ -256,6 +262,7 @@ class SearchService:
             contents,
             candidates=self._rerank_candidates,
             on_usage=on_usage,
+            graph=graph,
         )
 
 
@@ -267,10 +274,15 @@ async def rerank(
     *,
     candidates: int,
     on_usage: RerankUsageSink | None = None,
+    graph: GraphSnapshot | None = None,
+    mode: RerankMode = RerankMode.INTERACTIVE,
+    on_llm_usage: LLMUsageSink | None = None,
 ) -> tuple[list[SearchHit], list[float], bool]:
     """The hits in their final order, with their 0-1 scores, and whether the cross-encoder
     ordered them: its picks of the best ``candidates`` first (their relevance), then the rest
-    in fused order (their fused score, scaled below the picks)."""
+    in fused order (their fused score, scaled below the picks). With the snapshot's ``graph``,
+    each definition's callers and callees go along (the listwise model reads them, 3.6.5).
+    ``mode`` is the search box's (the cross-encoder only) unless asked (the evals: ``agent``)."""
     fused = [hit.score for hit in hits]
     top = list(hits[:candidates])
     if reranker is None or len(top) < 2:
@@ -281,10 +293,17 @@ async def rerank(
             code=_definition_text(hit, contents.get(hit.chunk_id)),
             path=hit.path,
             layer=hit.lane.value,
+            graph_neighbourhood=(
+                neighbourhood(graph, hit.symbol_key)
+                if graph is not None and hit.symbol_key is not None
+                else None
+            ),
         )
         for n, hit in enumerate(top)
     ]
-    ranking = await reranker.rerank(query, shown, RerankMode.INTERACTIVE, on_rerank_usage=on_usage)
+    ranking = await reranker.rerank(
+        query, shown, mode, on_rerank_usage=on_usage, on_llm_usage=on_llm_usage
+    )
     if not ranking.scored:
         return list(hits), _scaled(fused, 1.0), False
     picked = [int(item.candidate.id) for item in ranking.items]

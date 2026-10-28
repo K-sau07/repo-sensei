@@ -1,5 +1,6 @@
 """Hybrid retrieval (2.9): fusion by reciprocal rank per symbol, layer tags, and a plan's legs run
-on an indexed snapshot (BM25, symbols, grep; semantic legs pending)."""
+on an indexed snapshot (BM25, symbols, grep; semantic legs pending); and the graph leg (3.6): the
+definitions around the other legs' best."""
 
 from __future__ import annotations
 
@@ -17,21 +18,28 @@ from sensei_core.models import CodeChunk, Repo, RepoFile, RepoSource, Snapshot
 from sensei_core.orgs.service import OrgService
 from sensei_engine.chunk.files import chunk_file
 from sensei_engine.chunk.store import FileChunks, save_chunks
+from sensei_engine.graph import python as python_graph
+from sensei_engine.graph.snapshot import GraphSnapshot
+from sensei_engine.graph.snapshot import Node as GraphNode
+from sensei_engine.graph.stage import load_project, resolve_graph, write_graph
 from sensei_engine.ingest.discover import discover
 from sensei_engine.ingest.store import save_discovery
 from sensei_engine.parse.parser import parse_file
 from sensei_engine.parse.stage import parseable
 from sensei_engine.search.bm25 import Filters
 from sensei_engine.search.hybrid import (
+    PPR_QUERY,
     ChunkRef,
+    Fused,
     HybridRetriever,
     Ranking,
     Weights,
     WorktreeGrep,
     fuse,
+    ppr_seeds,
 )
 from sensei_engine.search.layers import lane_of, layer_of
-from sensei_engine.search.plan import Leg, Origin, SubQuery, plan
+from sensei_engine.search.plan import Leg, Mode, Origin, SearchPlan, SubQuery, plan
 from sensei_engine.search.route import Lane, Layer, classify
 from sensei_engine.symbols.extract import extract_symbols
 from sensei_engine.symbols.store import FileSymbols, save_symbols
@@ -408,3 +416,107 @@ async def test_a_snapshot_not_chunked_finds_nothing(
         snapshot_id=snapshot.id,
     )
     assert (result.hits, result.rankings) == ([], [])
+
+
+# ---------------------------------------------------------------------- the graph leg
+
+ROUTE = "py backend/app/api/routes/items.py/create_item_route()."
+SERVICE = "py backend/app/services/items.py/create_item()."
+# The backend a project of its own: ``app.services.items`` is its file.
+LINKED = {**FILES, "backend/pyproject.toml": '[project]\nname = "app"\n'}
+
+
+async def _linked(db: AsyncSession, root: Path, snapshot: Snapshot) -> GraphSnapshot:
+    """The graph stage on ``_index``'s snapshot: its Python linked, then read into memory."""
+    facts: dict[str, object] = {}
+    for path, content in LINKED.items():
+        if path.endswith(".py"):
+            found = python_graph.extract(parse_file(path, content.encode()))
+            if found is not None:
+                facts[path] = found
+    project = await load_project(db, snapshot.id, root)
+    await write_graph(db, snapshot, resolve_graph(project, {"python": facts}))
+    return await GraphSnapshot.build(db, snapshot.id)
+
+
+def _grep_plan(text: str, mode: Mode = Mode.HYBRID) -> SearchPlan:
+    route = classify(text).route
+    return SearchPlan(route, mode, (SubQuery(Leg.GREP, text, Origin.ORIGINAL, ()),))
+
+
+async def test_the_graph_leg_ranks_what_the_other_legs_best_results_call(
+    db_session: AsyncSession, tmp_path: Path
+) -> None:
+    """Only the route's docstring is searched for: the service it calls is found by the graph."""
+    snapshot = await _index(db_session, tmp_path, LINKED)
+    graph = await _linked(db_session, tmp_path, snapshot)
+    ids = (snapshot.repo_id, snapshot.id)
+    found = _grep_plan("Create a new item.")
+    without = await HybridRetriever(grep=WorktreeGrep(tmp_path)).search(
+        db_session, found, repo_id=ids[0], snapshot_id=ids[1]
+    )
+    assert [hit.symbol_key for hit in without.hits] == [ROUTE]
+
+    retriever = HybridRetriever(grep=WorktreeGrep(tmp_path), graph=graph)
+    result = await retriever.search(db_session, found, repo_id=ids[0], snapshot_id=ids[1])
+    assert [r.sub for r in result.rankings] == [found.legs[0], PPR_QUERY]
+    keys = [hit.symbol_key for hit in result.hits]
+    assert keys[0] == ROUTE  # the seed: found by grep, left out of the graph's ranking
+    assert SERVICE in keys
+    service = next(hit for hit in result.hits if hit.symbol_key == SERVICE)
+    assert service.legs == {"ppr": 1}
+    assert ROUTE not in {ref.symbol_key for ref in result.rankings[-1].found}
+
+
+async def test_the_graph_leg_runs_on_hybrid_plans_it_weighs_something_in(
+    db_session: AsyncSession, tmp_path: Path
+) -> None:
+    snapshot = await _index(db_session, tmp_path, LINKED)
+    graph = await _linked(db_session, tmp_path, snapshot)
+    ids = (snapshot.repo_id, snapshot.id)
+    grep = WorktreeGrep(tmp_path)
+    for retriever, found in (
+        (HybridRetriever(grep=grep, graph=graph), _grep_plan("Create a new item.", Mode.GREP)),
+        (
+            HybridRetriever(
+                grep=grep, graph=graph, weights=Weights(legs={Leg.GREP: 1.0, Leg.PPR: 0.0})
+            ),
+            _grep_plan("Create a new item."),
+        ),
+        (HybridRetriever(grep=grep, graph=graph), _grep_plan("nothing like this anywhere")),
+    ):
+        rankings, _ = await retriever.rankings(
+            db_session, found, repo_id=ids[0], snapshot_id=ids[1]
+        )
+        assert PPR_QUERY not in [r.sub for r in rankings], found
+
+
+def test_the_graph_legs_seeds_are_the_best_definitions_the_graph_holds() -> None:
+    def fused(unit: str, score: float, focus: str | None = None) -> Fused:
+        return Fused(unit, uuid.uuid4(), score, {}, 1, 0, focus)
+
+    graph = GraphSnapshot(
+        [
+            _graph_node("py a.py/a()."),
+            _graph_node("py b.py/b()."),
+            _graph_node("py c.py/c()."),
+        ],
+        [],
+    )
+    results = [
+        fused("py a.py/a().", 0.5),
+        fused("py gone.py/x().", 0.4),  # not in the graph
+        fused(f"chunk:{uuid.uuid4()}", 0.3, focus="py b.py/b()."),  # found in a chunk of several
+        fused(f"chunk:{uuid.uuid4()}", 0.2),  # a Markdown section
+        fused("py c.py/c().", 0.1),
+    ]
+    assert ppr_seeds(results, graph) == {
+        "py a.py/a().": 0.5,
+        "py b.py/b().": 0.3,
+        "py c.py/c().": 0.1,
+    }
+    assert ppr_seeds(results, graph, limit=1) == {"py a.py/a().": 0.5}
+
+
+def _graph_node(key: str) -> GraphNode:
+    return GraphNode(key, "function", key, key, "a.py", 1, 2, "python")

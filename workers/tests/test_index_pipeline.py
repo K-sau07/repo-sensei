@@ -32,6 +32,7 @@ from sensei_core.indexing.state import IndexJobStateMachine
 from sensei_core.jobs import TaskName
 from sensei_core.models import (
     CodeChunk,
+    CodeEdge,
     CodeNode,
     GlossaryTerm,
     IndexJob,
@@ -50,6 +51,8 @@ from sensei_core.storage import Bucket, artifact_key, repo_prefix
 from sensei_engine.chunk.store import ChunkWriter, FileChunks, make_live, new_generation
 from sensei_engine.embed.provider import EmbeddingUsage, InputType, UsageSink
 from sensei_engine.embed.voyage import VoyageError
+from sensei_engine.graph import stage as graph_stage
+from sensei_engine.graph.snapshot import ARTIFACT_NAME
 from sensei_engine.ingest.store import file_ids
 from sensei_engine.llm import rollups, summaries
 from sensei_engine.search.bm25 import chunk_partition, keyword_search
@@ -60,6 +63,7 @@ from sensei_workers.ingest.git import GitRunner
 from sensei_workers.runtime import Runtime, set_runtime
 from sensei_workers.tasks import chunk as chunk_task
 from sensei_workers.tasks import embed as embed_task
+from sensei_workers.tasks import graph as graph_task
 from sensei_workers.tasks import maintenance, orchestrate
 from sensei_workers.tasks.merkle import build_merkle
 from sensei_workers.tasks.orchestrate import run_index_job
@@ -236,7 +240,10 @@ def test_a_full_run_streams_its_stages_in_order(
     repo, job = runtime.run(_state(runtime.system_database, repo_id, job_id))
     assert (job.status, job.stage, job.progress) == (JobStatus.SUCCEEDED, "finalize", 1.0)
     assert (repo.status, repo.last_indexed_sha) == (RepoStatus.READY, bare_repo.second)
-    assert {job.stages[s]["status"] for s in ("parse", "symbols", "chunks")} == {"done"}
+    assert {job.stages[s]["status"] for s in ("parse", "symbols", "chunks", "graph")} == {"done"}
+    graph = job.stages["graph"]["details"]
+    assert (graph["files"], graph["extracted"], graph["edges"]) == (1, 1, 2)
+    assert graph["resolvers"]["python"]["imports"]["unresolved"] == 0
     # The stages this phase doesn't have yet are recorded as skipped; so are summaries, with no
     # Anthropic key.
     assert job.stages["embeddings"]["status"] == job.stages["links"]["status"] == "skipped"
@@ -261,12 +268,17 @@ def test_a_full_run_streams_its_stages_in_order(
         ("stage_started", "chunks"),
         ("stage_done", "chunks"),
         ("unlock", "chunks"),
+        ("stage_started", "graph"),
+        ("stage_done", "graph"),
+        ("unlock", "graph"),
         ("stage_started", "finalize"),
         ("stage_done", "finalize"),
         ("done", "finalize"),
     ]
     unlocks = [e["unlocks"] for e in events if e["type"] == "unlock"]
-    assert unlocks == [["code_browser"], ["goto_definition"], ["keyword_search"]]
+    assert unlocks == [
+        ["code_browser"], ["goto_definition"], ["keyword_search"], ["graph_view", "callers"],
+    ]  # fmt: skip
     progress = [e for e in events if e["type"] == "progress"]
     assert progress
     assert all(e["done"] <= e["total"] for e in progress)
@@ -275,6 +287,7 @@ def test_a_full_run_streams_its_stages_in_order(
     assert any(m.startswith("Found 5 files") for m in logs)
     assert "Parsed 1 of 1 source files." in logs
     assert "Found 4 definitions. Go to definition is ready." in logs
+    assert any(m.startswith("Linked 1 files: ") for m in logs)
     assert "File summaries are off: this server has no Anthropic API key." in logs
     assert logs[-1].startswith("Indexed")
     assert {e["job_id"] for e in events} == {str(job_id)}
@@ -879,9 +892,11 @@ def test_files_are_summarized_and_the_wiki_unlocked(
         ("stage_started", "summaries"),
         ("stage_done", "summaries"),
         ("unlock", "summaries"),
-        ("stage_started", "finalize"),
+        ("stage_started", "graph"),  # then the code graph
     ]
-    assert [e["unlocks"] for e in events if e["type"] == "unlock"][-1] == ["wiki"]
+    assert [e["unlocks"] for e in events if e["type"] == "unlock"][-2:] == [
+        ["wiki"], ["graph_view", "callers"],
+    ]  # fmt: skip
     progress = [(e["done"], e["total"]) for e in events if e["type"] == "progress"]
     assert (0, 1) in progress
     assert (1, 1) in progress
@@ -1438,3 +1453,110 @@ def test_summaries_follow_embeddings(
     events = runtime.run(_events(runtime, job_stream(job_id)))
     started = [e["stage"] for e in events if e["type"] == "stage_started"]
     assert started.index("embeddings") < started.index("summaries") < started.index("finalize")
+
+
+# ---------------------------------------------------------------- the code graph
+
+
+async def _graph(database: Database, snapshot_id: uuid.UUID) -> set[tuple[str, str, str]]:
+    async with database.session() as db:
+        src, dst = CodeNode.__table__.alias("src"), CodeNode.__table__.alias("dst")
+        rows = await db.execute(
+            select(src.c.symbol_key, dst.c.symbol_key, CodeEdge.type)
+            .join(src, src.c.id == CodeEdge.src_id)
+            .join(dst, dst.c.id == CodeEdge.dst_id)
+            .where(CodeEdge.snapshot_id == snapshot_id)
+        )
+        return {(a, b, kind.value) for a, b, kind in rows.tuples()}
+
+
+def test_the_graph_stage_writes_the_snapshots_code_graph(
+    runtime: Runtime,
+    ids: tuple[uuid.UUID, uuid.UUID, uuid.UUID],
+    github: respx.MockRouter,
+    bare_repo: Any,
+) -> None:
+    """Every language's resolver: Python's calls, TypeScript's import and call."""
+    github.get(COMMITS_URL).mock(return_value=httpx.Response(200, json={"sha": bare_repo.third}))
+    org_id, repo_id, job_id = ids
+    _run(org_id, repo_id, job_id)
+
+    _, job = runtime.run(_state(runtime.system_database, repo_id, job_id))
+    assert job.snapshot_id is not None
+    assert runtime.run(_graph(runtime.system_database, job.snapshot_id)) == {
+        ("py src/app.py/main().", "py src/app.py/Greeter#", "calls"),
+        ("py src/app.py/main().", "py src/app.py/Greeter#greet().", "calls"),
+        ("ts web/main.ts/", "ts web/greet.ts/greet().", "imports"),
+        ("ts web/main.ts/main().", "ts web/greet.ts/greet().", "calls"),
+    }
+    details = job.stages["graph"]["details"]["resolvers"]
+    assert {name: d["files"] for name, d in details.items()} == {"ecma": 2, "python": 1}
+
+
+def test_a_chain_sent_without_the_graph_stage_gets_it_from_finalize(
+    runtime: Runtime,
+    ids: tuple[uuid.UUID, uuid.UUID, uuid.UUID],
+    github: respx.MockRouter,
+) -> None:
+    """A job whose chain was sent before the deploy that added the graph stage."""
+    org_id, repo_id, job_id = ids
+    kwargs = {"job_id": str(job_id), "org_id": str(org_id), "repo_id": str(repo_id)}
+    old = [stage for stage in orchestrate.STAGES if stage is not graph_task.build_graph]
+    chain(*(stage.si(**kwargs) for stage in old)).apply().get()
+
+    repo, job = runtime.run(_state(runtime.system_database, repo_id, job_id))
+    assert (job.status, repo.status) == (JobStatus.SUCCEEDED, RepoStatus.READY)
+    assert job.stages["graph"]["status"] == "done"
+    assert job.snapshot_id is not None
+    assert len(runtime.run(_graph(runtime.system_database, job.snapshot_id))) == 2
+
+
+def test_storage_failing_as_the_graph_is_written_retries_the_stage_instead_of_skipping_it(
+    runtime: Runtime,
+    ids: tuple[uuid.UUID, uuid.UUID, uuid.UUID],
+    github: respx.MockRouter,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Only a resolver's failure costs the graph: storage (or the database) failing for a moment
+    is retried, and the graph is built."""
+    org_id, repo_id, job_id = ids
+    storage = runtime.run(runtime.storage())
+    real = storage.put_bytes
+    stops = [RetryableError("storage went away")]
+
+    async def put_bytes(bucket: Bucket, key: str, data: bytes, **kwargs: Any) -> Any:
+        if key.endswith(ARTIFACT_NAME) and stops:
+            raise stops.pop()
+        return await real(bucket, key, data, **kwargs)
+
+    monkeypatch.setattr(storage, "put_bytes", put_bytes)
+    _run(org_id, repo_id, job_id)
+
+    repo, job = runtime.run(_state(runtime.system_database, repo_id, job_id))
+    assert not stops  # it failed once
+    assert (job.status, repo.status) == (JobStatus.SUCCEEDED, RepoStatus.READY)
+    assert job.stages["graph"]["status"] == "done"
+    assert job.snapshot_id is not None
+    assert runtime.run(_graph(runtime.system_database, job.snapshot_id))
+
+
+def test_a_resolver_that_fails_skips_the_graph_and_the_index_still_finishes(
+    runtime: Runtime,
+    ids: tuple[uuid.UUID, uuid.UUID, uuid.UUID],
+    github: respx.MockRouter,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    org_id, repo_id, job_id = ids
+
+    def broken(*_: Any) -> None:
+        raise RuntimeError("a resolver bug")
+
+    monkeypatch.setattr(graph_stage.RESOLVERS["python"], "resolve", broken)
+    _run(org_id, repo_id, job_id)
+
+    repo, job = runtime.run(_state(runtime.system_database, repo_id, job_id))
+    assert (job.status, repo.status) == (JobStatus.SUCCEEDED, RepoStatus.READY)
+    assert job.stages["graph"]["status"] == "skipped"
+    assert job.stages["graph"]["details"]["reason"] == "graph_failed"
+    assert job.snapshot_id is not None
+    assert runtime.run(_graph(runtime.system_database, job.snapshot_id)) == set()

@@ -11,7 +11,11 @@ Each sub-query of the plan is one ranking:
   snapshot's files (each matched line at the chunk around it), the path prefix searched as
   ripgrep globs (:func:`path_globs`) so the leg's lines come from inside it;
 * ``sem_code`` and ``sem_summary``: nearest embeddings, through a :class:`DenseLegs` once 2.7 has
-  embedded the snapshot; without one they are reported pending.
+  embedded the snapshot; without one they are reported pending;
+* ``ppr`` (3.6), given the snapshot's graph: the other legs' best results fused (at most
+  :data:`PPR_SEEDS` definitions, weighed by their scores) seed a personalized PageRank over the
+  code graph, and the definitions around them, best first, are one more ranking (the seeds left
+  out: they are already found). It runs on hybrid plans only, after the others.
 
 Rankings are fused by reciprocal rank, ``Σ w / (k + rank)`` with ``k = 60``; a ranking's weight
 is its leg's times its origin's (the query as asked, the model's rewrites, guessed names, routes,
@@ -39,7 +43,7 @@ import uuid
 from collections.abc import Container, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from sqlalchemy import Integer, String, Text, bindparam, select, text
 from sqlalchemy.dialects.postgresql import ARRAY
@@ -63,12 +67,16 @@ from sensei_engine.search.grep import (
     InvalidQueryError,
 )
 from sensei_engine.search.layers import lane_of, layer_of
-from sensei_engine.search.plan import Leg, Origin, SearchPlan, SubQuery
+from sensei_engine.search.plan import Leg, Mode, Origin, SearchPlan, SubQuery
 from sensei_engine.search.route import Lane, Layer
 from sensei_engine.symbols.lookup import find_symbols
 
+if TYPE_CHECKING:
+    from sensei_engine.graph.snapshot import GraphSnapshot
+
 LEG_DEPTH = 50  # each ranking's depth, at least (more when more results are asked for)
 MAX_RESULTS = 200  # fused results read and tagged
+PPR_SEEDS = 10  # the fused results whose surroundings the graph leg ranks
 
 LEXICAL: Mapping[Leg, LexQuery] = {
     Leg.LEX_CODE: LexQuery("", LexLeg.CODE, "code"),
@@ -92,6 +100,7 @@ class Weights:
             Leg.LEX_SUMMARY: 0.4,
             Leg.SYM: 0.6,
             Leg.GREP: 1.0,
+            Leg.PPR: 1.0,
         }
     )
     origins: Mapping[Origin, float] = field(
@@ -272,6 +281,26 @@ class SearchResult:
     pending: tuple[Leg, ...] = ()  # legs of the plan that couldn't run yet (no embeddings)
 
 
+# The graph leg's sub-query: no text, its ranking is the graph's (no plan lists it).
+PPR_QUERY = SubQuery(Leg.PPR, "", Origin.ORIGINAL, ())
+
+
+def ppr_seeds(
+    fused: Sequence[Fused], graph: GraphSnapshot, *, limit: int = PPR_SEEDS
+) -> dict[str, float]:
+    """The graph leg's seeds: the best ``limit`` fused results that are definitions the graph
+    holds (a chunk of several, as the one found in it), by key, weighed by their scores."""
+    seeds: dict[str, float] = {}
+    for result in fused:
+        key = result.focus if result.unit.startswith("chunk:") else result.unit
+        if key is None or key in seeds or graph.node(key) is None:
+            continue
+        seeds[key] = result.score
+        if len(seeds) >= limit:
+            break
+    return seeds
+
+
 def fuse(rankings: Sequence[Ranking], weights: Weights) -> list[Fused]:
     """Reciprocal rank fusion per result (see the module); best first."""
     k = weights.rrf_k
@@ -432,8 +461,9 @@ def _like_prefix(prefix: str) -> str:
 
 
 class HybridRetriever:
-    """Runs a plan on one snapshot (see the module). ``grep`` and ``dense`` are optional: a plan's
-    grep legs need the snapshot's files, its semantic legs its embeddings."""
+    """Runs a plan on one snapshot (see the module). ``grep``, ``dense`` and ``graph`` are
+    optional: a plan's grep legs need the snapshot's files, its semantic legs its embeddings, the
+    graph leg its graph."""
 
     def __init__(
         self,
@@ -441,11 +471,13 @@ class HybridRetriever:
         weights: Weights | None = None,
         grep: GrepLegs | None = None,
         dense: DenseLegs | None = None,
+        graph: GraphSnapshot | None = None,
         depth: int = LEG_DEPTH,
     ) -> None:
         self.weights = weights or Weights()
         self._grep = grep
         self._dense = dense
+        self._graph = graph
         self._depth = depth
 
     async def rankings(
@@ -458,8 +490,9 @@ class HybridRetriever:
         k: int = 20,
         filters: Filters = Filters(),  # noqa: B008 - frozen, never mutated
     ) -> tuple[list[Ranking], tuple[Leg, ...]]:
-        """Every ranking of the plan, in plan order, and the legs that couldn't run. Every leg
-        reads the snapshot's live generation as the search found it (:func:`live_chunks`)."""
+        """Every ranking of the plan, in plan order (then the graph's), and the legs that
+        couldn't run. Every leg reads the snapshot's live generation as the search found it
+        (:func:`live_chunks`)."""
         depth = max(k, self._depth)
         found: dict[int, Ranking] = {}
         pending: list[Leg] = []
@@ -504,6 +537,45 @@ class HybridRetriever:
             for (n, sub), refs in zip(semantic, results, strict=True):
                 found[n] = Ranking(sub, list(refs), seconds)
         started = time.monotonic()
+        located, groups = await self._places(db, plan, snapshot_id, depth, filters)
+        if located:
+            refs = await locate_all(
+                db,
+                repo_id=repo_id,
+                snapshot_id=snapshot_id,
+                generation=live.generation,
+                groups=groups,
+                filters=filters,
+            )
+            seconds = (time.monotonic() - started) / len(located)
+            for (n, sub), ranked in zip(located, refs, strict=True):
+                found[n] = Ranking(sub, ranked, seconds)
+        rankings = [found[n] for n in sorted(found)]
+        if self._graph is not None and plan.mode is Mode.HYBRID and self.weights.of(PPR_QUERY) > 0:
+            around = await self._around(
+                db,
+                self._graph,
+                rankings,
+                repo_id=repo_id,
+                snapshot_id=snapshot_id,
+                generation=live.generation,
+                depth=depth,
+                filters=filters,
+            )
+            if around is not None:
+                rankings.append(around)
+        return rankings, tuple(pending)
+
+    async def _places(
+        self,
+        db: AsyncSession,
+        plan: SearchPlan,
+        snapshot_id: uuid.UUID,
+        depth: int,
+        filters: Filters,
+    ) -> tuple[list[tuple[int, SubQuery]], list[Sequence[Place]]]:
+        """The grep and symbol legs' places (each sub-query's, with its position in the plan),
+        to be located at once."""
         located: list[tuple[int, SubQuery]] = []
         groups: list[Sequence[Place]] = []
         greps = [(n, sub) for n, sub in enumerate(plan.legs) if sub.leg is Leg.GREP]
@@ -518,19 +590,42 @@ class HybridRetriever:
                 symbols = await find_symbols(db, snapshot_id, sub.text, limit=depth)
                 located.append((n, sub))
                 groups.append([(hit.path, hit.start_line, hit.symbol_key) for hit in symbols])
-        if located:
-            refs = await locate_all(
-                db,
-                repo_id=repo_id,
-                snapshot_id=snapshot_id,
-                generation=live.generation,
-                groups=groups,
-                filters=filters,
-            )
-            seconds = (time.monotonic() - started) / len(located)
-            for (n, sub), ranked in zip(located, refs, strict=True):
-                found[n] = Ranking(sub, ranked, seconds)
-        return [found[n] for n in sorted(found)], tuple(pending)
+        return located, groups
+
+    async def _around(
+        self,
+        db: AsyncSession,
+        graph: GraphSnapshot,
+        rankings: Sequence[Ranking],
+        *,
+        repo_id: uuid.UUID,
+        snapshot_id: uuid.UUID,
+        generation: int,
+        depth: int,
+        filters: Filters,
+    ) -> Ranking | None:
+        """The graph leg's ranking: the definitions around the other legs' best (see the
+        module); None when they found no definition the graph holds."""
+        started = time.monotonic()
+        seeds = ppr_seeds(fuse(rankings, self.weights), graph)
+        if not seeds:
+            return None
+        places: list[Place] = []
+        # Off the event loop: the first ranking of a graph builds its code graph.
+        ranked = await asyncio.to_thread(graph.personalized_pagerank, seeds, limit=depth)
+        for key, _ in ranked:
+            node = graph.node(key)
+            if node is not None and node.path is not None:
+                places.append((node.path, node.start_line, key))
+        [refs] = await locate_all(
+            db,
+            repo_id=repo_id,
+            snapshot_id=snapshot_id,
+            generation=generation,
+            groups=[places],
+            filters=filters,
+        )
+        return Ranking(PPR_QUERY, refs, time.monotonic() - started)
 
     async def search(
         self,

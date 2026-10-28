@@ -9,6 +9,8 @@ from typing import Any
 
 import pytest
 
+from sensei_core.models import EdgeType, Provenance
+from sensei_engine.graph.snapshot import Edge, GraphSnapshot, Node
 from sensei_engine.search.hybrid import SearchHit
 from sensei_engine.search.plan import Leg, plan
 from sensei_engine.search.rerank import Candidate, Ranked, Ranking, Reranker, RerankMode
@@ -157,8 +159,30 @@ async def test_reranked_results_lead_with_their_relevance_and_the_rest_follow_be
     assert scores[2] < 0.4
     assert scores[2:] == sorted(scores[2:], reverse=True)
 
+    assert {c.graph_neighbourhood for c in reranker.seen} == {None}  # no graph given
+
     unscored = _Reranker([2, 0], [0.9, 0.4], scored=False)
     ordered, scores, reranked = await rerank(unscored, "q", hits, {}, candidates=3)
     assert not reranked
     assert [hit.start_line for hit in ordered] == [0, 1, 2, 3, 4]
     assert scores[0] == 1.0
+
+
+async def test_the_reranker_reads_each_candidates_callers_and_callees() -> None:
+    hits = [_hit(n, 1.0 / (n + 1)) for n in range(3)]
+    nodes = [
+        Node(f"py m.py/f{n}().", "function", f"f{n}", f"f{n}", "m.py", n, n, "python", "svc")
+        for n in range(3)
+    ]
+    nodes.append(
+        Node("py db.py/save().", "function", "save", "save", "db.py", 1, 2, "python", "db")
+    )
+    calls = Edge(EdgeType.CALLS, 0.9, Provenance.IMPORT_RESOLVED, "m.py", 1)
+    graph = GraphSnapshot(nodes, [(0, 1, calls), (1, 3, calls)])
+    reranker = _Reranker([1, 0], [0.9, 0.4], scored=True)
+    await rerank(reranker, "q", hits, {}, candidates=3, graph=graph)
+    assert [c.graph_neighbourhood for c in reranker.seen] == [
+        "calls: f1",
+        "calls: save [db]\ncalled by: f0",
+        None,  # nothing calls f2, and it calls nothing
+    ]

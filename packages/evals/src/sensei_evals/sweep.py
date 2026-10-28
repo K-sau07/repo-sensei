@@ -10,6 +10,9 @@ Three ways to read the same rankings:
 * ``plan``: what search runs (a symbol or pattern query's short-circuit only);
 * ``full``: every leg of every query;
 * one leg: only that leg's rankings of the full plan (a leg measured on its own).
+
+The graph leg's ranking (``ppr``, with ``--opt graph=1``) is no plan's sub-query: it counts in
+the full plan, and in the plan search runs when that is a hybrid one (as search runs it).
 """
 
 from __future__ import annotations
@@ -22,6 +25,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 
 from sensei_engine.search.hybrid import (
+    PPR_QUERY,
     ChunkDetails,
     Ranking,
     SymbolDetails,
@@ -31,7 +35,7 @@ from sensei_engine.search.hybrid import (
     read_chunks,
     read_symbols,
 )
-from sensei_engine.search.plan import Leg, SearchPlan
+from sensei_engine.search.plan import Leg, Mode, SearchPlan
 from sensei_evals.hybrid import HybridEvalRetriever, plan_for, to_hit
 from sensei_evals.retrieval import RepoRef
 from sensei_evals.runner import score_item
@@ -42,7 +46,7 @@ REPORTED = ("recall_symbol@20", "recall_symbol@10", "recall_file@20", "ndcg_symb
 KS = (10, 20)
 DEPTH = 100  # what a run reads: its largest k (each leg as deep)
 # Each leg the sweep weighs and measures alone (sem_summary waits for summary-view chunks).
-SINGLE_LEGS = (Leg.SEM_CODE, Leg.LEX_CODE, Leg.LEX_PATH, Leg.SYM, Leg.GREP)
+SINGLE_LEGS = (Leg.SEM_CODE, Leg.LEX_CODE, Leg.LEX_PATH, Leg.SYM, Leg.GREP, Leg.PPR)
 
 
 @dataclass(frozen=True, slots=True)
@@ -95,9 +99,11 @@ async def _collect(
 
 def _kept(entry: Collected, view: str) -> tuple[SearchPlan, list[Ranking]]:
     """The plan a view arranges by, and its rankings."""
+    graph = [r for r in entry.rankings if r.sub == PPR_QUERY]
     if view == "plan":
-        return entry.searched, [r for r in entry.rankings if r.sub in entry.searched.legs]
-    full = [r for r in entry.rankings if r.sub in entry.plan.legs]
+        searched = [r for r in entry.rankings if r.sub in entry.searched.legs]
+        return entry.searched, searched + graph if entry.searched.mode is Mode.HYBRID else searched
+    full = [r for r in entry.rankings if r.sub in entry.plan.legs] + graph
     if view == "full":
         return entry.plan, full
     return entry.plan, [r for r in full if r.sub.leg.value == view]
@@ -142,7 +148,7 @@ def grid(base: Weights, values: Mapping[str, Sequence[float]] = GRID) -> Iterabl
     for point in itertools.product(*(values[name] for name in names)):
         chosen = dict(zip(names, point, strict=True))
         legs = dict(base.legs)
-        for leg in SINGLE_LEGS:
+        for leg in Leg:
             if leg.value in chosen:
                 legs[leg] = chosen[leg.value]
         yield dataclasses.replace(
@@ -154,7 +160,7 @@ def grid(base: Weights, values: Mapping[str, Sequence[float]] = GRID) -> Iterabl
 
 
 def describe(weights: Weights) -> str:
-    legs = ", ".join(f"{leg.value}={weights.legs[leg]:g}" for leg in SINGLE_LEGS)
+    legs = ", ".join(f"{leg.value}={weights.legs.get(leg, 0):g}" for leg in SINGLE_LEGS)
     return f"{legs}, multi_hit={weights.multi_hit:g}, layer_boost={weights.layer_boost:g}"
 
 
@@ -168,7 +174,10 @@ class Point:
 
 
 def sweep(
-    collected: Mapping[str, Sequence[Collected]], base: Weights, view: str = "plan"
+    collected: Mapping[str, Sequence[Collected]],
+    base: Weights,
+    view: str = "plan",
+    values: Mapping[str, Sequence[float]] = GRID,
 ) -> list[Point]:
     """Every grid point scored on every suite, best first by the mean of :data:`GATE` (ties:
     the mean nDCG, then the point nearest ``base``: a weight no score moves keeps its prior)."""
@@ -177,7 +186,7 @@ def sweep(
             weights,
             {suite: evaluate(entries, weights, view) for suite, entries in collected.items()},
         )
-        for weights in grid(base)
+        for weights in grid(base, values)
     ]
     points.sort(
         key=lambda point: (
@@ -190,7 +199,7 @@ def sweep(
 
 
 def _distance(weights: Weights, base: Weights) -> float:
-    legs = sum(abs(weights.legs[leg] - base.legs[leg]) for leg in SINGLE_LEGS)
+    legs = sum(abs(weights.legs.get(leg, 0) - base.legs.get(leg, 0)) for leg in SINGLE_LEGS)
     return (
         legs + abs(weights.multi_hit - base.multi_hit) + abs(weights.layer_boost - base.layer_boost)
     )
@@ -229,13 +238,15 @@ def render(
         lines.append(f"| {view} | " + " | ".join(cells) + " |")
     lines += [
         "",
-        f"## Best grid points (mean {GATE} over the suites)",
+        f"## Best grid points (mean {GATE} over the suites; each suite's, then nDCG@10)",
         "",
         "| weights | mean | " + " | ".join(suites) + " |",
         "|---|---|" + "---|" * len(suites),
     ]
     for point in best:
-        cells = [f"{point.scores[s][GATE]:.3f}" for s in suites]
+        cells = [
+            f"{point.scores[s][GATE]:.3f} / {point.scores[s]['ndcg_symbol@10']:.3f}" for s in suites
+        ]
         lines.append(
             f"| {describe(point.weights)} | {point.mean():.3f} | " + " | ".join(cells) + " |"
         )

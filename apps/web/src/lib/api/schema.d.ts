@@ -664,6 +664,48 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/orgs/{org}/repos/{repo}/graph/neighbors": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Neighbors
+         * @description What ``symbol`` reaches (``out``: its callees, imports, ...), what reaches it (``in``:
+         *     its callers, ...) or both, nearest first, each node once.
+         */
+        get: operations["neighbors_api_v1_orgs__org__repos__repo__graph_neighbors_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/repos/{repo}/graph/path": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Path
+         * @description The surest path from ``from`` to ``to`` along the edges (the highest product of
+         *     confidences).
+         */
+        get: operations["path_api_v1_orgs__org__repos__repo__graph_path_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/orgs/{org}/repos/{repo}/grep": {
         parameters: {
             query?: never;
@@ -1128,6 +1170,11 @@ export interface components {
             /** Z */
             z: number;
         };
+        /**
+         * EdgeType
+         * @enum {string}
+         */
+        EdgeType: "contains" | "defines" | "imports" | "calls" | "references" | "inherits" | "implements" | "renders" | "uses_hook" | "injects" | "issues_request" | "targets" | "handled_by" | "resolves" | "publishes" | "consumes" | "maps_to" | "reads" | "writes" | "tests";
         /** EstimateOut */
         EstimateOut: {
             /**
@@ -1308,6 +1355,72 @@ export interface components {
             sha: string;
             /** Size */
             size: number;
+        };
+        /** GraphEdgeOut */
+        GraphEdgeOut: {
+            /** Confidence */
+            confidence: number;
+            /**
+             * Direction
+             * @enum {string}
+             */
+            direction: "out" | "in";
+            evidence: components["schemas"]["GraphEvidence"] | null;
+            provenance: components["schemas"]["Provenance"];
+            type: components["schemas"]["EdgeType"];
+        };
+        /** GraphEvidence */
+        GraphEvidence: {
+            /** Line */
+            line: number | null;
+            /** Path */
+            path: string;
+        };
+        /** GraphHopOut */
+        GraphHopOut: {
+            /** Depth */
+            depth: number;
+            edge: components["schemas"]["GraphEdgeOut"];
+            node: components["schemas"]["GraphNodeOut"];
+            /** Via */
+            via: string;
+        };
+        /** GraphNeighborsOut */
+        GraphNeighborsOut: {
+            /** Hops */
+            hops: components["schemas"]["GraphHopOut"][];
+            root: components["schemas"]["GraphNodeOut"];
+            /** Truncated */
+            truncated: boolean;
+        };
+        /** GraphNodeOut */
+        GraphNodeOut: {
+            /** End Line */
+            end_line: number;
+            /** Kind */
+            kind: string;
+            lane: components["schemas"]["Lane"];
+            /** Lang */
+            lang: string;
+            /** Name */
+            name: string;
+            /** Path */
+            path: string | null;
+            /** Qualified Name */
+            qualified_name: string;
+            /** Start Line */
+            start_line: number;
+            /** Symbol Key */
+            symbol_key: string;
+        };
+        /** GraphPathOut */
+        GraphPathOut: {
+            /** Confidence */
+            confidence: number;
+            /** Found */
+            found: boolean;
+            /** Hops */
+            hops: components["schemas"]["GraphHopOut"][];
         };
         /** GrepHitOut */
         GrepHitOut: {
@@ -1724,6 +1837,12 @@ export interface components {
              */
             files?: number | null;
         };
+        /**
+         * Provenance
+         * @description How an edge is known, from a compiler's word to a model's guess.
+         * @enum {string}
+         */
+        Provenance: "scip" | "lsp" | "runtime" | "contract" | "import_resolved" | "receiver_heuristic" | "url_literal" | "name_unique" | "name_ambiguous" | "llm_inferred";
         /** ReadinessResponse */
         ReadinessResponse: {
             /** Checks */
@@ -3573,6 +3692,134 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
+            };
+        };
+    };
+    neighbors_api_v1_orgs__org__repos__repo__graph_neighbors_get: {
+        parameters: {
+            query: {
+                symbol: string;
+                direction?: "out" | "in" | "both";
+                /** @description Edge types, comma-separated (none: all) */
+                types?: string | null;
+                depth?: number;
+                min_conf?: number;
+                limit?: number;
+                /** @description Branch or commit (or its first 7+ characters). */
+                ref?: string | null;
+            };
+            header?: never;
+            path: {
+                /** @description Organization slug */
+                org: string;
+                /** @description Repository slug */
+                repo: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    /** @description The commit the response was read from. */
+                    "X-Commit-Sha"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GraphNeighborsOut"];
+                };
+            };
+            /** @description No such symbol in the graph (``symbol_not_found``) */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The graph isn't built yet (``graph_not_ready``) */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description ``validation_failed`` or ``invalid_types`` */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Too many graph requests (``rate_limited``, with ``Retry-After``) */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    path_api_v1_orgs__org__repos__repo__graph_path_get: {
+        parameters: {
+            query: {
+                from: string;
+                to: string;
+                /** @description Edge types, comma-separated (none: all) */
+                types?: string | null;
+                min_conf?: number;
+                /** @description Branch or commit (or its first 7+ characters). */
+                ref?: string | null;
+            };
+            header?: never;
+            path: {
+                /** @description Organization slug */
+                org: string;
+                /** @description Repository slug */
+                repo: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    /** @description The commit the response was read from. */
+                    "X-Commit-Sha"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GraphPathOut"];
+                };
+            };
+            /** @description No such symbol in the graph (``symbol_not_found``) */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The graph isn't built yet (``graph_not_ready``) */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description ``validation_failed`` or ``invalid_types`` */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Too many graph requests (``rate_limited``, with ``Retry-After``) */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

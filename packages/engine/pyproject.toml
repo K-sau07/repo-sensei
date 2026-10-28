@@ -15,6 +15,7 @@ dependencies = [
     "pathspec>=0.12",
     "pyyaml>=6.0",
     "redis>=6.2",
+    "rustworkx>=0.17",
     "sensei-core",
     "sqlglot>=29",  # SQL statement splitting (chunking); tokenizer_core is 29+
     "tiktoken>=0.12",  # token counts for chunk budgets (cl100k_base)

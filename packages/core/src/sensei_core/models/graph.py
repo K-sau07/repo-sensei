@@ -138,6 +138,7 @@ class CodeEdge(IdMixin, OrgScopedMixin, Base):
         Index("ix_edges_src_id_type", "src_id", "type"),
         Index("ix_edges_dst_id_type", "dst_id", "type"),
         Index("ix_edges_owner_file_id", "owner_file_id"),
+        Index("ix_edges_evidence_file_id", "evidence_file_id"),  # deleting a file cascades here
         Index("ix_edges_repo_id", "repo_id"),  # deleting a repository cascades here
         CheckConstraint("confidence >= 0 AND confidence <= 1", name="confidence_range"),
         # With org_id: an edge can't point at another org's nodes, snapshot or files.

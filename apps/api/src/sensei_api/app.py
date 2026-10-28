@@ -19,12 +19,14 @@ from starlette.middleware.gzip import GZipMiddleware
 from sensei_api import __version__
 from sensei_api.browse import ConstellationCache, TreeCache
 from sensei_api.errors import install_error_handlers
+from sensei_api.graphs import GraphStore
 from sensei_api.middleware import RequestIdMiddleware
 from sensei_api.routers import (
     auth,
     browse,
     constellation,
     github,
+    graph,
     health,
     index_jobs,
     indexing,
@@ -76,6 +78,7 @@ def _install_services(app: FastAPI, settings: Settings) -> None:
         max_snapshot_bytes=settings.ingest.max_checkout_bytes,
     )
     app.state.tree_cache = TreeCache(max_mb=settings.api.tree_cache_mb)
+    app.state.graph_store = GraphStore(max_mb=settings.api.graph_cache_mb)
     app.state.constellation_cache = ConstellationCache(max_mb=settings.api.constellation_cache_mb)
     app.state.exact_search = ExactSearch()  # ripgrep over those unpacked snapshots
 
@@ -154,6 +157,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(internal.router, prefix=API_PREFIX)
     app.include_router(symbols.router, prefix=API_PREFIX)
     app.include_router(search.router, prefix=API_PREFIX)
+    app.include_router(graph.router, prefix=API_PREFIX)
     # Wraps the whole middleware stack; RequestIdMiddleware tags the server span it creates.
     FastAPIInstrumentor.instrument_app(app, server_request_hook=scrub_server_span)
     return app

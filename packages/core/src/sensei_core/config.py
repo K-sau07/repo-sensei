@@ -172,6 +172,11 @@ class ApiSettings(BaseSettings):
     # least recently used out first. One snapshot larger than its budget is still served.
     tree_cache_mb: int = Field(default=96, gt=0)
     constellation_cache_mb: int = Field(default=64, gt=0)
+    # Code graphs in memory, for traversals and the search's graph leg (about 600 bytes a
+    # node and 200 an edge: Langflow's takes about 220 MB).
+    graph_cache_mb: int = Field(default=128, gt=0)
+    # Graph requests (neighbours, paths) per user a minute: a code view asks for a few at a time.
+    graph_rate_per_minute: int = Field(default=240, gt=0)
 
 
 class WebSettings(BaseSettings):
@@ -333,6 +338,8 @@ class SearchSettings(BaseSettings):
     lex_summary: float = Field(default=0.4, ge=0)
     sym: float = Field(default=0.6, ge=0)
     grep: float = Field(default=1.0, ge=0)
+    # The code graph around the other legs' best results (personalized PageRank, 3.6).
+    ppr: float = Field(default=1.0, ge=0)
     # The query as asked, and what the plan made of it.
     origin_original: float = Field(default=1.0, ge=0)
     origin_structural: float = Field(default=0.7, ge=0)
