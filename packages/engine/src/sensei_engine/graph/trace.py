@@ -17,10 +17,12 @@ any node, edges at least ``min_conf``; a node is on a path once, and library cod
 never on one. Ways on are tried nearest the goal first (the tables, or ``to``: distances from a
 walk back from them), then those of the same feature (a word of the entry's name in theirs:
 ``Login`` → ``/login/access-token``, where a hook serves several features), then surest. The
-paths that reach the goal win; then those covering more layers, those more of the entry's
-feature, those with fewer detours through injected dependencies (``INJECTS``: the session, the
-current user, which every handler has), the surer (the product of their edges' confidence)
-and the shorter. The top
+paths that reach the goal win; then those with fewer detours through injected dependencies
+(``INJECTS``: the session, the current user, which every handler has), those more of the
+entry's feature, the surer (the product of their edges' confidence), those covering more layers
+and the shorter. Sureness comes before layers: a handler that writes its table itself beats a
+path on through a helper that writes another one (an audit row, a default folder) only to
+cover the service layer. The top
 :data:`TOP_PATHS` distinct ones are returned, each with its **breaks**: where it stops short of
 the goal, and why (a client call no endpoint matches, an endpoint with no handler in the
 repository, code that calls nothing further).
@@ -327,17 +329,17 @@ class _Partial:
 def _score(
     hops: Sequence[TraceHop], goal_distance: int | None, feature: set[str]
 ) -> tuple[float, ...]:
-    """Lower is better: reachable goal first, nearer it, more layers, more of the entry's
-    feature, surer, shorter."""
+    """Lower is better: reachable goal first, nearer it, fewer detours, more of the entry's
+    feature, surer, more layers, shorter (as :func:`_best` ranks)."""
     layers = len({h.layer for h in hops if h.layer != "other"})
     confidence = prod(h.edge.confidence for h in hops if h.edge is not None)
     return (
         0 if goal_distance is not None else 1,
         goal_distance if goal_distance is not None else 0,
-        -layers,
-        -_affinity(hops, feature),
         _detours(hops),
+        -_affinity(hops, feature),
         -confidence,
+        -layers,
         len(hops),
     )
 
@@ -449,16 +451,17 @@ def _breaks(hops: Sequence[TraceHop], why: str) -> list[TraceBreak]:
 
 
 def _best(paths: Sequence[TracePath], feature: set[str]) -> list[TracePath]:
-    """The top paths: reaching the goal, covering more layers, more of the entry's feature,
-    surer, shorter; none the same nodes as another, or what another one continues."""
+    """The top paths: reaching the goal, fewer detours, more of the entry's feature, surer,
+    covering more layers, shorter (see the module); none the same nodes as another, or what
+    another one continues."""
     ranked = sorted(
         paths,
         key=lambda p: (
             not p.reaches_goal,
-            -len(p.layers),
-            -_affinity(p.hops, feature),
             _detours(p.hops),
+            -_affinity(p.hops, feature),
             -p.confidence,
+            -len(p.layers),
             len(p.hops),
             [h.node.symbol_key for h in p.hops],
         ),

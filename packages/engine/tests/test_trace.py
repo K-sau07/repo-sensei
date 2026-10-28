@@ -345,6 +345,28 @@ def test_a_functions_nested_functions_edges_are_its_own() -> None:
     assert edge.evidence_line == 9
 
 
+def test_a_handler_reading_its_table_beats_a_detour_for_another_layer() -> None:
+    """A handler that reads its table itself is surer than a path on through a helper (the
+    service layer) that writes another table, an audit row's: more layers don't make it the
+    feature's path."""
+    audit = _node("py a.py/stage_audit_event().", NodeKind.FUNCTION, lane_="svc")
+    audit_table = _node("table audit_events", NodeKind.TABLE, path=None)
+    graph = _graph(
+        [ENDPOINT, HANDLER, TABLE, audit, audit_table],
+        [
+            (ENDPOINT.symbol_key, HANDLER.symbol_key, _edge(EdgeType.HANDLED_BY, 1.0)),
+            (HANDLER.symbol_key, TABLE.symbol_key, _edge(EdgeType.READS)),
+            (HANDLER.symbol_key, audit.symbol_key, _edge(EdgeType.CALLS)),
+            (audit.symbol_key, audit_table.symbol_key, _edge(EdgeType.WRITES)),
+        ],
+    )
+    paths = trace_feature(graph, ENDPOINT.symbol_key).paths
+    assert [h.node.symbol_key for h in paths[0].hops] == [
+        ENDPOINT.symbol_key, HANDLER.symbol_key, TABLE.symbol_key,
+    ]  # fmt: skip
+    assert paths[1].hops[-1].node.symbol_key == audit_table.symbol_key
+
+
 def test_a_function_is_as_near_the_table_as_its_nested_functions() -> None:
     """The way on through a hook whose callback reaches the table is tried before surer ones
     that lead nowhere, though only the callback has the edge: more of those than the fan-out
