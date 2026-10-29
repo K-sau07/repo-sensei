@@ -26,7 +26,16 @@ the most literal win (``/users/me`` over ``/users/{}``); several left are ambigu
 - one match, every segment matched its own kind (a literal the same literal, a parameter a
   parameter: ``/items/${id}`` to ``/items/{id}``) and the base known (the call's own, or one the
   config adds; not dropped for the match): ``url_literal`` raised to 0.9;
-- one match otherwise: ``url_literal``'s 0.5; ``k`` matches: 0.5/k each.
+- one match otherwise: ``url_literal``'s 0.5; ``k`` matches: 0.5/k each;
+- a match only with a base path moved (:func:`_prefix_matches`), when nothing matches as it is:
+  every route of a server under a prefix the call doesn't have (controllers all under
+  ``/api/...`` while the client's base URL is the bare origin), the rest of the prefix added
+  after what the call has of it; or a
+  first segment of the call that no endpoint starts with (or a proxy's prefix, which it may
+  strip), dropped. Only for a call to a relative URL, a local host or an environment's, and
+  only when one of the call's own literals still matches: :data:`PREFIX_CONFIDENCE` (0.3), /k
+  for ``k``, and the edge says what was moved and why (``attrs.prefix_added`` or
+  ``prefix_dropped``, ``attrs.reason``).
 
 A call that matches nothing gets a reason for the trace's "gap" (the report's, and on its node:
 :func:`with_reasons` sets ``attrs.unmatched_reason``): the path exists under another method, the
@@ -49,6 +58,8 @@ from sensei_engine.link.http_calls import HttpCall
 PARAM = "{}"
 REST = "{*}"
 LITERAL_CONFIDENCE = 0.9  # one exact match, the base known
+PREFIX_CONFIDENCE = 0.3  # a match only with a base path added or dropped (see the module)
+LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1", "0.0.0.0", "::1"})  # noqa: S104
 MAX_CANDIDATES = 8
 
 _CATCH_ALL_RE = re.compile(r"^(?:\[\[?\.\.\.[^\]]+\]\]?|\{[^{}]*:path\}|\*\*?|:[A-Za-z_]\w*\*)$")
@@ -172,6 +183,10 @@ class EndpointTrie:
         kept = {m.endpoint: m for m in found if m.literals == best}
         return sorted(kept.values(), key=lambda m: m.endpoint)
 
+    def first_segments(self) -> set[str]:
+        """The literal segments some endpoint's path starts with (any method)."""
+        return {s for root in self._roots.values() for s in root.literals}
+
     def methods_for(self, call: Normalized) -> set[str]:
         """The methods some endpoint has at ``call``'s path (for "method differs")."""
         found: set[str] = set()
@@ -190,6 +205,7 @@ class Endpoint:
     path_norm: str
     operation_id: str | None = None
     root_path: str = ""  # its app's (a proxy's prefix, "/api"): it's matched under it too
+    server: str = ""  # the app serving it (a Spring module; "": the one), for its shared prefix
 
 
 def operation_key(operation_id: str) -> str:
@@ -203,6 +219,7 @@ class LinkReport:
     linked: int = 0
     contract: int = 0
     ambiguous: int = 0
+    prefixed: int = 0  # linked only with a base path added or dropped
     unmatched: dict[str, str] = field(default_factory=dict[str, str])  # call key -> reason
 
 
@@ -238,6 +255,86 @@ def _url_matches(
     return normalized, [], False
 
 
+def shared_prefix(paths: Iterable[str]) -> tuple[str, ...]:
+    """The literal segments every one of ``paths`` starts with."""
+    common: list[str] | None = None
+    for path in paths:
+        segments = [s for s in path.split("/") if s]
+        if common is None:
+            common = segments
+            continue
+        size = next(
+            (i for i, (a, b) in enumerate(zip(common, segments, strict=False)) if a != b),
+            min(len(common), len(segments)),
+        )
+        common = common[:size]
+    kept: list[str] = []
+    for segment in common or []:
+        if segment in (PARAM, REST):
+            break
+        kept.append(segment)
+    return tuple(kept)
+
+
+def _local(url: str) -> bool:
+    """Whether a call's URL is relative, or to a local host (a server of the repository's)."""
+    text = url.strip()
+    if "://" not in text and not text.startswith("//"):
+        return True
+    host = urlsplit(text if "://" in text else "http:" + text).hostname
+    return host is None or host in LOCAL_HOSTS
+
+
+def _moved(call: Normalized, segments: tuple[str, ...]) -> Normalized:
+    return Normalized(
+        call.method,
+        "/" + "/".join(segments),
+        segments,
+        all(s not in (PARAM, REST) for s in segments),
+        call.base_unknown,
+    )
+
+
+def _prefix_matches(
+    trie: EndpointTrie,
+    call: HttpCall,
+    prefixes: Sequence[tuple[str, ...]],
+    bases: Sequence[str],
+) -> tuple[Normalized, list[Match], dict[str, str]] | None:
+    """The endpoints a call means with a base path moved (see the module), and what moved."""
+    if not _local(call.url):
+        return None
+    plain = normalize(call.method, call.url, base=call.base)
+    segments = plain.segments
+    for prefix in prefixes:
+        # What the call has of the prefix already (a context path, but not the "/api" after it).
+        have = next(
+            (i for i in range(len(prefix)) if segments[i : i + 1] != prefix[i : i + 1]),
+            len(prefix),
+        )
+        if have == len(prefix):
+            continue
+        moved = _moved(plain, (*prefix, *segments[have:]))
+        found = [m for m in trie.match(moved) if m.literals > len(prefix)]
+        if found:
+            added = "/" + "/".join(prefix[have:])
+            reason = f"the call's URL has no {added}, which every route of its server is under"
+            return moved, found, {"prefix_added": added, "reason": reason}
+    drops = [tuple(s for s in base.split("/") if s) for base in bases]
+    if segments and segments[0] not in (PARAM, REST) and segments[0] not in trie.first_segments():
+        drops.append(segments[:1])
+    for drop in drops:
+        if not drop or len(segments) <= len(drop) or segments[: len(drop)] != drop:
+            continue
+        moved = _moved(plain, segments[len(drop) :])
+        found = [m for m in trie.match(moved) if m.literals >= 1]
+        if found:
+            dropped = "/" + "/".join(drop)
+            reason = f"no endpoint is under the call's {dropped}; matched without it"
+            return moved, found, {"prefix_dropped": dropped, "reason": reason}
+    return None
+
+
 def link_calls(
     calls: Iterable[HttpCall], endpoints: Iterable[Endpoint], *, bases: Sequence[str] = ()
 ) -> Linked:
@@ -245,7 +342,9 @@ def link_calls(
     base paths the repository's config adds (``/api`` a proxy forwards, a ``root_path``)."""
     trie = EndpointTrie()
     by_operation: dict[tuple[str, str], list[str]] = defaultdict(list)  # (method, key) -> keys
+    by_server: dict[str, list[str]] = defaultdict(list)
     for endpoint in endpoints:
+        by_server[endpoint.server].append(endpoint.path_norm)
         trie.add(endpoint.method, endpoint.path_norm, endpoint.key)
         if endpoint.root_path.strip("/"):
             under = normalize(endpoint.method, endpoint.path_norm, base=endpoint.root_path).path
@@ -253,6 +352,9 @@ def link_calls(
         if endpoint.operation_id:
             operation = (endpoint.method.upper(), operation_key(endpoint.operation_id))
             by_operation[operation].append(endpoint.key)
+    prefixes = sorted(
+        {shared_prefix(paths) for paths in by_server.values() if len(paths) > 1} - {()}
+    )
     edges: list[GraphEdge] = []
     report = LinkReport()
     for call in calls:
@@ -286,7 +388,14 @@ def link_calls(
             report.unmatched[call.key] = "the URL is built at run time (no literal to match)"
             continue
         if not matches:
-            report.unmatched[call.key] = _reason(trie, normalized)
+            moved = _prefix_matches(trie, call, prefixes, bases)
+            if moved is None:
+                report.unmatched[call.key] = _reason(trie, normalized)
+                continue
+            edges += _prefixed_edges(call, *moved)
+            report.linked += 1
+            report.prefixed += 1
+            report.ambiguous += len(moved[1][:MAX_CANDIDATES]) > 1
             continue
         matches = matches[:MAX_CANDIDATES]
         if len(matches) == 1:
@@ -311,6 +420,26 @@ def link_calls(
             )
         report.linked += 1
     return Linked(edges, report)
+
+
+def _prefixed_edges(
+    call: HttpCall, normalized: Normalized, matches: list[Match], moved: dict[str, str]
+) -> list[GraphEdge]:
+    kept = matches[:MAX_CANDIDATES]
+    return [
+        GraphEdge(
+            call.key,
+            match.endpoint,
+            EdgeType.TARGETS,
+            Provenance.URL_LITERAL,
+            confidence=PREFIX_CONFIDENCE / len(kept),
+            attrs={"path": normalized.path, "candidates": len(kept), **moved},
+            evidence_path=call.evidence_path,
+            evidence_line=call.evidence_line,
+            owner=call.owner,
+        )
+        for match in kept
+    ]
 
 
 def with_reasons(nodes: Iterable[GraphNode], report: LinkReport) -> list[GraphNode]:

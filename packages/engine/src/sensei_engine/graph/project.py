@@ -1,6 +1,6 @@
 """What a language's graph resolver knows of the snapshot (Phase 3): its files, the config files
 that shape resolution (``pyproject.toml``, ``tsconfig.json``, ``package.json``,
-``pnpm-workspace.yaml``, ...), and the
+``pnpm-workspace.yaml``, Spring Boot's ``application.properties``, ...), and the
 definitions the symbols stage extracted, by file.
 
 Each language resolves its files' facts (imports, calls, ...) against a :class:`Project` into
@@ -24,6 +24,9 @@ CONFIG_PATTERNS = (
     "tsconfig*.json",
     "jsconfig*.json",
     "pnpm-workspace.yaml",  # a pnpm monorepo's workspaces (3.3)
+    "application*.properties",  # Spring Boot's: the servlet's context path (3.19)
+    "application*.yml",
+    "application*.yaml",
 )
 
 
