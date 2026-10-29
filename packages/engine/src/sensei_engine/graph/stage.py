@@ -28,7 +28,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from sensei_core.models import SYMBOL_KINDS, CodeNode, RepoFile, Snapshot
 from sensei_engine.chunk.store import SnapshotKey
-from sensei_engine.graph import python
+from sensei_engine.graph import java, python
 from sensei_engine.graph.project import Definition, Project, is_config
 from sensei_engine.graph.writer import CODE, GraphCounts, GraphEdge, GraphNode, GraphWriter
 from sensei_engine.imports.ecma import graph as ecma
@@ -50,7 +50,7 @@ class Resolver(Protocol):
 
 
 # The languages' resolvers, by name (a language a resolver doesn't list: no graph facts).
-RESOLVERS: dict[str, ModuleType] = {"python": python, "ecma": ecma}
+RESOLVERS: dict[str, ModuleType] = {"python": python, "ecma": ecma, "java": java}
 
 
 def resolver_for(language: str) -> str | None:
@@ -197,6 +197,8 @@ class GraphBuild:
     nodes: list[GraphNode] = field(default_factory=list[GraphNode])
     edges: list[GraphEdge] = field(default_factory=list[GraphEdge])
     tables: dict[str, dict[str, str]] = field(default_factory=dict[str, dict[str, str]])
+    # What a resolver keeps on nodes besides import tables (Java's attrs["java"]), by key.
+    attrs: dict[str, dict[str, Any]] = field(default_factory=dict[str, dict[str, Any]])
     details: dict[str, Any] = field(default_factory=dict[str, Any])  # by resolver
 
 
@@ -219,6 +221,9 @@ def resolve_graph(
             nodes.setdefault(node.key, node)
         build.edges.extend(found_edges)
         build.tables.update(getattr(stats, "tables", None) or {})
+        kept = cast("Mapping[str, Mapping[str, Any]]", getattr(stats, "attrs", None) or {})
+        for key, held in kept.items():
+            build.attrs.setdefault(key, {}).update(held)
         build.details[name] = {
             "files": len(by_path),
             "edges": len(found_edges),
@@ -266,9 +271,12 @@ def _plain(value: object) -> Any:
 async def write_graph(
     db: AsyncSession, snapshot: Snapshot | SnapshotKey, build: GraphBuild
 ) -> GraphCounts:
-    """Replace the snapshot's CODE layer with ``build`` and keep each module's import table on
-    its node, in the caller's transaction."""
+    """Replace the snapshot's CODE layer with ``build`` and keep each module's import table
+    (and what else a resolver keeps on definitions) on its node, in the caller's transaction."""
     writer = GraphWriter(db, snapshot)
     counts = await writer.replace_all(build.nodes, build.edges, layer=CODE)
-    await writer.annotate({key: {"imports": table} for key, table in build.tables.items()})
+    merged: dict[str, dict[str, Any]] = {key: dict(held) for key, held in build.attrs.items()}
+    for key, table in build.tables.items():
+        merged.setdefault(key, {})["imports"] = table
+    await writer.annotate(merged)
     return counts
