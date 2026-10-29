@@ -90,7 +90,7 @@ async function traced(params: Params, request: Request, query: Query | Response)
     return apiError(
       404,
       "trace_entry_not_found",
-      `Nothing in this commit's graph is called '${query.from}'.`,
+      `Nothing in this commit's graph is called '${query.from}', and no endpoint or code is named for it.`,
     );
   }
   return HttpResponse.json<Trace>(trace, {

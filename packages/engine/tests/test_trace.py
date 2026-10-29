@@ -21,6 +21,8 @@ from sensei_engine.graph.trace import (
     MAX_DEPTH,
     TraceError,
     TracePath,
+    _shares,  # pyright: ignore[reportPrivateUsage]
+    feature_entries,
     resolve_entry,
     table_model,
     trace_feature,
@@ -602,3 +604,102 @@ def test_the_app_s_entry_module_is_an_origin() -> None:
     graph = _graph([main, PAGE], [(main.symbol_key, PAGE.symbol_key, _edge(EdgeType.RENDERS))])
     [path] = trace_feature(graph, PAGE.symbol_key, direction="up").paths
     assert (_keys(path), path.reaches_origin) == ([main.symbol_key, PAGE.symbol_key], True)
+
+
+def _endpoint(method: str, route: str) -> Node:
+    name = f"{method} {route}"
+    return Node(
+        f"api_endpoint {name}", NodeKind.API_ENDPOINT.value, name, name, None, 0, 0, "", "api"
+    )
+
+
+def _table(name: str) -> Node:
+    return Node(f"table {name}", NodeKind.TABLE.value, name, name, None, 0, 0, "", "db")
+
+
+def _handler(name: str) -> Node:
+    return _node(f"py api.py/{name}().", NodeKind.FUNCTION, path="api.py", lane_="api")
+
+
+def _orders_graph() -> tuple[GraphSnapshot, dict[str, Node]]:
+    """A dashboard that lists items and places orders; the order's handler looks its caller up
+    in ``users`` and saves the row in ``orders``."""
+    page = _node("ts dash.tsx/Dashboard().", NodeKind.COMPONENT, path="dash.tsx", lane_="ui")
+    list_call = _node("http_client_call GET /items dash.tsx:3", NodeKind.HTTP_CLIENT_CALL)
+    order_call = _node("http_client_call POST /orders dash.tsx:9", NodeKind.HTTP_CLIENT_CALL)
+    items = _endpoint("GET", "/api/items")
+    create = _endpoint("POST", "/api/orders")
+    mine = _endpoint("GET", "/api/orders/my-orders")
+    by_status = _endpoint("GET", "/api/orders/status/{status}")
+    list_items, create_order = _handler("list_items"), _handler("create_order")
+    my_orders, orders_by_status = _handler("my_orders"), _handler("orders_by_status")
+    find_user = _node("py db.py/find_user().", NodeKind.FUNCTION, path="db.py", lane_="db")
+    users, orders, item = _table("users"), _table("orders"), _table("item")
+    nodes = {
+        n.symbol_key: n
+        for n in (page, list_call, order_call, items, create, mine, by_status, list_items,
+                  create_order, my_orders, orders_by_status, find_user, users, orders, item)
+    }  # fmt: skip
+    sure = 0.9
+    edges = [
+        (page, list_call, _edge(EdgeType.ISSUES_REQUEST, sure)),
+        (page, order_call, _edge(EdgeType.ISSUES_REQUEST, sure)),
+        (list_call, items, _edge(EdgeType.TARGETS, sure)),
+        (order_call, create, _edge(EdgeType.TARGETS, sure)),
+        (items, list_items, _edge(EdgeType.HANDLED_BY, sure)),
+        (create, create_order, _edge(EdgeType.HANDLED_BY, sure)),
+        (mine, my_orders, _edge(EdgeType.HANDLED_BY, sure)),
+        (by_status, orders_by_status, _edge(EdgeType.HANDLED_BY, sure)),
+        (list_items, item, _edge(EdgeType.READS, sure)),
+        (create_order, find_user, _edge(EdgeType.CALLS, sure)),
+        (find_user, users, _edge(EdgeType.READS, sure)),
+        (create_order, orders, _edge(EdgeType.READS, 0.7)),
+        (create_order, orders, _edge(EdgeType.WRITES, 0.7)),
+        (my_orders, orders, _edge(EdgeType.READS, sure)),
+        (orders_by_status, orders, _edge(EdgeType.READS, sure)),
+    ]
+    keyed = [(a.symbol_key, b.symbol_key, e) for a, b, e in edges]
+    return _graph(list(nodes.values()), keyed), {n.name: n for n in nodes.values()}
+
+
+def test_a_feature_in_words_starts_from_the_endpoint_that_serves_it() -> None:
+    """``create order`` is the POST its verb asks for; with no verb, a feature is shown (GET),
+    the route naming least besides first; a verb no endpoint of its things does is none."""
+    graph, _ = _orders_graph()
+    assert [n.name for n in feature_entries(graph, "create order")] == ["POST /api/orders"]
+    assert [n.name for n in feature_entries(graph, "place order")] == ["POST /api/orders"]
+    assert [n.name for n in feature_entries(graph, "my orders")] == ["GET /api/orders/my-orders"]
+    assert feature_entries(graph, "delete order") == []
+    with pytest.raises(TraceError, match="no endpoint or code is named for it"):
+        trace_feature(graph, "delete order")
+    # A name still wins over words: the entry is what is called that.
+    assert [n.name for n in resolve_entry(graph, "Dashboard")] == ["Dashboard"]
+
+
+def test_a_feature_found_by_its_words_is_followed_to_its_own_table() -> None:
+    """Past ``POST /api/orders`` the path goes on to ``orders``, not the ``users`` row the
+    handler looks the caller up in (surer, and nearer); and of a table read and written as
+    surely, the hop is the write."""
+    graph, _ = _orders_graph()
+    [best, *_] = trace_feature(graph, "create order", direction="both").paths
+    down = best.hops[: best.return_index]
+    assert [h.node.name for h in down][-3:] == ["POST /api/orders", "create_order", "orders"]
+    assert down[-1].edge_type is EdgeType.WRITES
+    assert down[0].node.name == "Dashboard"  # where the request is made from
+
+
+def test_a_feature_says_which_of_a_pages_ways_to_follow() -> None:
+    """A dashboard listing items and placing orders: ``feature`` picks the order's way."""
+    graph, named = _orders_graph()
+    page = named["Dashboard"].symbol_key
+    plain = trace_feature(graph, page).paths[0]
+    asked = trace_feature(graph, page, feature="place order").paths[0]
+    assert plain.hops[-1].node.name == "item"  # the surest way, no feature asked
+    assert [h.node.name for h in asked.hops[: asked.return_index]][-1] == "orders"
+
+
+def test_a_name_with_one_of_the_words_counts_more_than_a_longer_form() -> None:
+    words = {"traces"}
+    assert _shares(words, _node("ts t.ts/useGetTracesQuery().", NodeKind.HOOK)) == 2
+    assert _shares(words, _node("ts t.ts/useGetTraceQuery().", NodeKind.HOOK)) == 1
+    assert _shares(words, _node("ts t.ts/useGetFlows().", NodeKind.HOOK)) == 0

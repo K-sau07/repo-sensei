@@ -2454,6 +2454,8 @@ export interface components {
              * @enum {string}
              */
             direction: "down" | "up" | "both";
+            /** Feature */
+            feature?: string | null;
             /** From */
             from: string;
             /**
@@ -4431,6 +4433,7 @@ export interface operations {
                 to?: string | null;
                 min_conf?: number;
                 direction?: "down" | "up" | "both";
+                feature?: string | null;
                 /** @description Branch or commit (or its first 7+ characters). */
                 ref?: string | null;
             };

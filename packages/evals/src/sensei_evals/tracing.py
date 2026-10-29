@@ -176,13 +176,17 @@ def bench_paths(graph: GraphSnapshot, paths: Sequence[EnginePath]) -> list[Trace
 
 class TraceTracer:
     """``trace_feature`` on the checkout (``--checkout``), linked once for the run;
-    ``--opt min_conf=<0..1>`` drops less sure edges."""
+    ``--opt min_conf=<0..1>`` drops less sure edges; ``--opt feature=query`` follows each flow's
+    ``query`` (which of its entry's features it is), as a user who typed it would."""
 
     name = "trace"
 
-    def __init__(self, graph: GraphSnapshot, *, min_conf: float = 0.0) -> None:
+    def __init__(
+        self, graph: GraphSnapshot, *, min_conf: float = 0.0, by_query: bool = False
+    ) -> None:
         self.graph = graph
         self.min_conf = min_conf
+        self.by_query = by_query
 
     @classmethod
     def build(cls, context: TracerContext) -> TraceTracer:
@@ -190,11 +194,18 @@ class TraceTracer:
             msg = "the trace tracer needs the repository's checkout (--checkout)"
             raise ValueError(msg)
         min_conf = float(context.options.get("min_conf", "0"))
-        return cls(link_checkout(context.checkout), min_conf=min_conf)
+        feature = context.options.get("feature")
+        if feature not in (None, "query"):
+            msg = f"--opt feature= takes 'query', not {feature!r}"
+            raise ValueError(msg)
+        return cls(link_checkout(context.checkout), min_conf=min_conf, by_query=feature == "query")
 
     def trace(self, flow: Flow) -> list[TracePath]:
+        feature = flow.query if self.by_query else None
         try:
-            result = trace_feature(self.graph, entry_of(self.graph, flow), min_conf=self.min_conf)
+            result = trace_feature(
+                self.graph, entry_of(self.graph, flow), min_conf=self.min_conf, feature=feature
+            )
         except TraceError:
             return []
         return bench_paths(self.graph, result.paths)

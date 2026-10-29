@@ -16,17 +16,23 @@ The search is a beam, bounded: at most :data:`MAX_DEPTH` hops, :data:`MAX_FANOUT
 any node, edges at least ``min_conf``; a node is on a path once, and library code (externals) is
 never on one. Ways on are tried nearest the goal first (the tables, or ``to``: distances from a
 walk back from them), then those of the same feature (a word of the entry's name in theirs:
-``Login`` → ``/login/access-token``, where a hook serves several features), then surest. The
-paths that reach the goal win; then those with fewer detours through injected dependencies
-(``INJECTS``: the session, the current user, which every handler has), those more of the
-entry's feature, the surer (the product of their edges' confidence), those covering more layers
-and the shorter. Sureness comes before layers: a handler that writes its table itself beats a
-path on through a helper that writes another one (an audit row, a default folder) only to
-cover the service layer. The top
+``Login`` → ``/login/access-token``, where a hook serves several features; past a request, a word
+of its route's: ``POST /api/orders`` → the ``orders`` table), then surest. The paths that reach
+the goal win; then those with fewer detours through injected dependencies (``INJECTS``: the
+session, the current user, which every handler has), those more of the feature, the surer
+(the product of their edges' confidence), those covering more layers and the shorter.
+Sureness comes before layers: a handler that writes its table itself beats a path on through a
+helper that writes another one (an audit row, a default folder) only to cover the service
+layer. The top
 :data:`TOP_PATHS` distinct ones are returned, each with its **breaks**: where it stops short of
 the goal, and why (a client call no endpoint matches, an endpoint with no handler in the
 repository, client code that calls nothing further: gaps; server code that calls no more of
 the repository's, a DTO built or a token signed: an end; the hop limit).
+
+**The feature** (3.24) is the entry's own words, the ``feature`` asked for (which of a
+dashboard's features to follow: ``create order``), and, for an entry given as a feature in words
+rather than a name (:func:`feature_entries`), those words: the endpoints whose route or handler
+names its things, with the method its verb asks for (``create`` → POST), are where it starts.
 
 A path that went down through a client call comes back up (3.22): after its deepest hop, a
 **return leg** (from :attr:`TracePath.return_index`) goes back to the function that made the call
@@ -86,6 +92,7 @@ CALLABLE_KINDS = frozenset({
 })  # fmt: skip
 # An entry given as a file starts from what in it a feature begins with, best first.
 ENTRY_KINDS = (NodeKind.COMPONENT, NodeKind.HOOK, NodeKind.FUNCTION, NodeKind.METHOD)
+ENTRY_KINDS_SET = frozenset(kind.value for kind in ENTRY_KINDS)
 
 Layer = Literal["ui", "state", "client", "route", "handler", "service", "db", "other"]
 # Why a path stops short of the goal: a ``gap`` the graph has (a client call no endpoint matches,
@@ -294,12 +301,7 @@ def _client_code(path: TracePath) -> TracePath:
     client's methods: ``authService.login``) in the client's layer (``state``) rather than the
     page's; a helper the page calls on a way with no request (``cn``) stays the page's."""
     request = next(
-        (
-            i
-            for i, hop in enumerate(path.hops)
-            if i >= path.entry_index and hop.node.kind == NodeKind.HTTP_CLIENT_CALL
-        ),
-        None,
+        (i for i, hop in enumerate(path.hops) if hop.node.kind == NodeKind.HTTP_CLIENT_CALL), None
     )
     if request is None:
         return path
@@ -333,7 +335,8 @@ def _override(index: _Index, here: int) -> list[_Step]:
 
 
 def _steps(index: _Index, here: int, min_conf: float) -> list[_Step]:
-    """The ways on from ``here``: each neighbour once, by its surest edge, with how many
+    """The ways on from ``here``: each neighbour once, by its surest edge (a table it reads and
+    writes as surely, by the write), with how many
     targets its call site has (:func:`_site`: a call two endpoints match, a method name several
     classes have, is ambiguous; several calls, or a handler's dependencies, aren't)."""
     nodes = index.graph.nodes
@@ -346,7 +349,7 @@ def _steps(index: _Index, here: int, min_conf: float) -> list[_Step]:
         if (site := _site(edge)) is not None:
             by_site[site] = by_site.get(site, 0) + 1
         held = best.get(there)
-        if held is None or edge.confidence > held.confidence:
+        if held is None or edge.confidence > held.confidence or _writes_over(edge, held):
             best[there] = edge
     steps = [
         _Step(t, e, e.type, by_site[site] if (site := _site(e)) is not None else 1)
@@ -355,6 +358,16 @@ def _steps(index: _Index, here: int, min_conf: float) -> list[_Step]:
     if not steps:
         steps = [s for s in _override(index, here) if s.edge.confidence >= min_conf]
     return steps
+
+
+def _writes_over(edge: Edge, held: Edge) -> bool:
+    """Code that reads a table and writes it (finds a row, then saves it) changes it: its write,
+    as sure as its read, is the step."""
+    return (
+        edge.type is EdgeType.WRITES
+        and held.type is EdgeType.READS
+        and edge.confidence >= held.confidence
+    )
 
 
 # Edges one place in the code may have many of, each certain: a signature's dependencies, the
@@ -399,20 +412,26 @@ def _distances(index: _Index, goals: Sequence[int], min_conf: float) -> dict[int
 
 def resolve_entry(graph: GraphSnapshot, entry: str, kind: EntryKind = "auto") -> list[Node]:
     """What ``entry`` names: a node's key; a route (``POST /api/v1/items/``); a file (what in it
-    a feature starts from: its components, else hooks, functions, methods); or a name or
-    qualified name (every definition of it, up to :data:`MAX_ENTRIES`)."""
+    a feature starts from: its components, else hooks, functions, methods); a name or qualified
+    name (every definition of it, up to :data:`MAX_ENTRIES`); or, none of those, a feature in
+    words (``create order``: :func:`feature_entries`)."""
+    return _resolve(graph, entry, kind)[0]
+
+
+def _resolve(graph: GraphSnapshot, entry: str, kind: EntryKind) -> tuple[list[Node], bool]:
+    """:func:`resolve_entry`'s nodes, and whether they were found by the entry's words."""
     text = entry.strip()
     if not text:
         raise TraceError("Say where the trace starts.")
     if kind in ("auto", "symbol") and (node := graph.node(text)) is not None:
-        return [node]
+        return [node], False
     parts = text.split(maxsplit=1)
     if kind in ("auto", "route") and len(parts) == 2 and parts[0].isalpha():
         method, path = parts[0].upper(), parts[1]
         if path.startswith("/") and (
             node := graph.node(f"api_endpoint {method} {normalize_path(path)}")
         ):
-            return [node]
+            return [node], False
         if kind == "route":
             raise TraceError(f"No endpoint {method} {path} in this commit.")
     nodes = graph.nodes
@@ -421,15 +440,100 @@ def resolve_entry(graph: GraphSnapshot, entry: str, kind: EntryKind = "auto") ->
         if in_file:
             best = min(ENTRY_KINDS.index(NodeKind(n.kind)) for n in in_file)
             chosen = [n for n in in_file if ENTRY_KINDS.index(NodeKind(n.kind)) == best]
-            return sorted(chosen, key=lambda n: n.start_line)[:MAX_ENTRIES]
+            return sorted(chosen, key=lambda n: n.start_line)[:MAX_ENTRIES], False
     named = [
         n
         for n in nodes
         if n.path is not None and n.kind in ENTRY_KINDS and text in (n.qualified_name, n.name)
     ]
     if named:
-        return sorted(named, key=lambda n: (n.qualified_name != text, n.symbol_key))[:MAX_ENTRIES]
-    raise TraceError(f"Nothing in this commit's graph is called {text!r}.")
+        ranked = sorted(named, key=lambda n: (n.qualified_name != text, n.symbol_key))
+        return ranked[:MAX_ENTRIES], False
+    if kind == "auto" and (found := feature_entries(graph, text)):
+        return found, True
+    raise TraceError(
+        f"Nothing in this commit's graph is called {text!r}, and no endpoint or code is named "
+        "for it."
+    )
+
+
+# What a feature's verb asks of an endpoint: the methods that do it ("create order" → POST).
+VERB_METHODS: dict[str, frozenset[str]] = {
+    **dict.fromkeys(
+        ("create", "add", "new", "post", "submit", "upload", "register", "signup", "place"),
+        frozenset({"POST"}),
+    ),
+    **dict.fromkeys(("save", "store"), frozenset({"POST", "PUT", "PATCH"})),
+    **dict.fromkeys(("delete", "remove", "destroy", "clear"), frozenset({"DELETE"})),
+    **dict.fromkeys(
+        ("update", "edit", "rename", "change", "patch", "modify", "reset"),
+        frozenset({"PUT", "PATCH"}),
+    ),
+    **dict.fromkeys(
+        ("list", "load", "view", "open", "read", "fetch", "show", "find", "search", "history"),
+        frozenset({"GET"}),
+    ),
+}
+MAX_FEATURE_ENTRIES = 3  # the endpoints (or code) a feature matching several equally starts from
+
+
+def feature_entries(graph: GraphSnapshot, text: str) -> list[Node]:
+    """What a feature in words starts from (``create order``, ``delete api key``): the endpoints
+    whose route or handler names its things (``orders``, ``createOrder``), with a method its verb
+    asks for (``create`` → POST) ranking first, as a request's spine; else the code (a page, a
+    hook, a function) named with all of its words. Best first, ties together; none when nothing
+    names any of them."""
+    words = _words(text)
+    if not words:
+        return []
+    verbs = {w for w in words if w in VERB_METHODS}
+    things = words - verbs
+    index = _index(graph)
+    nodes = graph.nodes
+    endpoints: list[tuple[tuple[int, ...], Node]] = []
+    for i, node in enumerate(nodes):
+        if node.kind != NodeKind.API_ENDPOINT.value:
+            continue
+        method = node.name.partition(" ")[0].upper()
+        handlers: set[str] = set()
+        for there, edge in index.out[i]:
+            if edge.type is EdgeType.HANDLED_BY:
+                handlers |= _words(nodes[there].name)
+        route = _route_words(node)
+        named = route | handlers
+        held = sum(any(_alike(t, w) for w in named) for t in things)
+        if things and held == 0:
+            continue
+        # No verb: what a feature named by its things alone does is show them (GET).
+        asked = any(method in VERB_METHODS[v] for v in verbs) if verbs else method == "GET"
+        said = sum(any(_alike(v, w) for w in handlers) for v in verbs)
+        if verbs and not asked and not said:
+            continue  # "delete order" is no endpoint that only creates one
+        # Of the rest, the route naming least besides (``/orders/my-orders`` over
+        # ``/orders/status/{status}`` for "my orders"), then the shortest.
+        extra = sum(not any(_alike(w, t) for t in words) for w in route)
+        segments = len([part for part in node.name.partition(" ")[2].split("/") if part])
+        endpoints.append(((held, asked, said, -extra, -segments), node))
+    if endpoints:
+        return _top(endpoints)
+    code: list[tuple[tuple[int, ...], Node]] = []
+    for node in nodes:
+        if node.path is None or node.kind not in ENTRY_KINDS_SET or _is_test(node):
+            continue
+        named = _words(node.name)
+        held = sum(any(_alike(w, n) for n in named) for w in words)
+        if held == len(words):
+            code.append(((held, -len(named)), node))
+    return _top(code)
+
+
+def _top(scored: list[tuple[tuple[int, ...], Node]]) -> list[Node]:
+    """The best-scored nodes, ties together (by key), at most :data:`MAX_FEATURE_ENTRIES`."""
+    if not scored:
+        return []
+    best = max(score for score, _ in scored)
+    tied = sorted((node for score, node in scored if score == best), key=lambda n: n.symbol_key)
+    return tied[:MAX_FEATURE_ENTRIES]
 
 
 def _words(text: str) -> set[str]:
@@ -442,15 +546,20 @@ def _words(text: str) -> set[str]:
     }
 
 
-def _shares(words: set[str], node: Node) -> bool:
-    """Whether ``node`` is named with one of ``words`` (or a longer form of one: sign, signup)."""
-    for word in _words(node.name):
-        for other in words:
-            if word == other or (min(len(word), len(other)) >= 4 and word.startswith(other)):
-                return True
-            if min(len(word), len(other)) >= 4 and other.startswith(word):
-                return True
-    return False
+def _alike(word: str, other: str) -> bool:
+    """The same word, or one a longer form of the other (sign, signup; order, orders)."""
+    if word == other:
+        return True
+    return min(len(word), len(other)) >= 4 and (word.startswith(other) or other.startswith(word))
+
+
+def _shares(words: set[str], node: Node) -> int:
+    """How much ``node`` is named for ``words``: 2 with one of them, 1 with only a longer or
+    shorter form of one (sign, signup; ``trace`` for ``traces``), 0 with none."""
+    named = _words(node.name)
+    if named & words:
+        return 2
+    return int(any(_alike(word, other) for word in named for other in words))
 
 
 @dataclass(order=True, slots=True)
@@ -484,8 +593,31 @@ def _detours(hops: Sequence[TraceHop]) -> int:
 
 
 def _affinity(hops: Sequence[TraceHop], feature: set[str]) -> int:
-    """How many hops past the entry are named for its feature."""
-    return sum(_shares(feature, hop.node) for hop in hops[1:])
+    """How much the hops past the entry are named for its feature (:func:`_shares`), or, past a
+    request, for what the request is about (``POST /api/orders``: on to the ``orders`` table,
+    not the ``users`` one its handler looks the caller up in on the way)."""
+    count = 0
+    words = feature
+    for hop in hops[1:]:
+        count += _shares(words, hop.node)
+        if hop.node.kind == NodeKind.API_ENDPOINT:
+            words = words | _route_words(hop.node)
+    return count
+
+
+def _path_words(hops: Sequence[TraceHop], feature: set[str]) -> set[str]:
+    """The entry's feature and the words of the routes ``hops`` went through."""
+    words = feature
+    for hop in hops:
+        if hop.node.kind == NodeKind.API_ENDPOINT:
+            words = words | _route_words(hop.node)
+    return words
+
+
+def _route_words(endpoint: Node) -> set[str]:
+    """An endpoint's resource, in words: its path's (``POST /api/orders/{id}`` → ``orders``)."""
+    _, _, path = endpoint.name.partition(" ")
+    return _words(re.sub(r"\{[^}]*\}|:[A-Za-z_]\w*", " ", path or endpoint.name))
 
 
 def trace_feature(
@@ -496,12 +628,16 @@ def trace_feature(
     to: str | None = None,
     min_conf: float = 0.0,
     direction: Direction = "down",
+    feature: str | None = None,
 ) -> TraceResult:
     """The surest paths from ``entry`` (see :func:`resolve_entry`) to the data layer, or to
     ``to`` (a node's key, a route or a name, as ``entry``); with ``direction`` ``up`` or
-    ``both``, from where the entry is reached (see :func:`_upstream`) as well."""
+    ``both``, from where the entry is reached (see :func:`_upstream`) as well. ``feature`` (in
+    words: ``create order``) says which of the entry's features to follow, where it has several
+    (a dashboard listing items and placing orders); an entry found by its words
+    (:func:`feature_entries`) follows them."""
     index = _index(graph)
-    entries = resolve_entry(graph, entry, kind)
+    entries, searched = _resolve(graph, entry, kind)
     goal_node = resolve_entry(graph, to)[0] if to else None
     nodes = graph.nodes
     if goal_node is not None:
@@ -510,25 +646,23 @@ def trace_feature(
         goals = [i for i, n in enumerate(nodes) if n.kind in DATA_KINDS]
     goal_set = set(goals)
     distance = _distances(index, goals, min_conf)
-    feature: set[str] = set()
-    for node in entries:
-        feature |= _words(node.name) | _words((node.path or "").rsplit("/", 1)[-1].split(".")[0])
-
+    wanted = _wanted(entries, feature, entry if searched else None)
     beam: list[_Partial] = []
     for node in entries:
         start = index.position[node.symbol_key]
         hops = (TraceHop(node, layer_of(node, None), None),)
-        beam.append(_Partial(_score(hops, distance.get(start), feature), (start,), hops))
+        beam.append(_Partial(_score(hops, distance.get(start), wanted), (start,), hops))
     done: list[TracePath] = []
     for _ in range(MAX_DEPTH):
         grown: list[_Partial] = []
         for partial in beam:
             here = partial.nodes[-1]
             steps = [s for s in _steps(index, here, min_conf) if s.there not in partial.nodes]
+            words = _path_words(partial.hops, wanted)
             steps.sort(
                 key=lambda s: (
                     distance.get(s.there, MAX_DEPTH + 1),
-                    not _shares(feature, nodes[s.there]),
+                    -_shares(words, nodes[s.there]),
                     s.edge_type is EdgeType.INJECTS,
                     -s.edge.confidence,
                     nodes[s.there].symbol_key,
@@ -546,7 +680,7 @@ def trace_feature(
                 hops = (*partial.hops, hop)
                 grown.append(
                     _Partial(
-                        _score(hops, distance.get(step.there), feature),
+                        _score(hops, distance.get(step.there), wanted),
                         (*partial.nodes, step.there),
                         hops,
                     )
@@ -567,17 +701,29 @@ def trace_feature(
         )
         for p in beam
     )
-    downs = _best(done, feature)
+    downs = _best(done, wanted)
     if direction == "down":
         return TraceResult(entries, goal_node, _returning(index, downs))
     ups = {
-        node.symbol_key: _upstream(index, index.position[node.symbol_key], feature, min_conf)
+        node.symbol_key: _upstream(index, index.position[node.symbol_key], wanted, min_conf)
         for node in entries
     }
     if direction == "up":
         every = [path for found in ups.values() for path in found]
-        return TraceResult(entries, goal_node, _returning(index, _best_up(every, feature)))
+        return TraceResult(entries, goal_node, _returning(index, _best_up(every, wanted)))
     return TraceResult(entries, goal_node, _returning(index, _joined(downs, ups)))
+
+
+def _wanted(entries: Sequence[Node], feature: str | None, searched: str | None) -> set[str]:
+    """The feature a trace follows: its entries' own words (a name, a file's), the ``feature``
+    asked for, and the words an entry was found by (``searched``)."""
+    wanted: set[str] = set()
+    for node in entries:
+        wanted |= _words(node.name) | _words((node.path or "").rsplit("/", 1)[-1].split(".")[0])
+    for words in (feature, searched):
+        if words:
+            wanted |= _words(words)
+    return wanted
 
 
 def _finish(partial: _Partial, goals: set[int], why: str) -> TracePath:
@@ -711,7 +857,7 @@ def _upstream(index: _Index, start: int, feature: set[str], min_conf: float) -> 
             steps.sort(
                 key=lambda s: (
                     near.get(s.there, MAX_DEPTH + 1),
-                    not _shares(feature, nodes[s.there]),
+                    -_shares(feature, nodes[s.there]),
                     s.edge_type is EdgeType.INJECTS,
                     -s.edge.confidence,
                     nodes[s.there].symbol_key,
@@ -779,7 +925,7 @@ def _is_test(node: Node) -> bool:
 
 
 def _affinity_up(hops: Sequence[TraceHop], feature: set[str]) -> int:
-    """How many hops before the entry are named for its feature (the page most of all)."""
+    """How much the hops before the entry are named for its feature (the page most of all)."""
     return sum(_shares(feature, hop.node) for hop in hops[:-1])
 
 

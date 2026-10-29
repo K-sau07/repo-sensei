@@ -14,7 +14,9 @@ from typing import Any, cast
 import pytest
 from typer.testing import CliRunner
 
-from sensei_evals import paths
+from sensei_engine.graph.snapshot import GraphSnapshot
+from sensei_engine.graph.trace import TraceResult
+from sensei_evals import paths, tracing
 from sensei_evals.cli import app
 from sensei_evals.crosslayer import (
     Bench,
@@ -22,6 +24,7 @@ from sensei_evals.crosslayer import (
     GoldTracer,
     TraceHop,
     TracePath,
+    TracerContext,
     as_suite,
     bench_path,
     calibration,
@@ -105,6 +108,38 @@ def test_bad_benches_say_why(old: str, new: str, message: str) -> None:
     assert old in BENCH
     with pytest.raises(SuiteError, match=message):
         parse_bench(BENCH.replace(old, new))
+
+
+def test_a_flow_may_say_the_query_a_user_would_type_and_the_tracer_follow_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``query`` is what finds a flow's feature on a page with several; ``--opt feature=query``
+    has the trace tracer follow it (and nothing else is a ``feature=``)."""
+    bench = parse_bench(BENCH.replace("    hops:\n", "    query: add item\n    hops:\n", 1))
+    assert [flow.query for flow in bench.flows] == ["add item", None]
+    asked: list[str | None] = []
+
+    def traced(graph: GraphSnapshot, entry: str, **options: Any) -> TraceResult:
+        asked.append(options.get("feature"))
+        return TraceResult([], None, [])
+
+    monkeypatch.setattr(tracing, "trace_feature", traced)
+
+    def linked(_root: Path) -> GraphSnapshot:
+        return GraphSnapshot([], [])
+
+    monkeypatch.setattr(tracing, "link_checkout", linked)
+
+    def tracer(**options: str) -> tracing.TraceTracer:
+        return tracing.TraceTracer.build(TracerContext("fastapi-template", SHA, tmp_path, options))
+
+    by_query, plain = tracer(feature="query"), tracer()
+    for flow in bench.flows:
+        assert by_query.trace(flow) == []
+        assert plain.trace(flow) == []
+    assert asked == ["add item", None, None, None]
+    with pytest.raises(ValueError, match="takes 'query'"):
+        tracer(feature="x")
 
 
 def test_bench_names_and_paths() -> None:

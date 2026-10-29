@@ -3875,6 +3875,19 @@
             "title": "Direction",
             "type": "string"
           },
+          "feature": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Feature"
+          },
           "from": {
             "maxLength": 2000,
             "minLength": 1,
@@ -7498,6 +7511,24 @@
               ],
               "title": "Direction",
               "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "feature",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 2000,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Feature"
             }
           },
           {

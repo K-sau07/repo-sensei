@@ -2,16 +2,18 @@
 symbol) to the tables it reads and writes, or to ``to``; the top paths, each hop with the edge
 that proves it.
 
-``POST …/trace`` takes ``{from, kind?, to?, min_conf?, direction?}`` (``both`` by default: from
-where the entry is reached, a page, to where it goes; ``entry_index`` says which hop it is); ``GET
-…/trace?from=`` is the same, for deep links (the code viewer's "Trace this"). ``from`` (and ``to``)
-is a node's key, a route (``POST /api/v1/items/``), a file, or a name (see
-:func:`sensei_engine.graph.trace.resolve_entry`). ``ref`` picks the snapshot as in browsing; the
-commit read is in ``X-Commit-Sha``. A snapshot whose graph isn't built yet answers ``409
-graph_not_ready``; ``linked`` says whether its cross-layer links are in it yet (the links stage:
-without them a trace stays in the code). An entry the graph doesn't have is ``404
-trace_entry_not_found``. A trace counts against the user's graph requests per minute (``429
-rate_limited``), and runs off the event loop.
+``POST …/trace`` takes ``{from, kind?, to?, min_conf?, direction?, feature?}`` (``both`` by
+default: from where the entry is reached, a page, to where it goes; ``entry_index`` says which hop
+it is); ``GET …/trace?from=`` is the same, for deep links (the code viewer's "Trace this").
+``from`` (and ``to``) is a node's key, a route (``POST /api/v1/items/``), a file, a name, or a
+feature in words (``create order``: the endpoints serving it; see
+:func:`sensei_engine.graph.trace.resolve_entry`). ``feature`` says which of the entry's features
+to follow, where it has several (a dashboard listing items and placing orders: ``place order``).
+``ref`` picks the snapshot as in browsing; the commit read is in ``X-Commit-Sha``. A snapshot
+whose graph isn't built yet answers ``409 graph_not_ready``; ``linked`` says whether its
+cross-layer links are in it yet (the links stage: without them a trace stays in the code). An
+entry the graph doesn't have is ``404 trace_entry_not_found``. A trace counts against the user's
+graph requests per minute (``429 rate_limited``), and runs off the event loop.
 
 A break carries what the graph knows of why: a client call no endpoint matches has the reason
 3.10 found (``detail``: the path exists under another method, the URL is dynamic, ...).
@@ -80,6 +82,7 @@ class TraceRequest(BaseModel):
     # both: where the entry is reached from (back to a page) and where it goes (on to the data)
     direction: Direction = "both"
     min_conf: Annotated[float, Field(ge=0, le=1)] = 0.0
+    feature: EntryText | None = None  # which of the entry's features to follow, in words
 
 
 class TraceModelOut(BaseModel):
@@ -305,6 +308,7 @@ async def _trace(
             to=body.to,
             min_conf=body.min_conf,
             direction=body.direction,
+            feature=body.feature,
         )
     except TraceError as exc:
         raise NotFoundError(str(exc), code="trace_entry_not_found") from None
@@ -373,11 +377,19 @@ async def trace_link(
     to: Annotated[str | None, Query(min_length=1, max_length=2000)] = None,
     min_conf: Annotated[float, Query(ge=0, le=1)] = 0.0,
     direction: Direction = "both",
+    feature: Annotated[str | None, Query(min_length=1, max_length=2000)] = None,
     ref: RefParam = None,
 ) -> TraceOut:
     """``POST …/trace`` for a deep link (``?from=``)."""
     body = TraceRequest.model_validate(
-        {"from": source, "kind": kind, "to": to, "min_conf": min_conf, "direction": direction}
+        {
+            "from": source,
+            "kind": kind,
+            "to": to,
+            "min_conf": min_conf,
+            "direction": direction,
+            "feature": feature,
+        }
     )
     return await _trace(
         request=request,

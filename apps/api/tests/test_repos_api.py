@@ -2300,6 +2300,7 @@ async def test_a_trace_says_where_it_breaks_and_why(
     assert path["reaches_goal"] is False
     [stop] = path["breaks"]
     assert (stop["after_hop"], stop["reason"]) == (1, "client call has no matching endpoint")
+    assert stop["kind"] == "gap"
     assert stop["detail"]  # 3.10's reason, kept on the call's node
     assert path["hops"][1]["node"]["symbol_key"] == "http_client_call GET /nothing stack/page.ts:8"
     assert path["return_index"] is None  # nothing done with its response
@@ -2321,8 +2322,19 @@ async def test_a_trace_says_where_it_breaks_and_why(
     assert [h["layer"] for h in down.json()["paths"][0]["hops"]] == ["route", "handler"]
     assert down.json()["paths"][0]["entry_index"] == 0
 
+    # A feature in words (3.24) starts from the endpoint serving it, and is followed.
+    worded = (await client.get(url, params={"from": "read items"})).json()
+    assert [e["symbol_key"] for e in worded["entries"]] == ["api_endpoint GET /items"]
+    found = worded["paths"][0]
+    keys = [h["node"]["symbol_key"] for h in found["hops"][: found["return_index"]]]
+    assert (keys[0], keys[-1]) == ("ts stack/page.ts/loadItems().", "table item")
+    asked = await client.get(url, params={"from": "loadItems", "feature": "items"})
+    assert asked.status_code == 200, asked.text
+    assert asked.json()["paths"][0]["reaches_goal"] is True
+
     missing = await client.get(url, params={"from": "nothing_here"})
     assert (missing.status_code, missing.json()["error"]["code"]) == (404, "trace_entry_not_found")
+    assert "no endpoint or code is named for it" in missing.json()["error"]["message"]
     empty = await client.get(url, params={"from": ""})
     assert empty.status_code == 422
 
