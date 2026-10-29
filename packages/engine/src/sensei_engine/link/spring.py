@@ -78,6 +78,8 @@ PREFIX_SETTINGS = (
 MAX_DEPTH = 8  # constants defined by constants
 MAX_PATHS = 32  # a mapping's paths (arrays of arrays)
 MAX_CONSTANT = 1000  # characters of a constant's initializer kept
+MAX_SETTINGS = 10_000  # settings read from one YAML document
+MAX_PATH_CHARS = 2048  # a route path built from constants longer than this is unresolved
 
 _CONFIG_RE = re.compile(r"^application(?:-([\w.-]+))?\.(?:properties|ya?ml)$")
 _PLACEHOLDER_RE = re.compile(r"\$\{[^}:]*(?::([^}]*))?\}")
@@ -324,12 +326,25 @@ def _relaxed(key: str) -> str:
     return re.sub(r"[-_.\s]", "", key.lower())
 
 
-def _flatten(data: Any, above: str = "") -> Iterator[tuple[str, Any]]:
-    if isinstance(data, dict):
-        for key, value in cast("dict[Any, Any]", data).items():
-            yield from _flatten(value, f"{above}.{key}" if above else str(key))
-    else:
-        yield above, data
+def _flatten(data: Any) -> list[tuple[str, Any]]:
+    """A YAML document's settings as dotted keys, in order. A loop, with a budget: an alias
+    is the mapping it names (shared, not copied), so a mapping that holds itself is skipped
+    where it recurs and aliases of aliases stop at :data:`MAX_SETTINGS` rather than multiply."""
+    found: list[tuple[str, Any]] = []
+    stack: list[tuple[str, Any, frozenset[int]]] = [("", data, frozenset())]
+    while stack and len(found) < MAX_SETTINGS:
+        above, value, around = stack.pop()
+        if not isinstance(value, dict):
+            found.append((above, value))
+            continue
+        mapping = cast("dict[Any, Any]", value)
+        if id(mapping) in around:
+            continue  # a: &a {b: *a}
+        inside = around | {id(mapping)}
+        items = list(mapping.items())
+        for key, child in reversed(items):
+            stack.append((f"{above}.{key}" if above else str(key), child, inside))
+    return found
 
 
 def _properties(text: str) -> dict[str, str]:
@@ -353,7 +368,7 @@ def _documents(path: str, text: str) -> list[tuple[str, dict[str, str]]]:
     found: list[tuple[str, dict[str, str]]] = []
     try:
         loaded = list(yaml.safe_load_all(text))
-    except yaml.YAMLError:
+    except (yaml.YAMLError, RecursionError, ValueError):
         return found
     for document in loaded:
         settings = {
@@ -533,6 +548,7 @@ class _Routes:
         self.constants: dict[str, str] = {
             k: v for f in files.values() for k, v in f.constants.items()
         }
+        self.values: dict[str, list[str] | None] = {}  # each constant's, once worked out
         self.prefixes = servlet_prefixes(project.configs)
         for root, prefix in sorted(self.prefixes.items()):
             if prefix.path:
@@ -612,8 +628,10 @@ class _Routes:
                 if found is None:
                     return None, False
                 key, where = found
-                inner, _ = self.strings(where, parse_value(self.constants[key]), depth + 1)
-                return inner, True
+                if key not in self.values:
+                    inner, _ = self.strings(where, parse_value(self.constants[key]), depth + 1)
+                    self.values[key] = inner
+                return self.values[key], True
             case Array(items):
                 return self.each(declared, items, depth, joined=False)
             case Concat(parts):
@@ -632,6 +650,8 @@ class _Routes:
             out = [a + b for a in out for b in found] if joined else [*out, *found]
             out = out[:MAX_PATHS]
             used = used or constant
+            if any(len(path) > MAX_PATH_CHARS for path in out):
+                return None, used  # constants of constants doubling: no route is that long
         return out, used
 
     def paths(

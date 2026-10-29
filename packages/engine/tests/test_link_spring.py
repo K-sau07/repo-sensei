@@ -8,6 +8,7 @@ with the server's ``/api`` prefix the client's base URL doesn't have."""
 from __future__ import annotations
 
 import pickle
+import time
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -603,3 +604,54 @@ def test_a_call_with_a_prefix_the_server_lacks() -> None:
     assert edge.attrs["prefix_dropped"] == "/backend"
     far = http_calls.HttpCall("call 2", "GET", "https://elsewhere.example.org/x/items")
     assert link_calls([far], endpoints).edges == []
+
+
+# ---------------------------------------------------------------- hardening (3.19 b)
+
+
+def test_yaml_aliases_never_multiply_or_loop_the_settings() -> None:
+    """A mapping that holds itself is skipped where it recurs; aliases of aliases stop at a
+    budget rather than multiply; the settings around them are still read."""
+    looped = "a: &a {b: *a}\nserver:\n  servlet:\n    context-path: /shop\n"
+    assert servlet_prefixes({"x/application.yml": looped})["x"].path == "/shop"
+    bomb = "a0: &a0 {p: 1, q: 2, r: 3, s: 4, t: 5, u: 6}\n" + "".join(
+        f"a{i}: &a{i} {{p: *a{i - 1}, q: *a{i - 1}, r: *a{i - 1}, s: *a{i - 1}}}\n"
+        for i in range(1, 12)
+    )
+    tail = "server:\n  servlet:\n    context-path: /y\n"
+    started = time.monotonic()
+    found = servlet_prefixes({"y/application.yml": bomb + tail})
+    assert time.monotonic() - started < 2
+    # Past the budget the rest of the document goes unread: no prefix, never a wrong one.
+    assert found.get("y") is None or found["y"].path in ("", "/y")
+
+
+def test_constants_of_constants_are_worked_out_once_and_never_grow_a_route_past_a_cap(
+    tmp_path: Path,
+) -> None:
+    """``C3 = C2 + C2 + ...`` (valid Java) once built megabyte keys, re-evaluated each name:
+    each constant is worked out once, and a route past the cap is no route."""
+    wide = 64
+    levels = "\n".join(
+        f"    static final String C{i} = " + " + ".join([f"C{i - 1}"] * wide) + ";"
+        for i in range(1, 4)
+    )
+    files = {
+        f"{JAVA}/web/Paths.java": (
+            "package org.acme.shop.web;\n\npublic final class Paths {\n"
+            f'    static final String C0 = "/a";\n{levels}\n'
+            '    static final String SHORT = C0 + "/b";\n}\n'
+        ),
+        f"{JAVA}/web/Long.java": (
+            "package org.acme.shop.web;\n\nimport org.springframework.web.bind.annotation.*;\n\n"
+            "@RestController\npublic class Long {\n"
+            '    @GetMapping(Paths.C3)\n    public String huge() { return ""; }\n\n'
+            '    @GetMapping(Paths.SHORT)\n    public String fine() { return ""; }\n}\n'
+        ),
+    }
+    started = time.monotonic()
+    build, _ = _build(tmp_path, files)
+    assert time.monotonic() - started < 5
+    endpoints = _endpoints(build)
+    assert "api_endpoint GET /a/b" in endpoints
+    assert all(len(key) < 4096 for key in endpoints)
