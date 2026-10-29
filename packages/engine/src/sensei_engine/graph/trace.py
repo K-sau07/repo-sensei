@@ -26,6 +26,15 @@ cover the service layer. The top
 :data:`TOP_PATHS` distinct ones are returned, each with its **breaks**: where it stops short of
 the goal, and why (a client call no endpoint matches, an endpoint with no handler in the
 repository, code that calls nothing further).
+
+A path that went down through a client call comes back up (3.22): after its deepest hop, a
+**return leg** (from :attr:`TracePath.return_index`) goes back to the function that made the call
+and on up the path, each with what it does with the response, in source order (``PRODUCES``
+edges to :mod:`~sensei_engine.link.outcomes`' outcomes: a token stored, a page navigated to,
+state set, an error shown). An outcome belongs to a hop when the call it is tied to covers the
+line the hop calls on from (``const res = await login(…)``, or the ``mutationFn`` an
+``onSuccess`` is beside); each is shown once. The return leg is not part of the path's
+confidence, layers or ranking.
 """
 
 from __future__ import annotations
@@ -44,6 +53,7 @@ from typing import Literal
 from sensei_core.models import EdgeType, NodeKind, Provenance
 from sensei_engine.graph.snapshot import Edge, GraphSnapshot, Node
 from sensei_engine.link.fastapi import normalize_path
+from sensei_engine.link.outcomes import outcome_kind, outcome_tie
 
 MAX_DEPTH = 8
 MAX_FANOUT = 8
@@ -111,12 +121,15 @@ class TracePath:
     breaks: list[TraceBreak] = field(default_factory=list[TraceBreak])
     entry_index: int = 0  # the entry's hop: what comes before it is where it is reached from
     reaches_origin: bool = False  # the hops before the entry start at a page (a UI root)
+    # The first hop of the return leg (None: none): back up from the deepest hop to what the
+    # code that made the request does with its response.
+    return_index: int | None = None
 
     @property
     def layers(self) -> list[Layer]:
-        """The layers it passes through, in order, each once."""
+        """The layers it passes through on the way down, in order, each once."""
         seen: list[Layer] = []
-        for hop in self.hops:
+        for hop in self.hops[: self.return_index]:
             if hop.layer != "other" and hop.layer not in seen:
                 seen.append(hop.layer)
         return seen
@@ -141,15 +154,18 @@ class _Index:
     """What a trace reads of one graph, built once per graph: node positions, and each node's
     edges the trace follows (the surest per neighbour and type), out and in."""
 
-    def __init__(self, graph: GraphSnapshot) -> None:
+    def __init__(self, graph: GraphSnapshot) -> None:  # noqa: PLR0912 - one case per edge kind
         self.graph = graph
         self.position = {node.symbol_key: i for i, node in enumerate(graph.nodes)}
         self.out: list[list[tuple[int, Edge]]] = [[] for _ in graph.nodes]
         self.into: list[list[tuple[int, Edge]]] = [[] for _ in graph.nodes]
         self.inherits_into: list[list[tuple[int, Edge]]] = [[] for _ in graph.nodes]
+        self.produces: dict[int, list[tuple[int, Edge]]] = {}  # a function's response outcomes
         for a, b, i in graph.graph.weighted_edge_list():
             edge = graph.edges[i]
-            if edge.type in TRACE_EDGES:
+            if edge.type is EdgeType.PRODUCES:
+                self.produces.setdefault(a, []).append((b, edge))
+            elif edge.type in TRACE_EDGES:
                 self.out[a].append((b, edge))
                 self.into[b].append((a, edge))
             elif edge.type in (EdgeType.INHERITS, EdgeType.IMPLEMENTS):
@@ -505,15 +521,15 @@ def trace_feature(
     done.extend(_finish(p, goal_set, "depth") for p in beam)
     downs = _best(done, feature)
     if direction == "down":
-        return TraceResult(entries, goal_node, downs)
+        return TraceResult(entries, goal_node, _returning(index, downs))
     ups = {
         node.symbol_key: _upstream(index, index.position[node.symbol_key], feature, min_conf)
         for node in entries
     }
     if direction == "up":
         every = [path for found in ups.values() for path in found]
-        return TraceResult(entries, goal_node, _best_up(every, feature))
-    return TraceResult(entries, goal_node, _joined(downs, ups))
+        return TraceResult(entries, goal_node, _returning(index, _best_up(every, feature)))
+    return TraceResult(entries, goal_node, _returning(index, _joined(downs, ups)))
 
 
 def _finish(partial: _Partial, goals: set[int], why: str) -> TracePath:
@@ -747,6 +763,86 @@ def _joined(downs: Sequence[TracePath], ups: Mapping[str, Sequence[TracePath]]) 
         if len(chosen) == TOP_PATHS:
             break
     return chosen
+
+
+# ---------------------------------------------------------------- the return leg
+
+# An outcome's layer: where it lands (a page, the client's state).
+OUTCOME_LAYERS: dict[str, Layer] = {
+    "navigate": "ui", "error": "ui", "storage": "state", "state": "state",
+}  # fmt: skip
+# Steps that aren't a call from the hop before (its nested function, an override).
+NOT_CALLS = frozenset({EdgeType.CONTAINS, EdgeType.IMPLEMENTS})
+
+
+def _outcomes(index: _Index, here: int, path: str, line: int) -> list[tuple[int, Edge]]:
+    """What ``here`` (and the functions nested in it) does with the response of its call on
+    ``line``: the outcomes tied to lines covering it, in source order."""
+    nodes = index.graph.nodes
+    found: list[tuple[int, Edge]] = []
+    for at in (here, *index.nested.get(here, ())):
+        for there, edge in index.produces.get(at, ()):
+            ties = outcome_tie(nodes[there].symbol_key) or ()
+            if nodes[there].path == path and any(a <= line <= b for a, b in ties):
+                found.append((there, edge))
+    return sorted(found, key=lambda f: (f[1].evidence_line or 0, nodes[f[0]].symbol_key))
+
+
+def _return_leg(index: _Index, path: TracePath) -> TracePath:
+    """``path`` with its return leg (see the module): from the code that made its client call
+    back up the path, each hop that does something with the response followed by what it does.
+    A path with no client call, or whose callers do nothing with it, is as it was."""
+    hops = path.hops
+    calls = [
+        i for i, hop in enumerate(hops) if i > 0 and hop.node.kind == NodeKind.HTTP_CLIENT_CALL
+    ]
+    if not calls:
+        return path
+    nodes = index.graph.nodes
+    leg: list[TraceHop] = []
+    shown: set[int] = set()
+    for i in range(calls[0] - 1, -1, -1):
+        hop, down = hops[i], hops[i + 1]
+        edge = down.edge
+        if (
+            edge is None
+            or down.edge_type in NOT_CALLS
+            or edge.evidence_path is None
+            or edge.evidence_line is None
+        ):
+            continue
+        here = index.position.get(hop.node.symbol_key)
+        if here is None:
+            continue
+        found = [
+            (there, produced)
+            for there, produced in _outcomes(index, here, edge.evidence_path, edge.evidence_line)
+            if there not in shown
+        ]
+        if not found:
+            continue
+        # Back to the hop, at the line it called on from; then what it does there.
+        leg.append(TraceHop(hop.node, hop.layer, edge, down.edge_type))
+        for there, produced in found:
+            shown.add(there)
+            node = nodes[there]
+            layer = OUTCOME_LAYERS.get(outcome_kind(node.symbol_key) or "", "state")
+            leg.append(TraceHop(node, layer, produced, EdgeType.PRODUCES))
+    if not leg:
+        return path
+    return TracePath(
+        [*hops, *leg],
+        path.confidence,
+        reaches_goal=path.reaches_goal,
+        breaks=path.breaks,
+        entry_index=path.entry_index,
+        reaches_origin=path.reaches_origin,
+        return_index=len(hops),
+    )
+
+
+def _returning(index: _Index, paths: Sequence[TracePath]) -> list[TracePath]:
+    return [_return_leg(index, path) for path in paths]
 
 
 def table_model(graph: GraphSnapshot, table: Node) -> Node | None:

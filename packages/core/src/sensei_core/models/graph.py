@@ -54,6 +54,9 @@ class NodeKind(enum.StrEnum):
     EXTERNAL_SYMBOL = "external_symbol"  # what an import names outside the repository
     # Boundaries between layers.
     HTTP_CLIENT_CALL = "http_client_call"
+    # What the client does with a response (3.22): attrs kind (storage, navigate, state, error),
+    # action, target, value, tie, after_call, on.
+    CLIENT_OUTCOME = "client_outcome"
     API_ENDPOINT = "api_endpoint"  # attrs: method, path_norm, framework
     GRAPHQL_OPERATION = "graphql_operation"
     GRAPHQL_FIELD = "graphql_field"
@@ -104,6 +107,7 @@ class EdgeType(enum.StrEnum):
     READS = "reads"  # function -> orm_model or table
     WRITES = "writes"
     TESTS = "tests"  # test -> function
+    PRODUCES = "produces"  # function -> client_outcome (what it does with a response)
 
 
 class Provenance(enum.StrEnum):

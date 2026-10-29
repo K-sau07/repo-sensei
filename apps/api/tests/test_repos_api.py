@@ -2141,8 +2141,8 @@ async def test_the_graph_is_rate_limited_per_user(
 
 # ------------------------------------------------------------------ trace
 
-# A page's calls (one to a route, one to nothing), the FastAPI route, and the table its handler
-# reads: the links stage's facts, for the trace.
+# A page's calls (one to a route, one to nothing), the FastAPI route, the table its handler
+# reads, and what the page does with the response: the links stage's facts, for the trace.
 STACK_FILES = {
     "stack/api.py": (
         b"from fastapi import FastAPI\n"
@@ -2163,6 +2163,7 @@ STACK_FILES = {
     "stack/page.ts": (
         b"export async function loadItems() {\n"
         b'  const response = await fetch("/items")\n'
+        b'  localStorage.setItem("items_seen", String(response.status))\n'
         b"  return response.json()\n"
         b"}\n"
         b"\n"
@@ -2235,7 +2236,29 @@ async def test_a_feature_traces_from_its_page_to_the_table(
         ("route", "api_endpoint GET /items"),
         ("handler", "py stack/api.py/read_items()."),
         ("db", "table item"),
+        # The return leg (3.22): back to the call, then what it does with the response.
+        ("service", "ts stack/page.ts/loadItems()."),
+        ("state", "client_outcome storage items_seen stack/page.ts:3 after 2-2"),
     ]
+    assert best["return_index"] == 5
+    assert best["layers"] == ["service", "client", "route", "handler", "db"]
+    stored = best["hops"][6]
+    assert stored["edge"] == {
+        "type": "produces",
+        "confidence": 1.0,
+        "provenance": "contract",
+        "evidence": {"path": "stack/page.ts", "line": 3},
+        "alternatives": 1,
+    }
+    assert stored["node"]["outcome"] == {
+        "kind": "storage",
+        "action": "localStorage.setItem",
+        "target": "items_seen",
+        "value": "String(response.status)",
+        "after_call": "http_client_call GET /items stack/page.ts:2",
+        "on": None,
+    }
+    assert best["hops"][0]["node"]["outcome"] is None
     assert best["hops"][0]["edge"] is None
     assert best["hops"][1]["edge"] == {
         "type": "issues_request",
@@ -2244,15 +2267,15 @@ async def test_a_feature_traces_from_its_page_to_the_table(
         "evidence": {"path": "stack/page.ts", "line": 2},
         "alternatives": 1,
     }
-    assert [h["edge"]["type"] for h in best["hops"][2:]] == ["targets", "handled_by", "reads"]
+    assert [h["edge"]["type"] for h in best["hops"][2:5]] == ["targets", "handled_by", "reads"]
     # The table's hop names the model it is mapped from.
-    assert best["hops"][-1]["node"]["model"] == {
+    assert best["hops"][4]["node"]["model"] == {
         "symbol_key": "py stack/api.py/Item#",
         "path": "stack/api.py",
         "lines": [7, 9],
     }
     assert best["path_confidence"] == pytest.approx(
-        math.prod(h["edge"]["confidence"] for h in best["hops"][1:]), abs=1e-4
+        math.prod(h["edge"]["confidence"] for h in best["hops"][1:5]), abs=1e-4
     )
     # The deep link answers the same.
     linked = await client.get(url, params={"from": "loadItems"})
@@ -2278,14 +2301,18 @@ async def test_a_trace_says_where_it_breaks_and_why(
     [stop] = path["breaks"]
     assert (stop["after_hop"], stop["reason"]) == (1, "client call has no matching endpoint")
     assert stop["detail"]  # 3.10's reason, kept on the call's node
-    assert path["hops"][1]["node"]["symbol_key"] == "http_client_call GET /nothing stack/page.ts:7"
+    assert path["hops"][1]["node"]["symbol_key"] == "http_client_call GET /nothing stack/page.ts:8"
+    assert path["return_index"] is None  # nothing done with its response
 
     to = await client.get(url, params={"from": "GET /items", "to": "py stack/api.py/read_items()."})
     assert to.json()["goal"]["symbol_key"] == "py stack/api.py/read_items()."
     # Where the endpoint is reached from (the page's call), then on to the goal.
     [whole] = to.json()["paths"]
-    assert [h["layer"] for h in whole["hops"]] == ["service", "client", "route", "handler"]
+    assert [h["layer"] for h in whole["hops"]] == [
+        "service", "client", "route", "handler", "service", "state",
+    ]  # fmt: skip
     assert (whole["entry_index"], whole["reaches_origin"]) == (2, False)  # no page renders it
+    assert whole["return_index"] == 4  # and back up to what the page does with the response
     down = await client.get(
         url,
         params={"from": "GET /items", "to": "py stack/api.py/read_items()."}

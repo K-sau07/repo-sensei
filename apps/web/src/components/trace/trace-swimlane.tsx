@@ -6,7 +6,8 @@
  * the path's hops left to right, each card in its lane: what it is, its name, how it was reached
  * and where (the call site's `file:line`), and its pip. A lane the path doesn't use stays, thin,
  * so a skipped layer shows. The Trace Beam runs through the cards; a gap is a dashed card where
- * the next hop would be.
+ * the next hop would be. The return leg (what the client does with the response) is its own
+ * section after the deepest hop.
  *
  * The cards are an ordered list in the path's order, so screen readers and the keyboard get the
  * hops in order (the lanes and the beam are decoration); the list view says the same at length.
@@ -17,6 +18,7 @@ import { useLayoutEffect, useRef, useState, type CSSProperties } from "react";
 
 import {
   breaksByHop,
+  downHops,
   hopPlace,
   howReached,
   isAmbiguous,
@@ -31,6 +33,7 @@ import { HopPip } from "./hop-pip";
 import { kindLabel, TRACE_LANES } from "./meta";
 import { TraceBeam, type Anchor } from "./trace-beam";
 import { TraceGap } from "./trace-gap";
+import { returnSummary, TraceReturns } from "./trace-returns";
 
 const LABEL_COLUMN = "8.5rem";
 const HOP_COLUMN = "11.5rem";
@@ -50,9 +53,10 @@ const UNMEASURED: Measured = { width: 0, height: 0, rows: null, anchors: [], gap
 
 const fileName = (path: string) => path.slice(path.lastIndexOf("/") + 1);
 
-/** The lanes shown: every layer a request crosses, and "other" when the path has one. */
+/** The lanes shown: every layer a request crosses, and "other" when the path has one (on the way
+ * down: the return leg has its own section). */
 export function lanesOf(path: TracePath): TraceLayer[] {
-  const used = new Set(path.hops.map((hop) => hop.layer));
+  const used = new Set(downHops(path).map((hop) => hop.layer));
   return TRACE_LAYERS.filter((layer) => layer !== "other" || used.has("other"));
 }
 
@@ -66,9 +70,11 @@ export function gapLane(layer: TraceLayer): TraceLayer {
 export function hopSummary(path: TracePath, index: number): string {
   const hop = path.hops[index];
   if (!hop) return "";
+  const steps = downHops(path).length;
+  if (index >= steps) return returnSummary(path, index);
   const place = hopPlace(hop);
   return [
-    `Step ${String(index + 1)} of ${String(path.hops.length)}`,
+    `Step ${String(index + 1)} of ${String(steps)}`,
     TRACE_LANES[hop.layer].label,
     `${kindLabel(hop.node.kind)} ${hop.node.name}`,
     howReached(path, index),
@@ -176,7 +182,8 @@ export function TraceSwimlane({
   onPulsed?: () => void;
 }) {
   const lanes = lanesOf(path);
-  const used = new Set(path.hops.map((hop) => hop.layer));
+  const hops = downHops(path);
+  const used = new Set(hops.map((hop) => hop.layer));
   const breaks = breaksByHop(path);
   const gap = path.breaks.at(-1) ?? null;
   const gapAt = gap ? path.hops[gap.after_hop] : undefined;
@@ -184,7 +191,7 @@ export function TraceSwimlane({
   if (gapRow) used.add(gapRow);
   const row = (layer: TraceLayer) => lanes.indexOf(layer) + 1;
   const gapColumn = gap ? gap.after_hop + 3 : null;
-  const columns = Math.max(path.hops.length, gapColumn ? gapColumn - 1 : 0);
+  const columns = Math.max(hops.length, gapColumn ? gapColumn - 1 : 0);
   const template: CSSProperties = {
     gridTemplateColumns: [
       LABEL_COLUMN,
@@ -213,7 +220,7 @@ export function TraceSwimlane({
               layer,
             }
           : null;
-      const anchors = path.hops.flatMap(
+      const anchors = downHops(path).flatMap(
         (hop, i) => anchorOf(cards.current[i] ?? null, hop.layer) ?? [],
       );
       setBox({
@@ -273,7 +280,7 @@ export function TraceSwimlane({
           {...(onPulsed ? { onPulsed } : {})}
         />
         <ol ref={list} aria-label="Hops, in order" className="relative grid py-1" style={template}>
-          {path.hops.map((hop, i) => (
+          {hops.map((hop, i) => (
             <li
               key={hop.node.symbol_key}
               ref={(element) => {
@@ -304,6 +311,9 @@ export function TraceSwimlane({
             </li>
           )}
         </ol>
+      </div>
+      <div className="mt-2 w-max min-w-full">
+        <TraceReturns path={path} selected={selected} onSelect={onSelect} />
       </div>
     </div>
   );

@@ -151,7 +151,8 @@ def template(tmp_path_factory: pytest.TempPathFactory) -> GraphSnapshot:
 
 
 def _route(path: TracePath) -> list[tuple[str, str]]:
-    return [(hop.layer, hop.node.qualified_name) for hop in path.hops]
+    """The way down (a return leg left out)."""
+    return [(hop.layer, hop.node.qualified_name) for hop in path.hops[: path.return_index]]
 
 
 def test_the_login_page_traces_to_the_user_table(template: GraphSnapshot) -> None:
@@ -162,7 +163,8 @@ def test_the_login_page_traces_to_the_user_table(template: GraphSnapshot) -> Non
     best = result.paths[0]
     assert best.reaches_goal
     assert best.breaks == []
-    assert [hop.node.symbol_key for hop in best.hops] == [
+    down = best.hops[: best.return_index]
+    assert [hop.node.symbol_key for hop in down] == [
         "tsx frontend/src/routes/login.tsx/Login().",
         "ts frontend/src/hooks/useAuth.ts/useAuth().",
         "ts frontend/src/client/sdk.gen.ts/LoginService#loginAccessToken().",
@@ -173,10 +175,21 @@ def test_the_login_page_traces_to_the_user_table(template: GraphSnapshot) -> Non
         "py backend/app/crud.py/get_user_by_email().",
         "table user",
     ]
-    layers = [hop.layer for hop in best.hops]
+    layers = [hop.layer for hop in down]
     assert layers[:2] == ["ui", "state"]
     assert layers[3:6] == ["client", "route", "handler"]
     assert layers[-1] == "db"
+    # And back up (3.22): useAuth's login() stores the token, the mutation's onSuccess goes
+    # home, its onError hands the error to handleError.
+    assert [
+        (hop.node.name, hop.edge.evidence_line if hop.edge else None)
+        for hop in best.hops[len(down) :]
+    ] == [
+        ("useAuth", 42),
+        ("localStorage.setItem access_token", 45),
+        ("navigate /", 51),
+        ("handleError", 53),
+    ]
     # Each hop is proven where the code says it: the handler's call on login.py:30.
     authenticate = best.hops[6]
     edge = authenticate.edge
@@ -185,7 +198,7 @@ def test_the_login_page_traces_to_the_user_table(template: GraphSnapshot) -> Non
         EdgeType.CALLS, "backend/app/api/routes/login.py", 30,
     )  # fmt: skip
     assert best.confidence == pytest.approx(0.9**7)
-    model = table_model(template, best.hops[-1].node)
+    model = table_model(template, down[-1].node)
     assert model is not None
     assert (model.qualified_name, model.path, model.start_line) == (
         "User",
@@ -217,7 +230,7 @@ def test_a_trace_to_a_given_symbol_stops_there(template: GraphSnapshot) -> None:
     assert result.goal is not None
     best = result.paths[0]
     assert best.reaches_goal
-    assert best.hops[-1].node.qualified_name == "authenticate"
+    assert best.hops[: best.return_index][-1].node.qualified_name == "authenticate"
     assert all(hop.node.kind != NodeKind.TABLE for hop in best.hops)
 
 

@@ -602,7 +602,8 @@
           "maps_to",
           "reads",
           "writes",
-          "tests"
+          "tests",
+          "produces"
         ],
         "title": "EdgeType",
         "type": "string"
@@ -3625,6 +3626,16 @@
             "title": "Name",
             "type": "string"
           },
+          "outcome": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TraceOutcomeOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "path": {
             "anyOf": [
               {
@@ -3697,6 +3708,78 @@
         "title": "TraceOut",
         "type": "object"
       },
+      "TraceOutcomeOut": {
+        "description": "What the client does with a response (a return leg's outcome).",
+        "properties": {
+          "action": {
+            "title": "Action",
+            "type": "string"
+          },
+          "after_call": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "After Call"
+          },
+          "kind": {
+            "enum": [
+              "storage",
+              "navigate",
+              "state",
+              "error"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "on": {
+            "anyOf": [
+              {
+                "const": "error",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "On"
+          },
+          "target": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target"
+          },
+          "value": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Value"
+          }
+        },
+        "required": [
+          "kind",
+          "action",
+          "target",
+          "value"
+        ],
+        "title": "TraceOutcomeOut",
+        "type": "object"
+      },
       "TracePathOut": {
         "properties": {
           "breaks": {
@@ -3745,6 +3828,17 @@
           "reaches_origin": {
             "title": "Reaches Origin",
             "type": "boolean"
+          },
+          "return_index": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Return Index"
           }
         },
         "required": [

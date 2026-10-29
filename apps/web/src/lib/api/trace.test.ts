@@ -3,9 +3,14 @@ import { describe, expect, it } from "vitest";
 import {
   breaksByHop,
   definitionPlace,
+  downHops,
   edgeLabel,
   hopPlace,
+  howReached,
   isAmbiguous,
+  isReturn,
+  outcomeLabel,
+  returnGroups,
   pathFiles,
   pathOutcome,
   pathTitle,
@@ -14,6 +19,7 @@ import {
   type TraceEdge,
   type TraceHop,
   type TraceNode,
+  type TraceOutcome,
   type TracePath,
 } from "./trace";
 
@@ -147,5 +153,64 @@ describe("a path in words", () => {
         "endpoint (no POST endpoint at /x (it has GET)). Where does it go next, and what in the " +
         "code connects them?",
     );
+  });
+});
+
+describe("the return leg", () => {
+  const outcome = (overrides: Partial<TraceOutcome>): TraceOutcome => ({
+    kind: "storage",
+    action: "localStorage.setItem",
+    target: "token",
+    value: "res.data.token",
+    after_call: null,
+    on: null,
+    ...overrides,
+  });
+  const produced = (name: string, of: TraceOutcome, line: number): TraceHop => ({
+    layer: "state",
+    node: node(name, { kind: "client_outcome", outcome: of }),
+    edge: edge({ type: "produces", evidence: { path: "login.tsx", line } }),
+  });
+  const token = outcome({});
+  const home = outcome({ kind: "navigate", action: "navigate", target: "/dashboard" });
+  const failed = outcome({ kind: "state", action: "setError", target: "setError", on: "error" });
+  const returning = path(
+    [
+      hop("Login", null, { path: "login.tsx" }),
+      hop("login", edge({ evidence: { path: "login.tsx", line: 12 } })),
+      hop("user", edge({ type: "reads" }), { kind: "table", path: null, lines: null }),
+      hop("Login", edge({ evidence: { path: "login.tsx", line: 12 } }), { path: "login.tsx" }),
+      produced("localStorage.setItem token", token, 13),
+      produced("navigate /dashboard", home, 14),
+      produced("setError", failed, 17),
+    ],
+    { return_index: 3 },
+  );
+
+  it("comes after the way down, which names the path", () => {
+    expect(downHops(returning).map((h) => h.node.name)).toEqual(["Login", "login", "user"]);
+    expect(isReturn(returning, 2)).toBe(false);
+    expect(isReturn(returning, 3)).toBe(true);
+    expect(pathTitle(returning)).toBe("Login → user");
+    expect(pathOutcome(returning, null)).toBe("Reaches the user table");
+    expect(downHops(path([hop("a", null)]))).toHaveLength(1);
+  });
+
+  it("groups what each function does with the response, in order", () => {
+    expect(
+      returnGroups(returning).map((g) => [g.index, g.outcomes.map((step) => step.index)]),
+    ).toEqual([[3, [4, 5, 6]]]);
+    expect(returnGroups(path([hop("a", null)]))).toEqual([]);
+  });
+
+  it("says each step in words: back to the function, then what it does", () => {
+    expect(howReached(returning, 3)).toBe("returns to");
+    expect(howReached(returning, 4)).toBe("stores");
+    expect(howReached(returning, 5)).toBe("navigates");
+    expect(howReached(returning, 6)).toBe("on error, sets");
+    expect(howReached(returning, 1)).toBe("calls");
+    expect(outcomeLabel(token)).toBe("localStorage.setItem token");
+    expect(outcomeLabel(home)).toBe("→ /dashboard");
+    expect(outcomeLabel(failed)).toBe("setError");
   });
 });

@@ -143,6 +143,37 @@ test.describe("trace", () => {
     expect(copied).toContain("client call has no matching endpoint");
   });
 
+  test("after the data, the trace comes back to what the page does with the response", async ({
+    page,
+  }) => {
+    await page.goto(trace(LOGIN));
+    const returns = page.getByTestId("trace-returns");
+    await expect(returns.getByRole("heading", { name: /Returns/ })).toBeVisible();
+    const group = returns.getByRole("list", { name: "Returns, in order" }).getByRole("listitem");
+    await expect(group.first()).toContainText("useAuth");
+    const did = returns.getByRole("list", { name: "What useAuth does with it" });
+    await expect(
+      did.getByRole("button", { name: /stores, Storage localStorage\.setItem access_token/ }),
+    ).toBeVisible();
+    await expect(did.getByRole("button", { name: /navigates, Navigates → \// })).toBeVisible();
+    await expect(
+      did.getByRole("button", { name: /on error, shows, Error handleError/ }),
+    ).toBeVisible();
+    await expect(did.getByText("on error", { exact: true })).toBeVisible();
+    // The way down keeps its hops; the summary says where the response goes back to.
+    await expect(hops(page).getByRole("listitem")).toHaveCount(9);
+    await expect(page.getByText(/then back to useAuth/).first()).toBeVisible();
+    // A step opens its code at the line that does it.
+    await did.getByRole("button", { name: /stores, Storage/ }).click();
+    const code = page.getByRole("region", { name: /^Code of localStorage\.setItem/ });
+    await expect(code.getByText("frontend/src/hooks/useAuth.ts:45")).toBeVisible();
+    await expect(code.locator(".cm-range-line")).toContainText("localStorage.setItem(");
+    // The list view has the same section.
+    await page.getByRole("group", { name: "View" }).getByRole("button", { name: /List/ }).click();
+    await expect(page.getByTestId("trace-list")).toBeVisible();
+    await expect(page.getByTestId("trace-returns")).toContainText("useAuth");
+  });
+
   test("the list view says the same as an ordered list", async ({ page }) => {
     await page.goto(trace(LOGIN));
     await expect(page.getByTestId("trace-swimlane")).toBeVisible();

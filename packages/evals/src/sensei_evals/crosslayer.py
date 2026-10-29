@@ -37,6 +37,10 @@ place (a node in no file) is neither right nor wrong. Per flow, on the best path
   no unmatched placed hop (``exact_at_3``: any of the 3 paths is);
 - ``layers_hit``: every layer of the gold has a matched hop.
 
+A path's **return leg** (3.22: back up from the data to what the client does with the response)
+is kept apart (:attr:`TracePath.returns`) and never scored: the gold is the way down. Each flow
+reports the best path's return hops (``returns``), and a run how many flows have one.
+
 Over a run (:func:`aggregate`): the means, and **calibration**: the expected calibration error
 and Brier score of the best path's confidence against ``exact``, and of each hop's edge
 confidence against the hop being right.
@@ -232,6 +236,7 @@ class TracePath:
     hops: tuple[TraceHop, ...]
     confidence: float  # the product of its edges'
     breaks: tuple[str, ...] = ()  # where it stops short, and why
+    returns: tuple[TraceHop, ...] = ()  # its return leg (not scored)
 
 
 class Tracer(Protocol):
@@ -308,6 +313,7 @@ class FlowResult(BaseModel):
     hop_confidences: list[tuple[float, bool]] = Field(default_factory=list[tuple[float, bool]])
     breaks: list[str] = Field(default_factory=list[str])
     trace: list[dict[str, Any]] = Field(default_factory=list[dict[str, Any]])  # the best path
+    returns: list[dict[str, Any]] = Field(default_factory=list[dict[str, Any]])  # its return leg
     error: str | None = None
     seconds: float = 0.0
 
@@ -354,6 +360,7 @@ def score_flow(flow: Flow, paths: Sequence[TracePath], seconds: float = 0.0) -> 
         hop_confidences=hop_confidences,
         breaks=list(best.breaks),
         trace=[_hop_json(h, m) for h, m in zip(best.hops, best_score.matched, strict=True)],
+        returns=[_hop_json(h, None) for h in best.returns],
         seconds=seconds,
     )
 
@@ -422,7 +429,12 @@ def aggregate(results: Sequence[FlowResult]) -> dict[str, Any]:
             if (group := [r for r in results if r.repo == repo])
         },
         "calibration": {"paths": paths, "hops": hops},
-        "counts": {"items": len(results), "answerable": len(results)},
+        "counts": {
+            "items": len(results),
+            "answerable": len(results),
+            "returning": sum(bool(r.returns) for r in results),  # with a return leg
+            "return_hops": sum(len(r.returns) for r in results),
+        },
         "latency_ms": {"p50": percentile(latencies, 0.5), "p95": percentile(latencies, 0.95)},
         "breaks": {r.id: r.breaks for r in results if r.breaks},
         "errors": {r.id: r.error for r in results if r.error is not None},
@@ -588,15 +600,22 @@ def _trace_hop(hop: Mapping[str, Any]) -> TraceHop:
 def paths_from_trace(answer: Mapping[str, Any]) -> list[TracePath]:
     """3.12's ``trace_feature`` answer as paths: ``{paths: [{hops: [{layer, node: {kind, name,
     symbol_key, path, lines, model?: {symbol_key, path, lines}}, edge: {confidence, ...} |
-    null}], path_confidence, breaks: [{after_hop, reason}]}]}``."""
+    null}], path_confidence, breaks: [{after_hop, reason}], return_index?}]}``, the hops from
+    ``return_index`` on (the return leg) kept apart."""
     found: list[TracePath] = []
     for raw in cast("list[dict[str, Any]]", answer.get("paths") or [])[:MAX_PATHS]:
         hops = tuple(_trace_hop(hop) for hop in cast("list[dict[str, Any]]", raw.get("hops") or []))
+        back = raw.get("return_index")
+        down = hops[:back] if isinstance(back, int) else hops
         breaks = tuple(
             f"after hop {b.get('after_hop')}: {b.get('reason')}"
             for b in cast("list[dict[str, Any]]", raw.get("breaks") or [])
         )
-        found.append(TracePath(hops, float(raw.get("path_confidence", 0.0)), breaks))
+        found.append(
+            TracePath(
+                down, float(raw.get("path_confidence", 0.0)), breaks, returns=hops[len(down) :]
+            )
+        )
     return found
 
 
@@ -715,6 +734,10 @@ def render_run(run: RunRecord) -> str:
         f"Brier {_num(paths.get('brier'))} over {paths.get('n', 0)}. Hops (edge confidence "
         f"against right): ECE {_num(hops.get('ece'))}, Brier {_num(hops.get('brier'))} over "
         f"{hops.get('n', 0)}.",
+        "",
+        f"**Return legs** (not scored): {counts.get('returning', 0)} of {counts.get('items', 0)} "
+        f"flows come back up to what the client does with the response, "
+        f"{counts.get('return_hops', 0)} hops.",
         "",
         "| flow | hops | recall | precision | exact | exact@3 | layers | confidence | breaks |",
         "|---|---|---|---|---|---|---|---|---|",

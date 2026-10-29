@@ -3,7 +3,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest
 import { createApiClient } from "@/lib/api/client";
 import { ApiError } from "@/lib/api/errors";
 import { LAYERS } from "@/lib/api/search";
-import { TRACE_LAYERS, type Trace } from "@/lib/api/trace";
+import { downHops, returnGroups, TRACE_LAYERS, type Trace } from "@/lib/api/trace";
 
 import { BROWSE_COMMIT } from "./browse";
 import { db, resetMockDb } from "./db";
@@ -62,7 +62,10 @@ describe("the mock traces", () => {
       expect(trace.paths.length).toBeGreaterThan(0);
       expect(trace.paths.length).toBeLessThanOrEqual(3);
       for (const path of trace.paths) {
-        const [entry, ...rest] = path.hops;
+        // The return leg (back up to what the client does with the response) comes after the
+        // way down, and is no part of its sureness.
+        const down = downHops(path);
+        const [entry, ...rest] = down;
         expect(entry?.edge).toBeNull();
         for (const hop of rest) {
           expect(hop.edge).not.toBeNull();
@@ -73,11 +76,19 @@ describe("the mock traces", () => {
           expect(TRACE_LAYERS).toContain(hop.layer);
           expect(LAYERS).toContain(hop.node.lane);
         }
-        const keys = path.hops.map((hop) => hop.node.symbol_key);
+        const keys = down.map((hop) => hop.node.symbol_key);
         expect(new Set(keys).size).toBe(keys.length);
         const product = rest.reduce((p, hop) => p * (hop.edge?.confidence ?? 1), 1);
         expect(path.path_confidence).toBeCloseTo(product, 3);
-        for (const gap of path.breaks) expect(gap.after_hop).toBeLessThan(path.hops.length);
+        for (const gap of path.breaks) expect(gap.after_hop).toBeLessThan(down.length);
+        for (const group of returnGroups(path)) {
+          expect(keys).toContain(group.hop.node.symbol_key);
+          expect(group.outcomes.length).toBeGreaterThan(0);
+          for (const { hop } of group.outcomes) {
+            expect(hop.edge?.type).toBe("produces");
+            expect(hop.node.outcome).toBeTruthy();
+          }
+        }
       }
     }
   });
@@ -95,8 +106,9 @@ describe("the mock traces", () => {
 
   it("go from the Login page to the user table, every hop's file served by the mock", () => {
     const [best] = traces[LOGIN_ENTRY]?.paths ?? [];
-    expect(best?.reaches_goal).toBe(true);
-    expect(best?.hops.map((hop) => hop.layer)).toEqual([
+    if (!best) throw new Error("no Login trace");
+    expect(best.reaches_goal).toBe(true);
+    expect(downHops(best).map((hop) => hop.layer)).toEqual([
       "ui",
       "state",
       "ui",
@@ -107,8 +119,15 @@ describe("the mock traces", () => {
       "db",
       "db",
     ]);
-    expect(best?.hops.at(-1)?.node).toMatchObject({ kind: "table", name: "user" });
-    for (const hop of best?.hops ?? []) {
+    expect(downHops(best).at(-1)?.node).toMatchObject({ kind: "table", name: "user" });
+    // And back up: useAuth stores the token and goes home; its onError hands the error on.
+    expect(
+      returnGroups(best).map((group) => [
+        group.hop.node.name,
+        group.outcomes.map(({ hop }) => hop.node.outcome?.kind),
+      ]),
+    ).toEqual([["useAuth", ["storage", "navigate", "error"]]]);
+    for (const hop of best.hops) {
       if (hop.node.path) expect(files[hop.node.path], hop.node.path).toBeDefined();
       if (hop.edge?.evidence) expect(files[hop.edge.evidence.path]).toBeDefined();
     }

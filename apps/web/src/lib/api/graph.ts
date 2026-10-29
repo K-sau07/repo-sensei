@@ -34,6 +34,7 @@ export const REFERENCE_TYPES: readonly EdgeType[] = [
   "reads",
   "writes",
   "tests",
+  "produces",
 ];
 
 /** The most hops one request asks for (the API's cap). */
@@ -77,6 +78,7 @@ export const EDGE_VERBS: Record<EdgeType, string> = {
   reads: "reads",
   writes: "writes",
   tests: "tests",
+  produces: "produces",
 };
 
 /** The kinds a definition has (a node of another kind is one of the graph's own). */

@@ -31,7 +31,10 @@ def test_the_web_mock_traces_are_the_tracers_output() -> None:
     # with its reason, an ambiguous endpoint, and a trace before the links stage.
     login = mock["traces"][script.LOGIN]["paths"][0]
     assert login["reaches_goal"]
-    assert login["hops"][-1]["node"]["name"] == "user"
+    assert login["hops"][login["return_index"] - 1]["node"]["name"] == "user"
+    # And back up (3.22): the token stored, the page navigated to.
+    outcomes = [h["node"]["outcome"] for h in login["hops"][login["return_index"] :]]
+    assert {o["kind"] for o in outcomes if o} >= {"storage", "navigate"}
     [gap] = mock["traces"][script.EXPORT]["paths"][0]["breaks"]
     assert gap["detail"]
     endpoint = mock["traces"][script.REPORT]["paths"][0]["hops"][2]["edge"]

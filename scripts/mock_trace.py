@@ -14,7 +14,8 @@ and links stages would (``sensei_evals.tracing.link_checkout``: no database, no 
   LINKS layer), as the API answers with ``linked: false``.
 
 A break's ``detail`` is read where the API reads it, from the call's ``unmatched_reason``, here
-from the links stage's build. The parse pool spawns workers, so this runs under ``__main__``::
+from the links stage's build; so is what a return leg's outcome is (3.22: its node's attrs).
+The parse pool spawns workers, so this runs under ``__main__``::
 
     uv run python scripts/mock_trace.py
 """
@@ -32,9 +33,12 @@ import orjson
 
 from sensei_api.routers.trace import (
     TraceOut,
+    TraceOutcomeOut,
     _node,  # pyright: ignore[reportPrivateUsage]
     _path,  # pyright: ignore[reportPrivateUsage]
+    outcome_of,
 )
+from sensei_core.models import NodeKind
 from sensei_engine.graph.project import Project
 from sensei_engine.graph.snapshot import Edge, GraphSnapshot
 from sensei_engine.graph.trace import trace_feature
@@ -183,15 +187,28 @@ def _reasons(build: LinkBuild) -> dict[str, str]:
     return found
 
 
+def _outcomes(build: LinkBuild) -> dict[str, TraceOutcomeOut]:
+    return {
+        node.key: found
+        for node in build.nodes
+        if node.kind is NodeKind.CLIENT_OUTCOME and (found := outcome_of(dict(node.attrs)))
+    }
+
+
 def _trace(
-    graph: GraphSnapshot, entry: str, details: dict[str, str], *, linked: bool
+    graph: GraphSnapshot,
+    entry: str,
+    details: dict[str, str],
+    outcomes: dict[str, TraceOutcomeOut],
+    *,
+    linked: bool,
 ) -> dict[str, Any]:
     result = trace_feature(graph, entry, direction="both")  # as GET /trace answers by default
     out = TraceOut(
         entries=[_node(graph, node) for node in result.entries],
         goal=_node(graph, result.goal) if result.goal is not None else None,
         linked=linked,
-        paths=[_path(graph, path, details) for path in result.paths],
+        paths=[_path(graph, path, details, outcomes) for path in result.paths],
     )
     return out.model_dump(mode="json")
 
@@ -217,25 +234,25 @@ def build() -> dict[str, Any]:
     aliases: dict[str, str] = {}
     with tempfile.TemporaryDirectory() as plain, tempfile.TemporaryDirectory() as added:
         graph, links = _linked(_checkout(Path(plain), synthetic=False))
-        details = _reasons(links)
+        details, outcomes = _reasons(links), _outcomes(links)
         traces = _traces(
             graph,
             TEMPLATE_ENTRIES,
-            lambda g, entry: _trace(g, entry, details, linked=True),
+            lambda g, entry: _trace(g, entry, details, outcomes, linked=True),
             aliases,
         )
         unlinked = _traces(
             _without_links(graph, links),
             {LOGIN: TEMPLATE_ENTRIES[LOGIN]},
-            lambda g, entry: _trace(g, entry, {}, linked=False),
+            lambda g, entry: _trace(g, entry, {}, {}, linked=False),
             {},
         )
         more, more_links = _linked(_checkout(Path(added), synthetic=True))
-        more_details = _reasons(more_links)
+        more_details, more_outcomes = _reasons(more_links), _outcomes(more_links)
         traces |= _traces(
             more,
             SYNTHETIC_ENTRIES,
-            lambda g, entry: _trace(g, entry, more_details, linked=True),
+            lambda g, entry: _trace(g, entry, more_details, more_outcomes, linked=True),
             aliases,
         )
     return {

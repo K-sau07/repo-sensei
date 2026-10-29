@@ -1,7 +1,7 @@
 /** What the trace view calls things: its lanes and its pips. Every one has a text label and a
  * glyph as well as a color, so color is never the only signal. */
 import { LAYERS as LAYER_BADGES } from "@/components/primitives/layer-badge";
-import type { Pip, TraceLayer } from "@/lib/api/trace";
+import type { Pip, TraceLayer, TraceOutcome } from "@/lib/api/trace";
 
 export interface TraceLaneMeta {
   label: string;
@@ -74,9 +74,23 @@ export const PIPS: Record<Pip, PipMeta> = {
   },
 };
 
+export interface OutcomeMeta {
+  label: string;
+  glyph: string;
+}
+
+/** What a return leg's outcome is: a glyph and a word each, not only a color. */
+export const OUTCOMES: Record<TraceOutcome["kind"], OutcomeMeta> = {
+  storage: { label: "Storage", glyph: "⛁" },
+  navigate: { label: "Navigates", glyph: "→" },
+  state: { label: "State", glyph: "↻" },
+  error: { label: "Error", glyph: "!" },
+};
+
 /** What a node is, in a word or two ("component", "HTTP call", "table"). */
 export function kindLabel(kind: string): string {
   if (kind === "http_client_call") return "HTTP call";
+  if (kind === "client_outcome") return "outcome";
   if (kind === "api_endpoint") return "endpoint";
   return kind.replaceAll("_", " ");
 }

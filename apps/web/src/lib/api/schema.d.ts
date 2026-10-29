@@ -1219,7 +1219,7 @@ export interface components {
          * EdgeType
          * @enum {string}
          */
-        EdgeType: "contains" | "defines" | "imports" | "calls" | "references" | "inherits" | "implements" | "renders" | "uses_hook" | "injects" | "issues_request" | "targets" | "handled_by" | "resolves" | "publishes" | "consumes" | "maps_to" | "reads" | "writes" | "tests";
+        EdgeType: "contains" | "defines" | "imports" | "calls" | "references" | "inherits" | "implements" | "renders" | "uses_hook" | "injects" | "issues_request" | "targets" | "handled_by" | "resolves" | "publishes" | "consumes" | "maps_to" | "reads" | "writes" | "tests" | "produces";
         /** EstimateOut */
         EstimateOut: {
             /**
@@ -2382,6 +2382,7 @@ export interface components {
             model?: components["schemas"]["TraceModelOut"] | null;
             /** Name */
             name: string;
+            outcome?: components["schemas"]["TraceOutcomeOut"] | null;
             /** Path */
             path: string | null;
             /** Qualified Name */
@@ -2399,6 +2400,27 @@ export interface components {
             /** Paths */
             paths: components["schemas"]["TracePathOut"][];
         };
+        /**
+         * TraceOutcomeOut
+         * @description What the client does with a response (a return leg's outcome).
+         */
+        TraceOutcomeOut: {
+            /** Action */
+            action: string;
+            /** After Call */
+            after_call?: string | null;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "storage" | "navigate" | "state" | "error";
+            /** On */
+            on?: "error" | null;
+            /** Target */
+            target: string | null;
+            /** Value */
+            value: string | null;
+        };
         /** TracePathOut */
         TracePathOut: {
             /** Breaks */
@@ -2415,6 +2437,8 @@ export interface components {
             reaches_goal: boolean;
             /** Reaches Origin */
             reaches_origin: boolean;
+            /** Return Index */
+            return_index?: number | null;
         };
         /** TraceRequest */
         TraceRequest: {

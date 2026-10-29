@@ -41,6 +41,14 @@ describe("the swimlanes", () => {
     expect(hopSummary(login, 1)).toBe(
       "Step 2 of 9, Hook / client, hook useAuth, uses, frontend/src/routes/login.tsx:54",
     );
+    // The return leg says itself: back to useAuth, then what it does there.
+    expect(hopSummary(login, 9)).toBe(
+      "Returns, returns to, useAuth, frontend/src/hooks/useAuth.ts:42",
+    );
+    expect(hopSummary(login, 10)).toBe(
+      "Returns, stores, Storage localStorage.setItem access_token, frontend/src/hooks/useAuth.ts:45",
+    );
+    expect(lanesOf(login)).not.toContain("other");
   });
 });
 

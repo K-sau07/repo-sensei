@@ -20,6 +20,7 @@ from sensei_engine.graph.project import Definition, Project, is_config
 from sensei_engine.graph.snapshot import Edge, GraphSnapshot, Node, lane
 from sensei_engine.graph.stage import extract_files, resolve_graph, resolver_for
 from sensei_engine.graph.trace import TraceError, table_model, trace_feature
+from sensei_engine.graph.trace import TraceHop as EngineHop
 from sensei_engine.graph.trace import TracePath as EnginePath
 from sensei_engine.graph.writer import GraphEdge, GraphNode
 from sensei_engine.ingest.classify import Flag
@@ -138,29 +139,38 @@ def entry_of(graph: GraphSnapshot, flow: Flow) -> str:
     return first.path
 
 
+def _bench_hop(graph: GraphSnapshot, hop: EngineHop) -> TraceHop:
+    node = hop.node
+    model = table_model(graph, node) if node.kind == "table" else None
+    return TraceHop(
+        kind=node.kind,
+        name=node.qualified_name,
+        path=node.path if node.start_line > 0 else None,
+        lines=(node.start_line, node.end_line) if node.start_line > 0 else None,
+        confidence=hop.edge.confidence if hop.edge is not None else None,
+        layer=hop.layer,
+        model=(model.path, (model.start_line, model.end_line))
+        if model is not None and model.path is not None
+        else None,
+    )
+
+
 def bench_paths(graph: GraphSnapshot, paths: Sequence[EnginePath]) -> list[TracePath]:
-    """The engine's paths as the bench scores them (a table placed at its ORM class)."""
+    """The engine's paths as the bench scores them (a table placed at its ORM class), each
+    return leg kept apart (not scored)."""
     found: list[TracePath] = []
     for path in paths:
-        hops: list[TraceHop] = []
-        for hop in path.hops:
-            node = hop.node
-            model = table_model(graph, node) if node.kind == "table" else None
-            hops.append(
-                TraceHop(
-                    kind=node.kind,
-                    name=node.qualified_name,
-                    path=node.path if node.start_line > 0 else None,
-                    lines=(node.start_line, node.end_line) if node.start_line > 0 else None,
-                    confidence=hop.edge.confidence if hop.edge is not None else None,
-                    layer=hop.layer,
-                    model=(model.path, (model.start_line, model.end_line))
-                    if model is not None and model.path is not None
-                    else None,
-                )
-            )
+        down = path.hops[: path.return_index]
+        back = path.hops[len(down) :]
         breaks = tuple(f"after hop {b.after_hop}: {b.reason}" for b in path.breaks)
-        found.append(TracePath(tuple(hops), path.confidence, breaks))
+        found.append(
+            TracePath(
+                tuple(_bench_hop(graph, hop) for hop in down),
+                path.confidence,
+                breaks,
+                returns=tuple(_bench_hop(graph, hop) for hop in back),
+            )
+        )
     return found
 
 

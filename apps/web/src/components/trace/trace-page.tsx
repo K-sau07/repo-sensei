@@ -33,6 +33,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { ApiError } from "@/lib/api/errors";
 import {
+  downHops,
   hopPlace,
   howReached,
   pathOutcome,
@@ -40,6 +41,7 @@ import {
   pathTitle,
   percent,
   placeLabel,
+  returnGroups,
   type Trace,
   type TracePath,
 } from "@/lib/api/trace";
@@ -193,8 +195,12 @@ function PathSummary({ path, trace }: { path: TracePath; trace: Trace }) {
       )}
       <span className={path.reaches_goal ? "text-fg" : ""}>{pathOutcome(path, trace.goal)}</span>
       <span className="tabular-nums">
-        {path.hops.length} {path.hops.length === 1 ? "hop" : "hops"},{" "}
+        {downHops(path).length} {downHops(path).length === 1 ? "hop" : "hops"},{" "}
         {percent(path.path_confidence)} sure
+        {returnGroups(path).length > 0 &&
+          `, then back to ${returnGroups(path)
+            .map((group) => group.hop.node.name)
+            .join(", ")}`}
       </span>
       <span className="flex flex-wrap items-center gap-1.5 text-xs">
         {path.layers.map((layer) => (

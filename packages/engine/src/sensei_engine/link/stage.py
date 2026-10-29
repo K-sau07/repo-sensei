@@ -5,10 +5,10 @@ tables and the code that reads and writes them).
 Like the graph stage, files are parsed again in the pool and their facts extracted there
 (:func:`extract_links`: no tree leaves a worker process): a Python file's routes (3.8), imports
 and data-layer facts (3.11), a JavaScript or TypeScript file's HTTP calls (3.9, with the ``.env``
-values its folder sees), a Java file's types and constants for its Spring routes (3.19) and its
-facts for JPA (3.20), and the migrations and configs JPA reads.
-:func:`resolve_links` then joins them over the project (its paths, definitions and configs, as
-:func:`sensei_engine.graph.stage.load_project` reads them):
+values its folder sees) and what it does with their responses (3.22), a Java file's types and
+constants for its Spring routes (3.19) and its facts for JPA (3.20), and the migrations and
+configs JPA reads. :func:`resolve_links` then joins them over the project (its paths,
+definitions and configs, as :func:`sensei_engine.graph.stage.load_project` reads them):
 
 - the routes, statically, reconciled with the running app's when the sandbox read them
   (:func:`runtime_routes`: the caller decides whether to run it); a Java file's Spring
@@ -16,6 +16,7 @@ facts for JPA (3.20), and the migrations and configs JPA reads.
 - the client calls, and each matched to its endpoints through the URL trie (3.10), a call that
   matches none keeping why on its node;
 - the models, tables and query sites: Python's, then JPA's (sharing a table both name);
+- what the client does with a response (:mod:`sensei_engine.link.outcomes`);
 
 and :func:`write_links` replaces the snapshot's LINKS layer with the result, in the caller's
 transaction. A file that doesn't parse, or that a scanner can't read, contributes nothing and is
@@ -39,11 +40,12 @@ from sensei_engine.graph.python.imports import PyFacts
 from sensei_engine.graph.python.imports import extract as python_imports
 from sensei_engine.graph.writer import LINKS, GraphCounts, GraphEdge, GraphNode, GraphWriter
 from sensei_engine.ingest.classify import MAX_PARSE_BYTES
-from sensei_engine.link import fastapi, http_calls, jpa, orm, spring, urls
+from sensei_engine.link import fastapi, http_calls, jpa, orm, outcomes, spring, urls
 from sensei_engine.link.fastapi import FileRoutes, RouteGraph, RuntimeRoutes
 from sensei_engine.link.http_calls import ECMA_LANGUAGES, ENV_FILES, FileCalls
 from sensei_engine.link.jpa import FileJpa
 from sensei_engine.link.orm import FileOrm
+from sensei_engine.link.outcomes import FileOutcomes
 from sensei_engine.link.spring import FileSpring, SpringRoutes
 from sensei_engine.parse.parser import TIMEOUT_SECONDS, parse_file
 from sensei_engine.parse.pool import BATCH_SIZE, Failed, run_parallel
@@ -80,6 +82,7 @@ class FileLinks:
     imports: PyFacts | None = None  # Python
     orm: FileOrm | None = None  # Python
     calls: FileCalls | None = None  # JavaScript and TypeScript
+    outcomes: FileOutcomes | None = None  # JavaScript and TypeScript: what responses lead to
     spring: FileSpring | None = None  # Java
     jpa: FileJpa | None = None  # Java, and the migrations and configs JPA reads
     failure: str | None = None  # why it has nothing (didn't parse, a scanner raised)
@@ -115,9 +118,9 @@ def extract_request(request: LinkRequest) -> FileLinks:  # noqa: PLR0911 - one p
                 imports=python_imports(parsed),
                 orm=orm.scan(parsed, symbols),
             )
-        return FileLinks(
-            request.path, calls=http_calls.scan_calls(parsed, definitions, request.env)
-        )
+        calls = http_calls.scan_calls(parsed, definitions, request.env)
+        found = None if calls.server else outcomes.scan_outcomes(parsed, definitions)
+        return FileLinks(request.path, calls=calls, outcomes=found)
     except Exception as exc:  # a bug for one file's shape loses its facts, not the stage
         return FileLinks(request.path, failure=f"{type(exc).__name__}: {exc}"[:300])
 
@@ -248,12 +251,16 @@ def resolve_links(
     )
     data = orm.link(f.orm for _, f in sorted(files.items()) if f.orm is not None)
     java = jpa.link((f.jpa for _, f in sorted(files.items()) if f.jpa is not None), data.nodes)
+    done = outcomes.link_outcomes(
+        {p: f.outcomes for p, f in files.items() if f.outcomes is not None}, calls.nodes
+    )
     build = LinkBuild()
     build.nodes = [
         *graph.nodes,
         *web.nodes,
         *urls.with_reasons(calls.nodes, linked.report),
         *java.nodes,
+        *done.nodes,
     ]
     build.edges = [
         *graph.edges,
@@ -262,6 +269,7 @@ def resolve_links(
         *linked.edges,
         *data.edges,
         *java.edges,
+        *done.edges,
     ]
     build.details = {
         "routes": asdict(graph.report),
@@ -270,6 +278,7 @@ def resolve_links(
         "urls": asdict(linked.report),
         "orm": asdict(data.report),
         "jpa": asdict(java.report),
+        "outcomes": asdict(done.report),
     }
     return build
 

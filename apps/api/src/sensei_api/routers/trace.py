@@ -15,12 +15,17 @@ rate_limited``), and runs off the event loop.
 
 A break carries what the graph knows of why: a client call no endpoint matches has the reason
 3.10 found (``detail``: the path exists under another method, the URL is dynamic, ...).
+
+A path that went down through a client call comes back up (3.22): its hops from
+``return_index`` on are the **return leg**, from the code that made the call back up the path,
+each followed by what it does with the response, an outcome node whose ``outcome`` says what (a
+key stored, a page navigated to, state set, an error shown; ``on: error`` in an error's branch).
 """
 
 from __future__ import annotations
 
 import asyncio
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Query, Request, Response
 from pydantic import BaseModel, ConfigDict, Field
@@ -34,7 +39,7 @@ from sensei_api.routers.browse import COMMIT_HEADER, RefParam
 from sensei_api.routers.graph import limit_graph
 from sensei_core.errors import NotFoundError
 from sensei_core.indexing.snapshots import resolve_snapshot
-from sensei_core.models import CodeNode, EdgeType, Provenance, Snapshot
+from sensei_core.models import CodeNode, EdgeType, NodeKind, Provenance, Snapshot
 from sensei_core.storage import ObjectStorage
 from sensei_engine.graph.snapshot import GraphSnapshot, Node
 from sensei_engine.graph.trace import (
@@ -84,6 +89,17 @@ class TraceModelOut(BaseModel):
     lines: tuple[int, int]
 
 
+class TraceOutcomeOut(BaseModel):
+    """What the client does with a response (a return leg's outcome)."""
+
+    kind: Literal["storage", "navigate", "state", "error"]
+    action: str  # as written: localStorage.setItem, navigate, router.push, setOrders, ...
+    target: str | None  # the key, the path, the setter (None: not known)
+    value: str | None  # what it is given, short
+    after_call: str | None = None  # the client call whose result flows into it (its key)
+    on: Literal["error"] | None = None  # in an error's branch (a catch, an onError)
+
+
 class TraceNodeOut(BaseModel):
     kind: str
     name: str
@@ -93,6 +109,7 @@ class TraceNodeOut(BaseModel):
     lines: tuple[int, int] | None  # None: no lines (a node in no file)
     lane: Lane
     model: TraceModelOut | None = None  # a table's ORM class
+    outcome: TraceOutcomeOut | None = None  # a return leg's outcome: what it is
 
 
 class TraceEvidence(BaseModel):
@@ -128,6 +145,8 @@ class TracePathOut(BaseModel):
     breaks: list[TraceBreakOut]
     entry_index: int  # the entry's hop: the hops before it are where it is reached from
     reaches_origin: bool  # those start at a page (or the app's entry module)
+    # The return leg's first hop (None: none): back up to what the client does with the response.
+    return_index: int | None = None
 
 
 class TraceOut(BaseModel):
@@ -137,7 +156,9 @@ class TraceOut(BaseModel):
     paths: list[TracePathOut]
 
 
-def _node(graph: GraphSnapshot, node: Node) -> TraceNodeOut:
+def _node(
+    graph: GraphSnapshot, node: Node, outcomes: dict[str, TraceOutcomeOut] | None = None
+) -> TraceNodeOut:
     model = table_model(graph, node) if node.kind == "table" else None
     return TraceNodeOut(
         kind=node.kind,
@@ -154,14 +175,17 @@ def _node(graph: GraphSnapshot, node: Node) -> TraceNodeOut:
         )
         if model is not None and model.path is not None
         else None,
+        outcome=(outcomes or {}).get(node.symbol_key),
     )
 
 
-def _hop(graph: GraphSnapshot, hop: TraceHop) -> TraceHopOut:
+def _hop(
+    graph: GraphSnapshot, hop: TraceHop, outcomes: dict[str, TraceOutcomeOut] | None = None
+) -> TraceHopOut:
     edge = hop.edge
     return TraceHopOut(
         layer=hop.layer,
-        node=_node(graph, hop.node),
+        node=_node(graph, hop.node, outcomes),
         edge=TraceEdgeOut(
             type=hop.edge_type or edge.type,
             confidence=round(edge.confidence, 4),
@@ -176,14 +200,20 @@ def _hop(graph: GraphSnapshot, hop: TraceHop) -> TraceHopOut:
     )
 
 
-def _path(graph: GraphSnapshot, path: TracePath, details: dict[str, str]) -> TracePathOut:
+def _path(
+    graph: GraphSnapshot,
+    path: TracePath,
+    details: dict[str, str],
+    outcomes: dict[str, TraceOutcomeOut] | None = None,
+) -> TracePathOut:
     return TracePathOut(
-        hops=[_hop(graph, hop) for hop in path.hops],
+        hops=[_hop(graph, hop, outcomes) for hop in path.hops],
         path_confidence=round(path.confidence, 4),
         layers=path.layers,
         reaches_goal=path.reaches_goal,
         entry_index=path.entry_index,
         reaches_origin=path.reaches_origin,
+        return_index=path.return_index,
         breaks=[
             TraceBreakOut(after_hop=b.after_hop, reason=b.reason, detail=details.get(b.node))
             for b in path.breaks
@@ -206,6 +236,41 @@ async def _break_details(db: DbSession, snapshot: Snapshot, keys: set[str]) -> d
         if isinstance(reason, str) and reason:
             found[key] = reason
     return found
+
+
+def outcome_of(attrs: dict[str, Any] | None) -> TraceOutcomeOut | None:
+    """An outcome node's attrs (:mod:`sensei_engine.link.outcomes`) as the API says them."""
+    found = attrs or {}
+    kind, action = found.get("kind"), found.get("action")
+    if kind not in ("storage", "navigate", "state", "error") or not isinstance(action, str):
+        return None
+
+    def text(key: str) -> str | None:
+        value = found.get(key)
+        return value if isinstance(value, str) and value else None
+
+    return TraceOutcomeOut(
+        kind=kind,
+        action=action,
+        target=text("target"),
+        value=text("value"),
+        after_call=text("after_call"),
+        on="error" if found.get("on") == "error" else None,
+    )
+
+
+async def _outcomes(
+    db: DbSession, snapshot: Snapshot, keys: set[str]
+) -> dict[str, TraceOutcomeOut]:
+    """What each return leg's outcome is, from its node's attrs."""
+    if not keys:
+        return {}
+    rows = await db.execute(
+        select(CodeNode.symbol_key, CodeNode.attrs).where(
+            CodeNode.snapshot_id == snapshot.id, CodeNode.symbol_key.in_(sorted(keys))
+        )
+    )
+    return {key: found for key, attrs in rows.tuples() if (found := outcome_of(attrs)) is not None}
 
 
 async def _trace(
@@ -240,11 +305,21 @@ async def _trace(
     details = await _break_details(
         db, snapshot, {b.node for path in result.paths for b in path.breaks}
     )
+    outcomes = await _outcomes(
+        db,
+        snapshot,
+        {
+            hop.node.symbol_key
+            for path in result.paths
+            for hop in path.hops
+            if hop.node.kind == NodeKind.CLIENT_OUTCOME
+        },
+    )
     return TraceOut(
         entries=[_node(graph, node) for node in result.entries],
         goal=_node(graph, result.goal) if result.goal is not None else None,
         linked=await links_done(db, snapshot),
-        paths=[_path(graph, path, details) for path in result.paths],
+        paths=[_path(graph, path, details, outcomes) for path in result.paths],
     )
 
 

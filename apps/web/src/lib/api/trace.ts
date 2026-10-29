@@ -8,6 +8,7 @@ export type TraceHop = Schemas["TraceHopOut"];
 export type TraceNode = Schemas["TraceNodeOut"];
 export type TraceEdge = Schemas["TraceEdgeOut"];
 export type TraceBreak = Schemas["TraceBreakOut"];
+export type TraceOutcome = Schemas["TraceOutcomeOut"];
 export type TraceRequest = Schemas["TraceRequest"];
 export type TraceLayer = TraceHop["layer"];
 export type TraceEntryKind = TraceRequest["kind"];
@@ -46,12 +47,73 @@ export function edgeLabel(edge: TraceEdge): string {
   return edge.type === "implements" ? "is implemented by" : EDGE_VERBS[edge.type];
 }
 
+/** The hops on the way down: the path without its return leg. */
+export function downHops(path: TracePath): TraceHop[] {
+  const at = path.return_index;
+  return at === null || at === undefined ? path.hops : path.hops.slice(0, at);
+}
+
+/** Whether a path's hop is on its return leg (back up to what the client does with the
+ * response). */
+export const isReturn = (path: TracePath, index: number) =>
+  path.return_index !== null && path.return_index !== undefined && index >= path.return_index;
+
+/** What an outcome does, in a verb. */
+export const OUTCOME_VERBS: Record<TraceOutcome["kind"], string> = {
+  storage: "stores",
+  navigate: "navigates",
+  state: "sets",
+  error: "shows",
+};
+
 /** How a path's hop is reached, in a word or two: where the journey starts (the first hop,
- * when the entry comes later), the entry, or the edge from the hop before ("uses", ...). */
+ * when the entry comes later), the entry, the edge from the hop before ("uses", ...), or, on
+ * the return leg, the response coming back to it and what it does with it. */
 export function howReached(path: TracePath, index: number): string {
-  const edge = path.hops[index]?.edge;
+  const hop = path.hops[index];
+  const edge = hop?.edge;
+  if (edge && isReturn(path, index)) {
+    const outcome = hop.node.outcome;
+    if (outcome)
+      return outcome.on === "error"
+        ? `on error, ${OUTCOME_VERBS[outcome.kind]}`
+        : OUTCOME_VERBS[outcome.kind];
+    return edge.type === "produces" ? "does" : "returns to";
+  }
   if (edge) return edgeLabel(edge);
   return index === path.entry_index ? "entry" : "starts here";
+}
+
+/** An outcome as its chip reads: `localStorage.setItem access_token`, `→ /dashboard`,
+ * `setOrders`. */
+export function outcomeLabel(outcome: TraceOutcome): string {
+  if (outcome.kind === "navigate") return `→ ${outcome.target ?? outcome.action}`;
+  if (outcome.target && outcome.target !== outcome.action)
+    return `${outcome.action} ${outcome.target}`;
+  return outcome.action;
+}
+
+export interface ReturnStep {
+  /** The hop's index in the path. */
+  index: number;
+  hop: TraceHop;
+}
+
+export interface ReturnGroup extends ReturnStep {
+  /** What it does with the response, in source order. */
+  outcomes: ReturnStep[];
+}
+
+/** A path's return leg as it is read: each function the response comes back to (deepest
+ * first), with what it does with it. */
+export function returnGroups(path: TracePath): ReturnGroup[] {
+  const groups: ReturnGroup[] = [];
+  path.hops.forEach((hop, index) => {
+    if (!isReturn(path, index)) return;
+    if (hop.edge?.type === "produces") groups.at(-1)?.outcomes.push({ index, hop });
+    else groups.push({ index, hop, outcomes: [] });
+  });
+  return groups;
 }
 
 /** Whether a path's hop is the entry traced, after where it is reached from. */
@@ -104,16 +166,17 @@ export function breaksByHop(path: TracePath): Map<number, TraceBreak> {
   return new Map(path.breaks.map((found) => [found.after_hop, found]));
 }
 
-/** A path in a few words, for its tab: where it starts and where it ends. */
+/** A path in a few words, for its tab: where it starts and where it ends (on the way down). */
 export function pathTitle(path: TracePath): string {
-  const first = path.hops[0]?.node.name ?? "";
-  const last = path.hops.at(-1)?.node.name ?? "";
-  return path.hops.length > 1 ? `${first} → ${last}` : first;
+  const hops = downHops(path);
+  const first = hops[0]?.node.name ?? "";
+  const last = hops.at(-1)?.node.name ?? "";
+  return hops.length > 1 ? `${first} → ${last}` : first;
 }
 
 /** What a path comes to: it reaches the goal, or where and why it stops. */
 export function pathOutcome(path: TracePath, goal: TraceNode | null): string {
-  const last = path.hops.at(-1)?.node;
+  const last = downHops(path).at(-1)?.node;
   if (path.reaches_goal) {
     if (goal) return `Reaches ${goal.name}`;
     return last?.kind === "table" ? `Reaches the ${last.name} table` : "Reaches the data";
@@ -125,7 +188,7 @@ export function pathOutcome(path: TracePath, goal: TraceNode | null): string {
 /** The files a path passes through, in order, each once (a table at its ORM class's file). */
 export function pathFiles(path: TracePath): string[] {
   const files: string[] = [];
-  for (const hop of path.hops) {
+  for (const hop of downHops(path)) {
     const file = hop.node.model?.path ?? hop.node.path;
     if (file && !files.includes(file)) files.push(file);
   }
