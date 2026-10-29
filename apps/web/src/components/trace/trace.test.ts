@@ -35,10 +35,10 @@ describe("the swimlanes", () => {
 
   it("say each hop in words, for screen readers", () => {
     if (!login) throw new Error("no Login trace");
-    expect(hopSummary(hopAt(0), 0, 9)).toBe(
+    expect(hopSummary(login, 0)).toBe(
       "Step 1 of 9, Component, component Login, entry, frontend/src/routes/login.tsx:53",
     );
-    expect(hopSummary(hopAt(1), 1, 9)).toBe(
+    expect(hopSummary(login, 1)).toBe(
       "Step 2 of 9, Hook / client, hook useAuth, uses, frontend/src/routes/login.tsx:54",
     );
   });

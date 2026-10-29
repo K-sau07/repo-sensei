@@ -7,7 +7,7 @@
  */
 import { cn } from "cn";
 
-import { edgeLabel, hopPlace, percent, type TracePath } from "@/lib/api/trace";
+import { hopPlace, howReached, isMidEntry, percent, type TracePath } from "@/lib/api/trace";
 
 import { HopPip } from "./hop-pip";
 import { kindLabel, TRACE_LANES } from "./meta";
@@ -58,13 +58,21 @@ export function TraceList({
               }}
               className="flex min-w-0 flex-1 items-baseline gap-2 text-left outline-none focus-visible:ring-2 focus-visible:ring-accent"
             >
-              <span className="sr-only">{hopSummary(hop, i, path.hops.length)}</span>
+              <span className="sr-only">{hopSummary(path, i)}</span>
               <span aria-hidden className="shrink-0 font-mono text-fg">
                 {hop.node.name}
               </span>
               <span aria-hidden className="shrink-0 text-xs text-fg-muted">
-                {kindLabel(hop.node.kind)} · {hop.edge ? edgeLabel(hop.edge) : "entry"}
+                {kindLabel(hop.node.kind)} · {howReached(path, i)}
               </span>
+              {isMidEntry(path, i) && (
+                <span
+                  aria-hidden
+                  className="text-surface-0 shrink-0 rounded-sm bg-signal px-1 text-[10px] font-medium"
+                >
+                  entry
+                </span>
+              )}
               {place && (
                 <span aria-hidden className="min-w-0 truncate font-mono text-xs text-fg-faint">
                   {place.path}:{place.start}

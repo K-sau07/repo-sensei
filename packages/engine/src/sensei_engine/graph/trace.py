@@ -31,11 +31,12 @@ repository, code that calls nothing further).
 from __future__ import annotations
 
 import bisect
+import functools
 import heapq
 import re
 import weakref
 from collections import deque
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from math import prod
 from typing import Literal
@@ -57,6 +58,11 @@ TRACE_EDGES = frozenset({
 DATA_KINDS = frozenset({NodeKind.TABLE.value})
 # Never on a path: what lies outside the repository.
 OUTSIDE_KINDS = frozenset({NodeKind.EXTERNAL_SYMBOL.value, NodeKind.PACKAGE.value})
+# Test code (a spec driving the app, a unit test): never where a user's journey starts.
+TEST_PATH = re.compile(
+    r"(^|/)(tests?|__tests__|e2e|spec|cypress|playwright)/|(^|/)test_[^/]*\.py$|"
+    r"[._-](test|spec)\.[cm]?[jt]sx?$|_test\.(py|go)$|Tests?\.(java|kt|cs)$"
+)
 # Words too common in names to say which feature a node is part of.
 STOP_WORDS = frozenset({
     "api", "app", "backend", "frontend", "src", "index", "page", "pages", "route", "routes",
@@ -72,6 +78,9 @@ ENTRY_KINDS = (NodeKind.COMPONENT, NodeKind.HOOK, NodeKind.FUNCTION, NodeKind.ME
 
 Layer = Literal["ui", "state", "client", "route", "handler", "service", "db", "other"]
 EntryKind = Literal["auto", "ui", "route", "symbol"]
+# down: from the entry to the data; up: from where the entry is reached (a page, an endpoint) to
+# it; both: the two joined at the entry.
+Direction = Literal["down", "up", "both"]
 
 
 class TraceError(ValueError):
@@ -100,6 +109,8 @@ class TracePath:
     confidence: float  # the product of its edges'
     reaches_goal: bool
     breaks: list[TraceBreak] = field(default_factory=list[TraceBreak])
+    entry_index: int = 0  # the entry's hop: what comes before it is where it is reached from
+    reaches_origin: bool = False  # the hops before the entry start at a page (a UI root)
 
     @property
     def layers(self) -> list[Layer]:
@@ -166,6 +177,53 @@ class _Index:
         for outer, inner in self.nested.items():
             for i in inner:
                 self.enclosing.setdefault(i, []).append(outer)
+
+    def outermost(self, here: int) -> int:
+        """The callable ``here`` is nested in, outermost (``here`` when it is in none)."""
+        around = self.enclosing.get(here)
+        if not around:
+            return here
+        return min(around, key=lambda i: len(self.graph.nodes[i].symbol_key))
+
+    @functools.cached_property
+    def ui_roots(self) -> frozenset[int]:
+        """Where a user's journey starts: components no other code renders, calls or reaches (a
+        page), and the frontend's entry modules (``main.tsx`` rendering ``<App />``). A
+        component nested in another callable is that callable's, never a root."""
+        reached = {
+            there
+            for here, edges in enumerate(self.out)
+            for there, _ in edges
+            if there != self.outermost(here)
+        }
+        return frozenset(
+            i
+            for i, node in enumerate(self.graph.nodes)
+            if i not in reached
+            and i not in self.enclosing
+            and (
+                node.kind == NodeKind.COMPONENT.value
+                or (node.kind == NodeKind.MODULE.value and node.lane == "ui" and self.out[i])
+            )
+        )
+
+    @functools.cached_property
+    def from_ui(self) -> dict[int, int]:
+        """How many hops each node is from a page, walking the trace's edges forward (a callable's
+        nested ones lend it theirs), up to the depth a path may have."""
+        found = dict.fromkeys(self.ui_roots, 0)
+        queue = deque(self.ui_roots)
+        while queue:
+            here = queue.popleft()
+            depth = found[here]
+            if depth >= MAX_DEPTH:
+                continue
+            for at in (here, *self.nested.get(here, ())):
+                for there, edge in self.out[at]:
+                    if edge.type is not EdgeType.MAPS_TO and there not in found:
+                        found[there] = depth + 1
+                        queue.append(there)
+        return found
 
 
 _INDEXES: weakref.WeakKeyDictionary[GraphSnapshot, _Index] = weakref.WeakKeyDictionary()
@@ -383,9 +441,11 @@ def trace_feature(
     kind: EntryKind = "auto",
     to: str | None = None,
     min_conf: float = 0.0,
+    direction: Direction = "down",
 ) -> TraceResult:
     """The surest paths from ``entry`` (see :func:`resolve_entry`) to the data layer, or to
-    ``to`` (a node's key, a route or a name, as ``entry``)."""
+    ``to`` (a node's key, a route or a name, as ``entry``); with ``direction`` ``up`` or
+    ``both``, from where the entry is reached (see :func:`_upstream`) as well."""
     index = _index(graph)
     entries = resolve_entry(graph, entry, kind)
     goal_node = resolve_entry(graph, to)[0] if to else None
@@ -443,7 +503,17 @@ def trace_feature(
         if not beam:
             break
     done.extend(_finish(p, goal_set, "depth") for p in beam)
-    return TraceResult(entries, goal_node, _best(done, feature))
+    downs = _best(done, feature)
+    if direction == "down":
+        return TraceResult(entries, goal_node, downs)
+    ups = {
+        node.symbol_key: _upstream(index, index.position[node.symbol_key], feature, min_conf)
+        for node in entries
+    }
+    if direction == "up":
+        every = [path for found in ups.values() for path in found]
+        return TraceResult(entries, goal_node, _best_up(every, feature))
+    return TraceResult(entries, goal_node, _joined(downs, ups))
 
 
 def _finish(partial: _Partial, goals: set[int], why: str) -> TracePath:
@@ -496,6 +566,184 @@ def _best(paths: Sequence[TracePath], feature: set[str]) -> list[TracePath]:
             continue
         chosen.append(path)
         seen.append(keys)
+        if len(chosen) == TOP_PATHS:
+            break
+    return chosen
+
+
+# ---------------------------------------------------------------- upstream
+
+
+def _steps_up(index: _Index, here: int, min_conf: float) -> list[_Step]:
+    """The ways back from ``here``: what reaches it, each once by its surest edge (a nested
+    callable's edge counted as its outermost callable's: ``Login().handleSubmit()`` calling
+    ``login`` is ``Login`` calling it), and the callable it is nested in (``CONTAINS``)."""
+    nodes = index.graph.nodes
+    best: dict[int, Edge] = {}
+    for source, edge in index.into[here]:
+        if edge.type not in TRACE_EDGES or edge.confidence < min_conf:
+            continue
+        there = index.outermost(source)
+        if there == here or nodes[there].kind in OUTSIDE_KINDS or _is_test(nodes[there]):
+            continue
+        held = best.get(there)
+        if held is None or edge.confidence > held.confidence:
+            best[there] = edge
+    steps = [_Step(there, edge, edge.type, 1) for there, edge in best.items()]
+    outer = index.outermost(here)
+    if outer != here and outer not in best:
+        inner = nodes[here]
+        line = inner.start_line if inner.start_line > 0 else None
+        held = Edge(EdgeType.CONTAINS, 1.0, Provenance.IMPORT_RESOLVED, inner.path, line)
+        steps.append(_Step(outer, held, EdgeType.CONTAINS, 1))
+    return steps
+
+
+@dataclass(order=True, slots=True)
+class _Up:
+    sort: tuple[float, ...]
+    nodes: tuple[int, ...] = field(compare=False)  # the entry first, then back towards a page
+    steps: tuple[_Step, ...] = field(compare=False)  # steps[i]: from nodes[i + 1] to nodes[i]
+
+
+def _upstream(index: _Index, start: int, feature: set[str], min_conf: float) -> list[TracePath]:
+    """Where ``start`` is reached from, best first: the trace's edges walked back (callers, the
+    components rendering it, the endpoint handing off to it, the client call targeting that
+    endpoint, ...) until a page (:attr:`_Index.ui_roots`) or nothing reaches further (an origin:
+    an endpoint of a backend alone, a job, unused code). Ways back are tried nearest a page
+    first, then of the entry's feature, then surest; each path ends at the entry."""
+    nodes = index.graph.nodes
+    near = index.from_ui
+    roots = index.ui_roots
+
+    def score(path: tuple[int, ...], steps: tuple[_Step, ...]) -> tuple[float, ...]:
+        last = path[-1]
+        return (
+            near.get(last, MAX_DEPTH + 1),
+            sum(step.edge_type is EdgeType.INJECTS for step in steps),
+            -sum(_shares(feature, nodes[i]) for i in path[1:]),
+            -prod(step.edge.confidence for step in steps),
+            len(path),
+        )
+
+    beam = [_Up(score((start,), ()), (start,), ())]
+    done: list[_Up] = []
+    for _ in range(MAX_DEPTH):
+        grown: list[_Up] = []
+        for partial in beam:
+            here = partial.nodes[-1]
+            steps = [] if here in roots else _steps_up(index, here, min_conf)
+            steps = [s for s in steps if s.there not in partial.nodes]
+            if not steps:
+                done.append(partial)
+                continue
+            steps.sort(
+                key=lambda s: (
+                    near.get(s.there, MAX_DEPTH + 1),
+                    not _shares(feature, nodes[s.there]),
+                    s.edge_type is EdgeType.INJECTS,
+                    -s.edge.confidence,
+                    nodes[s.there].symbol_key,
+                )
+            )
+            for step in steps[:MAX_FANOUT]:
+                path, taken = (*partial.nodes, step.there), (*partial.steps, step)
+                grown.append(_Up(score(path, taken), path, taken))
+        beam = heapq.nsmallest(BEAM_WIDTH, grown)
+        if not beam:
+            break
+    done.extend(beam)
+    return _best_up([_up_path(index, partial) for partial in done], feature)
+
+
+def _up_path(index: _Index, partial: _Up) -> TracePath:
+    """A walk back as a path read forward: from where it starts to the entry."""
+    nodes = index.graph.nodes
+    order = list(reversed(partial.nodes))
+    steps = list(reversed(partial.steps))
+    first = nodes[order[0]]
+    hops = [TraceHop(first, layer_of(first, None), None)]
+    for step, at in zip(steps, order[1:], strict=True):
+        node = nodes[at]
+        hops.append(TraceHop(node, layer_of(node, step.edge_type), step.edge, step.edge_type))
+    return TracePath(
+        hops,
+        prod(step.edge.confidence for step in steps),
+        reaches_goal=False,
+        entry_index=len(hops) - 1,
+        reaches_origin=order[0] in index.ui_roots,
+    )
+
+
+def _best_up(paths: Sequence[TracePath], feature: set[str]) -> list[TracePath]:
+    """The top ways to the entry: from a page first, then fewer detours, more of the entry's
+    feature before it (the ``Login`` page for ``/login/access-token``), surer, shorter; none the
+    same nodes as another, or the tail of one. Test code is never on one (:data:`TEST_PATH`)."""
+    ranked = sorted(
+        paths,
+        key=lambda p: (
+            not p.reaches_origin,
+            _detours(p.hops),
+            -_affinity_up(p.hops, feature),
+            -p.confidence,
+            len(p.hops),
+            [h.node.symbol_key for h in p.hops],
+        ),
+    )
+    chosen: list[TracePath] = []
+    seen: list[tuple[str, ...]] = []
+    for path in ranked:
+        keys = tuple(h.node.symbol_key for h in path.hops)
+        if any(keys == other[-len(keys) :] for other in seen):
+            continue
+        chosen.append(path)
+        seen.append(keys)
+        if len(chosen) == TOP_PATHS:
+            break
+    return chosen
+
+
+def _is_test(node: Node) -> bool:
+    return node.path is not None and TEST_PATH.search(node.path) is not None
+
+
+def _affinity_up(hops: Sequence[TraceHop], feature: set[str]) -> int:
+    """How many hops before the entry are named for its feature (the page most of all)."""
+    return sum(_shares(feature, hop.node) for hop in hops[:-1])
+
+
+def _join(up: TracePath, down: TracePath) -> TracePath:
+    """``up`` (ending at the entry) and ``down`` (starting there) as one path."""
+    shift = up.entry_index
+    return TracePath(
+        [*up.hops, *down.hops[1:]],
+        up.confidence * down.confidence,
+        reaches_goal=down.reaches_goal,
+        breaks=[TraceBreak(b.after_hop + shift, b.reason, b.node) for b in down.breaks],
+        entry_index=shift,
+        reaches_origin=up.reaches_origin,
+    )
+
+
+def _joined(downs: Sequence[TracePath], ups: Mapping[str, Sequence[TracePath]]) -> list[TracePath]:
+    """The top whole journeys: the best way to the entry with each way on from it, and the
+    other ways to it with the best way on (a function two pages reach is shown from both)."""
+    pairs: list[tuple[int, int]] = [(0, 0), (0, 1), (1, 0), (0, 2), (2, 0)]
+    chosen: list[TracePath] = []
+    seen: set[tuple[str, ...]] = set()
+    for u, d in pairs:
+        if d >= len(downs):
+            continue
+        down = downs[d]
+        found = ups.get(down.hops[0].node.symbol_key, ())
+        if u >= len(found):
+            continue
+        path = _join(found[u], down)
+        keys = tuple(h.node.symbol_key for h in path.hops)
+        if keys in seen:
+            continue
+        chosen.append(path)
+        seen.add(keys)
         if len(chosen) == TOP_PATHS:
             break
     return chosen

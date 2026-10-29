@@ -34,7 +34,9 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { ApiError } from "@/lib/api/errors";
 import {
   hopPlace,
+  howReached,
   pathOutcome,
+  pathStart,
   pathTitle,
   percent,
   placeLabel,
@@ -186,6 +188,9 @@ function PathTab({ path, index, trace }: { path: TracePath; index: number; trace
 function PathSummary({ path, trace }: { path: TracePath; trace: Trace }) {
   return (
     <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-fg-muted">
+      {pathStart(path) && (
+        <span className={path.reaches_origin ? "text-fg" : ""}>{pathStart(path)}</span>
+      )}
       <span className={path.reaches_goal ? "text-fg" : ""}>{pathOutcome(path, trace.goal)}</span>
       <span className="tabular-nums">
         {path.hops.length} {path.hops.length === 1 ? "hop" : "hops"},{" "}
@@ -255,7 +260,8 @@ function TraceView({ entry }: { entry: string }) {
   const path = data.paths[at];
   const selected = state.hop !== null && path?.hops[state.hop] ? state.hop : null;
   const hop = selected !== null ? path?.hops[selected] : undefined;
-  const firstPlace = path?.hops[0] ? hopPlace(path.hops[0]) : null;
+  const entryHop = path?.hops[path.entry_index];
+  const firstPlace = entryHop ? hopPlace(entryHop) : null;
   const select = (next: number | null) => void setState({ hop: next });
 
   return (
@@ -373,6 +379,7 @@ function TraceView({ entry }: { entry: string }) {
         <HopCode
           key={`${String(at)}:${String(selected)}`}
           hop={hop}
+          how={path && selected !== null ? howReached(path, selected) : "entry"}
           onClose={() => {
             select(null);
           }}

@@ -2,14 +2,16 @@
 symbol) to the tables it reads and writes, or to ``to``; the top paths, each hop with the edge
 that proves it.
 
-``POST …/trace`` takes ``{from, kind?, to?, min_conf?}``; ``GET …/trace?from=`` is the same, for
-deep links (the code viewer's "Trace this"). ``from`` (and ``to``) is a node's key, a route
-(``POST /api/v1/items/``), a file, or a name (see :func:`sensei_engine.graph.trace.resolve_entry`).
-``ref`` picks the snapshot as in browsing; the commit read is in ``X-Commit-Sha``. A snapshot
-whose graph isn't built yet answers ``409 graph_not_ready``; ``linked`` says whether its
-cross-layer links are in it yet (the links stage: without them a trace stays in the code). An
-entry the graph doesn't have is ``404 trace_entry_not_found``. A trace counts against the user's
-graph requests per minute (``429 rate_limited``), and runs off the event loop.
+``POST …/trace`` takes ``{from, kind?, to?, min_conf?, direction?}`` (``both`` by default: from
+where the entry is reached, a page, to where it goes; ``entry_index`` says which hop it is); ``GET
+…/trace?from=`` is the same, for deep links (the code viewer's "Trace this"). ``from`` (and ``to``)
+is a node's key, a route (``POST /api/v1/items/``), a file, or a name (see
+:func:`sensei_engine.graph.trace.resolve_entry`). ``ref`` picks the snapshot as in browsing; the
+commit read is in ``X-Commit-Sha``. A snapshot whose graph isn't built yet answers ``409
+graph_not_ready``; ``linked`` says whether its cross-layer links are in it yet (the links stage:
+without them a trace stays in the code). An entry the graph doesn't have is ``404
+trace_entry_not_found``. A trace counts against the user's graph requests per minute (``429
+rate_limited``), and runs off the event loop.
 
 A break carries what the graph knows of why: a client call no endpoint matches has the reason
 3.10 found (``detail``: the path exists under another method, the URL is dynamic, ...).
@@ -36,6 +38,7 @@ from sensei_core.models import CodeNode, EdgeType, Provenance, Snapshot
 from sensei_core.storage import ObjectStorage
 from sensei_engine.graph.snapshot import GraphSnapshot, Node
 from sensei_engine.graph.trace import (
+    Direction,
     EntryKind,
     Layer,
     TraceError,
@@ -68,6 +71,8 @@ class TraceRequest(BaseModel):
     source: EntryText = Field(alias="from")
     kind: EntryKind = "auto"  # what ``from`` is (auto: a key, a route, a file, then a name)
     to: EntryText | None = None
+    # both: where the entry is reached from (back to a page) and where it goes (on to the data)
+    direction: Direction = "both"
     min_conf: Annotated[float, Field(ge=0, le=1)] = 0.0
 
 
@@ -121,6 +126,8 @@ class TracePathOut(BaseModel):
     layers: list[Layer]
     reaches_goal: bool  # the data layer, or ``to``
     breaks: list[TraceBreakOut]
+    entry_index: int  # the entry's hop: the hops before it are where it is reached from
+    reaches_origin: bool  # those start at a page (or the app's entry module)
 
 
 class TraceOut(BaseModel):
@@ -175,6 +182,8 @@ def _path(graph: GraphSnapshot, path: TracePath, details: dict[str, str]) -> Tra
         path_confidence=round(path.confidence, 4),
         layers=path.layers,
         reaches_goal=path.reaches_goal,
+        entry_index=path.entry_index,
+        reaches_origin=path.reaches_origin,
         breaks=[
             TraceBreakOut(after_hop=b.after_hop, reason=b.reason, detail=details.get(b.node))
             for b in path.breaks
@@ -218,7 +227,13 @@ async def _trace(
     response.headers[COMMIT_HEADER] = snapshot.commit_sha
     try:
         result = await asyncio.to_thread(
-            trace_feature, graph, body.source, kind=body.kind, to=body.to, min_conf=body.min_conf
+            trace_feature,
+            graph,
+            body.source,
+            kind=body.kind,
+            to=body.to,
+            min_conf=body.min_conf,
+            direction=body.direction,
         )
     except TraceError as exc:
         raise NotFoundError(str(exc), code="trace_entry_not_found") from None
@@ -276,11 +291,12 @@ async def trace_link(
     kind: EntryKind = "auto",
     to: Annotated[str | None, Query(min_length=1, max_length=2000)] = None,
     min_conf: Annotated[float, Query(ge=0, le=1)] = 0.0,
+    direction: Direction = "both",
     ref: RefParam = None,
 ) -> TraceOut:
     """``POST …/trace`` for a deep link (``?from=``)."""
     body = TraceRequest.model_validate(
-        {"from": source, "kind": kind, "to": to, "min_conf": min_conf}
+        {"from": source, "kind": kind, "to": to, "min_conf": min_conf, "direction": direction}
     )
     return await _trace(
         request=request,

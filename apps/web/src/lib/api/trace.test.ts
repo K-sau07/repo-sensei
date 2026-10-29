@@ -55,6 +55,8 @@ function path(hops: TraceHop[], overrides: Partial<TracePath> = {}): TracePath {
     layers: ["service"],
     reaches_goal: true,
     breaks: [],
+    entry_index: 0,
+    reaches_origin: false,
     ...overrides,
   };
 }

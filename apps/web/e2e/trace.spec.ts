@@ -36,6 +36,25 @@ const hops = (page: Page) =>
   page.getByTestId("trace-view").getByRole("list", { name: "Hops, in order" });
 
 test.describe("trace", () => {
+  test("an entry mid-flow shows where it is reached from and where it goes", async ({ page }) => {
+    await page.goto(trace("POST /api/v1/items/"));
+    const view = page.getByTestId("trace-view");
+    // From the page that starts it, through the entry (the endpoint), on to the table.
+    await expect(view.getByText("Starts at Items", { exact: true })).toBeVisible();
+    await expect(view.getByText("Reaches the item table", { exact: true })).toBeVisible();
+    await expect(hops(page).getByRole("listitem")).toHaveCount(7);
+    await expect(
+      hops(page).getByRole("button", {
+        name: /^Step 1 of 7, Component, component Items, starts here/,
+      }),
+    ).toBeVisible();
+    await expect(
+      hops(page).getByRole("button", { name: /^Step 5 of 7, Endpoint, .*the entry traced/ }),
+    ).toBeVisible();
+    // The header points at the entry's own place, and its hop opens on it.
+    await expect(view.getByText(/backend\/app\/api\/routes\/items\.py:\d+/).first()).toBeVisible();
+  });
+
   test("a deep link shows the Login page's path as swimlanes, with the beam", async ({ page }) => {
     await page.goto(trace(LOGIN));
     const view = page.getByTestId("trace-view");

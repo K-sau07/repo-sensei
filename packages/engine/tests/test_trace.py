@@ -457,3 +457,96 @@ def test_an_entry_is_a_key_a_route_a_file_or_a_name() -> None:
         resolve_entry(graph, "nothing")
     with pytest.raises(TraceError, match="Say where"):
         resolve_entry(graph, "  ")
+
+
+# ---------------------------------------------------------------- where an entry is reached from
+
+
+def _keys(path: TracePath) -> list[str]:
+    return [h.node.symbol_key for h in path.hops]
+
+
+def _journey() -> tuple[GraphSnapshot, Node, Node]:
+    """A page using a hook whose callback calls the API, the endpoint's handler reading a table;
+    and a test driving the handler."""
+    hook = _node("ts h.ts/useAuth().", NodeKind.HOOK, path="h.ts")
+    inner = _node("ts h.ts/useAuth().login().", NodeKind.FUNCTION, path="h.ts")
+    spec = _node("ts e2e/login.spec.ts/", NodeKind.MODULE, path="e2e/login.spec.ts")
+    graph = _graph(
+        [PAGE, hook, inner, CALL, ENDPOINT, HANDLER, TABLE, spec],
+        [
+            (PAGE.symbol_key, hook.symbol_key, _edge(EdgeType.USES_HOOK)),
+            (inner.symbol_key, CALL.symbol_key, _edge(EdgeType.ISSUES_REQUEST, 1.0, line=9)),
+            (CALL.symbol_key, ENDPOINT.symbol_key, _edge(EdgeType.TARGETS, 0.9)),
+            (ENDPOINT.symbol_key, HANDLER.symbol_key, _edge(EdgeType.HANDLED_BY, 1.0)),
+            (HANDLER.symbol_key, TABLE.symbol_key, _edge(EdgeType.READS)),
+            (spec.symbol_key, HANDLER.symbol_key, _edge(EdgeType.CALLS)),
+        ],
+    )
+    return graph, hook, inner
+
+
+def test_a_function_mid_flow_shows_where_it_is_reached_from_and_where_it_goes() -> None:
+    """From the handler: back to the page (through the endpoint, the call, the hook its
+    callback is in), on to the table; the test calling the handler is no origin."""
+    graph, hook, _ = _journey()
+    [path] = trace_feature(graph, HANDLER.symbol_key, direction="both").paths
+    assert _keys(path) == [
+        PAGE.symbol_key, hook.symbol_key, CALL.symbol_key, ENDPOINT.symbol_key,
+        HANDLER.symbol_key, TABLE.symbol_key,
+    ]  # fmt: skip
+    assert (path.entry_index, path.reaches_origin, path.reaches_goal) == (4, True, True)
+    # Each hop says how it is reached from the one before: the hook's callback issues the call.
+    assert [h.edge_type for h in path.hops[1:]] == [
+        EdgeType.USES_HOOK, EdgeType.ISSUES_REQUEST, EdgeType.TARGETS, EdgeType.HANDLED_BY,
+        EdgeType.READS,
+    ]  # fmt: skip
+    edge = path.hops[2].edge
+    assert edge is not None
+    assert edge.evidence_line == 9
+    assert path.confidence == pytest.approx(0.9 * 1.0 * 0.9 * 1.0 * 0.9)
+    # Down alone is the trace as it was; up alone ends at the entry.
+    [down] = trace_feature(graph, HANDLER.symbol_key).paths
+    assert (_keys(down), down.entry_index) == ([HANDLER.symbol_key, TABLE.symbol_key], 0)
+    [up] = trace_feature(graph, HANDLER.symbol_key, direction="up").paths
+    assert _keys(up) == _keys(path)[:5]
+    assert (up.entry_index, up.reaches_origin) == (4, True)
+
+
+def test_a_nested_function_is_reached_through_the_one_it_is_in() -> None:
+    graph, hook, inner = _journey()
+    path = trace_feature(graph, inner.symbol_key, direction="both").paths[0]
+    assert _keys(path)[:3] == [PAGE.symbol_key, hook.symbol_key, inner.symbol_key]
+    assert path.entry_index == 2
+    assert path.hops[2].edge_type is EdgeType.CONTAINS
+    assert path.reaches_goal
+
+
+def test_a_page_is_where_its_journey_starts_and_breaks_count_from_the_page() -> None:
+    graph, _, _ = _journey()
+    [path] = trace_feature(graph, PAGE.symbol_key, direction="both").paths
+    assert (path.entry_index, path.reaches_origin) == (0, True)
+    lonely = _graph(
+        [PAGE, CALL], [(PAGE.symbol_key, CALL.symbol_key, _edge(EdgeType.ISSUES_REQUEST))]
+    )
+    [stops] = trace_feature(lonely, CALL.symbol_key, direction="both").paths
+    assert (_keys(stops), stops.entry_index) == ([PAGE.symbol_key, CALL.symbol_key], 1)
+    assert [(b.after_hop, b.reason) for b in stops.breaks] == [
+        (1, "client call has no matching endpoint")
+    ]
+
+
+def test_code_nothing_in_the_app_reaches_has_no_origin() -> None:
+    """Called by a test only: the path back stops at the entry, and says it found no page."""
+    orphan = _node("py a.py/cleanup().", NodeKind.FUNCTION, lane_="svc")
+    spec = _node("py tests/test_a.py/test_cleanup().", NodeKind.FUNCTION, path="tests/test_a.py")
+    graph = _graph([orphan, spec], [(spec.symbol_key, orphan.symbol_key, _edge(EdgeType.CALLS))])
+    [path] = trace_feature(graph, orphan.symbol_key, direction="up").paths
+    assert (_keys(path), path.reaches_origin) == ([orphan.symbol_key], False)
+
+
+def test_the_app_s_entry_module_is_an_origin() -> None:
+    main = _node("tsx src/main.tsx/", NodeKind.MODULE, path="src/main.tsx", lane_="ui")
+    graph = _graph([main, PAGE], [(main.symbol_key, PAGE.symbol_key, _edge(EdgeType.RENDERS))])
+    [path] = trace_feature(graph, PAGE.symbol_key, direction="up").paths
+    assert (_keys(path), path.reaches_origin) == ([main.symbol_key, PAGE.symbol_key], True)

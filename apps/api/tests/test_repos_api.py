@@ -2282,7 +2282,17 @@ async def test_a_trace_says_where_it_breaks_and_why(
 
     to = await client.get(url, params={"from": "GET /items", "to": "py stack/api.py/read_items()."})
     assert to.json()["goal"]["symbol_key"] == "py stack/api.py/read_items()."
-    assert [h["layer"] for h in to.json()["paths"][0]["hops"]] == ["route", "handler"]
+    # Where the endpoint is reached from (the page's call), then on to the goal.
+    [whole] = to.json()["paths"]
+    assert [h["layer"] for h in whole["hops"]] == ["service", "client", "route", "handler"]
+    assert (whole["entry_index"], whole["reaches_origin"]) == (2, False)  # no page renders it
+    down = await client.get(
+        url,
+        params={"from": "GET /items", "to": "py stack/api.py/read_items()."}
+        | {"direction": "down"},
+    )
+    assert [h["layer"] for h in down.json()["paths"][0]["hops"]] == ["route", "handler"]
+    assert down.json()["paths"][0]["entry_index"] == 0
 
     missing = await client.get(url, params={"from": "nothing_here"})
     assert (missing.status_code, missing.json()["error"]["code"]) == (404, "trace_entry_not_found")

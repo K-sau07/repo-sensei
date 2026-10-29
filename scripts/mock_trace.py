@@ -186,7 +186,7 @@ def _reasons(build: LinkBuild) -> dict[str, str]:
 def _trace(
     graph: GraphSnapshot, entry: str, details: dict[str, str], *, linked: bool
 ) -> dict[str, Any]:
-    result = trace_feature(graph, entry)
+    result = trace_feature(graph, entry, direction="both")  # as GET /trace answers by default
     out = TraceOut(
         entries=[_node(graph, node) for node in result.entries],
         goal=_node(graph, result.goal) if result.goal is not None else None,

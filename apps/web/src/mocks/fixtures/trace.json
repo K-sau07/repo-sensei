@@ -273,7 +273,9 @@
             "db"
           ],
           "reaches_goal": true,
-          "breaks": []
+          "breaks": [],
+          "entry_index": 0,
+          "reaches_origin": true
         },
         {
           "hops": [
@@ -494,7 +496,9 @@
             "db"
           ],
           "reaches_goal": true,
-          "breaks": []
+          "breaks": [],
+          "entry_index": 0,
+          "reaches_origin": true
         },
         {
           "hops": [
@@ -715,7 +719,9 @@
             "db"
           ],
           "reaches_goal": true,
-          "breaks": []
+          "breaks": [],
+          "entry_index": 0,
+          "reaches_origin": true
         }
       ]
     },
@@ -741,6 +747,127 @@
         {
           "hops": [
             {
+              "layer": "ui",
+              "node": {
+                "kind": "component",
+                "name": "ChangePassword",
+                "qualified_name": "ChangePassword",
+                "symbol_key": "tsx frontend/src/components/UserSettings/ChangePassword.tsx/ChangePassword().",
+                "path": "frontend/src/components/UserSettings/ChangePassword.tsx",
+                "lines": [
+                  41,
+                  144
+                ],
+                "lane": "ui",
+                "model": null
+              },
+              "edge": null
+            },
+            {
+              "layer": "ui",
+              "node": {
+                "kind": "method",
+                "name": "updatePasswordMe",
+                "qualified_name": "UsersService.updatePasswordMe",
+                "symbol_key": "ts frontend/src/client/sdk.gen.ts/UsersService#updatePasswordMe().",
+                "path": "frontend/src/client/sdk.gen.ts",
+                "lines": [
+                  183,
+                  194
+                ],
+                "lane": "ui",
+                "model": null
+              },
+              "edge": {
+                "type": "calls",
+                "confidence": 0.9,
+                "provenance": "import_resolved",
+                "evidence": {
+                  "path": "frontend/src/components/UserSettings/ChangePassword.tsx",
+                  "line": 56
+                },
+                "alternatives": 1
+              }
+            },
+            {
+              "layer": "client",
+              "node": {
+                "kind": "http_client_call",
+                "name": "PATCH /api/v1/users/me/password",
+                "qualified_name": "PATCH /api/v1/users/me/password",
+                "symbol_key": "http_client_call PATCH /api/v1/users/me/password frontend/src/client/sdk.gen.ts:184",
+                "path": "frontend/src/client/sdk.gen.ts",
+                "lines": [
+                  184,
+                  184
+                ],
+                "lane": "ui",
+                "model": null
+              },
+              "edge": {
+                "type": "issues_request",
+                "confidence": 1.0,
+                "provenance": "contract",
+                "evidence": {
+                  "path": "frontend/src/client/sdk.gen.ts",
+                  "line": 184
+                },
+                "alternatives": 1
+              }
+            },
+            {
+              "layer": "route",
+              "node": {
+                "kind": "api_endpoint",
+                "name": "PATCH /api/v1/users/me/password",
+                "qualified_name": "PATCH /api/v1/users/me/password",
+                "symbol_key": "api_endpoint PATCH /api/v1/users/me/password",
+                "path": "backend/app/api/routes/users.py",
+                "lines": [
+                  103,
+                  121
+                ],
+                "lane": "api",
+                "model": null
+              },
+              "edge": {
+                "type": "targets",
+                "confidence": 0.9,
+                "provenance": "url_literal",
+                "evidence": {
+                  "path": "frontend/src/client/sdk.gen.ts",
+                  "line": 184
+                },
+                "alternatives": 1
+              }
+            },
+            {
+              "layer": "handler",
+              "node": {
+                "kind": "function",
+                "name": "update_password_me",
+                "qualified_name": "update_password_me",
+                "symbol_key": "py backend/app/api/routes/users.py/update_password_me().",
+                "path": "backend/app/api/routes/users.py",
+                "lines": [
+                  103,
+                  121
+                ],
+                "lane": "api",
+                "model": null
+              },
+              "edge": {
+                "type": "handled_by",
+                "confidence": 0.9,
+                "provenance": "import_resolved",
+                "evidence": {
+                  "path": "backend/app/api/routes/users.py",
+                  "line": 103
+                },
+                "alternatives": 1
+              }
+            },
+            {
               "layer": "handler",
               "node": {
                 "kind": "function",
@@ -755,21 +882,371 @@
                 "lane": "api",
                 "model": null
               },
-              "edge": null
+              "edge": {
+                "type": "injects",
+                "confidence": 0.9,
+                "provenance": "import_resolved",
+                "evidence": {
+                  "path": "backend/app/api/routes/users.py",
+                  "line": 105
+                },
+                "alternatives": 1
+              }
             }
           ],
-          "path_confidence": 1.0,
+          "path_confidence": 0.6561,
           "layers": [
+            "ui",
+            "client",
+            "route",
             "handler"
           ],
           "reaches_goal": false,
           "breaks": [
             {
-              "after_hop": 0,
+              "after_hop": 5,
               "reason": "get_db calls nothing the trace follows further",
               "detail": null
             }
-          ]
+          ],
+          "entry_index": 5,
+          "reaches_origin": true
+        },
+        {
+          "hops": [
+            {
+              "layer": "ui",
+              "node": {
+                "kind": "component",
+                "name": "UserInformation",
+                "qualified_name": "UserInformation",
+                "symbol_key": "tsx frontend/src/components/UserSettings/UserInformation.tsx/UserInformation().",
+                "path": "frontend/src/components/UserSettings/UserInformation.tsx",
+                "lines": [
+                  31,
+                  169
+                ],
+                "lane": "ui",
+                "model": null
+              },
+              "edge": null
+            },
+            {
+              "layer": "ui",
+              "node": {
+                "kind": "method",
+                "name": "updateUserMe",
+                "qualified_name": "UsersService.updateUserMe",
+                "symbol_key": "ts frontend/src/client/sdk.gen.ts/UsersService#updateUserMe().",
+                "path": "frontend/src/client/sdk.gen.ts",
+                "lines": [
+                  165,
+                  176
+                ],
+                "lane": "ui",
+                "model": null
+              },
+              "edge": {
+                "type": "calls",
+                "confidence": 0.9,
+                "provenance": "import_resolved",
+                "evidence": {
+                  "path": "frontend/src/components/UserSettings/UserInformation.tsx",
+                  "line": 53
+                },
+                "alternatives": 1
+              }
+            },
+            {
+              "layer": "client",
+              "node": {
+                "kind": "http_client_call",
+                "name": "PATCH /api/v1/users/me",
+                "qualified_name": "PATCH /api/v1/users/me",
+                "symbol_key": "http_client_call PATCH /api/v1/users/me frontend/src/client/sdk.gen.ts:166",
+                "path": "frontend/src/client/sdk.gen.ts",
+                "lines": [
+                  166,
+                  166
+                ],
+                "lane": "ui",
+                "model": null
+              },
+              "edge": {
+                "type": "issues_request",
+                "confidence": 1.0,
+                "provenance": "contract",
+                "evidence": {
+                  "path": "frontend/src/client/sdk.gen.ts",
+                  "line": 166
+                },
+                "alternatives": 1
+              }
+            },
+            {
+              "layer": "route",
+              "node": {
+                "kind": "api_endpoint",
+                "name": "PATCH /api/v1/users/me",
+                "qualified_name": "PATCH /api/v1/users/me",
+                "symbol_key": "api_endpoint PATCH /api/v1/users/me",
+                "path": "backend/app/api/routes/users.py",
+                "lines": [
+                  81,
+                  100
+                ],
+                "lane": "api",
+                "model": null
+              },
+              "edge": {
+                "type": "targets",
+                "confidence": 0.9,
+                "provenance": "url_literal",
+                "evidence": {
+                  "path": "frontend/src/client/sdk.gen.ts",
+                  "line": 166
+                },
+                "alternatives": 1
+              }
+            },
+            {
+              "layer": "handler",
+              "node": {
+                "kind": "function",
+                "name": "update_user_me",
+                "qualified_name": "update_user_me",
+                "symbol_key": "py backend/app/api/routes/users.py/update_user_me().",
+                "path": "backend/app/api/routes/users.py",
+                "lines": [
+                  81,
+                  100
+                ],
+                "lane": "api",
+                "model": null
+              },
+              "edge": {
+                "type": "handled_by",
+                "confidence": 0.9,
+                "provenance": "import_resolved",
+                "evidence": {
+                  "path": "backend/app/api/routes/users.py",
+                  "line": 81
+                },
+                "alternatives": 1
+              }
+            },
+            {
+              "layer": "handler",
+              "node": {
+                "kind": "function",
+                "name": "get_db",
+                "qualified_name": "get_db",
+                "symbol_key": "py backend/app/api/deps.py/get_db().",
+                "path": "backend/app/api/deps.py",
+                "lines": [
+                  21,
+                  23
+                ],
+                "lane": "api",
+                "model": null
+              },
+              "edge": {
+                "type": "injects",
+                "confidence": 0.9,
+                "provenance": "import_resolved",
+                "evidence": {
+                  "path": "backend/app/api/routes/users.py",
+                  "line": 83
+                },
+                "alternatives": 1
+              }
+            }
+          ],
+          "path_confidence": 0.6561,
+          "layers": [
+            "ui",
+            "client",
+            "route",
+            "handler"
+          ],
+          "reaches_goal": false,
+          "breaks": [
+            {
+              "after_hop": 5,
+              "reason": "get_db calls nothing the trace follows further",
+              "detail": null
+            }
+          ],
+          "entry_index": 5,
+          "reaches_origin": true
+        },
+        {
+          "hops": [
+            {
+              "layer": "ui",
+              "node": {
+                "kind": "component",
+                "name": "RecoverPassword",
+                "qualified_name": "RecoverPassword",
+                "symbol_key": "tsx frontend/src/routes/recover-password.tsx/RecoverPassword().",
+                "path": "frontend/src/routes/recover-password.tsx",
+                "lines": [
+                  51,
+                  130
+                ],
+                "lane": "ui",
+                "model": null
+              },
+              "edge": null
+            },
+            {
+              "layer": "ui",
+              "node": {
+                "kind": "method",
+                "name": "recoverPassword",
+                "qualified_name": "LoginService.recoverPassword",
+                "symbol_key": "ts frontend/src/client/sdk.gen.ts/LoginService#recoverPassword().",
+                "path": "frontend/src/client/sdk.gen.ts",
+                "lines": [
+                  59,
+                  65
+                ],
+                "lane": "ui",
+                "model": null
+              },
+              "edge": {
+                "type": "calls",
+                "confidence": 0.9,
+                "provenance": "import_resolved",
+                "evidence": {
+                  "path": "frontend/src/routes/recover-password.tsx",
+                  "line": 61
+                },
+                "alternatives": 1
+              }
+            },
+            {
+              "layer": "client",
+              "node": {
+                "kind": "http_client_call",
+                "name": "POST /api/v1/password-recovery/{email}",
+                "qualified_name": "POST /api/v1/password-recovery/{email}",
+                "symbol_key": "http_client_call POST /api/v1/password-recovery/{email} frontend/src/client/sdk.gen.ts:60",
+                "path": "frontend/src/client/sdk.gen.ts",
+                "lines": [
+                  60,
+                  60
+                ],
+                "lane": "ui",
+                "model": null
+              },
+              "edge": {
+                "type": "issues_request",
+                "confidence": 1.0,
+                "provenance": "contract",
+                "evidence": {
+                  "path": "frontend/src/client/sdk.gen.ts",
+                  "line": 60
+                },
+                "alternatives": 1
+              }
+            },
+            {
+              "layer": "route",
+              "node": {
+                "kind": "api_endpoint",
+                "name": "POST /api/v1/password-recovery/{email}",
+                "qualified_name": "POST /api/v1/password-recovery/{email}",
+                "symbol_key": "api_endpoint POST /api/v1/password-recovery/{}",
+                "path": "backend/app/api/routes/login.py",
+                "lines": [
+                  53,
+                  74
+                ],
+                "lane": "api",
+                "model": null
+              },
+              "edge": {
+                "type": "targets",
+                "confidence": 0.9,
+                "provenance": "url_literal",
+                "evidence": {
+                  "path": "frontend/src/client/sdk.gen.ts",
+                  "line": 60
+                },
+                "alternatives": 1
+              }
+            },
+            {
+              "layer": "handler",
+              "node": {
+                "kind": "function",
+                "name": "recover_password",
+                "qualified_name": "recover_password",
+                "symbol_key": "py backend/app/api/routes/login.py/recover_password().",
+                "path": "backend/app/api/routes/login.py",
+                "lines": [
+                  53,
+                  74
+                ],
+                "lane": "api",
+                "model": null
+              },
+              "edge": {
+                "type": "handled_by",
+                "confidence": 0.9,
+                "provenance": "import_resolved",
+                "evidence": {
+                  "path": "backend/app/api/routes/login.py",
+                  "line": 53
+                },
+                "alternatives": 1
+              }
+            },
+            {
+              "layer": "handler",
+              "node": {
+                "kind": "function",
+                "name": "get_db",
+                "qualified_name": "get_db",
+                "symbol_key": "py backend/app/api/deps.py/get_db().",
+                "path": "backend/app/api/deps.py",
+                "lines": [
+                  21,
+                  23
+                ],
+                "lane": "api",
+                "model": null
+              },
+              "edge": {
+                "type": "injects",
+                "confidence": 0.9,
+                "provenance": "import_resolved",
+                "evidence": {
+                  "path": "backend/app/api/routes/login.py",
+                  "line": 54
+                },
+                "alternatives": 1
+              }
+            }
+          ],
+          "path_confidence": 0.6561,
+          "layers": [
+            "ui",
+            "client",
+            "route",
+            "handler"
+          ],
+          "reaches_goal": false,
+          "breaks": [
+            {
+              "after_hop": 5,
+              "reason": "get_db calls nothing the trace follows further",
+              "detail": null
+            }
+          ],
+          "entry_index": 5,
+          "reaches_origin": true
         }
       ]
     },
@@ -798,6 +1275,23 @@
               "layer": "ui",
               "node": {
                 "kind": "component",
+                "name": "Items",
+                "qualified_name": "Items",
+                "symbol_key": "tsx frontend/src/routes/_layout/items.tsx/Items().",
+                "path": "frontend/src/routes/_layout/items.tsx",
+                "lines": [
+                  57,
+                  70
+                ],
+                "lane": "ui",
+                "model": null
+              },
+              "edge": null
+            },
+            {
+              "layer": "ui",
+              "node": {
+                "kind": "component",
                 "name": "AddItem",
                 "qualified_name": "AddItem",
                 "symbol_key": "tsx frontend/src/components/Items/AddItem.tsx/AddItem().",
@@ -809,7 +1303,16 @@
                 "lane": "ui",
                 "model": null
               },
-              "edge": null
+              "edge": {
+                "type": "renders",
+                "confidence": 0.9,
+                "provenance": "import_resolved",
+                "evidence": {
+                  "path": "frontend/src/routes/_layout/items.tsx",
+                  "line": 65
+                },
+                "alternatives": 1
+              }
             },
             {
               "layer": "ui",
@@ -949,7 +1452,7 @@
               }
             }
           ],
-          "path_confidence": 0.5103,
+          "path_confidence": 0.4593,
           "layers": [
             "ui",
             "client",
@@ -958,10 +1461,29 @@
             "db"
           ],
           "reaches_goal": true,
-          "breaks": []
+          "breaks": [],
+          "entry_index": 1,
+          "reaches_origin": true
         },
         {
           "hops": [
+            {
+              "layer": "ui",
+              "node": {
+                "kind": "component",
+                "name": "Items",
+                "qualified_name": "Items",
+                "symbol_key": "tsx frontend/src/routes/_layout/items.tsx/Items().",
+                "path": "frontend/src/routes/_layout/items.tsx",
+                "lines": [
+                  57,
+                  70
+                ],
+                "lane": "ui",
+                "model": null
+              },
+              "edge": null
+            },
             {
               "layer": "ui",
               "node": {
@@ -977,7 +1499,16 @@
                 "lane": "ui",
                 "model": null
               },
-              "edge": null
+              "edge": {
+                "type": "renders",
+                "confidence": 0.9,
+                "provenance": "import_resolved",
+                "evidence": {
+                  "path": "frontend/src/routes/_layout/items.tsx",
+                  "line": 65
+                },
+                "alternatives": 1
+              }
             },
             {
               "layer": "ui",
@@ -1143,7 +1674,7 @@
               }
             }
           ],
-          "path_confidence": 0.5905,
+          "path_confidence": 0.5314,
           "layers": [
             "ui",
             "client",
@@ -1152,10 +1683,29 @@
             "db"
           ],
           "reaches_goal": true,
-          "breaks": []
+          "breaks": [],
+          "entry_index": 1,
+          "reaches_origin": true
         },
         {
           "hops": [
+            {
+              "layer": "ui",
+              "node": {
+                "kind": "component",
+                "name": "Items",
+                "qualified_name": "Items",
+                "symbol_key": "tsx frontend/src/routes/_layout/items.tsx/Items().",
+                "path": "frontend/src/routes/_layout/items.tsx",
+                "lines": [
+                  57,
+                  70
+                ],
+                "lane": "ui",
+                "model": null
+              },
+              "edge": null
+            },
             {
               "layer": "ui",
               "node": {
@@ -1171,7 +1721,16 @@
                 "lane": "ui",
                 "model": null
               },
-              "edge": null
+              "edge": {
+                "type": "renders",
+                "confidence": 0.9,
+                "provenance": "import_resolved",
+                "evidence": {
+                  "path": "frontend/src/routes/_layout/items.tsx",
+                  "line": 65
+                },
+                "alternatives": 1
+              }
             },
             {
               "layer": "ui",
@@ -1226,18 +1785,20 @@
               }
             }
           ],
-          "path_confidence": 0.81,
+          "path_confidence": 0.729,
           "layers": [
             "ui"
           ],
           "reaches_goal": false,
           "breaks": [
             {
-              "after_hop": 2,
+              "after_hop": 3,
               "reason": "cn calls nothing the trace follows further",
               "detail": null
             }
-          ]
+          ],
+          "entry_index": 1,
+          "reaches_origin": true
         }
       ]
     },
@@ -1263,6 +1824,101 @@
         {
           "hops": [
             {
+              "layer": "ui",
+              "node": {
+                "kind": "component",
+                "name": "Items",
+                "qualified_name": "Items",
+                "symbol_key": "tsx frontend/src/routes/_layout/items.tsx/Items().",
+                "path": "frontend/src/routes/_layout/items.tsx",
+                "lines": [
+                  57,
+                  70
+                ],
+                "lane": "ui",
+                "model": null
+              },
+              "edge": null
+            },
+            {
+              "layer": "ui",
+              "node": {
+                "kind": "component",
+                "name": "AddItem",
+                "qualified_name": "AddItem",
+                "symbol_key": "tsx frontend/src/components/Items/AddItem.tsx/AddItem().",
+                "path": "frontend/src/components/Items/AddItem.tsx",
+                "lines": [
+                  40,
+                  141
+                ],
+                "lane": "ui",
+                "model": null
+              },
+              "edge": {
+                "type": "renders",
+                "confidence": 0.9,
+                "provenance": "import_resolved",
+                "evidence": {
+                  "path": "frontend/src/routes/_layout/items.tsx",
+                  "line": 65
+                },
+                "alternatives": 1
+              }
+            },
+            {
+              "layer": "ui",
+              "node": {
+                "kind": "method",
+                "name": "createItem",
+                "qualified_name": "ItemsService.createItem",
+                "symbol_key": "ts frontend/src/client/sdk.gen.ts/ItemsService#createItem().",
+                "path": "frontend/src/client/sdk.gen.ts",
+                "lines": [
+                  307,
+                  318
+                ],
+                "lane": "ui",
+                "model": null
+              },
+              "edge": {
+                "type": "calls",
+                "confidence": 0.9,
+                "provenance": "import_resolved",
+                "evidence": {
+                  "path": "frontend/src/components/Items/AddItem.tsx",
+                  "line": 56
+                },
+                "alternatives": 1
+              }
+            },
+            {
+              "layer": "client",
+              "node": {
+                "kind": "http_client_call",
+                "name": "POST /api/v1/items/",
+                "qualified_name": "POST /api/v1/items/",
+                "symbol_key": "http_client_call POST /api/v1/items/ frontend/src/client/sdk.gen.ts:308",
+                "path": "frontend/src/client/sdk.gen.ts",
+                "lines": [
+                  308,
+                  308
+                ],
+                "lane": "ui",
+                "model": null
+              },
+              "edge": {
+                "type": "issues_request",
+                "confidence": 1.0,
+                "provenance": "contract",
+                "evidence": {
+                  "path": "frontend/src/client/sdk.gen.ts",
+                  "line": 308
+                },
+                "alternatives": 1
+              }
+            },
+            {
               "layer": "route",
               "node": {
                 "kind": "api_endpoint",
@@ -1277,7 +1933,16 @@
                 "lane": "api",
                 "model": null
               },
-              "edge": null
+              "edge": {
+                "type": "targets",
+                "confidence": 0.9,
+                "provenance": "url_literal",
+                "evidence": {
+                  "path": "frontend/src/client/sdk.gen.ts",
+                  "line": 308
+                },
+                "alternatives": 1
+              }
             },
             {
               "layer": "handler",
@@ -1339,17 +2004,116 @@
               }
             }
           ],
-          "path_confidence": 0.63,
+          "path_confidence": 0.4593,
           "layers": [
+            "ui",
+            "client",
             "route",
             "handler",
             "db"
           ],
           "reaches_goal": true,
-          "breaks": []
+          "breaks": [],
+          "entry_index": 4,
+          "reaches_origin": true
         },
         {
           "hops": [
+            {
+              "layer": "ui",
+              "node": {
+                "kind": "component",
+                "name": "Items",
+                "qualified_name": "Items",
+                "symbol_key": "tsx frontend/src/routes/_layout/items.tsx/Items().",
+                "path": "frontend/src/routes/_layout/items.tsx",
+                "lines": [
+                  57,
+                  70
+                ],
+                "lane": "ui",
+                "model": null
+              },
+              "edge": null
+            },
+            {
+              "layer": "ui",
+              "node": {
+                "kind": "component",
+                "name": "AddItem",
+                "qualified_name": "AddItem",
+                "symbol_key": "tsx frontend/src/components/Items/AddItem.tsx/AddItem().",
+                "path": "frontend/src/components/Items/AddItem.tsx",
+                "lines": [
+                  40,
+                  141
+                ],
+                "lane": "ui",
+                "model": null
+              },
+              "edge": {
+                "type": "renders",
+                "confidence": 0.9,
+                "provenance": "import_resolved",
+                "evidence": {
+                  "path": "frontend/src/routes/_layout/items.tsx",
+                  "line": 65
+                },
+                "alternatives": 1
+              }
+            },
+            {
+              "layer": "ui",
+              "node": {
+                "kind": "method",
+                "name": "createItem",
+                "qualified_name": "ItemsService.createItem",
+                "symbol_key": "ts frontend/src/client/sdk.gen.ts/ItemsService#createItem().",
+                "path": "frontend/src/client/sdk.gen.ts",
+                "lines": [
+                  307,
+                  318
+                ],
+                "lane": "ui",
+                "model": null
+              },
+              "edge": {
+                "type": "calls",
+                "confidence": 0.9,
+                "provenance": "import_resolved",
+                "evidence": {
+                  "path": "frontend/src/components/Items/AddItem.tsx",
+                  "line": 56
+                },
+                "alternatives": 1
+              }
+            },
+            {
+              "layer": "client",
+              "node": {
+                "kind": "http_client_call",
+                "name": "POST /api/v1/items/",
+                "qualified_name": "POST /api/v1/items/",
+                "symbol_key": "http_client_call POST /api/v1/items/ frontend/src/client/sdk.gen.ts:308",
+                "path": "frontend/src/client/sdk.gen.ts",
+                "lines": [
+                  308,
+                  308
+                ],
+                "lane": "ui",
+                "model": null
+              },
+              "edge": {
+                "type": "issues_request",
+                "confidence": 1.0,
+                "provenance": "contract",
+                "evidence": {
+                  "path": "frontend/src/client/sdk.gen.ts",
+                  "line": 308
+                },
+                "alternatives": 1
+              }
+            },
             {
               "layer": "route",
               "node": {
@@ -1365,7 +2129,16 @@
                 "lane": "api",
                 "model": null
               },
-              "edge": null
+              "edge": {
+                "type": "targets",
+                "confidence": 0.9,
+                "provenance": "url_literal",
+                "evidence": {
+                  "path": "frontend/src/client/sdk.gen.ts",
+                  "line": 308
+                },
+                "alternatives": 1
+              }
             },
             {
               "layer": "handler",
@@ -1453,17 +2226,116 @@
               }
             }
           ],
-          "path_confidence": 0.729,
+          "path_confidence": 0.5314,
           "layers": [
+            "ui",
+            "client",
             "route",
             "handler",
             "db"
           ],
           "reaches_goal": true,
-          "breaks": []
+          "breaks": [],
+          "entry_index": 4,
+          "reaches_origin": true
         },
         {
           "hops": [
+            {
+              "layer": "ui",
+              "node": {
+                "kind": "component",
+                "name": "Items",
+                "qualified_name": "Items",
+                "symbol_key": "tsx frontend/src/routes/_layout/items.tsx/Items().",
+                "path": "frontend/src/routes/_layout/items.tsx",
+                "lines": [
+                  57,
+                  70
+                ],
+                "lane": "ui",
+                "model": null
+              },
+              "edge": null
+            },
+            {
+              "layer": "ui",
+              "node": {
+                "kind": "component",
+                "name": "AddItem",
+                "qualified_name": "AddItem",
+                "symbol_key": "tsx frontend/src/components/Items/AddItem.tsx/AddItem().",
+                "path": "frontend/src/components/Items/AddItem.tsx",
+                "lines": [
+                  40,
+                  141
+                ],
+                "lane": "ui",
+                "model": null
+              },
+              "edge": {
+                "type": "renders",
+                "confidence": 0.9,
+                "provenance": "import_resolved",
+                "evidence": {
+                  "path": "frontend/src/routes/_layout/items.tsx",
+                  "line": 65
+                },
+                "alternatives": 1
+              }
+            },
+            {
+              "layer": "ui",
+              "node": {
+                "kind": "method",
+                "name": "createItem",
+                "qualified_name": "ItemsService.createItem",
+                "symbol_key": "ts frontend/src/client/sdk.gen.ts/ItemsService#createItem().",
+                "path": "frontend/src/client/sdk.gen.ts",
+                "lines": [
+                  307,
+                  318
+                ],
+                "lane": "ui",
+                "model": null
+              },
+              "edge": {
+                "type": "calls",
+                "confidence": 0.9,
+                "provenance": "import_resolved",
+                "evidence": {
+                  "path": "frontend/src/components/Items/AddItem.tsx",
+                  "line": 56
+                },
+                "alternatives": 1
+              }
+            },
+            {
+              "layer": "client",
+              "node": {
+                "kind": "http_client_call",
+                "name": "POST /api/v1/items/",
+                "qualified_name": "POST /api/v1/items/",
+                "symbol_key": "http_client_call POST /api/v1/items/ frontend/src/client/sdk.gen.ts:308",
+                "path": "frontend/src/client/sdk.gen.ts",
+                "lines": [
+                  308,
+                  308
+                ],
+                "lane": "ui",
+                "model": null
+              },
+              "edge": {
+                "type": "issues_request",
+                "confidence": 1.0,
+                "provenance": "contract",
+                "evidence": {
+                  "path": "frontend/src/client/sdk.gen.ts",
+                  "line": 308
+                },
+                "alternatives": 1
+              }
+            },
             {
               "layer": "route",
               "node": {
@@ -1479,7 +2351,16 @@
                 "lane": "api",
                 "model": null
               },
-              "edge": null
+              "edge": {
+                "type": "targets",
+                "confidence": 0.9,
+                "provenance": "url_literal",
+                "evidence": {
+                  "path": "frontend/src/client/sdk.gen.ts",
+                  "line": 308
+                },
+                "alternatives": 1
+              }
             },
             {
               "layer": "handler",
@@ -1534,19 +2415,23 @@
               }
             }
           ],
-          "path_confidence": 0.81,
+          "path_confidence": 0.5905,
           "layers": [
+            "ui",
+            "client",
             "route",
             "handler"
           ],
           "reaches_goal": false,
           "breaks": [
             {
-              "after_hop": 2,
+              "after_hop": 6,
               "reason": "get_db calls nothing the trace follows further",
               "detail": null
             }
-          ]
+          ],
+          "entry_index": 4,
+          "reaches_origin": true
         }
       ]
     },
@@ -1654,7 +2539,9 @@
               "reason": "client call has no matching endpoint",
               "detail": "no POST endpoint at /api/v1/items/export (it has DELETE, GET, PUT)"
             }
-          ]
+          ],
+          "entry_index": 0,
+          "reaches_origin": true
         }
       ]
     },
@@ -1817,7 +2704,9 @@
             "db"
           ],
           "reaches_goal": true,
-          "breaks": []
+          "breaks": [],
+          "entry_index": 0,
+          "reaches_origin": true
         },
         {
           "hops": [
@@ -1959,7 +2848,9 @@
             "db"
           ],
           "reaches_goal": true,
-          "breaks": []
+          "breaks": [],
+          "entry_index": 0,
+          "reaches_origin": true
         },
         {
           "hops": [
@@ -2099,7 +2990,9 @@
               "reason": "get_db calls nothing the trace follows further",
               "detail": null
             }
-          ]
+          ],
+          "entry_index": 0,
+          "reaches_origin": true
         }
       ]
     }
@@ -2208,7 +3101,9 @@
               "reason": "LoginService.loginAccessToken calls nothing the trace follows further",
               "detail": null
             }
-          ]
+          ],
+          "entry_index": 0,
+          "reaches_origin": true
         },
         {
           "hops": [
@@ -2267,7 +3162,9 @@
               "reason": "Form calls nothing the trace follows further",
               "detail": null
             }
-          ]
+          ],
+          "entry_index": 0,
+          "reaches_origin": true
         },
         {
           "hops": [
@@ -2326,7 +3223,9 @@
               "reason": "FormField calls nothing the trace follows further",
               "detail": null
             }
-          ]
+          ],
+          "entry_index": 0,
+          "reaches_origin": true
         }
       ]
     }

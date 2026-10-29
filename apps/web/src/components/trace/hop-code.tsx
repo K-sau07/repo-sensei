@@ -16,7 +16,6 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { ApiError } from "@/lib/api/errors";
 import {
   definitionPlace,
-  edgeLabel,
   hopPlace,
   placeLabel,
   type HopPlace,
@@ -87,7 +86,16 @@ function Viewer({ place }: { place: HopPlace }) {
   return <CodeSkeleton />;
 }
 
-export function HopCode({ hop, onClose }: { hop: TraceHop; onClose: () => void }) {
+export function HopCode({
+  hop,
+  how,
+  onClose,
+}: {
+  hop: TraceHop;
+  /** How the hop is reached (see `howReached`): "starts here", "entry", or the edge's verb. */
+  how: string;
+  onClose: () => void;
+}) {
   const { org, repo, ref } = useCodeLocation();
   const place = hopPlace(hop);
   const definition = definitionPlace(hop.node);
@@ -107,7 +115,7 @@ export function HopCode({ hop, onClose }: { hop: TraceHop; onClose: () => void }
         <h2 className="truncate font-mono font-medium">{hop.node.name}</h2>
         <span className="shrink-0 text-xs text-fg-muted">
           {kindLabel(hop.node.kind)}
-          {hop.edge ? `, ${edgeLabel(hop.edge)} at` : ", the entry, at"}
+          {hop.edge ? `, ${how} at` : `, ${how === "entry" ? "the entry" : "where it starts"}, at`}
         </span>
         {place && (
           <span className="min-w-0 truncate font-mono text-xs text-fg-faint">

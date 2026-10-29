@@ -198,14 +198,14 @@ describe("POST /trace", () => {
   it("takes the same entry in its body", async () => {
     const { data } = await api.POST(TRACE, {
       params: { path },
-      body: { from: GAP_ENTRY, kind: "auto", min_conf: 0 },
+      body: { from: GAP_ENTRY, kind: "auto", min_conf: 0, direction: "both" },
     });
     expect(data).toEqual(traces[GAP_ENTRY]);
     expect(
       await failure(
         api.POST(TRACE, {
           params: { path },
-          body: { from: GAP_ENTRY, kind: "nope" as "auto", min_conf: 0 },
+          body: { from: GAP_ENTRY, kind: "nope" as "auto", min_conf: 0, direction: "both" },
         }),
       ),
     ).toMatchObject({ status: 422, code: "validation_failed" });

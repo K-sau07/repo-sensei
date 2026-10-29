@@ -46,6 +46,26 @@ export function edgeLabel(edge: TraceEdge): string {
   return edge.type === "implements" ? "is implemented by" : EDGE_VERBS[edge.type];
 }
 
+/** How a path's hop is reached, in a word or two: where the journey starts (the first hop,
+ * when the entry comes later), the entry, or the edge from the hop before ("uses", ...). */
+export function howReached(path: TracePath, index: number): string {
+  const edge = path.hops[index]?.edge;
+  if (edge) return edgeLabel(edge);
+  return index === path.entry_index ? "entry" : "starts here";
+}
+
+/** Whether a path's hop is the entry traced, after where it is reached from. */
+export const isMidEntry = (path: TracePath, index: number) =>
+  index === path.entry_index && index > 0;
+
+/** Where a path's journey starts, when the entry is reached from somewhere: a page, or the
+ * first code that reaches it when no page does. */
+export function pathStart(path: TracePath): string | null {
+  if (path.entry_index === 0) return null;
+  const first = path.hops[0]?.node.name ?? "";
+  return path.reaches_origin ? `Starts at ${first}` : `Reached from ${first}; no page leads there`;
+}
+
 export const percent = (confidence: number) => `${String(Math.round(confidence * 100))}%`;
 
 export interface HopPlace {

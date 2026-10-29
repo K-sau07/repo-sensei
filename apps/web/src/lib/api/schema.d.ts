@@ -2403,6 +2403,8 @@ export interface components {
         TracePathOut: {
             /** Breaks */
             breaks: components["schemas"]["TraceBreakOut"][];
+            /** Entry Index */
+            entry_index: number;
             /** Hops */
             hops: components["schemas"]["TraceHopOut"][];
             /** Layers */
@@ -2411,9 +2413,17 @@ export interface components {
             path_confidence: number;
             /** Reaches Goal */
             reaches_goal: boolean;
+            /** Reaches Origin */
+            reaches_origin: boolean;
         };
         /** TraceRequest */
         TraceRequest: {
+            /**
+             * Direction
+             * @default both
+             * @enum {string}
+             */
+            direction: "down" | "up" | "both";
             /** From */
             from: string;
             /**
@@ -4390,6 +4400,7 @@ export interface operations {
                 kind?: "auto" | "ui" | "route" | "symbol";
                 to?: string | null;
                 min_conf?: number;
+                direction?: "down" | "up" | "both";
                 /** @description Branch or commit (or its first 7+ characters). */
                 ref?: string | null;
             };

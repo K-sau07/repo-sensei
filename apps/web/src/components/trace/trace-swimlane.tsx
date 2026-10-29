@@ -17,9 +17,10 @@ import { useLayoutEffect, useRef, useState, type CSSProperties } from "react";
 
 import {
   breaksByHop,
-  edgeLabel,
   hopPlace,
+  howReached,
   isAmbiguous,
+  isMidEntry,
   TRACE_LAYERS,
   type TraceHop,
   type TraceLayer,
@@ -62,14 +63,16 @@ export function gapLane(layer: TraceLayer): TraceLayer {
 }
 
 /** The words a hop's card (and its row in the list) says, for screen readers too. */
-export function hopSummary(hop: TraceHop, index: number, count: number): string {
+export function hopSummary(path: TracePath, index: number): string {
+  const hop = path.hops[index];
+  if (!hop) return "";
   const place = hopPlace(hop);
-  const how = hop.edge ? edgeLabel(hop.edge) : "entry";
   return [
-    `Step ${String(index + 1)} of ${String(count)}`,
+    `Step ${String(index + 1)} of ${String(path.hops.length)}`,
     TRACE_LANES[hop.layer].label,
     `${kindLabel(hop.node.kind)} ${hop.node.name}`,
-    how,
+    howReached(path, index),
+    isMidEntry(path, index) ? "the entry traced" : null,
     place ? `${place.path}:${String(place.start)}` : null,
   ]
     .filter(Boolean)
@@ -91,21 +94,34 @@ export function Alternatives({ hop }: { hop: TraceHop }) {
   );
 }
 
+/** The entry traced, when the path reaches it from somewhere first. */
+function EntryBadge() {
+  return (
+    <span
+      aria-hidden
+      className="text-surface-0 absolute -top-2 left-2 rounded-sm bg-signal px-1 text-[10px] leading-4 font-medium"
+    >
+      entry
+    </span>
+  );
+}
+
 function HopCard({
-  hop,
+  path,
   index,
-  count,
   selected,
   onSelect,
 }: {
-  hop: TraceHop;
+  path: TracePath;
   index: number;
-  count: number;
   selected: boolean;
   onSelect: () => void;
 }) {
+  const hop = path.hops[index];
+  if (!hop) return null;
   const lane = TRACE_LANES[hop.layer];
   const place = hopPlace(hop);
+  const entry = isMidEntry(path, index);
   return (
     <>
       <button
@@ -114,11 +130,12 @@ function HopCard({
         onClick={onSelect}
         title={hop.node.qualified_name}
         className={cn(
-          "flex h-[4.25rem] w-full flex-col justify-between rounded-[10px] border bg-surface-2 py-1.5 pr-7 pl-2.5 text-left text-xs shadow-(--elevation-1) outline-none hover:border-line-strong focus-visible:ring-2 focus-visible:ring-accent",
-          selected ? "border-accent bg-surface-3" : "border-line",
+          "relative flex h-[4.25rem] w-full flex-col justify-between rounded-[10px] border bg-surface-2 py-1.5 pr-7 pl-2.5 text-left text-xs shadow-(--elevation-1) outline-none hover:border-line-strong focus-visible:ring-2 focus-visible:ring-accent",
+          selected ? "border-accent bg-surface-3" : entry ? "border-signal/60" : "border-line",
         )}
       >
-        <span className="sr-only">{hopSummary(hop, index, count)}</span>
+        {entry && <EntryBadge />}
+        <span className="sr-only">{hopSummary(path, index)}</span>
         <span aria-hidden className={cn("flex min-w-0 items-center gap-1", lane.text)}>
           <span>{lane.glyph}</span>
           <span className="truncate">{kindLabel(hop.node.kind)}</span>
@@ -128,7 +145,7 @@ function HopCard({
         </span>
         <span className="flex min-w-0 items-center gap-1.5 text-fg-muted">
           <span aria-hidden className="shrink-0">
-            {hop.edge ? edgeLabel(hop.edge) : "entry"}
+            {howReached(path, index)}
           </span>
           {place && (
             <span aria-hidden className="truncate font-mono text-fg-faint">
@@ -268,9 +285,8 @@ export function TraceSwimlane({
               data-break={breaks.has(i) ? "" : undefined}
             >
               <HopCard
-                hop={hop}
+                path={path}
                 index={i}
-                count={path.hops.length}
                 selected={selected === i}
                 onSelect={() => {
                   onSelect(selected === i ? null : i);

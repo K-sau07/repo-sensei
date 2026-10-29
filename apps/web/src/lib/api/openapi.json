@@ -3706,6 +3706,10 @@
             "title": "Breaks",
             "type": "array"
           },
+          "entry_index": {
+            "title": "Entry Index",
+            "type": "integer"
+          },
           "hops": {
             "items": {
               "$ref": "#/components/schemas/TraceHopOut"
@@ -3737,6 +3741,10 @@
           "reaches_goal": {
             "title": "Reaches Goal",
             "type": "boolean"
+          },
+          "reaches_origin": {
+            "title": "Reaches Origin",
+            "type": "boolean"
           }
         },
         "required": [
@@ -3744,13 +3752,25 @@
           "path_confidence",
           "layers",
           "reaches_goal",
-          "breaks"
+          "breaks",
+          "entry_index",
+          "reaches_origin"
         ],
         "title": "TracePathOut",
         "type": "object"
       },
       "TraceRequest": {
         "properties": {
+          "direction": {
+            "default": "both",
+            "enum": [
+              "down",
+              "up",
+              "both"
+            ],
+            "title": "Direction",
+            "type": "string"
+          },
           "from": {
             "maxLength": 2000,
             "minLength": 1,
@@ -7359,6 +7379,21 @@
               "minimum": 0,
               "title": "Min Conf",
               "type": "number"
+            }
+          },
+          {
+            "in": "query",
+            "name": "direction",
+            "required": false,
+            "schema": {
+              "default": "both",
+              "enum": [
+                "down",
+                "up",
+                "both"
+              ],
+              "title": "Direction",
+              "type": "string"
             }
           },
           {
