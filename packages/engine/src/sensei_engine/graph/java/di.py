@@ -27,7 +27,7 @@ library, isn't seen), ``attrs.implements`` the interface.
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
 from typing import Literal
 
@@ -150,21 +150,38 @@ def bean_type(written: str) -> str | None:
     return None if name in NOT_BEANS else written
 
 
-def bean_classes(index: TypeIndex) -> list[Declared]:
+class Beans(list[Declared]):
+    """The repository's beans, in order, with the beans of each type they are (themselves and
+    their supertypes), worked out once for every injection to look up."""
+
+    def __init__(self, index: TypeIndex, beans: Iterable[Declared]) -> None:
+        super().__init__(beans)
+        self.keys = frozenset(b.type.key for b in self)
+        self.of_type: dict[str, list[Declared]] = {}
+        for bean in self:
+            for ref in index.hierarchy(bean.ref()):
+                self.of_type.setdefault(ref.key, []).append(bean)
+
+
+def bean_classes(index: TypeIndex) -> Beans:
     """The repository's beans: its classes with a stereotype."""
-    return [
-        d
-        for _, d in sorted(index.by_key.items())
-        if d.type.kind == "class" and stereotype(d.type) is not None
-    ]
+    return Beans(
+        index,
+        (
+            d
+            for _, d in sorted(index.by_key.items())
+            if d.type.kind == "class" and stereotype(d.type) is not None
+        ),
+    )
 
 
 def implementation(index: TypeIndex, beans: list[Declared], ref: TypeRef) -> str | None:
     """The bean Spring gives for an interface (or a class that isn't one itself): the one bean
     of its type, or the one of several marked ``@Primary`` (None: no bean, or several)."""
-    if ref.external or any(b.type.key == ref.key for b in beans):
+    held = beans if isinstance(beans, Beans) else Beans(index, beans)
+    if ref.external or ref.key in held.keys:
         return None
-    found = [b for b in beans if any(r.key == ref.key for r in index.hierarchy(b.ref()))]
+    found = held.of_type.get(ref.key, [])
     if len(found) > 1:
         found = [b for b in found if "Primary" in names(b.type.annotations)]
     return found[0].type.key if len(found) == 1 else None

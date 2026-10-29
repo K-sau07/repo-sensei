@@ -7,6 +7,7 @@ to end, through to a trace that reaches the implementation."""
 from __future__ import annotations
 
 import pickle
+import time
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, cast
@@ -900,3 +901,80 @@ def test_the_graph_stage_resolves_java_end_to_end(tmp_path: Path) -> None:
         _key(f"{IMPL}addItem()."),
     ]
     assert best.hops[-1].edge_type is EdgeType.IMPLEMENTS  # the override step
+
+
+# ---------------------------------------------------------------- hardening (3.18 b)
+
+
+def test_a_resolvers_bug_costs_its_own_languages_graph_not_every_ones(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A resolver that raises leaves its language out, with the failure in the details; the
+    others' graphs are all there."""
+    facts = _facts({"a/A.java": "package com.example.store.a;\npublic class A {}\n"})
+
+    def broken(*_args: Any, **_kwargs: Any) -> Any:
+        raise RecursionError("maximum recursion depth exceeded")
+
+    monkeypatch.setattr(java, "resolve", broken)
+    py = parse_file("app/m.py", b"import os\n\ndef f():\n    return os.getcwd()\n")
+    py_facts = RESOLVERS["python"].extract(py)
+    assert py_facts is not None
+    project = Project(frozenset([*facts, "app/m.py"]))
+    build = resolve_graph(project, {"java": facts, "python": {"app/m.py": py_facts}})
+    assert build.details["java"]["failed"] == "RecursionError: maximum recursion depth exceeded"
+    assert build.details["python"]["files"] == 1  # Python's ran, after Java's failed
+    assert "failed" not in build.details["python"]
+
+
+def test_supertypes_named_through_a_chain_of_member_types_resolve_without_recursing() -> None:
+    """``class V0 extends V1.W``, ``V1 extends V2.W``, ... 199 deep: each resolves its own."""
+    files = {
+        f"chain/V{i}.java": (
+            f"package com.example.store.chain;\npublic class V{i} extends V{i + 1}.W "
+            "{ static class W {} }\n"
+        )
+        for i in range(199)
+    }
+    files["chain/V199.java"] = (
+        "package com.example.store.chain;\npublic class V199 { static class W {} }\n"
+    )
+    _, edges, _ = _resolve(files)
+    extends = {_short(e.src) for e in edges if e.type is EdgeType.INHERITS}
+    assert len(extends) == 199
+
+
+def test_six_thousand_methods_key_their_calls_in_linear_time() -> None:
+    methods = "".join(f"  int m{i}(int a) {{ return h(a) + {i}; }}\n" for i in range(6000))
+    source = f"package p;\npublic class Big {{\n  int h(int a) {{ return a; }}\n{methods}}}\n"
+    parsed = parse_file("src/p/Big.java", source.encode(), timeout_seconds=60)
+    started = time.monotonic()
+    facts = java.extract(parsed)
+    assert time.monotonic() - started < 2
+    assert facts is not None
+    sources = {c.source for c in facts.calls}
+    assert len(sources) == 6000  # each call is its own method's
+    assert "java src/p/Big.java/Big#m5999()." in sources
+
+
+def test_two_modules_classes_of_one_name_resolve_to_each_ones_own() -> None:
+    """A monorepo's two services each with a ``com.example.store.Money``: each module's code
+    reaches its own module's."""
+    money = "package com.example.store;\npublic class Money {}\n"
+    uses = (
+        "package com.example.store;\npublic class Till {\n"
+        "  Money total() { return new Money(); }\n}\n"
+    )
+    facts = {
+        **_facts(
+            {"Money.java": money, "Till.java": uses}, "billing/src/main/java/com/example/store"
+        ),
+        **_facts({"Money.java": money, "Till.java": uses}, "shop/src/main/java/com/example/store"),
+    }
+    _, edges, _ = java.resolve(Project(frozenset(facts)), facts)
+    made = {
+        (e.evidence_path.split("/")[0] if e.evidence_path else "", e.dst.split("/")[0])
+        for e in edges
+        if e.type is EdgeType.CALLS and "Money" in e.dst
+    }
+    assert made == {("billing", "java billing"), ("shop", "java shop")}

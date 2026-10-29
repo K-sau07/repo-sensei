@@ -16,6 +16,7 @@ and is counted; nothing a file holds stops the stage.
 
 from __future__ import annotations
 
+import logging
 import time
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field, fields, is_dataclass
@@ -36,6 +37,8 @@ from sensei_engine.ingest.classify import MAX_PARSE_BYTES
 from sensei_engine.parse.parser import TIMEOUT_SECONDS, ParseResult, parse_file
 from sensei_engine.parse.pool import BATCH_SIZE, Failed, run_parallel
 from sensei_engine.parse.stage import read_source
+
+log = logging.getLogger(__name__)
 
 EXAMPLES = 10  # paths kept per problem, for the stage details
 SECTIONS = ("calls", "code", "di", "tests")  # a resolver's stats noted as they are
@@ -209,14 +212,28 @@ def resolve_graph(
     clock: Callable[[], float] | None = None,
 ) -> GraphBuild:
     """Every resolver over the project (``facts``: by resolver, then path): nodes (one per key),
-    edges, import tables and each resolver's stats."""
+    edges, import tables and each resolver's stats. A resolver that raises leaves its language
+    out (its details say why); when every one raises, so does this."""
     now = clock or time.monotonic
     build = GraphBuild()
     nodes: dict[str, GraphNode] = {}
+    failed: list[Exception] = []
+    resolved = 0
     for name, by_path in sorted(facts.items()):
         module = cast("Resolver", RESOLVERS[name])
         started = now()
-        found_nodes, found_edges, stats = module.resolve(project, by_path)
+        try:
+            found_nodes, found_edges, stats = module.resolve(project, by_path)
+        except Exception as exc:  # any bug in a resolver: its language's graph, not every one's
+            log.warning("resolver failed", extra={"resolver": name}, exc_info=True)
+            failed.append(exc)
+            build.details[name] = {
+                "files": len(by_path),
+                "failed": f"{type(exc).__name__}: {str(exc)[:200]}",
+                "seconds": round(now() - started, 3),
+            }
+            continue
+        resolved += 1
         for node in found_nodes:
             nodes.setdefault(node.key, node)
         build.edges.extend(found_edges)
@@ -230,6 +247,8 @@ def resolve_graph(
             "seconds": round(now() - started, 3),
             **_stats(stats),
         }
+    if failed and not resolved:
+        raise failed[0]  # no language's graph at all: the stage fails as it would have
     build.nodes = list(nodes.values())
     return build
 

@@ -39,6 +39,7 @@ from sensei_core.models import EdgeType, NodeKind, Provenance
 from sensei_engine.graph.java.facts import JavaFacts, JavaImport, JavaType
 from sensei_engine.graph.writer import GraphEdge, GraphNode
 
+MAX_NESTING = 32  # supertypes resolved inside the resolving of others' (see supertypes)
 PRIMITIVES = frozenset({
     "boolean", "byte", "char", "short", "int", "long", "float", "double", "void",
 })  # fmt: skip
@@ -206,7 +207,9 @@ class TypeIndex:
 
     def __init__(self, facts: Mapping[str, JavaFacts]) -> None:
         self.facts = facts
-        self.by_fqn: dict[str, Declared] = {}
+        self.by_fqn: dict[str, Declared] = {}  # the first by path of an FQN declared twice
+        self.twins: dict[str, list[Declared]] = {}  # an FQN's declarations, when several
+        self._near = ""  # the file a name is being resolved in (see :meth:`declared`)
         self.by_key: dict[str, Declared] = {}
         self.packages: dict[str, dict[str, str]] = {}  # package: simple name -> FQN
         self.members: dict[str, dict[str, str]] = {}  # a type's key: member type name -> key
@@ -218,6 +221,8 @@ class TypeIndex:
                 entry = Declared(path, declared, fqn, file)
                 self.by_key.setdefault(declared.key, entry)
                 if fqn is not None:
+                    if fqn in self.by_fqn:  # two modules' classes of one name
+                        self.twins.setdefault(fqn, [self.by_fqn[fqn]]).append(entry)
                     self.by_fqn.setdefault(fqn, entry)
                 if declared.outer is not None and not declared.local:
                     self.members.setdefault(declared.outer, {})[declared.name] = declared.key
@@ -251,6 +256,21 @@ class TypeIndex:
     def resolve(self, path: str, owner: str | None, written: str) -> TypeRef | None:
         """What a type as written in file ``path`` (inside type ``owner``) means; None: a
         primitive, an array, a type variable or an external we can't name."""
+        around, self._near = self._near, path
+        try:
+            return self._resolve(path, owner, written)
+        finally:
+            self._near = around
+
+    def declared(self, fqn: str) -> Declared | None:
+        """The repository's type of an FQN; of two modules' of one name, the one nearest the
+        file being resolved (the longest path they share: its own module's)."""
+        twins = self.twins.get(fqn)
+        if not twins:
+            return self.by_fqn.get(fqn)
+        return max(twins, key=lambda d: len(commonpath_prefix(d.path, self._near)))
+
+    def _resolve(self, path: str, owner: str | None, written: str) -> TypeRef | None:
         if not written or is_array(written):
             return None
         name = base_name(written)
@@ -293,8 +313,9 @@ class TypeIndex:
         if found is not None:
             return found
         fqn = self.packages.get(file.package, {}).get(name)
-        if fqn:
-            return self.by_fqn[fqn].ref()
+        held = self.declared(fqn) if fqn else None
+        if held is not None:
+            return held.ref()
         return self._on_demand(file, name)
 
     def _around(self, owner: str | None, name: str) -> TypeRef | None:
@@ -356,9 +377,10 @@ class TypeIndex:
     def in_package(self, source: str, name: str) -> TypeRef | None:
         """``name`` in an on-demand import's package, or as a member of its type."""
         fqn = self.packages.get(source, {}).get(name)
-        if fqn:
-            return self.by_fqn[fqn].ref()
-        declared = self.by_fqn.get(source)
+        held = self.declared(fqn) if fqn else None
+        if held is not None:
+            return held.ref()
+        declared = self.declared(source)
         if declared is not None:
             return self.member_type(declared.ref(), name)
         return None
@@ -366,7 +388,7 @@ class TypeIndex:
     def _qualified(self, parts: list[str]) -> TypeRef | None:
         """A fully qualified name (``com.acme.shop.domain.Order.Line``, ``java.util.List``)."""
         for end in range(len(parts), 0, -1):
-            declared = self.by_fqn.get(".".join(parts[:end]))
+            declared = self.declared(".".join(parts[:end]))
             if declared is None:
                 continue
             found: TypeRef | None = declared.ref()
@@ -392,6 +414,11 @@ class TypeIndex:
             return held
         declared = self.by_key.get(key)
         if declared is None or key in self._resolving:
+            return []
+        if len(self._resolving) >= MAX_NESTING:
+            # A supertype named through another type's member (class V1 extends V2.W) asks for
+            # V2's hierarchy, and so on: past this depth the answer is none, and not kept (a
+            # type asked for itself gets its own).
             return []
         self._resolving.add(key)
         # A type's supertypes are named in the scope around it (its own member types too).
@@ -436,6 +463,17 @@ class TypeIndex:
     def superclass(self, key: str) -> TypeRef | None:
         """What a class extends (None: Object, or a name we can't resolve)."""
         return next((r for rel, r, _ in self.supertypes(key) if rel == "extends"), None)
+
+
+def commonpath_prefix(a: str, b: str) -> str:
+    """The leading path segments two paths share (``app/src/x.java``, ``app/lib/y.java`` →
+    ``app/``)."""
+    shared: list[str] = []
+    for one, other in zip(a.split("/"), b.split("/"), strict=False):
+        if one != other:
+            break
+        shared.append(one + "/")
+    return "".join(shared)
 
 
 # ---------------------------------------------------------------------- edges

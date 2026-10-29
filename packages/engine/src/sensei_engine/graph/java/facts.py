@@ -24,6 +24,7 @@ symbol around a definition's name), so keys are the ones its nodes have.
 
 from __future__ import annotations
 
+import bisect
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, field
 from typing import Literal
@@ -273,6 +274,21 @@ class _Keys:
         self._spans = sorted(
             spans, key=lambda s: (s.start_line, s.start_col, -s.end_line, -s.end_col)
         )
+        # Where each span starts, and the span around it (-1: none): a lookup bisects to the
+        # last span starting by the point and climbs out, rather than scanning every span.
+        self._starts = [(s.start_line, s.start_col) for s in self._spans]
+        self._parents: list[int] = []
+        open_: list[int] = []
+        for at, span in enumerate(self._spans):
+            start = (span.start_line, span.start_col)
+            while open_ and not start < self._end(open_[-1]):
+                open_.pop()
+            self._parents.append(open_[-1] if open_ else -1)
+            open_.append(at)
+
+    def _end(self, at: int) -> tuple[int, int]:
+        span = self._spans[at]
+        return span.end_line, span.end_col
 
     def _point(self, node: Node) -> tuple[int, int]:
         row, byte_column = node.start_point
@@ -281,13 +297,10 @@ class _Keys:
 
     def around(self, node: Node) -> str:
         point = self._point(node)
-        found = self.module
-        for span in self._spans:
-            if (span.start_line, span.start_col) > point:
-                break
-            if point < (span.end_line, span.end_col):
-                found = span.symbol_key
-        return found
+        at = bisect.bisect_right(self._starts, point) - 1
+        while at >= 0 and not point < self._end(at):
+            at = self._parents[at]
+        return self._spans[at].symbol_key if at >= 0 else self.module
 
 
 @dataclass(slots=True)
