@@ -5,6 +5,8 @@ a file going through parsing, symbols and chunks end to end, and C's test files.
 
 from __future__ import annotations
 
+import time
+
 import pytest
 
 from sensei_engine.chunk.code import imported_names
@@ -508,3 +510,17 @@ def test_a_c_file_is_parsed_keyed_and_chunked_by_definition() -> None:
 )
 def test_c_test_files_are_tests(path: str, expected: str) -> None:
     assert assign_role(path, "c", "int x;\n", ui_package=False).value == expected
+
+
+def test_a_comment_of_long_runs_of_spaces_and_deep_nesting_cost_little() -> None:
+    """A docstring is read in linear time (a pattern for the comment's end backtracked on runs
+    of spaces), and a thousand nested structs key without recursing a thousand deep."""
+    spaced = b"/* a" + b" " * 150_000 + b"b */\nint f(void) { return 0; }\n"
+    started = time.monotonic()
+    [f] = [s for s in extract_symbols(parse_file("spaced.c", spaced), "c") if s.name == "f"]
+    assert time.monotonic() - started < 2
+    assert f.docstring is not None
+    assert f.docstring.startswith("a")
+    deep = "".join(f"struct s{i} {{ " for i in range(1200)) + "int x; " + "};" * 1200 + "\n"
+    symbols = extract_symbols(parse_file("deep.c", deep.encode()), "c")
+    assert len([s for s in symbols if s.kind is SymbolKind.CLASS]) == 1200

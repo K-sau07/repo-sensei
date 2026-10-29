@@ -609,7 +609,12 @@ class _Extractor:
     def _path(self, d: _Def) -> tuple[str, ...]:
         """Where ``d`` is keyed (its containers' names and owners, then its name) and its
         parameter types: one function's declaration and definition share it."""
-        outer = self._path(d.container)[:-1] if d.container is not None else ()
+        containers: list[_Def] = []
+        around = d.container
+        while around is not None:  # a loop: a thousand nested structs nest a thousand deep
+            containers.append(around)
+            around = around.container
+        outer = [part for c in reversed(containers) for part in (*c.owner, c.name)]
         return (*outer, *d.owner, d.name, d.parameters or "")
 
     def _owner(self, node: Node) -> tuple[str, ...]:
@@ -1280,11 +1285,13 @@ class _Extractor:
         if not comments:
             return None
         texts: list[str] = []
+        budget = MAX_DOCSTRING * 4  # what is kept is cut to MAX_DOCSTRING: read no more than this
         for comment in comments:
-            for line in self.source.node(comment).splitlines():
+            for line in self.source.node(comment)[:budget].splitlines():
                 stripped = line.strip()
                 stripped = re.sub(r"^(/\*\*?|\*/|\*(?!/)|//+|#+)\s?", "", stripped)
-                stripped = re.sub(r"\s*\*/$", "", stripped)
+                # Not a pattern: ``\s*\*/$`` backtracks on a long run of spaces.
+                stripped = stripped.removesuffix("*/").rstrip()
                 texts.append(stripped)
         text = "\n".join(texts)
         if self.csharp:

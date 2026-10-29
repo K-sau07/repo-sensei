@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import pytest
 
+from sensei_engine.chunk.code import chunk_code
 from sensei_engine.chunk.files import chunk_file
 from sensei_engine.graph.snapshot import lane
 from sensei_engine.ingest.roles import assign_role
@@ -312,3 +313,13 @@ def test_a_ruby_file_is_parsed_keyed_and_chunked_by_definition() -> None:
 def test_a_rails_layouts_folders_fall_in_their_lanes(path: str, expected: str) -> None:
     role = assign_role(path, "ruby", "class X; end\n", ui_package=False)
     assert lane("class", path, role.value) == expected
+
+
+def test_six_hundred_nested_modules_chunk_without_recursing_that_deep() -> None:
+    """Classes deeper than the chunker splits are kept whole in their parent's chunk."""
+    source = "".join(f"module M{i}\ndef f{i}\n" + "x = 1\n" * 8 + "end\n" for i in range(600))
+    parsed = parse_file("deep.rb", (source + "end\n" * 600).encode())
+    chunks = chunk_code(parsed, "ruby", extract_symbols(parsed, "ruby"))
+    assert chunks
+    covered = sorted({line for c in chunks for line in range(c.start_line, c.end_line + 1)})
+    assert covered[0] == 1

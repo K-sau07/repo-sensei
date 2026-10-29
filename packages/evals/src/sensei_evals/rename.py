@@ -65,7 +65,7 @@ import yaml
 
 from sensei_engine.ingest.frameworks import is_manifest
 from sensei_engine.ingest.ignore import IgnoreRules
-from sensei_engine.ingest.languages import detect_language
+from sensei_engine.ingest.languages import HEAD_BYTES, detect_language
 from sensei_engine.ingest.walk import walk
 from sensei_engine.parse.parser import parse_file
 from sensei_engine.parse.stage import parseable, read_source
@@ -731,7 +731,7 @@ def extracted_symbols(checkout: Path) -> dict[str, frozenset[str]]:
             data = read_source(checkout, file)
         except OSError:
             continue
-        detected = detect_language(file, data[:256])
+        detected = detect_language(file, data[:HEAD_BYTES])
         if detected is None or not parseable(detected):
             continue
         result = parse_file(file, data, language=detected, timeout_seconds=EXTRACT_TIMEOUT_SECONDS)

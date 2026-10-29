@@ -46,6 +46,9 @@ from sensei_engine.parse.languages import COMMENTS, QueryKind
 from sensei_engine.parse.parser import ParseResult
 from sensei_engine.symbols.extract import Symbol, SymbolKind
 
+# How many classes in a class is split into its members' chunks; one deeper is kept whole in its
+# parent's (600 nested Ruby modules would otherwise nest the chunker 1,200 calls deep).
+MAX_EXPAND_DEPTH = 32
 _CALLABLE = frozenset(
     {SymbolKind.FUNCTION, SymbolKind.METHOD, SymbolKind.COMPONENT, SymbolKind.HOOK}
 )
@@ -213,16 +216,17 @@ class _CodeChunker:
         self.imported = imported_names(result)
 
     def run(self) -> list[Chunk]:
-        return self._level(self.module, 1, len(self.lines))
+        return self._level(self.module, 1, len(self.lines), 0)
 
     # ------------------------------------------------------------------ units
 
-    def _level(self, container: Symbol, start: int, end: int) -> list[Chunk]:
-        """The chunks of lines ``start``..``end`` inside ``container`` (the module or a class)."""
+    def _level(self, container: Symbol, start: int, end: int, depth: int) -> list[Chunk]:
+        """The chunks of lines ``start``..``end`` inside ``container`` (the module or a class,
+        ``depth`` classes in)."""
         chunks: list[Chunk] = []
         run: list[_Entry] = []
         for entry in self._entries(container, start, end):
-            expanded = self._expand(entry)
+            expanded = self._expand(entry, depth) if depth < MAX_EXPAND_DEPTH else None
             if expanded is None:
                 run.append(entry)
                 continue
@@ -282,7 +286,7 @@ class _CodeChunker:
         mergeable = tokens < MIN_TOKENS and not any(self._holds_code(s) for s in symbols)
         return _Entry(Unit(start, end, tokens, mergeable), symbols)
 
-    def _expand(self, entry: _Entry) -> list[Chunk] | None:
+    def _expand(self, entry: _Entry, depth: int) -> list[Chunk] | None:
         """A class with methods, as its header and its members' chunks; None for any other
         unit."""
         if len(entry.symbols) != 1 or entry.unit.tokens < MIN_TOKENS:
@@ -300,7 +304,7 @@ class _CodeChunker:
         body = max(self._with_comments(members[0].start_line), entry.unit.start + 1)
         span = (entry.unit.start, body - 1)
         header = build(self.lines, self.path, self._spec([symbol]), span, self.layout.cuts)
-        return header + self._level(symbol, body, entry.unit.end)
+        return header + self._level(symbol, body, entry.unit.end, depth + 1)
 
     def _holds_code(self, symbol: Symbol) -> bool:
         """A class, or a module that holds definitions (not Rust's mod models;)."""

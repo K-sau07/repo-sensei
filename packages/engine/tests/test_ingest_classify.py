@@ -204,6 +204,14 @@ def test_a_symlink_swapped_in_is_not_followed(tmp_path: Path) -> None:
         ("src/list.c", b"", "c"),
         ("include/list.h", b"", "c"),
         ("include/box.h", b"namespace acme {\n", "cpp"),
+        # Prose in a C header's comments is no C++: "the class of devices", "std::".
+        (
+            "include/dev.h",
+            b"/*\n   class of devices it drives\n   (not std::vector)\n*/\nint f(void);\n",
+            "c",
+        ),
+        ("include/notes.h", b"// namespace-free\nint f(void);\n", "c"),
+        ("include/cut.h", b"int f(void);\n/* a comment the head cuts off: class Foo", "c"),
         ("include/box.ipp", b"", "cpp"),
         ("include/box.inl", b"", "cpp"),
         ("bin/run", b"#!/usr/bin/env python3\nprint(1)\n", "python"),

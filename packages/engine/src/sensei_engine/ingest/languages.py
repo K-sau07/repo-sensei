@@ -319,11 +319,17 @@ def _by_name(lowered: str) -> str | None:
     return BY_EXTENSION.get(PurePosixPath(lowered).suffix)
 
 
+# A header's comments (one cut off at the head's end included): prose there ("the class of
+# devices it drives") says nothing of its language.
+_HEADER_COMMENT = re.compile(rb"/\*.*?(?:\*/|\Z)|//[^\n]*", re.DOTALL)
+
+
 def _header_language(head: bytes) -> str:
-    """A ``.h`` header's language, from its first bytes (see the module)."""
-    if _OBJC_HEADER.search(head):
+    """A ``.h`` header's language, from its first bytes' code (see the module)."""
+    code = _HEADER_COMMENT.sub(b" ", head)
+    if _OBJC_HEADER.search(code):
         return "objective-c"
-    return "cpp" if _CPP_HEADER.search(head) else "c"
+    return "cpp" if _CPP_HEADER.search(code) else "c"
 
 
 def detect_language(path: str, head: bytes = b"") -> str | None:
