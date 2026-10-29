@@ -3,7 +3,7 @@
 /**
  * Where a trace starts, when the URL doesn't say (`/trace` without `?from=`): the repository's
  * symbols by name (the ⌘K palette's lookup), or whatever is typed (a route such as
- * `POST /api/v1/items/`, a file, a name, or a feature in words: `create order`), which the API
+ * `POST /api/v1/items/`, a file, a name, or a feature in words: `add item`), which the API
  * resolves.
  */
 import { useQuery } from "@tanstack/react-query";
@@ -66,8 +66,8 @@ export function EntryPicker() {
         </h2>
         <p id={hintId} className="text-sm text-fg-muted">
           From where it starts (a component, a hook, a route, a function, or a feature in words such
-          as &ldquo;create order&rdquo;) across the layers to the tables it reads and writes, each
-          hop with the code that proves it.
+          as &ldquo;add item&rdquo;) across the layers to the tables it reads and writes, each hop
+          with the code that proves it.
         </p>
       </div>
       <form
@@ -86,7 +86,7 @@ export function EntryPicker() {
           <Input
             aria-label="Where the trace starts"
             aria-describedby={hintId}
-            placeholder="A feature (create order), a name, a route or a file"
+            placeholder="A feature (add item), a name, a route or a file"
             value={typed}
             onChange={(event) => {
               setTyped(event.target.value);

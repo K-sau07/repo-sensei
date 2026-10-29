@@ -303,7 +303,7 @@ def test_client_code_that_calls_nothing_is_a_gap() -> None:
 def test_the_ui_code_on_the_way_to_a_request_is_the_clients() -> None:
     """An API client's method between the page and its request is the client's layer, not the
     page's (the Hook / client lane, not three components in a row)."""
-    client = _node("ts api.ts/authService.login().", NodeKind.METHOD, path="api.ts", lane_="ui")
+    client = _node("ts api.ts/ItemsService#create().", NodeKind.METHOD, path="api.ts", lane_="ui")
     request = _node("http_client_call POST /x api.ts:3", NodeKind.HTTP_CLIENT_CALL, path="api.ts")
     graph = _graph(
         [PAGE, client, request, ENDPOINT, HANDLER, TABLE],
@@ -621,81 +621,81 @@ def _handler(name: str) -> Node:
     return _node(f"py api.py/{name}().", NodeKind.FUNCTION, path="api.py", lane_="api")
 
 
-def _orders_graph() -> tuple[GraphSnapshot, dict[str, Node]]:
-    """A dashboard that lists items and places orders; the order's handler looks its caller up
-    in ``users`` and saves the row in ``orders``."""
+def _invoices_graph() -> tuple[GraphSnapshot, dict[str, Node]]:
+    """A dashboard that lists items and sends invoices; the invoice's handler looks its caller
+    up in ``account`` and saves the row in ``invoice``."""
     page = _node("ts dash.tsx/Dashboard().", NodeKind.COMPONENT, path="dash.tsx", lane_="ui")
     list_call = _node("http_client_call GET /items dash.tsx:3", NodeKind.HTTP_CLIENT_CALL)
-    order_call = _node("http_client_call POST /orders dash.tsx:9", NodeKind.HTTP_CLIENT_CALL)
+    send_call = _node("http_client_call POST /invoices dash.tsx:9", NodeKind.HTTP_CLIENT_CALL)
     items = _endpoint("GET", "/api/items")
-    create = _endpoint("POST", "/api/orders")
-    mine = _endpoint("GET", "/api/orders/my-orders")
-    by_status = _endpoint("GET", "/api/orders/status/{status}")
-    list_items, create_order = _handler("list_items"), _handler("create_order")
-    my_orders, orders_by_status = _handler("my_orders"), _handler("orders_by_status")
-    find_user = _node("py db.py/find_user().", NodeKind.FUNCTION, path="db.py", lane_="db")
-    users, orders, item = _table("users"), _table("orders"), _table("item")
+    create = _endpoint("POST", "/api/invoices")
+    mine = _endpoint("GET", "/api/invoices/mine")
+    by_state = _endpoint("GET", "/api/invoices/state/{state}")
+    list_items, create_invoice = _handler("list_items"), _handler("create_invoice")
+    my_invoices, invoices_in = _handler("my_invoices"), _handler("invoices_in_state")
+    find_account = _node("py db.py/find_account().", NodeKind.FUNCTION, path="db.py", lane_="db")
+    account, invoice, item = _table("account"), _table("invoice"), _table("item")
     nodes = {
         n.symbol_key: n
-        for n in (page, list_call, order_call, items, create, mine, by_status, list_items,
-                  create_order, my_orders, orders_by_status, find_user, users, orders, item)
+        for n in (page, list_call, send_call, items, create, mine, by_state, list_items,
+                  create_invoice, my_invoices, invoices_in, find_account, account, invoice, item)
     }  # fmt: skip
     sure = 0.9
     edges = [
         (page, list_call, _edge(EdgeType.ISSUES_REQUEST, sure)),
-        (page, order_call, _edge(EdgeType.ISSUES_REQUEST, sure)),
+        (page, send_call, _edge(EdgeType.ISSUES_REQUEST, sure)),
         (list_call, items, _edge(EdgeType.TARGETS, sure)),
-        (order_call, create, _edge(EdgeType.TARGETS, sure)),
+        (send_call, create, _edge(EdgeType.TARGETS, sure)),
         (items, list_items, _edge(EdgeType.HANDLED_BY, sure)),
-        (create, create_order, _edge(EdgeType.HANDLED_BY, sure)),
-        (mine, my_orders, _edge(EdgeType.HANDLED_BY, sure)),
-        (by_status, orders_by_status, _edge(EdgeType.HANDLED_BY, sure)),
+        (create, create_invoice, _edge(EdgeType.HANDLED_BY, sure)),
+        (mine, my_invoices, _edge(EdgeType.HANDLED_BY, sure)),
+        (by_state, invoices_in, _edge(EdgeType.HANDLED_BY, sure)),
         (list_items, item, _edge(EdgeType.READS, sure)),
-        (create_order, find_user, _edge(EdgeType.CALLS, sure)),
-        (find_user, users, _edge(EdgeType.READS, sure)),
-        (create_order, orders, _edge(EdgeType.READS, 0.7)),
-        (create_order, orders, _edge(EdgeType.WRITES, 0.7)),
-        (my_orders, orders, _edge(EdgeType.READS, sure)),
-        (orders_by_status, orders, _edge(EdgeType.READS, sure)),
+        (create_invoice, find_account, _edge(EdgeType.CALLS, sure)),
+        (find_account, account, _edge(EdgeType.READS, sure)),
+        (create_invoice, invoice, _edge(EdgeType.READS, 0.7)),
+        (create_invoice, invoice, _edge(EdgeType.WRITES, 0.7)),
+        (my_invoices, invoice, _edge(EdgeType.READS, sure)),
+        (invoices_in, invoice, _edge(EdgeType.READS, sure)),
     ]
     keyed = [(a.symbol_key, b.symbol_key, e) for a, b, e in edges]
     return _graph(list(nodes.values()), keyed), {n.name: n for n in nodes.values()}
 
 
 def test_a_feature_in_words_starts_from_the_endpoint_that_serves_it() -> None:
-    """``create order`` is the POST its verb asks for; with no verb, a feature is shown (GET),
+    """``add invoice`` is the POST its verb asks for; with no verb, a feature is shown (GET),
     the route naming least besides first; a verb no endpoint of its things does is none."""
-    graph, _ = _orders_graph()
-    assert [n.name for n in feature_entries(graph, "create order")] == ["POST /api/orders"]
-    assert [n.name for n in feature_entries(graph, "place order")] == ["POST /api/orders"]
-    assert [n.name for n in feature_entries(graph, "my orders")] == ["GET /api/orders/my-orders"]
-    assert feature_entries(graph, "delete order") == []
+    graph, _ = _invoices_graph()
+    assert [n.name for n in feature_entries(graph, "add invoice")] == ["POST /api/invoices"]
+    assert [n.name for n in feature_entries(graph, "submit invoice")] == ["POST /api/invoices"]
+    assert [n.name for n in feature_entries(graph, "my invoices")] == ["GET /api/invoices/mine"]
+    assert feature_entries(graph, "delete invoice") == []
     with pytest.raises(TraceError, match="no endpoint or code is named for it"):
-        trace_feature(graph, "delete order")
+        trace_feature(graph, "delete invoice")
     # A name still wins over words: the entry is what is called that.
     assert [n.name for n in resolve_entry(graph, "Dashboard")] == ["Dashboard"]
 
 
 def test_a_feature_found_by_its_words_is_followed_to_its_own_table() -> None:
-    """Past ``POST /api/orders`` the path goes on to ``orders``, not the ``users`` row the
+    """Past ``POST /api/invoices`` the path goes on to ``invoice``, not the ``account`` row the
     handler looks the caller up in (surer, and nearer); and of a table read and written as
     surely, the hop is the write."""
-    graph, _ = _orders_graph()
-    [best, *_] = trace_feature(graph, "create order", direction="both").paths
+    graph, _ = _invoices_graph()
+    [best, *_] = trace_feature(graph, "add invoice", direction="both").paths
     down = best.hops[: best.return_index]
-    assert [h.node.name for h in down][-3:] == ["POST /api/orders", "create_order", "orders"]
+    assert [h.node.name for h in down][-3:] == ["POST /api/invoices", "create_invoice", "invoice"]
     assert down[-1].edge_type is EdgeType.WRITES
     assert down[0].node.name == "Dashboard"  # where the request is made from
 
 
 def test_a_feature_says_which_of_a_pages_ways_to_follow() -> None:
-    """A dashboard listing items and placing orders: ``feature`` picks the order's way."""
-    graph, named = _orders_graph()
+    """A dashboard listing items and sending invoices: ``feature`` picks the invoice's way."""
+    graph, named = _invoices_graph()
     page = named["Dashboard"].symbol_key
     plain = trace_feature(graph, page).paths[0]
-    asked = trace_feature(graph, page, feature="place order").paths[0]
+    asked = trace_feature(graph, page, feature="send invoice").paths[0]
     assert plain.hops[-1].node.name == "item"  # the surest way, no feature asked
-    assert [h.node.name for h in asked.hops[: asked.return_index]][-1] == "orders"
+    assert [h.node.name for h in asked.hops[: asked.return_index]][-1] == "invoice"
 
 
 def test_a_name_with_one_of_the_words_counts_more_than_a_longer_form() -> None:

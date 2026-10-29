@@ -35,7 +35,7 @@ import axios from "axios"
 
 export const api = axios.create({ baseURL: "/api" })
 
-export const authService = {
+export const accountClient = {
   login: async (email, password) => {
     const res = await api.post("/auth/login", { email, password })
     return res.data
@@ -51,7 +51,7 @@ LOGIN = """\
 import { useState } from "react"
 import { useNavigate } from "react-router-dom"
 import { toast } from "react-hot-toast"
-import { authService } from "../api"
+import { accountClient } from "../api"
 
 export default function LoginPage() {
   const [error, setError] = useState(null)
@@ -60,7 +60,7 @@ export default function LoginPage() {
   const handleSubmit = async (event) => {
     event.preventDefault()
     try {
-      const session = await authService.login(event.target.email.value, "pw")
+      const session = await accountClient.login(event.target.email.value, "pw")
       localStorage.setItem("session_token", session.token)
       navigate("/home", { replace: true })
     } catch (err) {
@@ -270,7 +270,7 @@ def test_login_comes_back_to_the_stored_token_the_next_page_and_the_error(
     assert [hop.node.kind for hop in down][-1] == NodeKind.TABLE
     assert "client" in best.layers
     assert _back(best) == [
-        ("LoginPage", 13),  # back to the call it made: await authService.login(…)
+        ("LoginPage", 13),  # back to the call it made: await accountClient.login(…)
         ("localStorage.setItem session_token", 14),
         ("navigate /home", 15),
         ("setError", 17),
@@ -369,7 +369,7 @@ def test_an_outcome_node_says_what_it_is(tmp_path: Path) -> None:
         "target": "session_token",
         "value": "session.token",
         "tie": [[13, 13]],
-        "awaits": "authService.login",
+        "awaits": "accountClient.login",
     }
     assert outcome_tie(token.key) == ((13, 13),)
     assert outcome_kind(token.key) == "storage"

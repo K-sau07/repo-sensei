@@ -6,9 +6,9 @@ that proves it.
 default: from where the entry is reached, a page, to where it goes; ``entry_index`` says which hop
 it is); ``GET …/trace?from=`` is the same, for deep links (the code viewer's "Trace this").
 ``from`` (and ``to``) is a node's key, a route (``POST /api/v1/items/``), a file, a name, or a
-feature in words (``create order``: the endpoints serving it; see
+feature in words (``add item``: the endpoints serving it; see
 :func:`sensei_engine.graph.trace.resolve_entry`). ``feature`` says which of the entry's features
-to follow, where it has several (a dashboard listing items and placing orders: ``place order``).
+to follow, where it has several (a dashboard listing items and sending invoices: ``send invoice``).
 ``ref`` picks the snapshot as in browsing; the commit read is in ``X-Commit-Sha``. A snapshot
 whose graph isn't built yet answers ``409 graph_not_ready``; ``linked`` says whether its
 cross-layer links are in it yet (the links stage: without them a trace stays in the code). An

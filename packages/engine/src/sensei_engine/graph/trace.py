@@ -17,7 +17,7 @@ any node, edges at least ``min_conf``; a node is on a path once, and library cod
 never on one. Ways on are tried nearest the goal first (the tables, or ``to``: distances from a
 walk back from them), then those of the same feature (a word of the entry's name in theirs:
 ``Login`` → ``/login/access-token``, where a hook serves several features; past a request, a word
-of its route's: ``POST /api/orders`` → the ``orders`` table), then surest. The paths that reach
+of its route's: ``POST /api/invoices`` → the ``invoice`` table), then surest. The paths that reach
 the goal win; then those with fewer detours through injected dependencies (``INJECTS``: the
 session, the current user, which every handler has), those more of the feature, the surer
 (the product of their edges' confidence), those covering more layers and the shorter.
@@ -30,7 +30,7 @@ repository, client code that calls nothing further: gaps; server code that calls
 the repository's, a DTO built or a token signed: an end; the hop limit).
 
 **The feature** (3.24) is the entry's own words, the ``feature`` asked for (which of a
-dashboard's features to follow: ``create order``), and, for an entry given as a feature in words
+dashboard's features to follow: ``send invoice``), and, for an entry given as a feature in words
 rather than a name (:func:`feature_entries`), those words: the endpoints whose route or handler
 names its things, with the method its verb asks for (``create`` → POST), are where it starts.
 
@@ -292,13 +292,13 @@ def layer_of(node: Node, reached_by: EdgeType | None) -> Layer:
     return KIND_LAYERS.get(node.kind) or LANE_LAYERS.get(node.lane, "other")
 
 
-# The code a UI file holds between the page and its request (``authService.login``).
+# The code a UI file holds between the page and its request (``ItemsService.createItem``).
 CLIENT_CODE_KINDS = frozenset({NodeKind.FUNCTION.value, NodeKind.METHOD.value})
 
 
 def _client_code(path: TracePath) -> TracePath:
     """``path`` with the functions of UI files it calls on its way to a request (an API
-    client's methods: ``authService.login``) in the client's layer (``state``) rather than the
+    client's methods: ``ItemsService.createItem``) in the client's layer (``state``) rather than the
     page's; a helper the page calls on a way with no request (``cn``) stays the page's."""
     request = next(
         (i for i, hop in enumerate(path.hops) if hop.node.kind == NodeKind.HTTP_CLIENT_CALL), None
@@ -414,7 +414,7 @@ def resolve_entry(graph: GraphSnapshot, entry: str, kind: EntryKind = "auto") ->
     """What ``entry`` names: a node's key; a route (``POST /api/v1/items/``); a file (what in it
     a feature starts from: its components, else hooks, functions, methods); a name or qualified
     name (every definition of it, up to :data:`MAX_ENTRIES`); or, none of those, a feature in
-    words (``create order``: :func:`feature_entries`)."""
+    words (``add item``: :func:`feature_entries`)."""
     return _resolve(graph, entry, kind)[0]
 
 
@@ -457,7 +457,7 @@ def _resolve(graph: GraphSnapshot, entry: str, kind: EntryKind) -> tuple[list[No
     )
 
 
-# What a feature's verb asks of an endpoint: the methods that do it ("create order" → POST).
+# What a feature's verb asks of an endpoint: the methods that do it ("add item" → POST).
 VERB_METHODS: dict[str, frozenset[str]] = {
     **dict.fromkeys(
         ("create", "add", "new", "post", "submit", "upload", "register", "signup", "place"),
@@ -478,8 +478,8 @@ MAX_FEATURE_ENTRIES = 3  # the endpoints (or code) a feature matching several eq
 
 
 def feature_entries(graph: GraphSnapshot, text: str) -> list[Node]:
-    """What a feature in words starts from (``create order``, ``delete api key``): the endpoints
-    whose route or handler names its things (``orders``, ``createOrder``), with a method its verb
+    """What a feature in words starts from (``add item``, ``delete api key``): the endpoints
+    whose route or handler names its things (``items``, ``create_item``), with a method its verb
     asks for (``create`` → POST) ranking first, as a request's spine; else the code (a page, a
     hook, a function) named with all of its words. Best first, ties together; none when nothing
     names any of them."""
@@ -509,8 +509,8 @@ def feature_entries(graph: GraphSnapshot, text: str) -> list[Node]:
         said = sum(any(_alike(v, w) for w in handlers) for v in verbs)
         if verbs and not asked and not said:
             continue  # "delete order" is no endpoint that only creates one
-        # Of the rest, the route naming least besides (``/orders/my-orders`` over
-        # ``/orders/status/{status}`` for "my orders"), then the shortest.
+        # Of the rest, the route naming least besides (``/invoices/mine`` over
+        # ``/invoices/state/{state}`` for "my invoices"), then the shortest.
         extra = sum(not any(_alike(w, t) for t in words) for w in route)
         segments = len([part for part in node.name.partition(" ")[2].split("/") if part])
         endpoints.append(((held, asked, said, -extra, -segments), node))
@@ -547,7 +547,7 @@ def _words(text: str) -> set[str]:
 
 
 def _alike(word: str, other: str) -> bool:
-    """The same word, or one a longer form of the other (sign, signup; order, orders)."""
+    """The same word, or one a longer form of the other (sign, signup; item, items)."""
     if word == other:
         return True
     return min(len(word), len(other)) >= 4 and (word.startswith(other) or other.startswith(word))
@@ -594,8 +594,8 @@ def _detours(hops: Sequence[TraceHop]) -> int:
 
 def _affinity(hops: Sequence[TraceHop], feature: set[str]) -> int:
     """How much the hops past the entry are named for its feature (:func:`_shares`), or, past a
-    request, for what the request is about (``POST /api/orders``: on to the ``orders`` table,
-    not the ``users`` one its handler looks the caller up in on the way)."""
+    request, for what the request is about (``POST /api/invoices``: on to the ``invoice`` table,
+    not the ``account`` one its handler looks the caller up in on the way)."""
     count = 0
     words = feature
     for hop in hops[1:]:
@@ -615,7 +615,7 @@ def _path_words(hops: Sequence[TraceHop], feature: set[str]) -> set[str]:
 
 
 def _route_words(endpoint: Node) -> set[str]:
-    """An endpoint's resource, in words: its path's (``POST /api/orders/{id}`` → ``orders``)."""
+    """An endpoint's resource, in words: its path's (``POST /api/invoices/{id}`` → ``invoices``)."""
     _, _, path = endpoint.name.partition(" ")
     return _words(re.sub(r"\{[^}]*\}|:[A-Za-z_]\w*", " ", path or endpoint.name))
 
@@ -633,8 +633,8 @@ def trace_feature(
     """The surest paths from ``entry`` (see :func:`resolve_entry`) to the data layer, or to
     ``to`` (a node's key, a route or a name, as ``entry``); with ``direction`` ``up`` or
     ``both``, from where the entry is reached (see :func:`_upstream`) as well. ``feature`` (in
-    words: ``create order``) says which of the entry's features to follow, where it has several
-    (a dashboard listing items and placing orders); an entry found by its words
+    words: ``send invoice``) says which of the entry's features to follow, where it has several
+    (a dashboard listing items and sending invoices); an entry found by its words
     (:func:`feature_entries`) follows them."""
     index = _index(graph)
     entries, searched = _resolve(graph, entry, kind)

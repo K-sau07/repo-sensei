@@ -95,14 +95,18 @@ describe("pipOf and isAmbiguous", () => {
 
   it("names a method with its owner and a request by its path", () => {
     const at = (overrides: Partial<TraceNode>) => hopName(node("login", overrides));
-    expect(at({ kind: "method", qualified_name: "AuthService.login" })).toBe("AuthService.login");
+    expect(at({ kind: "method", qualified_name: "ItemsService.createItem" })).toBe(
+      "ItemsService.createItem",
+    );
     expect(at({ kind: "method", qualified_name: "app.crud.UserCrud.login" })).toBe(
       "UserCrud.login",
     );
     expect(at({ kind: "method", qualified_name: "login" })).toBe("login");
     expect(at({ kind: "function", qualified_name: "app.crud.login" })).toBe("login");
     const call = (name: string) => hopName(node(name, { kind: "http_client_call" }));
-    expect(call("POST http://localhost:8080/auth/login")).toBe("POST /auth/login");
+    expect(call("POST http://localhost:8000/api/v1/login/access-token")).toBe(
+      "POST /api/v1/login/access-token",
+    );
     expect(call("GET https://api.example.com")).toBe("GET /");
     expect(call("GET /api/v1/items/")).toBe("GET /api/v1/items/");
     expect(call("GET ${API_BASE}/items")).toBe("GET ${API_BASE}/items");
@@ -180,10 +184,10 @@ describe("a path in words", () => {
     const stop = (kind: TraceBreak["kind"], reason: string) =>
       path([hop("a", null)], { reaches_goal: false, breaks: [{ after_hop: 0, kind, reason }] });
     expect(
-      pathOutcome(stop("end", "AuthResponse calls no more of the repository's code"), null),
-    ).toBe("Ends: AuthResponse calls no more of the repository's code");
-    expect(pathOutcome(stop("limit", "the trace shows 8 hops; getSignKey goes on"), null)).toBe(
-      "The trace shows 8 hops; getSignKey goes on",
+      pathOutcome(stop("end", "ItemPublic calls no more of the repository's code"), null),
+    ).toBe("Ends: ItemPublic calls no more of the repository's code");
+    expect(pathOutcome(stop("limit", "the trace shows 8 hops; sign_token goes on"), null)).toBe(
+      "The trace shows 8 hops; sign_token goes on",
     );
   });
 });

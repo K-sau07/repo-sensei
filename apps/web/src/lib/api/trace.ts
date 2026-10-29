@@ -74,7 +74,7 @@ export function edgeLabel(edge: TraceEdge): string {
   return REACHED[edge.type];
 }
 
-/** A hop's name as the trace shows it: a method with its owner (`AuthService.login`, so three
+/** A hop's name as the trace shows it: a method with its owner (`ItemsService.createItem`, so three
  * `login`s in a row read apart), a request by its method and path (`POST /auth/login`: the
  * origin is in its title), anything else by its own name. */
 export function hopName(node: TraceNode): string {
