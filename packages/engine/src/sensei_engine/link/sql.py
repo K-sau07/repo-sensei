@@ -7,6 +7,11 @@ its error and no tables. ``SELECT`` reads every table it names; ``INSERT``, ``UP
 ``DROP``, ``TRUNCATE``) writes the tables it changes; DDL of anything else (a sequence, an index)
 names none. Common table expressions are names of the query, not
 tables, so they are left out.
+
+:func:`ddl` reads a migration script (Flyway's ``V1__init.sql``, a ``schema.sql``): the tables
+each of its statements creates, renames and drops, by its head (any dialect: ``IF NOT EXISTS``,
+quoted names, a schema), with the columns sqlglot reads of a ``CREATE TABLE`` when one of its
+dialects parses it.
 """
 
 from __future__ import annotations
@@ -14,6 +19,7 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass
+from typing import Literal
 
 import sqlglot
 from sqlglot import exp
@@ -90,3 +96,97 @@ def tables(sql: str) -> SqlTables:
         if name not in bucket:
             bucket.append(name)
     return SqlTables(kind=kind, reads=tuple(reads[:MAX_TABLES]), writes=tuple(writes[:MAX_TABLES]))
+
+
+# ---------------------------------------------------------------------- migrations
+
+DdlOp = Literal["create_table", "rename_table", "drop_table"]
+_NAME = r'((?:[`"\[]?[\w$]+[`"\]]?\.)*[`"\[]?[\w$]+[`"\]]?)'
+_CREATE_RE = re.compile(
+    r"\s*create\s+(?:or\s+replace\s+)?(?:(?:global\s+|local\s+)?(?:temporary|temp)\s+|unlogged\s+)?"
+    rf"table\s+(?:if\s+not\s+exists\s+)?{_NAME}",
+    re.IGNORECASE,
+)
+_RENAME_RE = re.compile(
+    rf"\s*alter\s+table\s+(?:if\s+exists\s+)?(?:only\s+)?{_NAME}\s+rename\s+to\s+{_NAME}",
+    re.IGNORECASE,
+)
+_RENAME_TABLE_RE = re.compile(rf"\s*rename\s+table\s+{_NAME}\s+to\s+{_NAME}", re.IGNORECASE)
+_DROP_RE = re.compile(rf"\s*drop\s+table\s+(?:if\s+exists\s+)?{_NAME}", re.IGNORECASE)
+_COMMENT_RE = re.compile(r"--[^\n]*|/\*.*?\*/", re.DOTALL)
+_DIALECTS = (None, "postgres", "mysql")
+
+
+@dataclass(frozen=True, slots=True)
+class TableChange:
+    op: DdlOp
+    table: str  # as written, unquoted ("public.users")
+    line: int  # 1-based, the statement's first
+    columns: tuple[tuple[str, int], ...] = ()
+    renamed_to: str | None = None
+
+
+def _unquoted(name: str) -> str:
+    return ".".join(part.strip('`"[]') for part in name.split("."))
+
+
+def _statements(script: str) -> list[tuple[str, int]]:
+    """A script's statements and the line each starts on (comments blanked, lines kept; split
+    at semicolons outside quotes and dollar-quoted bodies)."""
+    text = _COMMENT_RE.sub(lambda m: re.sub(r"[^\n]", " ", m[0]), script[: MAX_SQL_CHARS * 10])
+    found: list[tuple[str, int]] = []
+    start, quote, i = 0, "", 0
+    while i < len(text):
+        char = text[i]
+        if quote:
+            if text.startswith(quote, i):
+                i += len(quote) - 1
+                quote = ""
+        elif char in "'\"`":
+            quote = char
+        elif char == "$" and (dollar := re.match(r"\$\w*\$", text[i:])) is not None:
+            quote = dollar[0]
+            i += len(quote) - 1
+        elif char == ";":
+            found.append((text[start:i], start))
+            start = i + 1
+        i += 1
+    found.append((text[start:], start))
+    lines: list[tuple[str, int]] = []
+    for statement, offset in found:
+        lead = len(statement) - len(statement.lstrip())
+        if statement.strip():
+            lines.append((statement, text.count("\n", 0, offset + lead) + 1))
+    return lines
+
+
+def _columns(statement: str, line: int) -> tuple[tuple[str, int], ...]:
+    for dialect in _DIALECTS:
+        try:
+            parsed = sqlglot.parse_one(statement.strip()[:MAX_SQL_CHARS], read=dialect)
+        except SqlglotError:
+            continue
+        if isinstance(parsed, exp.Create) and isinstance(parsed.this, exp.Schema):
+            return tuple(
+                (column.name, line)
+                for column in parsed.this.expressions
+                if isinstance(column, exp.ColumnDef) and column.name
+            )
+    return ()
+
+
+def ddl(script: str) -> list[TableChange]:
+    """The tables a migration script creates, renames and drops, in order (see the module)."""
+    changes: list[TableChange] = []
+    for statement, line in _statements(script):
+        if (found := _CREATE_RE.match(statement)) is not None:
+            columns = _columns(statement, line)
+            changes.append(TableChange("create_table", _unquoted(found[1]), line, columns))
+        elif (found := _RENAME_RE.match(statement) or _RENAME_TABLE_RE.match(statement)) is not (
+            None
+        ):
+            old, new = _unquoted(found[1]), _unquoted(found[2])
+            changes.append(TableChange("rename_table", old, line, renamed_to=new))
+        elif (found := _DROP_RE.match(statement)) is not None:
+            changes.append(TableChange("drop_table", _unquoted(found[1]), line))
+    return changes

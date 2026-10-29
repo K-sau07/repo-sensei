@@ -5,7 +5,8 @@ tables and the code that reads and writes them).
 Like the graph stage, files are parsed again in the pool and their facts extracted there
 (:func:`extract_links`: no tree leaves a worker process): a Python file's routes (3.8), imports
 and data-layer facts (3.11), a JavaScript or TypeScript file's HTTP calls (3.9, with the ``.env``
-values its folder sees), a Java file's types and constants for its Spring routes (3.19).
+values its folder sees), a Java file's types and constants for its Spring routes (3.19) and its
+facts for JPA (3.20), and the migrations and configs JPA reads.
 :func:`resolve_links` then joins them over the project (its paths, definitions and configs, as
 :func:`sensei_engine.graph.stage.load_project` reads them):
 
@@ -14,7 +15,7 @@ values its folder sees), a Java file's types and constants for its Spring routes
   controllers (3.19);
 - the client calls, and each matched to its endpoints through the URL trie (3.10), a call that
   matches none keeping why on its node;
-- the models, tables and query sites;
+- the models, tables and query sites: Python's, then JPA's (sharing a table both name);
 
 and :func:`write_links` replaces the snapshot's LINKS layer with the result, in the caller's
 transaction. A file that doesn't parse, or that a scanner can't read, contributes nothing and is
@@ -38,9 +39,10 @@ from sensei_engine.graph.python.imports import PyFacts
 from sensei_engine.graph.python.imports import extract as python_imports
 from sensei_engine.graph.writer import LINKS, GraphCounts, GraphEdge, GraphNode, GraphWriter
 from sensei_engine.ingest.classify import MAX_PARSE_BYTES
-from sensei_engine.link import fastapi, http_calls, orm, spring, urls
+from sensei_engine.link import fastapi, http_calls, jpa, orm, spring, urls
 from sensei_engine.link.fastapi import FileRoutes, RouteGraph, RuntimeRoutes
 from sensei_engine.link.http_calls import ECMA_LANGUAGES, ENV_FILES, FileCalls
+from sensei_engine.link.jpa import FileJpa
 from sensei_engine.link.orm import FileOrm
 from sensei_engine.link.spring import FileSpring, SpringRoutes
 from sensei_engine.parse.parser import TIMEOUT_SECONDS, parse_file
@@ -50,7 +52,7 @@ from sensei_engine.sandbox.deps import DependencyImages
 from sensei_engine.sandbox.runner import Sandbox
 from sensei_engine.symbols.extract import extract_symbols
 
-LANGUAGES = frozenset({"python", "java", *ECMA_LANGUAGES})
+LANGUAGES = frozenset({"python", *ECMA_LANGUAGES, *jpa.LANGUAGES})
 
 
 def links_language(language: str | None) -> bool:
@@ -79,6 +81,7 @@ class FileLinks:
     orm: FileOrm | None = None  # Python
     calls: FileCalls | None = None  # JavaScript and TypeScript
     spring: FileSpring | None = None  # Java
+    jpa: FileJpa | None = None  # Java, and the migrations and configs JPA reads
     failure: str | None = None  # why it has nothing (didn't parse, a scanner raised)
 
 
@@ -90,12 +93,14 @@ def extract_request(request: LinkRequest) -> FileLinks:  # noqa: PLR0911 - one p
         return FileLinks(request.path, failure=f"unreadable: {type(exc).__name__}")
     if len(data) > MAX_PARSE_BYTES:
         return FileLinks(request.path, failure="too_large")
+    if request.language in jpa.TEXT_LANGUAGES:
+        return FileLinks(request.path, jpa=jpa.scan_text(request.path, data))
     parsed = parse_file(request.path, data, language=request.language)
     if not parsed.ok:
         return FileLinks(request.path, failure=parsed.status.value)
     try:
         if request.language == "java":
-            return FileLinks(request.path, spring=spring.scan(parsed))
+            return FileLinks(request.path, spring=spring.scan(parsed), jpa=jpa.scan(parsed))
         symbols = extract_symbols(parsed, request.language)
         definitions = [
             Definition(
@@ -141,7 +146,7 @@ def extract_links(
             http_calls.env_for(path, envs) if language in ECMA_LANGUAGES else {},
         )
         for path, language in files
-        if links_language(language)
+        if links_language(language) and jpa.wanted(path, language)
     ]
     for request, result in run_parallel(
         extract_request,
@@ -242,20 +247,29 @@ def resolve_links(
         bases=urls.config_bases(project.configs),
     )
     data = orm.link(f.orm for _, f in sorted(files.items()) if f.orm is not None)
+    java = jpa.link((f.jpa for _, f in sorted(files.items()) if f.jpa is not None), data.nodes)
     build = LinkBuild()
     build.nodes = [
         *graph.nodes,
         *web.nodes,
         *urls.with_reasons(calls.nodes, linked.report),
-        *data.nodes,
+        *java.nodes,
     ]
-    build.edges = [*graph.edges, *web.edges, *calls.edges, *linked.edges, *data.edges]
+    build.edges = [
+        *graph.edges,
+        *web.edges,
+        *calls.edges,
+        *linked.edges,
+        *data.edges,
+        *java.edges,
+    ]
     build.details = {
         "routes": asdict(graph.report),
         "spring": asdict(web.report),
         "calls": asdict(calls.report),
         "urls": asdict(linked.report),
         "orm": asdict(data.report),
+        "jpa": asdict(java.report),
     }
     return build
 
