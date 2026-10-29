@@ -2,10 +2,13 @@
 
 A key is ``<lang> <relpath>/<descriptors>``:
 
-- ``lang`` is ``py``, ``ts``, ``tsx``, ``js``, ``jsx`` or ``java`` (from the file's language);
+- ``lang`` is ``py``, ``ts``, ``tsx``, ``js``, ``jsx``, ``java``, ``kt``, ``go``, ``cs``, ``php``,
+  ``rb`` or ``rs`` (from the file's language);
 - the descriptors name the definition and its containers, outermost first:
-  ``Name#`` for a type (class, interface, type alias, enum, namespace), ``name().`` for a
-  callable (function, method, component, hook), ``name.`` for a value (variable, field);
+  ``Name#`` for a type (class, interface, type alias, enum, namespace, module), ``name().`` for a
+  callable (function, method, component, hook), ``name.`` for a value (variable, field); a Go
+  method and a Rust impl's function are under their type's descriptor though declared outside
+  it (``Server#Handle().``), and a C# or PHP namespace is no container;
 - the module itself has no descriptor (``py backend/app/models.py/``);
 - a name that isn't a plain identifier is quoted in backticks (a backtick inside is doubled);
 - a key already taken in the file (overloads, a property's setter, redefinitions) gets
@@ -13,12 +16,15 @@ A key is ``<lang> <relpath>/<descriptors>``:
   overloaded methods and constructors are numbered so too, not keyed by their parameter types:
   a method's key then stays put when its parameters change, and a method that isn't overloaded
   keeps the plain key. An overload added after the others leaves their keys alone; one added
-  before them renumbers those after it.
+  before them renumbers those after it. Kotlin's and C#'s overloads are numbered the same way.
 
 Examples: ``py backend/app/api/routes/items.py/read_items().``,
 ``py backend/app/models.py/Item#``, ``py backend/app/core/config.py/Settings#emails_enabled().``,
 ``tsx frontend/src/components/Items/AddItem.tsx/AddItem().onSubmit().``,
-``java src/main/java/com/acme/shop/web/OrderController.java/OrderController#getOrders().``.
+``java src/main/java/com/acme/shop/web/OrderController.java/OrderController#getOrders().``,
+``go internal/handlers/orders.go/OrderHandler#Get().``,
+``rs src/models/order.rs/Order#new().``,
+``rb app/controllers/api/v1/orders_controller.rb/Api#V1#OrdersController#show().``.
 """
 
 from __future__ import annotations
@@ -33,6 +39,12 @@ KEY_LANGUAGES: dict[str, str] = {
     "javascript": "js",
     "jsx": "jsx",
     "java": "java",
+    "kotlin": "kt",
+    "go": "go",
+    "csharp": "cs",
+    "php": "php",
+    "ruby": "rb",
+    "rust": "rs",
 }
 
 _PLAIN = re.compile(r"[\w$]+")

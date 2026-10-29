@@ -39,6 +39,11 @@ from sensei_engine.parse.languages import (
 
 TIMEOUT_SECONDS = 2.0
 MAX_ISSUES = 20  # syntax errors located per file (all of them are counted)
+_ATTRIBUTE_LISTS = frozenset({"attribute_list", "attribute_group"})  # C#'s [...], PHP's #[...]
+_RUST_PREFIX = frozenset({"attribute_item", "line_comment", "block_comment"})
+# A decorator's parent that holds what it decorates in a field: Python's decorated definition,
+# an exported declaration.
+_TARGET_FIELDS = {"decorated_definition": "definition", "export_statement": "declaration"}
 
 
 class ParseStatus(enum.StrEnum):
@@ -111,23 +116,34 @@ def lines(node: Node) -> tuple[int, int]:
 def decorated(decorator: Node) -> Node | None:
     """What a decorator node decorates: the function or class definition (Python); the class,
     method, field or parameter (JavaScript and TypeScript, where a method's decorators precede
-    it in the class body); the declaration whose modifiers hold an annotation (Java: a type,
-    method, constructor, field declaration, parameter or enum constant)."""
+    it in the class body); the declaration whose modifiers hold an annotation (Java and Kotlin: a
+    type, method, constructor, field declaration, property, parameter or enum constant); the
+    declaration an attribute list is on (C#, PHP); the item after a Rust attribute (its
+    sibling, other attributes and doc comments maybe between)."""
+    if decorator.type == "attribute_item":
+        return _next_past(decorator, _RUST_PREFIX)
     parent = decorator.parent
+    while parent is not None and parent.type in _ATTRIBUTE_LISTS:
+        parent = parent.parent
     if parent is None:
         return None
-    if parent.type == "modifiers":
-        return parent.parent
-    if parent.type == "decorated_definition":
-        return parent.child_by_field_name("definition")
+    if parent.type in _TARGET_FIELDS:
+        return parent.child_by_field_name(_TARGET_FIELDS[parent.type])
+    if parent.type in ("modifiers", "parameter_modifiers"):
+        # Kotlin's parameter annotations stand before the parameter, not in it.
+        return parent.parent if parent.type == "modifiers" else parent.next_named_sibling
     if parent.type == "class_body":
-        sibling = decorator.next_named_sibling
-        while sibling is not None and sibling.type in ("decorator", "comment"):
-            sibling = sibling.next_named_sibling
-        return sibling
-    if parent.type == "export_statement":
-        return parent.child_by_field_name("declaration")
+        return _next_past(decorator, ("decorator", "comment"))
     return parent
+
+
+def _next_past(node: Node, skipped: Iterable[str]) -> Node | None:
+    """The first named sibling after ``node`` that isn't of a type ``skipped``."""
+    skip = frozenset(skipped)
+    sibling = node.next_named_sibling
+    while sibling is not None and sibling.type in skip:
+        sibling = sibling.next_named_sibling
+    return sibling
 
 
 def _source(src: bytes | str) -> bytes | None:

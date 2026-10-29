@@ -6,11 +6,14 @@ Checked in order, first match wins:
 2. ``docs``: prose (Markdown, reStructuredText), READMEs, licences and changelogs, ``docs/``;
 3. ``config``: data and build files (JSON, YAML, TOML, Dockerfiles, CI), ``*.config.*``,
    dotfiles, settings modules and scripts;
-4. ``db``: SQL, schemas and migrations, models and repositories; JVM code (Java, Kotlin) by
-   the package it is in too: ``entity``, ``model``, ``domain``, ``dao`` and the like;
+4. ``db``: SQL, schemas and migrations, models and repositories (Rails' and Laravel's
+   ``app/models``, ASP.NET's ``Models``, Go's and Rust's ``models``, Rust's ``db``); JVM code
+   (Java, Kotlin) by the package it is in too: ``entity``, ``model``, ``domain``, ``dao`` and
+   the like; a folder only one ecosystem gives the layer: C#'s ``Entities``, Go's ``store``;
 5. ``api``: route handlers and applications by framework decorator or registration anywhere,
-   and by directory (``api``, ``routes``, ``controllers``, ``endpoints``) outside frontend
-   packages; JVM code in a ``controller``, ``web`` or ``rest`` package;
+   and by directory (``api``, ``routes``, ``controllers``, ``endpoints``, ``handlers``: Rails',
+   Laravel's and ASP.NET's controllers, Go's and Rust's handlers) outside frontend packages;
+   JVM code in a ``controller``, ``web`` or ``rest`` package;
 6. ``ui``: components that return JSX, Vue/Svelte/Astro files, stylesheets, HTML, and any
    JavaScript or TypeScript in a frontend package (one whose manifest uses React, Vue, Svelte,
    Angular or Next.js), except its server endpoints (Next.js ``route.ts``, SvelteKit
@@ -131,6 +134,13 @@ _JVM_LANGUAGES = frozenset({"java", "kotlin"})
 _JVM_DB_PACKAGES = frozenset({"entity", "entities", "model", "models", "domain", "dao", "daos"})
 _JVM_API_PACKAGES = frozenset({"controller", "controllers", "web", "rest"})
 
+# Folders that hold the data layer in one ecosystem only: EF Core's entities (TypeORM's are
+# found by name), a Go service's store (a frontend's store/ is its state).
+_LANGUAGE_DB_DIRS: dict[str, frozenset[str]] = {
+    "csharp": frozenset({"entities"}),
+    "go": frozenset({"store", "stores"}),
+}
+
 _API_DIRS = frozenset(
     {"api", "routes", "routers", "router", "controllers", "endpoints", "handlers"}
 )
@@ -212,6 +222,7 @@ def _db(f: _File) -> bool:
         or _DB_NAME.match(f.name)
         or (f.language in _ORM_LANGUAGES and _ORM_MODEL.search(f.code))
         or f.jvm_package in _JVM_DB_PACKAGES
+        or f.directories & _LANGUAGE_DB_DIRS.get(f.language or "", frozenset())
     )
 
 

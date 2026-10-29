@@ -1,11 +1,13 @@
 """The grammars we parse with, and their queries.
 
 A file's language id (from :mod:`sensei_engine.ingest.languages`) picks a grammar: ``python``,
-``javascript`` (``.js`` and ``.jsx``: the JavaScript grammar reads JSX), ``typescript``, ``tsx``
-or ``java``. Each grammar has one query per :class:`QueryKind`, read from
-``queries/<dir>/<kind>.scm``. A grammar's query is its own directory's file followed by those of
-the directories it inherits (:data:`INHERITS`): TypeScript and TSX share most patterns with
-JavaScript, and the JSX dialects share the component and element patterns.
+``javascript`` (``.js`` and ``.jsx``: the JavaScript grammar reads JSX), ``typescript``, ``tsx``,
+``java``, ``kotlin``, ``go``, ``csharp``, ``php`` (PHP with the HTML around it: a template's
+``<?php`` blocks parse, its markup is text), ``ruby`` or ``rust``. Each grammar has one query
+per :class:`QueryKind`, read from ``queries/<dir>/<kind>.scm``. A grammar's query is its own
+directory's file followed by those of the directories it inherits (:data:`INHERITS`): TypeScript
+and TSX share most patterns with JavaScript, and the JSX dialects share the component and
+element patterns.
 
 Query conventions (relied on by :func:`sensei_engine.parse.parser.parse_file`):
 
@@ -29,9 +31,15 @@ from dataclasses import dataclass
 from functools import cache
 from importlib import resources
 
+import tree_sitter_c_sharp
+import tree_sitter_go
 import tree_sitter_java
 import tree_sitter_javascript
+import tree_sitter_kotlin
+import tree_sitter_php
 import tree_sitter_python
+import tree_sitter_ruby
+import tree_sitter_rust
 import tree_sitter_typescript
 from tree_sitter import Language, Parser, Query
 
@@ -66,6 +74,12 @@ GRAMMAR_BY_LANGUAGE: dict[str, str] = {
     "typescript": "typescript",
     "tsx": "tsx",
     "java": "java",
+    "kotlin": "kotlin",
+    "go": "go",
+    "csharp": "csharp",
+    "php": "php",
+    "ruby": "ruby",
+    "rust": "rust",
 }
 
 # Query directories each grammar inherits, nearest first (``ecma`` and ``jsx`` aren't grammars:
@@ -76,6 +90,12 @@ INHERITS: dict[str, tuple[str, ...]] = {
     "typescript": ("ecma",),
     "tsx": ("jsx", "typescript"),
     "java": (),
+    "kotlin": (),
+    "go": (),
+    "csharp": (),
+    "php": (),
+    "ruby": (),
+    "rust": (),
     "jsx": (),
     "ecma": (),
 }
@@ -86,12 +106,18 @@ _LANGUAGES: dict[str, Callable[[], object]] = {
     "typescript": tree_sitter_typescript.language_typescript,
     "tsx": tree_sitter_typescript.language_tsx,
     "java": tree_sitter_java.language,
+    "kotlin": tree_sitter_kotlin.language,
+    "go": tree_sitter_go.language,
+    "csharp": tree_sitter_c_sharp.language,
+    "php": tree_sitter_php.language_php,
+    "ruby": tree_sitter_ruby.language,
+    "rust": tree_sitter_rust.language,
 }
 
 SUPPORTED_LANGUAGES = frozenset(GRAMMAR_BY_LANGUAGE)
 
-# Comment node types: ``comment`` in Python and ECMAScript, ``line_comment`` and ``block_comment``
-# (Javadoc among them) in Java.
+# Comment node types: ``comment`` in Python, ECMAScript, Go, C#, PHP and Ruby; ``line_comment``
+# and ``block_comment`` in Java, Kotlin and Rust (Javadoc, KDoc and Rust's ``///`` among them).
 COMMENTS = frozenset({"comment", "line_comment", "block_comment"})
 
 

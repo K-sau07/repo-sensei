@@ -51,8 +51,10 @@ _CALLABLE = frozenset(
 )
 _MEMBER_UNITS = _CALLABLE | {SymbolKind.CLASS, SymbolKind.MODULE}  # what ends a class header
 _WORD = re.compile(r"\w")
+_RUBY_END = re.compile(r"\bend\b")
+_GO_MAJOR = re.compile(r"v\d+")
 # Imports that name nothing local (or that the queries capture as a whole statement too), and
-# Java's package declaration.
+# a file's package or namespace declaration.
 _UNNAMED_IMPORTS = frozenset(
     {
         "import.wildcard",
@@ -62,8 +64,15 @@ _UNNAMED_IMPORTS = frozenset(
         "import.reexport",
         "import.static.wildcard",
         "import.package",
+        "import.blank",
+        "import.dot",
     }
 )
+# Languages whose types hold their code (methods, an enum's constructor), every one a class here
+# but a type alias; where they don't, only a class is (TypeScript), or a Rust trait or module, a
+# Ruby class or module. Go's methods stand outside their types: none is.
+_TYPES_HOLD_CODE = frozenset({"java", "kotlin", "csharp", "php"})
+_CODE_HOLDERS = {"rust": frozenset({"trait", "module"}), "ruby": frozenset({None, "module"})}
 
 
 @dataclass(slots=True)
@@ -103,8 +112,11 @@ def _layout(root: Node, source: bytes) -> _Layout:
             line = start.row + 1
             cuts[line] = min(depth, cuts.get(line, depth))
         if node.type in COMMENTS:
-            if starts_line and end.row < len(raw) and not raw[end.row][end.column :].strip():
-                comments.update(range(start.row + 1, end.row + 2))
+            row, column = end.row, end.column
+            if column == 0 and row > start.row:  # a Rust // comment ends at the next line's start
+                row, column = row - 1, len(raw[row - 1])
+            if starts_line and row < len(raw) and not raw[row][column:].strip():
+                comments.update(range(start.row + 1, row + 2))
             continue
         if end.row > start.row:  # a node on one line starts no other line
             stack.extend((child, depth + 1) for child in node.children)
@@ -126,7 +138,7 @@ def imported_names(result: ParseResult) -> list[str]:
         if local is not None:
             name = result.text(local).rsplit(".", 1)[-1]
         elif match.kind == "import" and (source := match.role("source")) is not None:
-            name = result.text(source).split(".", 1)[0]  # import os.path binds os
+            name = _bound(result.text(source), result.language)
         else:
             continue
         if name not in names:
@@ -134,14 +146,41 @@ def imported_names(result: ParseResult) -> list[str]:
     return names
 
 
+def _bound(source: str, language: str | None) -> str:
+    """The name an import without one binds: import os.path binds os; a Go import its path's
+    package (json for encoding/json, chi for github.com/go-chi/chi/v5, yaml for
+    gopkg.in/yaml.v3)."""
+    if language != "go":
+        return source.split(".", 1)[0]
+    parts = source.split("/")
+    name = parts[-2] if len(parts) > 1 and _GO_MAJOR.fullmatch(parts[-1]) else parts[-1]
+    return name.split(".", 1)[0]
+
+
 def _is_class(symbol: Symbol, language: str) -> bool:
     """A class (or a class component): not an interface, a type alias or an enum, which hold no
     code in TypeScript. Java's do (default methods, an enum's constructor and methods), so there
-    every type is a class, as a record and an annotation type are."""
+    every type is a class, as a record and an annotation type are; so in Kotlin, C# and PHP.
+    Rust's code is in traits and modules, Ruby's in classes and modules (see
+    :data:`_TYPES_HOLD_CODE`)."""
     subkind = symbol.attrs.get("subkind")
-    if language == "java":
-        return symbol.kind is SymbolKind.CLASS
+    if language in _TYPES_HOLD_CODE:
+        return symbol.kind is SymbolKind.CLASS and subkind != "type"
+    if language in _CODE_HOLDERS:
+        holds = symbol.kind in (SymbolKind.CLASS, SymbolKind.MODULE)
+        return holds and subkind in _CODE_HOLDERS[language]
+    if language == "go":
+        return False
     return (symbol.kind is SymbolKind.CLASS and subkind is None) or subkind == "class_component"
+
+
+def _wraps(symbol: Symbol, members: list[Symbol]) -> bool:
+    """A C# or PHP namespace block around its types: a symbol but not their container (they are
+    its siblings), so its lines are theirs and the code between them."""
+    return symbol.kind is SymbolKind.MODULE and any(
+        m is not symbol and symbol.start_line <= m.start_line and m.end_line <= symbol.end_line
+        for m in members
+    )
 
 
 class _CodeChunker:
@@ -163,6 +202,8 @@ class _CodeChunker:
         for symbol in symbols[1:]:
             if symbol.container_key is not None:
                 self.children[symbol.container_key].append(symbol)
+        for key, members in self.children.items():
+            self.children[key] = [m for m in members if not _wraps(m, members)]
         self.imported = imported_names(result)
 
     def run(self) -> list[Chunk]:
@@ -219,8 +260,12 @@ class _CodeChunker:
         span = self.lines.trim(start, end)
         if span is None:
             return
-        if entries and not _WORD.search(self.lines.text(*span)):
-            # Closing brackets: the end of the definition before (its size counted again).
+        text = self.lines.text(*span)
+        if self.language == "ruby":
+            text = _RUBY_END.sub("", text)
+        if entries and not _WORD.search(text):
+            # Closing brackets (Ruby's ends): the end of the definition before (its size counted
+            # again).
             before = entries[-1]
             entries[-1] = self._entry(before.unit.start, end, before.symbols)
             return
@@ -228,7 +273,7 @@ class _CodeChunker:
 
     def _entry(self, start: int, end: int, symbols: list[Symbol]) -> _Entry:
         tokens = self.lines.tokens(start, end)
-        mergeable = tokens < MIN_TOKENS and not any(_is_class(s, self.language) for s in symbols)
+        mergeable = tokens < MIN_TOKENS and not any(self._holds_code(s) for s in symbols)
         return _Entry(Unit(start, end, tokens, mergeable), symbols)
 
     def _expand(self, entry: _Entry) -> list[Chunk] | None:
@@ -237,7 +282,7 @@ class _CodeChunker:
         if len(entry.symbols) != 1 or entry.unit.tokens < MIN_TOKENS:
             return None
         symbol = entry.symbols[0]
-        if not _is_class(symbol, self.language):
+        if not self._holds_code(symbol):
             return None  # a function component's handlers are part of it
         members = [
             m
@@ -250,6 +295,11 @@ class _CodeChunker:
         span = (entry.unit.start, body - 1)
         header = build(self.lines, self.path, self._spec([symbol]), span, self.layout.cuts)
         return header + self._level(symbol, body, entry.unit.end)
+
+    def _holds_code(self, symbol: Symbol) -> bool:
+        """A class, or a module that holds definitions (not Rust's mod models;)."""
+        held = symbol.kind is not SymbolKind.MODULE or bool(self.children[symbol.symbol_key])
+        return held and _is_class(symbol, self.language)
 
     def _merged(self, container: Symbol, run: list[_Entry]) -> list[Chunk]:
         by_unit = {id(entry.unit): entry for entry in run}

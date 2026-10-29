@@ -11,16 +11,43 @@ From a file's ``defs`` captures (:mod:`sensei_engine.parse`) come:
   a class extending ``Component``) and **hooks** (``use`` + a capital letter);
 - Java: classes, interfaces, enums, records and annotation types at any depth (an inner class
   is keyed under its outer one), methods and constructors, fields (one per declarator), enum
-  constants and record components. Java has no exports: visibility is in the signature.
+  constants and record components. Java has no exports: visibility is in the signature;
+- Kotlin: classes, interfaces, data classes, enums, annotation classes, objects and companion
+  objects (``Companion`` when unnamed), functions (methods in a class or object body) and
+  secondary constructors (named after their class, as Java's are), properties (a primary
+  constructor's ``val``/``var`` parameters among them), enum entries, type aliases;
+- Go: the package, struct and interface types (and other named types), functions, methods keyed
+  under their receiver's type (``Server#Handle().``, the type maybe declared in another file of
+  the package), struct fields, interface methods, package-level constants and variables;
+- C#: namespaces, classes, interfaces, structs, records, enums and delegates, methods, local
+  functions and constructors, properties, fields and events (one per declarator), enum members
+  and a record's positional parameters;
+- PHP: namespaces, classes, interfaces, traits and enums, methods (``__construct`` a
+  constructor) and functions, properties (constructor-promoted ones among them), class
+  constants and enum cases;
+- Ruby: modules and classes, nested (``class Api::V1::Orders`` keyed as if nested), instance
+  methods, class methods (``def self.x`` and those in ``class << self``), constants;
+- Rust: modules, structs, enums, unions, traits and type aliases, functions, an ``impl``'s
+  functions and constants keyed under its type (``impl Repo for PgRepo``: ``PgRepo#find().``),
+  a trait's methods, fields and enum variants, constants and statics, ``macro_rules!``.
+
+A C# or PHP namespace is a symbol but not a container: a class is keyed by its file and name
+alike in a file-scoped and a block namespace, as Java's are without their package.
 
 ``kind`` is one of :class:`SymbolKind` (what the API and ⌘K show); the finer kind (``field``,
 ``interface``, ``type``, ``enum``, ``record``, ``annotation``, ``namespace``, ``signature``,
-``constructor``) is ``attrs["subkind"]``.
-A symbol's lines span the whole definition: decorators (Java's annotations), ``export`` and the
-``const`` a function is declared with included. ``signature`` is the source up to the body
-(whitespace collapsed, decorators left out), ``docstring`` the docstring or the comment just
-above (JSDoc and Javadoc, ``#`` or ``//`` lines; not a plain ``/* */`` in Java, where that is
-usually a licence or code commented out). Columns count characters, from 0.
+``constructor``, ``struct``, ``trait``, ``union``, ``object``, ``companion``, ``data_class``,
+``property``, ``classmethod``, ``macro``, ``package``, ``module``) is ``attrs["subkind"]``.
+A symbol's lines span the whole definition: decorators (Java's and Kotlin's annotations, C#'s,
+PHP's and Rust's attributes), ``export`` and the ``const`` a function is declared with included.
+``signature`` is the source up to the body (whitespace collapsed, decorators left out),
+``docstring`` the docstring or the comment just above (JSDoc, Javadoc, KDoc, PHPDoc, C#'s
+``///`` XML (its ``<summary>`` tags dropped), Rust's ``///``; ``#`` or ``//`` lines; not a plain
+``/* */`` outside JavaScript and TypeScript, where that is usually a licence or code commented
+out, nor Rust's ``//!``, which documents the module it is in). ``bases`` are what a type
+extends and implements, as written: superclasses and interfaces, Kotlin's delegation
+specifiers, Go's embedded types, PHP's traits, Ruby's included modules, a Rust trait's
+supertraits and the traits a type implements in its file. Columns count characters, from 0.
 """
 
 from __future__ import annotations
@@ -30,6 +57,7 @@ import enum
 import hashlib
 import inspect
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import PurePosixPath
 from typing import Any
@@ -37,7 +65,7 @@ from typing import Any
 from tree_sitter import Node
 
 from sensei_engine.parse.languages import COMMENTS, QueryKind
-from sensei_engine.parse.parser import Match, ParseResult
+from sensei_engine.parse.parser import Match, ParseResult, lines
 from sensei_engine.symbols.keys import Descriptor, KeyAllocator, descriptor
 
 MAX_SIGNATURE = 300
@@ -74,15 +102,55 @@ _DEFINITIONS: dict[str, tuple[SymbolKind, Descriptor, str | None]] = {
     "definition.annotation": (SymbolKind.CLASS, Descriptor.TYPE, "annotation"),
     "definition.constructor": (SymbolKind.METHOD, Descriptor.CALLABLE, "constructor"),
     "definition.module": (SymbolKind.MODULE, Descriptor.TYPE, "namespace"),
+    "definition.package": (SymbolKind.MODULE, Descriptor.TYPE, "package"),
+    # A Rust mod or a Ruby module: a scope that holds definitions.
+    "definition.mod": (SymbolKind.MODULE, Descriptor.TYPE, "module"),
+    "definition.struct": (SymbolKind.CLASS, Descriptor.TYPE, "struct"),
+    "definition.trait": (SymbolKind.CLASS, Descriptor.TYPE, "trait"),
+    "definition.union": (SymbolKind.CLASS, Descriptor.TYPE, "union"),
+    "definition.object": (SymbolKind.CLASS, Descriptor.TYPE, "object"),
+    "definition.companion": (SymbolKind.CLASS, Descriptor.TYPE, "companion"),
+    "definition.data_class": (SymbolKind.CLASS, Descriptor.TYPE, "data_class"),
+    "definition.property": (SymbolKind.VARIABLE, Descriptor.VALUE, "property"),
+    "definition.classmethod": (SymbolKind.METHOD, Descriptor.CALLABLE, "classmethod"),
+    "definition.macro": (SymbolKind.FUNCTION, Descriptor.CALLABLE, "macro"),
 }
+# The name of a definition the source leaves unnamed.
+_UNNAMED = {"definition.companion": "Companion"}
 _JSX = frozenset({"jsx_element", "jsx_self_closing_element", "jsx_fragment"})
 _REACT_BASES = re.compile(r"^(React\.)?(Pure)?Component$")
 _BODY_FIELDS = ("body",)
 _SIGNATURE_ONLY = frozenset({"function_signature", "method_signature", "abstract_method_signature"})
 _WRAPPERS = frozenset({"export_statement", "ambient_declaration"})
 _ANNOTATIONS = frozenset({"annotation", "marker_annotation"})
-# Java declarations that hold their fields' declarators (private int a, b;).
-_JAVA_DECLARATIONS = frozenset({"field_declaration", "constant_declaration"})
+# Declarations that hold their declarators (private int a, b;), by declarator: a declarator's
+# annotations, modifiers and docstring are its declaration's. Java's and PHP's are its children,
+# C#'s are in its variable_declaration, Go's specs in a group's list.
+_HOLDERS: dict[str, frozenset[str]] = {
+    "variable_declarator": frozenset(
+        {"field_declaration", "constant_declaration", "event_field_declaration"}
+    ),
+    "property_element": frozenset({"property_declaration"}),
+    "const_element": frozenset({"const_declaration"}),
+    "const_spec": frozenset({"const_declaration"}),
+    "var_spec": frozenset({"var_declaration"}),
+    "type_spec": frozenset({"type_declaration"}),
+    "type_alias": frozenset({"type_declaration"}),
+}
+_DECLARATOR_LISTS = frozenset({"variable_declaration", "var_spec_list"})
+# Kotlin's bodies (it names none ``body``): a class's, an enum's, a function's (``= expr`` among
+# them) and a secondary constructor's.
+_BODIES = frozenset({"class_body", "enum_class_body", "function_body", "block"})
+_ACCESSORS = frozenset({"getter", "setter"})
+# Attribute nodes a declaration holds before its modifiers (C#, and PHP's ``attributes``).
+_ATTRIBUTE_LISTS = frozenset({"attribute_list"})
+# Rust's attributes and doc comments stand before the item, as its siblings.
+_RUST_PREFIX = frozenset({"attribute_item", "line_comment", "block_comment"})
+_ECMA = frozenset({"javascript", "jsx", "typescript", "tsx"})
+_XML_DOC_TAGS = re.compile(r"</?(?:summary|remarks)>")
+_RUBY_MIXINS = frozenset({"include", "prepend"})
+_ASYNC = frozenset({"async", "suspend"})
+_MODIFIER_NODES = frozenset({"modifiers", "modifier", "function_modifiers", "function_modifier"})
 _SPACE = re.compile(r"\s+")
 _OPEN_SPACE = re.compile(r"([(\[{]) ")
 _CLOSE_SPACE = re.compile(r",? ?([)\]}])")
@@ -115,9 +183,20 @@ class _Def:
     kind: SymbolKind
     suffix: Descriptor
     subkind: str | None
+    owner: tuple[str, ...] = ()  # the type it is keyed under (a Go receiver's, an impl's)
     container: _Def | None = None
     key: str = ""
     qualified: str = ""
+
+
+def _rust_type_name(node: Node) -> Node | None:
+    """A Rust type's own name, without its path or type arguments (Order for crate::Order<T>)."""
+    while node.type in ("generic_type", "scoped_type_identifier"):
+        inner = node.child_by_field_name("type" if node.type == "generic_type" else "name")
+        if inner is None:
+            return None
+        node = inner
+    return node if node.type == "type_identifier" else None
 
 
 def _collapse(text: str, limit: int) -> str:
@@ -189,10 +268,21 @@ class _Extractor:
         self.python = language == "python"
         self.jsx = language in ("javascript", "jsx", "tsx")
         self.java = language == "java"
+        self.kotlin = language == "kotlin"
+        self.go = language == "go"
+        self.csharp = language == "csharp"
+        self.php = language == "php"
+        self.ruby = language == "ruby"
+        self.rust = language == "rust"
+        self.jvm = self.java or self.kotlin
+        self.ecma = language in _ECMA
         self.source = _Source(result)
         self.keys = KeyAllocator(language, result.path)
+        self.root: Node | None = None
+        self._implemented: dict[str, list[Node]] | None = None
 
     def run(self, root: Node) -> list[Symbol]:
+        self.root = root
         matches = self.result.captures.get(QueryKind.DEFS, ())
         defs = [d for m in matches if (d := self._definition(m)) is not None]
         by_node = {d.node.id: d for d in defs}
@@ -203,8 +293,10 @@ class _Extractor:
         symbols = [module]
         for d in defs:  # source order: a container's key exists before its children's
             parent_key = d.container.key if d.container else self.keys.module
+            parent_key += "".join(descriptor(o, Descriptor.TYPE) for o in d.owner)
             d.key = self.keys.allocate(parent_key, descriptor(d.name, d.suffix))
-            d.qualified = f"{d.container.qualified}.{d.name}" if d.container else d.name
+            names = [d.container.qualified] if d.container else []
+            d.qualified = ".".join([*names, *d.owner, d.name])
             symbols.append(self._symbol(d, exports))
         return symbols
 
@@ -217,7 +309,12 @@ class _Extractor:
         kind, suffix, subkind = found
         node = match.node
         name_node = match.role("name")
-        name = self.source.node(name_node) if name_node is not None else "default"
+        if name_node is not None:
+            name = self.source.node(name_node)
+        else:
+            name = _UNNAMED.get(match.kind, "default")
+        owner_node = match.role("owner")
+        owner = self._owner(owner_node) if owner_node is not None else ()
         if kind is SymbolKind.COMPONENT and not self._renders_jsx(node):
             kind = SymbolKind.FUNCTION  # capitalized, but no JSX: a plain function
         if (
@@ -232,7 +329,13 @@ class _Extractor:
         if kind is SymbolKind.CLASS and subkind is None and self._extends_react_component(node):
             kind, subkind = SymbolKind.COMPONENT, "class_component"
         span, first = self._span(node)
-        return _Def(match, node, span, first, name, kind, suffix, subkind)
+        return _Def(match, node, span, first, name, kind, suffix, subkind, owner)
+
+    def _owner(self, node: Node) -> tuple[str, ...]:
+        """The type a definition is keyed under, as descriptors: Go's receiver type, a Rust
+        impl's type, the scope of Ruby's compact class name (Api::V1 in class
+        Api::V1::Orders)."""
+        return tuple(p for p in self.source.node(node).split("::") if p)
 
     def _renders_jsx(self, node: Node) -> bool:
         if not self.jsx:
@@ -259,14 +362,8 @@ class _Extractor:
             elif node.type == "assignment" and parent is not None:
                 span = parent  # the expression statement
             return span, span
-        if self.java:
-            # A field's annotations and modifiers are its declaration's: the field spans that,
-            # unless the declaration has several (private int a, b;).
-            if node.type == "variable_declarator" and parent is not None:
-                declarators = parent.children_by_field_name("declarator")
-                if parent.type in _JAVA_DECLARATIONS and len(declarators) == 1:
-                    span = parent
-            return span, span
+        if not self.ecma:
+            return self._declared_span(node)
         if (
             node.type == "variable_declarator"
             and parent is not None
@@ -286,6 +383,22 @@ class _Extractor:
             previous = previous.prev_named_sibling
         return span, first
 
+    def _declared_span(self, node: Node) -> tuple[Node, Node]:
+        """A field's annotations and modifiers are its declaration's: the field spans that,
+        unless the declaration has several (private int a, b;). A Rust item's attributes stand
+        before it, doc comments maybe among them."""
+        span = node
+        holder = self._holder(node)
+        if holder is not None and len(self._declarators(holder)) == 1:
+            span = holder
+        first = span
+        previous = span.prev_named_sibling if self.rust else None
+        while previous is not None and previous.type in _RUST_PREFIX:
+            if previous.type == "attribute_item":
+                first = previous
+            previous = previous.prev_named_sibling
+        return span, first
+
     @staticmethod
     def _statement(span: Node) -> Node:
         """The statement a span is part of: itself, or for one of several declarators
@@ -301,14 +414,41 @@ class _Extractor:
             return parent.parent
         return span
 
+    def _holder(self, node: Node) -> Node | None:
+        """The declaration holding a declarator (a Java, C# or PHP field, a Go spec), if any."""
+        holders = _HOLDERS.get(node.type)
+        parent = node.parent
+        if holders is None or parent is None:
+            return None
+        if parent.type in _DECLARATOR_LISTS:
+            parent = parent.parent
+        return parent if parent is not None and parent.type in holders else None
+
+    @staticmethod
+    def _declarators(holder: Node) -> list[Node]:
+        """The declarators a declaration holds (a Go type declaration's specs and aliases)."""
+        children: list[Node] = []
+        for child in holder.named_children:
+            listed = child.type in _DECLARATOR_LISTS
+            children.extend(child.named_children if listed else [child])
+        return [c for c in children if holder.type in _HOLDERS.get(c.type, ())]
+
     def _container(self, d: _Def, by_node: dict[int, _Def]) -> _Def | None:
         parent = d.node.parent
         while parent is not None:
             found = by_node.get(parent.id)
-            if found is not None:
+            if found is not None and not self._passes_over(d, found):
                 return found
             parent = parent.parent
         return None
+
+    def _passes_over(self, d: _Def, outer: _Def) -> bool:
+        """Definitions that hold ``d`` without being what it is keyed under: a C# or PHP
+        namespace (see the module), and the constructor a PHP property is promoted in (a
+        property of the class)."""
+        if (self.csharp or self.php) and outer.subkind == "namespace":
+            return True
+        return d.node.type == "property_promotion_parameter" and outer.kind is SymbolKind.METHOD
 
     # ------------------------------------------------------------------ exports
 
@@ -341,7 +481,7 @@ class _Extractor:
 
     def _module(self, root: Node) -> Symbol:
         path = PurePosixPath(self.result.path)
-        package = path.stem in ("__init__", "index") and path.parent.name
+        package = path.stem in ("__init__", "index", "mod") and path.parent.name
         name = path.parent.name if package else path.stem
         last_line = max(1, root.end_point.row + (1 if root.end_point.column else 0))
         return Symbol(
@@ -369,7 +509,7 @@ class _Extractor:
         decorators = self._decorators(d)
         if decorators:
             attrs["decorators"] = decorators
-        if any(c.type == "async" for c in self._callable(d.node).children):
+        if self._is_async(self._callable(d.node)):
             attrs["async"] = True
         bases = self._bases(d.node)
         if bases:
@@ -410,6 +550,19 @@ class _Extractor:
             return value if value is not None else node
         return node
 
+    @staticmethod
+    def _is_async(node: Node) -> bool:
+        """``async`` (Python, ECMAScript, C#, Rust) or Kotlin's ``suspend``, among the
+        function's modifiers."""
+        stack = list(node.children)
+        while stack:
+            child = stack.pop()
+            if child.type in _ASYNC:
+                return True
+            if child.type in _MODIFIER_NODES:
+                stack.extend(child.children)
+        return False
+
     def _bases(self, node: Node) -> list[str]:
         if node.type == "class_definition":
             superclasses = node.child_by_field_name("superclasses")
@@ -422,6 +575,8 @@ class _Extractor:
             ]
         if self.java:
             return self._java_bases(node)
+        if not self.ecma:
+            return [_collapse(self.source.node(t), 120) for t in self._base_nodes(node)]
         found: list[str] = []
         for child in node.children:
             if child.type != "class_heritage":
@@ -450,38 +605,178 @@ class _Extractor:
             found.extend(_collapse(self.source.node(t), 120) for t in types)
         return found
 
-    def _modifiers(self, node: Node) -> Node | None:
-        """A Java declaration's modifiers (annotations and keywords); a field declarator's are
-        its declaration's."""
-        if node.type == "variable_declarator" and node.parent is not None:
-            node = node.parent
-        return next((c for c in node.named_children if c.type == "modifiers"), None)
+    def _base_nodes(self, node: Node) -> list[Node]:
+        """What a Kotlin, Go, C#, PHP, Ruby or Rust type extends and implements, in source
+        order."""
+        finders: dict[str, Callable[[Node], list[Node]]] = {
+            "kotlin": self._kotlin_bases,
+            "go": self._go_bases,
+            "csharp": self._csharp_bases,
+            "php": self._php_bases,
+            "ruby": self._ruby_bases,
+            "rust": self._rust_bases,
+        }
+        finder = finders.get(self.language)
+        return finder(node) if finder is not None else []
+
+    @staticmethod
+    def _kotlin_bases(node: Node) -> list[Node]:
+        """The delegation specifiers' types (BaseController for BaseController(), Repository
+        for Repository by impl)."""
+        found: list[Node] = []
+        for child in node.named_children:
+            if child.type != "delegation_specifiers":
+                continue
+            for specifier in child.named_children:
+                part = specifier.named_children[0] if specifier.named_children else specifier
+                if part.type in ("constructor_invocation", "explicit_delegation"):
+                    part = part.named_children[0]
+                found.append(part)
+        return found
+
+    @staticmethod
+    def _go_bases(node: Node) -> list[Node]:
+        """A struct's embedded types (*Base: Base), an interface's embedded interfaces."""
+        kind = node.child_by_field_name("type") if node.type == "type_spec" else None
+        members = kind.named_children if kind is not None else []
+        if kind is not None and kind.type == "struct_type" and members:
+            members = members[0].named_children  # its field_declaration_list
+        found: list[Node] = []
+        for member in members:
+            embedded = member.child_by_field_name("type")
+            if member.type == "type_elem":
+                found.append(member)
+            elif member.child_by_field_name("name") is None and embedded is not None:
+                found.append(embedded)
+        return found
+
+    @staticmethod
+    def _csharp_bases(node: Node) -> list[Node]:
+        """The base list (a record's base without its arguments: Entity for Entity(Id))."""
+        found: list[Node] = []
+        for child in node.named_children:
+            if child.type != "base_list":
+                continue
+            for base in child.named_children:
+                typed = base.child_by_field_name("type")
+                primary = base.type == "primary_constructor_base_type" and typed is not None
+                found.append(typed if primary and typed is not None else base)
+        return found
+
+    @staticmethod
+    def _php_bases(node: Node) -> list[Node]:
+        """The superclass, the interfaces, then the traits the class uses."""
+        found: list[Node] = []
+        for child in node.named_children:
+            if child.type in ("base_clause", "class_interface_clause"):
+                found.extend(child.named_children)
+        body = node.child_by_field_name("body")
+        for use in body.named_children if body is not None else ():
+            if use.type == "use_declaration":
+                found.extend(n for n in use.named_children if n.type in ("name", "qualified_name"))
+        return found
+
+    def _ruby_bases(self, node: Node) -> list[Node]:
+        """The superclass, then the modules the body includes or prepends."""
+        if node.type not in ("class", "module"):
+            return []
+        superclass = node.child_by_field_name("superclass")
+        found = list(superclass.named_children) if superclass is not None else []
+        body = node.child_by_field_name("body")
+        for call in body.named_children if body is not None else ():
+            method = call.child_by_field_name("method") if call.type == "call" else None
+            arguments = call.child_by_field_name("arguments")
+            mixin = method is not None and self.source.node(method) in _RUBY_MIXINS
+            if mixin and arguments is not None and call.child_by_field_name("receiver") is None:
+                found.extend(arguments.named_children)
+        return found
+
+    def _rust_bases(self, node: Node) -> list[Node]:
+        """A trait's supertraits; the traits a struct, enum or union is implemented for in its
+        file (impl Display for Order)."""
+        if node.type == "trait_item":
+            bounds = node.child_by_field_name("bounds")
+            return [b for b in bounds.named_children if b.type != "lifetime"] if bounds else []
+        name = node.child_by_field_name("name")
+        if node.type not in ("struct_item", "enum_item", "union_item") or name is None:
+            return []
+        return self._traits().get(self.source.node(name), [])
+
+    def _traits(self) -> dict[str, list[Node]]:
+        """The traits each type of the file is implemented for (impl Display for Order), in
+        source order, found once."""
+        if self._implemented is None:
+            self._implemented = {}
+            stack = [self.root] if self.root is not None else []
+            while stack:
+                node = stack.pop(0)
+                for child in node.named_children:
+                    if child.type in ("mod_item", "declaration_list"):
+                        stack.append(child)
+                    if child.type != "impl_item":
+                        continue
+                    trait = child.child_by_field_name("trait")
+                    kind = child.child_by_field_name("type")
+                    name = _rust_type_name(kind) if kind is not None else None
+                    if trait is not None and name is not None:
+                        self._implemented.setdefault(self.source.node(name), []).append(trait)
+        return self._implemented
 
     def _decorators(self, d: _Def) -> list[str]:
-        nodes: list[Node] = []
-        if self.java:
-            modifiers = self._modifiers(d.node)
-            if modifiers is not None:
-                nodes = [c for c in modifiers.named_children if c.type in _ANNOTATIONS]
-        elif self.python:
-            if d.span.type == "decorated_definition":
-                nodes = [c for c in d.span.named_children if c.type == "decorator"]
+        if self.python:
+            nodes = [c for c in d.span.named_children if c.type == "decorator"]
+        elif self.ecma:
+            nodes = self._ecma_decorators(d)
         else:
-            sibling: Node | None = d.first
-            while sibling is not None and sibling.type in ("decorator", "comment"):
-                if sibling.type == "decorator":
-                    nodes.append(sibling)
-                sibling = sibling.next_named_sibling
-            for holder in (d.span, d.node):
-                nodes.extend(c for c in holder.named_children if c.type == "decorator")
+            nodes = self._annotations(d)
+        wrap = {"csharp": ("[", "]"), "php": ("#[", "]")}.get(self.language, ("", ""))
         texts: list[str] = []
         for node in nodes:
-            text = _collapse(
-                self.source.code(node, node.start_byte, node.end_byte), MAX_DECORATOR_TEXT
-            )
+            code = self.source.code(node, node.start_byte, node.end_byte)
+            text = _collapse(f"{wrap[0]}{code}{wrap[1]}", MAX_DECORATOR_TEXT)
             if text not in texts:
                 texts.append(text)
         return texts[:MAX_DECORATORS]
+
+    @staticmethod
+    def _ecma_decorators(d: _Def) -> list[Node]:
+        """A method's decorators precede it in the class body; a class's are its own."""
+        nodes: list[Node] = []
+        sibling: Node | None = d.first
+        while sibling is not None and sibling.type in ("decorator", "comment"):
+            if sibling.type == "decorator":
+                nodes.append(sibling)
+            sibling = sibling.next_named_sibling
+        for holder in (d.span, d.node):
+            nodes.extend(c for c in holder.named_children if c.type == "decorator")
+        return nodes
+
+    def _annotations(self, d: _Def) -> list[Node]:
+        """Java's and Kotlin's annotations (in the modifiers), C#'s and PHP's attributes (an
+        attribute each: [A, B] and #[A, B] are two), Rust's attributes (before the item); a
+        field declarator's are its declaration's."""
+        holder = self._holder(d.node) or d.node
+        if self.jvm:
+            modifiers = next((c for c in holder.named_children if c.type == "modifiers"), None)
+            children = modifiers.named_children if modifiers is not None else []
+            return [c for c in children if c.type in _ANNOTATIONS]
+        if self.rust:
+            nodes: list[Node] = []
+            sibling: Node | None = d.first
+            while sibling is not None and sibling.type in _RUST_PREFIX:
+                if sibling.type == "attribute_item":
+                    nodes.append(sibling)
+                sibling = sibling.next_named_sibling
+            return nodes
+        found: list[Node] = []
+        stack = [c for c in holder.named_children if c.type in _ATTRIBUTE_LISTS]
+        while stack:
+            node = stack.pop(0)
+            if node.type == "attribute":
+                found.append(node)
+            elif node.type in ("attribute_list", "attribute_group"):
+                stack[:0] = node.named_children
+        return found
 
     # ------------------------------------------------------------------ signatures
 
@@ -496,24 +791,58 @@ class _Extractor:
             keyword = self._declaration_keyword(node)
             text = self.source.code(node, node.start_byte, end)
             return _collapse(f"{keyword} {text}".strip(), MAX_SIGNATURE)
+        body = self._body(node)
+        start = self._after_decorators(node)
+        end = body.start_byte if body is not None else self._header_end(node)
+        text = self.source.code(node, start, end).rstrip().rstrip(":;").rstrip()
+        if self.ruby:
+            text = text.removesuffix("=").rstrip()  # def total = lines.sum(&:amount)
+        if self.go and node.type == "type_spec":
+            text = f"type {text}"  # its declaration's keyword (type Server struct)
+        return _collapse(text, MAX_SIGNATURE) or None
+
+    def _body(self, node: Node) -> Node | None:
+        """Where a definition's body starts: its ``body``; a Kotlin class's or function's (an
+        ``= expr`` one too); a Go struct's fields, an interface's opening brace."""
         body = next(
             (b for f in _BODY_FIELDS if (b := node.child_by_field_name(f)) is not None), None
         )
-        start = self._after_decorators(node)
-        end = body.start_byte if body is not None else node.end_byte
-        text = self.source.code(node, start, end).rstrip().rstrip(":;").rstrip()
-        return _collapse(text, MAX_SIGNATURE) or None
+        if body is not None:
+            return body
+        if self.kotlin:
+            return next((c for c in node.children if c.type in _BODIES), None)
+        if self.go and node.type == "type_spec":
+            kind = node.child_by_field_name("type")
+            if kind is not None and kind.type == "struct_type":
+                return kind.named_children[0] if kind.named_children else None
+            if kind is not None and kind.type == "interface_type":
+                return next((c for c in kind.children if c.type == "{"), None)
+        return None
+
+    def _header_end(self, node: Node) -> int:
+        """Where a definition without a body ends: Ruby's at its name, superclass or parameters
+        (class Error < StandardError; end), a Rust macro's at its name, any other's at its
+        end."""
+        if self.ruby or node.type == "macro_definition":
+            parts = [
+                p
+                for f in ("name", "superclass", "parameters")
+                if (p := node.child_by_field_name(f))
+            ]
+            if parts:
+                return max(p.end_byte for p in parts)
+        return node.end_byte
 
     def _after_decorators(self, node: Node) -> int:
         for child in node.children:
-            if child.type == "modifiers":  # Java: the annotations lead the modifiers
+            if child.type == "modifiers":  # Java, Kotlin: the annotations lead the modifiers
                 kept = next(
                     (m for m in child.children if m.type not in _ANNOTATIONS | COMMENTS), None
                 )
                 if kept is not None:
                     return kept.start_byte
                 continue
-            if child.type != "decorator":
+            if child.type != "decorator" and child.type not in _ATTRIBUTE_LISTS:
                 return child.start_byte
         return node.start_byte
 
@@ -527,20 +856,26 @@ class _Extractor:
 
     def _value_signature(self, d: _Def) -> str:
         node = d.node
-        parent = node.parent
-        if self.java and parent is not None and parent.type in _JAVA_DECLARATIONS:
-            # The declaration's modifiers and type, then this declarator: private final
-            # OrderService orderService; private int a = 1 and private int b for int a = 1, b.
-            kind = parent.child_by_field_name("type")
-            head_end = kind.end_byte if kind is not None else parent.start_byte
-            head = self.source.code(parent, self._after_decorators(parent), head_end)
+        holder = None if self.python or self.ecma else self._holder(node)
+        if holder is not None:
+            # The declaration's modifiers and type (Go's: its keyword), then this declarator:
+            # private final OrderService orderService; private int a = 1 and private int b for
+            # int a = 1, b; const MaxPage = 50.
+            first = self._declarators(holder)[0]
+            if self.go:
+                head = self.source.node(holder.children[0])
+            else:
+                head = self.source.code(holder, self._after_decorators(holder), first.start_byte)
             text = f"{head} {self.source.code(node, node.start_byte, node.end_byte)}"
-        elif self.java:
-            # An enum constant (up to its class body) or a record component.
-            body = node.child_by_field_name("body")
+        elif self.jvm and node.type in ("enum_constant", "enum_entry"):
+            body = self._body(node)  # up to its class body
             end = body.start_byte if body is not None else node.end_byte
             text = self.source.code(node, self._after_decorators(node), end)
-        elif node.type == "variable_declarator":
+        elif self.kotlin and node.type == "property_declaration":
+            accessor = next((c for c in node.named_children if c.type in _ACCESSORS), None)
+            end = accessor.start_byte if accessor is not None else node.end_byte
+            text = self.source.code(node, self._after_decorators(node), end)
+        elif node.type == "variable_declarator" and self.ecma:
             code = self.source.code(node, node.start_byte, node.end_byte)
             text = f"{self._declaration_keyword(node)} {code}"
         else:
@@ -556,9 +891,9 @@ class _Extractor:
             if text:
                 return text
         anchor = d.first
-        if self.java and anchor.type == "variable_declarator" and anchor.parent is not None:
-            anchor = anchor.parent  # one of several declarators: the declaration's Javadoc
-        return self._leading_comment(anchor)
+        # One of several declarators: the declaration's doc (Go: a grouped spec's own).
+        holder = None if self.python or self.ecma or self.go else self._holder(anchor)
+        return self._leading_comment(holder if holder is not None else anchor)
 
     def _python_docstring(self, block: Node) -> str | None:
         first = next((c for c in block.named_children if c.type != "comment"), None)
@@ -582,23 +917,38 @@ class _Extractor:
         comments: list[Node] = []
         expected_row = node.start_point.row
         previous = node.prev_sibling
+        parent = node.parent
+        if (
+            previous is None
+            and self.ruby
+            and parent is not None
+            and parent.type == "body_statement"
+        ):
+            # A body's first statement: the comment above it is the body's sibling.
+            previous = parent.prev_sibling if parent.start_byte == node.start_byte else None
         while previous is not None and previous.type in COMMENTS:
-            if previous.end_point.row < expected_row - 1 or not self._starts_line(previous):
+            end_row = lines(previous)[1] - 1  # a Rust // comment ends on the next line
+            if end_row < expected_row - 1 or not self._starts_line(previous):
                 break  # a blank line between, or the end of the previous line's code
             raw = self.source.node(previous)
-            if previous.type == "block_comment" and not raw.startswith("/**"):
-                break  # Java: a licence or code commented out, not Javadoc
+            if raw.startswith(("//!", "/*!")):
+                break  # Rust: the docs of the module it is in
+            if not self.ecma and raw.startswith("/*") and not raw.startswith("/**"):
+                break  # a licence or code commented out, not Javadoc
             comments.insert(0, previous)
             expected_row = previous.start_point.row
             previous = previous.prev_sibling
         if not comments:
             return None
-        lines: list[str] = []
+        texts: list[str] = []
         for comment in comments:
             for line in self.source.node(comment).splitlines():
                 stripped = line.strip()
                 stripped = re.sub(r"^(/\*\*?|\*/|\*(?!/)|//+|#+)\s?", "", stripped)
                 stripped = re.sub(r"\s*\*/$", "", stripped)
-                lines.append(stripped)
-        text = "\n".join(lines).strip()
+                texts.append(stripped)
+        text = "\n".join(texts)
+        if self.csharp:
+            text = _XML_DOC_TAGS.sub("", text)  # /// <summary>...</summary>
+        text = text.strip()
         return text[:MAX_DOCSTRING] or None

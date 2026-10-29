@@ -29,8 +29,21 @@ from sensei_engine.parse.parser import (
     lines,
     parse_file,
 )
+from sensei_engine.symbols.extract import SymbolKind, extract_symbols
 
-GRAMMARS = ("python", "javascript", "typescript", "tsx", "java")
+GRAMMARS = (
+    "python",
+    "javascript",
+    "typescript",
+    "tsx",
+    "java",
+    "kotlin",
+    "go",
+    "csharp",
+    "php",
+    "ruby",
+    "rust",
+)
 
 
 def _patterns(source: str) -> Iterator[str]:
@@ -101,8 +114,40 @@ def test_language_ids_map_to_grammars() -> None:
     assert grammar_for("jsx") is grammar("javascript")
     assert grammar_for("tsx") is grammar("tsx")
     assert grammar_for("java") is grammar("java")
-    assert grammar_for("go") is None
+    for language in ("kotlin", "go", "csharp", "php", "ruby", "rust"):
+        assert grammar_for(language) is grammar(language)
+    assert grammar_for("scala") is None
     assert grammar_for(None) is None
+
+
+@pytest.mark.parametrize(
+    ("path", "source", "language", "keys"),
+    [
+        ("src/main/kotlin/App.kt", "fun main() {}\n", "kotlin", ["main()."]),
+        ("build.gradle.kts", 'plugins { id("java") }\n', "kotlin", []),
+        ("cmd/api/main.go", "package main\n\nfunc main() {}\n", "go", ["main#", "main()."]),
+        (
+            "src/Api/Program.cs",
+            "class Program { void Run() {} }\n",
+            "csharp",
+            ["Program#", "Program#Run()."],
+        ),
+        ("public/index.php", "<?php\nfunction main() {}\n", "php", ["main()."]),
+        ("app/models/order.rb", "class Order; end\n", "ruby", ["Order#"]),
+        ("src/main.rs", "fn main() {}\n", "rust", ["main()."]),
+    ],
+)
+def test_each_new_language_is_detected_parsed_and_has_a_module_symbol(
+    path: str, source: str, language: str, keys: list[str]
+) -> None:
+    result = parse_file(path, source.encode())  # the language comes from the extension
+    assert (result.status, result.language, result.error_count) == (ParseStatus.PARSED, language, 0)
+    symbols = extract_symbols(result, language)
+    module = symbols[0]
+    prefix = module.symbol_key
+    assert prefix.endswith(f" {path}/")
+    assert module.kind is SymbolKind.MODULE
+    assert [s.symbol_key.removeprefix(prefix) for s in symbols[1:]] == keys
 
 
 def test_each_thread_gets_its_own_parser() -> None:
@@ -120,7 +165,7 @@ def test_each_thread_gets_its_own_parser() -> None:
 
 
 def test_unsupported_binary_and_too_large_files_have_no_tree() -> None:
-    assert parse_file("main.go", b"package main\n").status is ParseStatus.UNSUPPORTED
+    assert parse_file("main.c", b"int main(void) { return 0; }\n").status is ParseStatus.UNSUPPORTED
     binary = parse_file("blob.py", b"\x00\x01\x02" * 10)
     assert (binary.status, binary.tree) == (ParseStatus.BINARY, None)
     large = parse_file("big.py", b"x = 1\n" * (MAX_PARSE_BYTES // 6 + 1))

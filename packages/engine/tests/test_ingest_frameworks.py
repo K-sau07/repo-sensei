@@ -220,6 +220,12 @@ def test_framework_root_is_the_deepest() -> None:
         ("src/main/java/com/acme/domain/service/Pricing.java", "java", "", False, Role.SERVICE),
         ("src/main/kotlin/com/acme/model/Status.kt", "kotlin", "", False, Role.DB),
         ("app/model/train.py", "python", "", False, Role.SERVICE),  # not JVM: no package rule
+        # Folders one ecosystem gives the data layer: EF Core's Entities, a Go service's store.
+        ("src/Shop.Api/Entities/Order.cs", "csharp", "", False, Role.DB),
+        ("internal/store/orders.go", "go", "", False, Role.DB),
+        ("web/src/store/cart.ts", "typescript", "", False, Role.SERVICE),
+        ("app/Http/Controllers/OrderController.php", "php", "", False, Role.API),
+        ("app/models/order.rb", "ruby", "", False, Role.DB),
         ("cmd/server/main.go", "go", 'http.HandleFunc("/health", ok)', False, Role.API),
         ("internal/http/routes.go", "go", 'r.GET("/users", list)', False, Role.API),
         ("mysite/settings/base.py", "python", "", False, Role.CONFIG),  # Django settings package
