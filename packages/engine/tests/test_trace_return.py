@@ -5,6 +5,7 @@ graph and links stages link them (a FastAPI backend for the login, so its path r
 
 from __future__ import annotations
 
+import time
 from collections.abc import Mapping
 from pathlib import Path
 from typing import cast
@@ -20,7 +21,9 @@ from sensei_engine.graph.trace import TracePath, trace_feature
 from sensei_engine.graph.writer import LINKS
 from sensei_engine.ingest.languages import detect_language
 from sensei_engine.link.outcomes import (
+    FileOutcomes,
     OutcomeSite,
+    link_outcomes,
     outcome_key,
     outcome_kind,
     outcome_tie,
@@ -229,13 +232,17 @@ def _back(path: TracePath) -> list[tuple[str, int | None]]:
     ]
 
 
-def _scan(path: str, text: str) -> list[OutcomeSite]:
+def _scanned(path: str, text: str) -> FileOutcomes:
     parsed = parse_file(path, text.encode(), language="tsx")
     definitions = [
         Definition(s.symbol_key, s.name, s.qualified_name, s.kind.value, s.start_line, s.end_line)
         for s in extract_symbols(parsed, "tsx")
     ]
-    return scan_outcomes(parsed, definitions).sites
+    return scan_outcomes(parsed, definitions)
+
+
+def _scan(path: str, text: str) -> list[OutcomeSite]:
+    return _scanned(path, text).sites
 
 
 # ---------------------------------------------------------------- the trace
@@ -463,3 +470,44 @@ def test_keys_carry_their_ties() -> None:
     assert outcome_tie(key) == ((4, 6), (2, 2))
     assert outcome_kind(key) == "navigate"
     assert outcome_tie("http_client_call GET /x a.ts:1") is None
+
+
+# ---------------------------------------------------------------- hardening (3.22 c)
+
+
+def test_two_outcomes_of_a_kind_and_target_on_one_line_are_two_nodes() -> None:
+    """``localStorage.setItem('token', …); sessionStorage.setItem('token', …)``: the second is
+    keyed by its action too; its tie is read back as the first's."""
+    page = (
+        "export default function Page() {\n"
+        "  const go = async () => {\n"
+        '    const r = await api.get("/t")\n'
+        '    localStorage.setItem("token", r.data); sessionStorage.setItem("token", r.data)\n'
+        "  }\n"
+        "  return null\n"
+        "}\n"
+    )
+    graph = link_outcomes({"web/Page.tsx": _scanned("web/Page.tsx", page)}, [])
+    keys = sorted(n.key for n in graph.nodes)
+    assert keys == [
+        "client_outcome storage token web/Page.tsx:4 after 3-3",
+        "client_outcome storage token web/Page.tsx:4 sessionStorage.setItem after 3-3",
+    ]
+    assert {outcome_tie(k) for k in keys} == {((3, 3),)}
+    assert len([e for e in graph.edges if e.type is EdgeType.PRODUCES]) == 2
+    key = outcome_key("storage", "t", "a.tsx", 4, ((3, 3),), action="sessionStorage.setItem")
+    assert key == "client_outcome storage t a.tsx:4 sessionStorage.setItem after 3-3"
+
+
+def test_a_function_of_two_thousand_awaits_is_scanned_in_linear_time() -> None:
+    """Each await is read once per function, and each outcome finds its own from the end."""
+    body = "".join(
+        f"    const r{i} = await api.get('/x{i}')\n    setItems{i}(r{i}.data)\n"
+        for i in range(2000)
+    )
+    page = f"export default function Page() {{\n  const load = async () => {{\n{body}  }}\n}}\n"
+    started = time.monotonic()
+    sites = _scan("web/Big.tsx", page)
+    assert time.monotonic() - started < 2
+    assert len(sites) == 2000
+    assert sites[-1].ties[0] == (4001, 4001)  # its own await, the line before

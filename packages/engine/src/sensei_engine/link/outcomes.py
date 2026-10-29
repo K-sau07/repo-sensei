@@ -47,6 +47,7 @@ from the props).
 
 from __future__ import annotations
 
+import bisect
 import re
 from collections.abc import Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -110,11 +111,15 @@ _KEY_KIND = re.compile(r"^client_outcome (\w+) ")
 Spans = tuple[tuple[int, int], ...]  # (first line, last line)s
 
 
-def outcome_key(kind: str, target: str, path: str, line: int, ties: Spans) -> str:
+def outcome_key(
+    kind: str, target: str, path: str, line: int, ties: Spans, *, action: str | None = None
+) -> str:
     """An outcome's node key: its kind, target and place, and the lines it is tied to (a trace
-    reads them back, :func:`outcome_tie`)."""
+    reads them back, :func:`outcome_tie`); ``action`` when another outcome of the same kind and
+    target is on its line (``localStorage.setItem('t', …); sessionStorage.setItem('t', …)``)."""
     after = ",".join(f"{start}-{end}" for start, end in ties)
-    return f"client_outcome {kind} {target or '?'} {path}:{line} after {after}"
+    place = f"{path}:{line}" if action is None else f"{path}:{line} {action}"
+    return f"client_outcome {kind} {target or '?'} {place} after {after}"
 
 
 def outcome_tie(key: str) -> Spans | None:
@@ -329,6 +334,10 @@ class _Scanner:
             if d.kind in ("function", "method", "component", "hook")
         )
         self.imports: dict[str, str] = {}  # local name -> the module it is imported from
+        # Each function body's awaited calls, and where each ends (see :meth:`awaits`).
+        self._awaits: dict[int, tuple[list[Node], list[int]]] = {}
+        self._declared: dict[int, dict[str, tuple[int, Node]]] = {}  # see :meth:`declared`
+        self._bound: dict[int, frozenset[str]] = {}  # see :meth:`bound`
         self.constants: dict[str, str] = {}  # the module's string constants
         self.navigators: set[str] = set()
         self.routers: set[str] = set()
@@ -681,11 +690,12 @@ class _Scanner:
                         return _Tie((span, *hooks), awaits, frozenset(), True)
             # An await before it in the same function: one whose result it uses, else the latest.
             if body is not None:
-                before = [c for c in self.awaits(body) if c.end_byte <= here.start_byte]
+                before = self.awaits_before(body, here.start_byte)
                 if before:
-                    flowing = [c for c in before if _bound_to(c) & used]
-                    call = (flowing or before)[-1]
-                    results = frozenset(_bound_to(call))
+                    # The latest whose result it uses, else the latest: from the end, so an
+                    # outcome right after its await costs one look, not one per await before.
+                    call = next((c for c in reversed(before) if self.bound(c) & used), before[-1])
+                    results = self.bound(call)
                     spans = (_span(call), *self.via_hook(call))
                     return _Tie(spans, _short(_callee(call)), results, False)
             parent = function.parent
@@ -794,34 +804,62 @@ class _Scanner:
         for block in ancestors(call):
             if block.type not in ("statement_block", "program"):
                 continue
-            for statement in block.named_children:
-                if statement.start_byte >= call.start_byte:
-                    break
-                if statement.type not in ("lexical_declaration", "variable_declaration"):
-                    continue
-                for declarator in statement.named_children:
-                    if declarator.type != "variable_declarator":
-                        continue
-                    if name not in _names(declarator.child_by_field_name("name")):
-                        continue
-                    value = declarator.child_by_field_name("value")
-                    value = _unwrap(value) if value is not None else None
-                    hook = _text(_callee(value)).split(".")[-1] if value is not None else ""
-                    if value is not None and value.type == "call_expression" and _HOOK.match(hook):
-                        return [_span(value)]
-                    return []
+            declared = self.declared(block).get(name)
+            if declared is None or declared[0] >= call.start_byte:
+                continue  # not declared in this block before the call: the one around it
+            value = declared[1].child_by_field_name("value")
+            value = _unwrap(value) if value is not None else None
+            hook = _text(_callee(value)).split(".")[-1] if value is not None else ""
+            if value is not None and value.type == "call_expression" and _HOOK.match(hook):
+                return [_span(value)]
+            return []
         return []
+
+    def declared(self, block: Node) -> dict[str, tuple[int, Node]]:
+        """Each name a block's declarations bind, first: (its statement's start, the
+        declarator); once per block, as every call in it asks."""
+        held = self._declared.get(block.id)
+        if held is not None:
+            return held
+        found: dict[str, tuple[int, Node]] = {}
+        for statement in block.named_children:
+            if statement.type not in ("lexical_declaration", "variable_declaration"):
+                continue
+            for declarator in statement.named_children:
+                if declarator.type != "variable_declarator":
+                    continue
+                for bound in _names(declarator.child_by_field_name("name")):
+                    found.setdefault(bound, (statement.start_byte, declarator))
+        self._declared[block.id] = found
+        return found
 
     def awaits(self, body: Node) -> list[Node]:
         """The calls ``body`` awaits, in order (not those of the functions in it, nor an
-        outcome awaited: ``await queryClient.invalidateQueries()``)."""
+        outcome awaited: ``await queryClient.invalidateQueries()``); once per body, as every
+        outcome in it asks."""
+        held = self._awaits.get(body.id)
+        if held is not None:
+            return held[0]
         found: list[Node] = []
         for node in _own(body):
             if node.type == "await_expression":
                 call = _awaited_call(node)
                 if call is not None and self.outcome(call) is None:
                     found.append(call)
+        self._awaits[body.id] = (found, [call.end_byte for call in found])
         return found
+
+    def bound(self, call: Node) -> frozenset[str]:
+        """:func:`_bound_to`, once per call."""
+        held = self._bound.get(call.id)
+        if held is None:
+            held = self._bound[call.id] = frozenset(_bound_to(call))
+        return held
+
+    def awaits_before(self, body: Node, offset: int) -> list[Node]:
+        """The calls ``body`` awaits that end by ``offset``, in order."""
+        found = self.awaits(body)
+        return found[: bisect.bisect_right(self._awaits[body.id][1], offset)]
 
     @staticmethod
     def chain_root(call: Node) -> Node:
@@ -909,7 +947,14 @@ def link_outcomes(files: Mapping[str, FileOutcomes], calls: Iterable[GraphNode])
     for path, found in sorted(files.items()):
         for site in found.sites:
             key = outcome_key(site.kind, site.target, path, site.line, site.ties)
-            if key in nodes:
+            held = nodes.get(key)
+            if held is not None and held.attrs.get("action") != site.action:
+                # Another outcome of the kind and target on the line: its own node.
+                key = outcome_key(
+                    site.kind, site.target, path, site.line, site.ties, action=site.action
+                )
+                held = nodes.get(key)
+            if held is not None:
                 continue
             after_call = at.get((path, site.after)) if site.after is not None else None
             report.outcomes += 1
