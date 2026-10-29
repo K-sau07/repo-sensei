@@ -169,6 +169,7 @@ class Call:
     owner: str | None  # the type around it
     text: str = ""  # the receiver as written (cut to 120 characters)
     static: bool = False  # Type.m(): on a capitalized name (a type's, by convention)
+    column: int = 0  # the name's (bytes), with ``line``: two calls on a line told apart
 
 
 @dataclass(frozen=True, slots=True)
@@ -803,6 +804,7 @@ def _calls(ordered: list[_CallMatch], walker: _Walker) -> list[Call]:
                 owner,
                 _text(roles["receiver"])[:120] if roles["receiver"] is not None else "",
                 _static_looking(receiver),
+                (name_node if name_node is not None and kind == "method" else node).start_point[1],
             )
         )
     return found

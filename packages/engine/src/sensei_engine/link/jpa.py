@@ -19,8 +19,8 @@ the repository's types, as the graph stage's Java resolver does, and its
   ``schema``), else the entity name, through the **physical naming strategy**. Spring Boot's
   default (``CamelCaseToUnderscoresNamingStrategy``, ``SpringPhysicalNamingStrategy`` before
   it) puts an underscore between a lower-case letter or digit and an upper-case letter followed
-  by a lower-case one, turns dots into underscores and lower-cases the rest (``FoodItem`` →
-  ``food_item``), explicit names included; a config naming Hibernate's
+  by a lower-case one, turns dots into underscores and lower-cases the rest (``OrderLine`` →
+  ``order_line``), explicit names included; a config naming Hibernate's
   ``PhysicalNamingStrategyStandardImpl`` keeps names as written (:data:`NAMINGS`). An entity
   extending another one maps the root's table under ``SINGLE_TABLE`` (the default
   ``@Inheritance``), its own under ``JOINED`` and ``TABLE_PER_CLASS``;
@@ -130,7 +130,7 @@ _NOT_COLUMNS = frozenset({"Transient", "Formula", "JoinFormula", "ElementCollect
 _TO_MANY = frozenset({"OneToMany", "ManyToMany"})
 _TO_ONE = frozenset({"ManyToOne", "OneToOne"})
 _EMBEDDED = frozenset({"Embedded", "EmbeddedId"})
-_JOIN_COLUMN_RE = re.compile(r'JoinColumn\s*\(\s*(?:name\s*=\s*)?"([^"]+)"')
+_JOIN_COLUMN_RE = re.compile(r"^@?\s*(?:[\w.]*\.)?JoinColumn\s*(\(.*\))\s*$", re.DOTALL)
 
 # Calls whose first argument :func:`scan` keeps, and what each does on the types it serves.
 _MANAGERS = frozenset({
@@ -162,8 +162,12 @@ NAMINGS = {
     "CamelCaseToUnderscoresNamingStrategy": "spring",
     "SpringPhysicalNamingStrategy": "spring",
 }
+# At a line's start (after its indent and the key's dotted prefix), so a commented-out one
+# (``#`` / ``!``) never counts.
 _NAMING_RE = re.compile(
-    r"(?:physical[-_]strategy|physical_naming_strategy)\s*[:=]\s*[\"']?([\w.$]+)"
+    r"^[ \t]*(?:[\w.\[\]-]*\.)?(?:physical[-_]strategy|physical_naming_strategy)"
+    r"\s*[:=]\s*[\"']?([\w.$]+)",
+    re.MULTILINE,
 )
 _FLYWAY_RE = re.compile(r"^(?:V\d[\w.]*|R)__.+\.sql$")
 _LIQUIBASE_RE = re.compile(r"changelog|changeset", re.IGNORECASE)
@@ -182,6 +186,7 @@ class Argument:
     method: str
     kind: Literal["class", "name", "string", "new"]
     value: str  # a type as written, a name chain ("this.user"), a string's value
+    column: int = 0  # the called name's (bytes, as the call's): two calls on a line apart
 
 
 @dataclass(frozen=True, slots=True)
@@ -226,6 +231,15 @@ def text_file(path: str) -> Tool | Literal["config"] | None:
     return None
 
 
+def _config_rank(path: str) -> tuple[bool, bool, str]:
+    """Which config's naming strategy holds, first first: the app's own (``src/main``, not a
+    test's) before a profile's (``application-local.yml`` applies only under that profile)."""
+    lowered = f"/{path.lower()}"
+    test = "/test/" in lowered or "/tests/" in lowered
+    profile = "-" in basename(path).split(".", 1)[0]
+    return (test, profile, path)
+
+
 def wanted(path: str, language: str | None) -> bool:
     """Whether JPA reads a file of a language it reads (a text file: only the ones it knows)."""
     return language not in TEXT_LANGUAGES or text_file(path) is not None
@@ -249,8 +263,12 @@ def scan_text(path: str, data: bytes) -> FileJpa:
 
 
 _XML_ATTR_RE = re.compile(r"""([\w:-]+)\s*=\s*["']([^"']*)["']""")
+# A change's body ends at its closing tag, never past the next change (so an unclosed one
+# costs its own stretch of the file, not the rest of it each time).
 _XML_CHANGE_RE = re.compile(
-    r"<(createTable|renameTable|dropTable)\b([^>]*?)(?:/>|>(.*?)</\1>)", re.DOTALL
+    r"<(createTable|renameTable|dropTable)\b([^>]*?)"
+    r"(?:/>|>((?:(?!<(?:createTable|renameTable|dropTable)\b).)*?)</\1>)",
+    re.DOTALL,
 )
 _XML_COLUMN_RE = re.compile(r"<column\b([^>]*)>?", re.DOTALL)
 
@@ -282,7 +300,19 @@ def _liquibase_xml(text: str) -> list[TableChange]:
     return changes
 
 
-_YAML_KEY_RE = re.compile(r"^(\s*)(?:-\s+)?(\w+)\s*:\s*[\"']?([^\"'#\n]*?)[\"']?\s*(?:#.*)?$")
+_YAML_KEY_RE = re.compile(r"^\s*(?:-\s+)?(\w+)\s*:")
+
+
+def _yaml_key(line: str) -> tuple[str, str] | None:
+    """A YAML line's key and its value (a comment after it dropped, quotes taken off), read by
+    hand: a pattern for the value backtracks on long runs of spaces."""
+    head = _YAML_KEY_RE.match(line)
+    if head is None:
+        return None
+    value = line[head.end() :].split("#", 1)[0].strip()
+    if len(value) >= 2 and value[0] in "\"'" and value[-1] == value[0]:
+        value = value[1:-1]
+    return head[1], value
 
 
 def _liquibase_yaml(text: str) -> list[TableChange]:
@@ -291,8 +321,8 @@ def _liquibase_yaml(text: str) -> list[TableChange]:
     lines = text.splitlines()
     changes: list[TableChange] = []
     for number, line in enumerate(lines):
-        head = _YAML_KEY_RE.match(line)
-        if head is None or head[2] not in ("createTable", "renameTable", "dropTable"):
+        head = _yaml_key(line)
+        if head is None or head[0] not in ("createTable", "renameTable", "dropTable"):
             continue
         indent = len(line) - len(line.lstrip(" -"))
         keys: dict[str, str] = {}
@@ -301,18 +331,18 @@ def _liquibase_yaml(text: str) -> list[TableChange]:
             inner = lines[at]
             if inner.strip() and len(inner) - len(inner.lstrip(" -")) <= indent:
                 break
-            found = _YAML_KEY_RE.match(inner)
-            if found is None or not found[3]:
+            found = _yaml_key(inner)
+            if found is None or not found[1]:
                 continue
-            if found[2] == "name":
-                columns.append((found[3], at + 1))
+            if found[0] == "name":
+                columns.append((found[1], at + 1))
             else:
-                keys.setdefault(found[2], found[3])
-        if head[2] == "createTable" and keys.get("tableName"):
+                keys.setdefault(found[0], found[1])
+        if head[0] == "createTable" and keys.get("tableName"):
             changes.append(
                 TableChange("create_table", keys["tableName"], number + 1, tuple(columns))
             )
-        elif head[2] == "renameTable" and keys.get("oldTableName") and keys.get("newTableName"):
+        elif head[0] == "renameTable" and keys.get("oldTableName") and keys.get("newTableName"):
             changes.append(
                 TableChange(
                     "rename_table",
@@ -321,7 +351,7 @@ def _liquibase_yaml(text: str) -> list[TableChange]:
                     renamed_to=keys["newTableName"],
                 )
             )
-        elif head[2] == "dropTable" and keys.get("tableName"):
+        elif head[0] == "dropTable" and keys.get("tableName"):
             changes.append(TableChange("drop_table", keys["tableName"], number + 1))
     return changes
 
@@ -382,7 +412,8 @@ def scan(result: ParseResult) -> FileJpa | None:
             )
             found = _argument(first) if first is not None else None
             if found is not None:
-                arguments.append(Argument(name.start_point.row + 1, _text(name), *found))
+                row, column = name.start_point
+                arguments.append(Argument(row + 1, _text(name), *found, column=column))
     keys = frozenset(
         f.key
         for t in facts.types
@@ -474,6 +505,23 @@ def _split_top(text: str) -> list[str]:
     return parts
 
 
+def _join_columns(arguments: str | None) -> list[str]:
+    """The column names a ``@JoinTable``'s ``joinColumns`` and ``inverseJoinColumns`` give (one
+    ``@JoinColumn(...)`` or ``{...}`` of them; ``name`` wherever it is among the elements)."""
+    found: list[str] = []
+    held = elements(arguments)
+    for key in ("joinColumns", "inverseJoinColumns"):
+        value = held.get(key, "").strip()
+        if value.startswith("{") and value.endswith("}"):
+            value = value[1:-1]
+        for part in _split_top(value):
+            column = _JOIN_COLUMN_RE.match(part.strip())
+            name = _string(column[1], "name", "value") if column is not None else None
+            if name:
+                found.append(name)
+    return found
+
+
 def _string(arguments: str | None, *keys: str) -> str | None:
     found = elements(arguments)
     for key in keys:
@@ -484,7 +532,7 @@ def _string(arguments: str | None, *keys: str) -> str | None:
 
 def physical(name: str, naming: str = "spring") -> str:
     """A logical name as the physical naming strategy makes it (see the module): Spring's
-    ``FoodItem`` is ``food_item``; a quoted name is kept as written."""
+    ``OrderLine`` is ``order_line``; a quoted name is kept as written."""
     if len(name) > 1 and name[0] in '`"' and name[-1] == name[0]:
         return name[1:-1]
     if naming == "standard":
@@ -612,7 +660,9 @@ class _Linker:
         self.nodes: dict[str, GraphNode] = {n.key: n for n in known}
         self.edges: list[GraphEdge] = []
         self.report = JpaReport()
-        configured = next((f.naming for f in files if f.naming), None)
+        configured = next(
+            (f.naming for f in sorted(files, key=lambda f: _config_rank(f.path)) if f.naming), None
+        )
         last = configured.rsplit(".", 1)[-1] if configured else None
         self.naming = NAMINGS.get(last or "", "spring")
         self.report.naming = (
@@ -623,6 +673,7 @@ class _Linker:
         self.entities: dict[str, _Entity] = {}
         self.by_name: dict[str, list[_Entity]] = {}
         self.repositories: dict[str, _Entity] = {}
+        self.ids: dict[str, str] = {}  # each entity's id column, once read
 
     @property
     def resolver(self) -> CallResolver:
@@ -957,12 +1008,34 @@ class _Linker:
         return None
 
     def id_column(self, entity: _Entity | None) -> str:
-        """The id column of an entity (``id`` when it can't be told)."""
+        """The id column of an entity (``id`` when it can't be told): its ``@Id`` field's, its
+        own or a mapped superclass's, read without following its relations (an entity may refer
+        to itself, an employee to their manager, or round a cycle), once per entity."""
         if entity is None:
             return "id"
-        for variable, column, _, _ in self.columns_of(entity):
-            if "Id" in _names(variable.annotations):
-                return column
+        held = self.ids.get(entity.key)
+        if held is None:
+            held = self.ids[entity.key] = self.read_id(entity)
+        return held
+
+    def read_id(self, entity: _Entity) -> str:
+        current = self.index.by_key.get(entity.key)
+        for _ in range(MAX_DEPTH):
+            if current is None:
+                break
+            for variable in current.type.fields:
+                marks = _names(variable.annotations)
+                if variable.static or "Id" not in marks:
+                    continue
+                if entity.store == "mongo":
+                    return "_id"
+                column = marks.get("Column")
+                name = _string(column.arguments, "name") if column is not None else None
+                return physical(name or variable.name, self.naming)
+            parent = self.index.superclass(current.type.key)
+            current = (
+                None if parent is None or parent.external else self.index.by_key.get(parent.key)
+            )
         return "id"
 
     def join_tables(self, entity: _Entity) -> Iterator[tuple[str, int, list[str]]]:
@@ -973,8 +1046,7 @@ class _Linker:
             name = _string(join.arguments, "name", "value") if join is not None else None
             if join is None or not name:
                 continue
-            written = _JOIN_COLUMN_RE.findall(join.arguments or "")
-            columns = [physical(c, self.naming) for c in written]
+            columns = [physical(c, self.naming) for c in _join_columns(join.arguments)]
             yield physical(name, self.naming), join.line, columns
 
     # repositories
@@ -1174,7 +1246,15 @@ class _Linker:
         return self.entities.get(declared.type.key) if declared is not None else None
 
     def statement(
-        self, src: str, sql: str, path: str, line: int, via: str, *, how: Provenance
+        self,
+        src: str,
+        sql: str,
+        path: str,
+        line: int,
+        via: str,
+        *,
+        how: Provenance,
+        column: int = 0,
     ) -> bool:
         """Native SQL: a ``SqlStatement`` node and its edges, and ``src``'s (as orm.py's raw
         SQL; ``how`` for the tables something declares)."""
@@ -1182,9 +1262,13 @@ class _Linker:
         if not looks_like_sql(sql):
             return False
         parsed = tables(sql)
+        key = f"sql_statement {path}:{line}"
+        held = self.nodes.get(key)
+        if held is not None and held.attrs.get("sql") != sql[:MAX_SQL_ATTR]:
+            key = f"{key}:{column}"  # another statement on the line: each its own node
         key = self.node(
             GraphNode(
-                key=f"sql_statement {path}:{line}",
+                key=key,
                 kind=NodeKind.SQL_STATEMENT,
                 name=" ".join(sql.split())[:MAX_NAME],
                 path=path,
@@ -1252,9 +1336,9 @@ class _Linker:
             facts = file.java
             if facts is None or not file.arguments:
                 continue
-            calls = {(c.line, c.name): c for c in facts.calls if c.kind == "method"}
+            calls = {(c.line, c.column, c.name): c for c in facts.calls if c.kind == "method"}
             for argument in file.arguments:
-                call = calls.get((argument.line, argument.method))
+                call = calls.get((argument.line, argument.column, argument.method))
                 if call is not None:
                     self.argument_call(file.path, call, argument)
 
@@ -1286,7 +1370,13 @@ class _Linker:
         name = call.name
         if fqn in _JDBC and name in _JDBC_SQL and argument.kind == "string":
             if self.statement(
-                call.source, argument.value, path, call.line, "jdbc", how=(Provenance.NAME_UNIQUE)
+                call.source,
+                argument.value,
+                path,
+                call.line,
+                "jdbc",
+                how=Provenance.NAME_UNIQUE,
+                column=call.column,
             ):
                 self.report.entity_manager += 1
             return
@@ -1308,7 +1398,13 @@ class _Linker:
             return
         if name in _MANAGER_SQL and argument.kind == "string":
             if self.statement(
-                call.source, argument.value, path, call.line, via, how=(Provenance.NAME_UNIQUE)
+                call.source,
+                argument.value,
+                path,
+                call.line,
+                via,
+                how=Provenance.NAME_UNIQUE,
+                column=call.column,
             ):
                 self.report.entity_manager += 1
             return

@@ -25,7 +25,8 @@ counted; nothing one file holds stops the stage.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Iterator, Mapping, Sequence
+import logging
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from posixpath import basename
@@ -53,6 +54,8 @@ from sensei_engine.parse.stage import read_source
 from sensei_engine.sandbox.deps import DependencyImages
 from sensei_engine.sandbox.runner import Sandbox
 from sensei_engine.symbols.extract import extract_symbols
+
+log = logging.getLogger(__name__)
 
 LANGUAGES = frozenset({"python", *ECMA_LANGUAGES, *jpa.LANGUAGES})
 
@@ -232,27 +235,68 @@ def resolve_links(
 ) -> LinkBuild:
     """Every linker over the project (``files``: each file's facts, by path; ``runtime``: the
     running app's routes, when the sandbox read them)."""
+    failed: dict[str, str] = {}
+
+    def guarded[T](name: str, run: Callable[[], T], empty: Callable[[], T]) -> T:
+        # One linker's bug costs its own facts, never the others' (nor the whole stage): it
+        # answers as it would for no files, and the details say it failed.
+        try:
+            return run()
+        except Exception as exc:  # any bug in a linker
+            log.warning("linker failed", extra={"linker": name}, exc_info=True)
+            failed[name] = f"{type(exc).__name__}: {str(exc)[:200]}"
+            return empty()
+
     routes, imports = _python(files)
-    graph = fastapi.endpoint_facts(
-        project, fastapi.static_routes(project, routes, imports), runtime
+    graph = guarded(
+        "routes",
+        lambda: fastapi.endpoint_facts(
+            project, fastapi.static_routes(project, routes, imports), runtime
+        ),
+        lambda: fastapi.endpoint_facts(project, [], None),
     )
-    web = spring.spring_routes(
-        project,
-        {p: f.spring for p, f in files.items() if f.spring is not None},
-        taken=frozenset(n.key for n in graph.nodes),
+    taken = frozenset(n.key for n in graph.nodes)
+    web = guarded(
+        "spring",
+        lambda: spring.spring_routes(
+            project, {p: f.spring for p, f in files.items() if f.spring is not None}, taken=taken
+        ),
+        lambda: spring.spring_routes(project, {}, taken=taken),
     )
-    calls = http_calls.client_calls(
-        project, {p: f.calls for p, f in files.items() if f.calls is not None}
+    calls = guarded(
+        "calls",
+        lambda: http_calls.client_calls(
+            project, {p: f.calls for p, f in files.items() if f.calls is not None}
+        ),
+        lambda: http_calls.client_calls(project, {}),
     )
-    linked = urls.link_calls(
-        calls.calls,
-        [*endpoints_of(graph), *endpoints_of(web)],
-        bases=urls.config_bases(project.configs),
+    linked = guarded(
+        "urls",
+        lambda: urls.link_calls(
+            calls.calls,
+            [*endpoints_of(graph), *endpoints_of(web)],
+            bases=urls.config_bases(project.configs),
+        ),
+        lambda: urls.link_calls([], []),
     )
-    data = orm.link(f.orm for _, f in sorted(files.items()) if f.orm is not None)
-    java = jpa.link((f.jpa for _, f in sorted(files.items()) if f.jpa is not None), data.nodes)
-    done = outcomes.link_outcomes(
-        {p: f.outcomes for p, f in files.items() if f.outcomes is not None}, calls.nodes
+    data = guarded(
+        "orm",
+        lambda: orm.link(f.orm for _, f in sorted(files.items()) if f.orm is not None),
+        lambda: orm.link([]),
+    )
+    java = guarded(
+        "jpa",
+        lambda: jpa.link(
+            (f.jpa for _, f in sorted(files.items()) if f.jpa is not None), data.nodes
+        ),
+        lambda: jpa.link([], data.nodes),
+    )
+    done = guarded(
+        "outcomes",
+        lambda: outcomes.link_outcomes(
+            {p: f.outcomes for p, f in files.items() if f.outcomes is not None}, calls.nodes
+        ),
+        lambda: outcomes.link_outcomes({}, calls.nodes),
     )
     build = LinkBuild()
     build.nodes = [
@@ -280,6 +324,8 @@ def resolve_links(
         "jpa": asdict(java.report),
         "outcomes": asdict(done.report),
     }
+    if failed:
+        build.details["failed"] = failed
     return build
 
 

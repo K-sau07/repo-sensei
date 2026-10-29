@@ -73,6 +73,8 @@ def tables(sql: str) -> SqlTables:
         parsed = [s for s in sqlglot.parse(sql[:MAX_SQL_CHARS]) if s is not None]
     except SqlglotError as exc:
         return SqlTables(kind="", reads=(), writes=(), error=str(exc).splitlines()[0][:200])
+    except (RecursionError, ValueError):  # nested past the parser's depth, or text it can't read
+        return SqlTables(kind="", reads=(), writes=(), error="too deeply nested to read")
     if not parsed:
         return SqlTables(kind="", reads=(), writes=(), error="no statement")
     statement = parsed[0]
@@ -113,7 +115,6 @@ _RENAME_RE = re.compile(
 )
 _RENAME_TABLE_RE = re.compile(rf"\s*rename\s+table\s+{_NAME}\s+to\s+{_NAME}", re.IGNORECASE)
 _DROP_RE = re.compile(rf"\s*drop\s+table\s+(?:if\s+exists\s+)?{_NAME}", re.IGNORECASE)
-_COMMENT_RE = re.compile(r"--[^\n]*|/\*.*?\*/", re.DOTALL)
 _DIALECTS = (None, "postgres", "mysql")
 
 
@@ -126,31 +127,24 @@ class TableChange:
     renamed_to: str | None = None
 
 
+_DOLLAR_RE = re.compile(r"\$\w*\$")
+
+
 def _unquoted(name: str) -> str:
     return ".".join(part.strip('`"[]') for part in name.split("."))
 
 
 def _statements(script: str) -> list[tuple[str, int]]:
     """A script's statements and the line each starts on (comments blanked, lines kept; split
-    at semicolons outside quotes and dollar-quoted bodies)."""
-    text = _COMMENT_RE.sub(lambda m: re.sub(r"[^\n]", " ", m[0]), script[: MAX_SQL_CHARS * 10])
+    at semicolons outside quotes and dollar-quoted bodies). One pass, so linear: a comment marker
+    inside a string is the string's, a backslash escapes the quote after it (MySQL's
+    ``'it\\'s'``), and an unclosed comment or string runs to the end."""
+    text = _uncommented(script[: MAX_SQL_CHARS * 10])
     found: list[tuple[str, int]] = []
-    start, quote, i = 0, "", 0
-    while i < len(text):
-        char = text[i]
-        if quote:
-            if text.startswith(quote, i):
-                i += len(quote) - 1
-                quote = ""
-        elif char in "'\"`":
-            quote = char
-        elif char == "$" and (dollar := re.match(r"\$\w*\$", text[i:])) is not None:
-            quote = dollar[0]
-            i += len(quote) - 1
-        elif char == ";":
-            found.append((text[start:i], start))
-            start = i + 1
-        i += 1
+    start = 0
+    for end in _semicolons(text):
+        found.append((text[start:end], start))
+        start = end + 1
     found.append((text[start:], start))
     lines: list[tuple[str, int]] = []
     for statement, offset in found:
@@ -160,11 +154,82 @@ def _statements(script: str) -> list[tuple[str, int]]:
     return lines
 
 
+def _uncommented(text: str) -> str:
+    """``text`` with its comments (outside strings) blanked, line breaks kept."""
+    out: list[str] = []
+    quote, i, n = "", 0, len(text)
+    while i < n:
+        skip = _quoted_end(text, i, quote) if quote else None
+        if skip is not None:
+            out.append(text[i:skip])
+            i, quote = skip, ""
+            continue
+        if quote:  # unclosed: the rest is the string's
+            out.append(text[i:])
+            break
+        if text.startswith("--", i) or text.startswith("/*", i):
+            close = "\n" if text[i + 1] == "-" else "*/"
+            end = text.find(close, i + 2)
+            end = n if end < 0 else end + (0 if close == "\n" else 2)
+            out.append(re.sub(r"[^\n]", " ", text[i:end]))
+            i = end
+            continue
+        char = text[i]
+        if char in "'\"`":
+            quote = char
+        elif char == "$" and (dollar := _DOLLAR_RE.match(text, i)) is not None:
+            quote = dollar[0]
+            out.append(quote)
+            i += len(quote)
+            continue
+        out.append(char)
+        i += 1
+    return "".join(out)
+
+
+def _quoted_end(text: str, i: int, quote: str) -> int | None:
+    """Where the string ``quote`` opened before ``i`` ends (past its closing quote), or None
+    when it doesn't; a backslash escapes the character after it in ``'`` and ``"`` strings."""
+    n = len(text)
+    while i < n:
+        if text[i] == "\\" and quote in "'\"":
+            i += 2
+            continue
+        if text.startswith(quote, i):
+            return i + len(quote)
+        i += 1
+    return None
+
+
+def _semicolons(text: str) -> list[int]:
+    """Where ``text`` (comments blanked) has a semicolon outside its strings."""
+    found: list[int] = []
+    quote, i, n = "", 0, len(text)
+    while i < n:
+        if quote:
+            end = _quoted_end(text, i, quote)
+            if end is None:
+                break
+            i, quote = end, ""
+            continue
+        char = text[i]
+        if char in "'\"`":
+            quote = char
+        elif char == "$" and (dollar := _DOLLAR_RE.match(text, i)) is not None:
+            quote = dollar[0]
+            i += len(quote)
+            continue
+        elif char == ";":
+            found.append(i)
+        i += 1
+    return found
+
+
 def _columns(statement: str, line: int) -> tuple[tuple[str, int], ...]:
     for dialect in _DIALECTS:
         try:
             parsed = sqlglot.parse_one(statement.strip()[:MAX_SQL_CHARS], read=dialect)
-        except SqlglotError:
+        except (SqlglotError, RecursionError, ValueError):
             continue
         if isinstance(parsed, exp.Create) and isinstance(parsed.this, exp.Schema):
             return tuple(

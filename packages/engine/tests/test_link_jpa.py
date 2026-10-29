@@ -7,6 +7,7 @@ links stage running it and a trace from the service down to the tables."""
 
 from __future__ import annotations
 
+import time
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -22,7 +23,7 @@ from sensei_engine.graph.trace import table_model, trace_feature
 from sensei_engine.graph.writer import LINKS, GraphEdge, GraphNode
 from sensei_engine.link import jpa
 from sensei_engine.link.jpa import FileJpa, JpaGraph, elements, physical, string_expression
-from sensei_engine.link.sql import ddl
+from sensei_engine.link.sql import ddl, tables
 from sensei_engine.link.stage import LinkRequest, extract_request, links_language, resolve_links
 from sensei_engine.parse.parser import parse_file
 from sensei_engine.symbols.extract import extract_symbols
@@ -405,7 +406,7 @@ def _access(graph: JpaGraph, src: str) -> set[tuple[str, str, str, float]]:
 
 
 def test_spring_names_tables_and_columns() -> None:
-    assert physical("FoodItem") == "food_item"
+    assert physical("OrderLine") == "order_line"
     assert physical("BookLoan") == "book_loan"
     assert physical("createdAt") == "created_at"
     assert physical("HTTPServer") == "httpserver"  # no lower-case letter before the S
@@ -815,3 +816,118 @@ def test_the_links_stage_runs_jpa_and_a_trace_reaches_the_tables(tmp_path: Path)
     model = table_model(graph, table)
     assert model is not None
     assert model.symbol_key == _key("domain/BookLoan.java/BookLoan#")
+
+
+# ---------------------------------------------------------------- hardening (3.20 b)
+
+
+def _entity(name: str, body: str, *, imports: str = "") -> str:
+    return (
+        f"package com.example.library.domain;\n\nimport jakarta.persistence.*;\n{imports}\n"
+        f"@Entity\npublic class {name} {{\n    @Id\n    private Long id;\n{body}}}\n"
+    )
+
+
+def test_an_entity_referring_to_itself_or_round_a_cycle_has_its_join_columns() -> None:
+    """An employee's manager is an employee; a team's lead's team is a team: the id column is
+    read from ``@Id``, never by following the relations round."""
+    files = {
+        f"{ROOT}/domain/Employee.java": _entity(
+            "Employee", "    @ManyToOne\n    private Employee manager;\n"
+        ),
+        f"{ROOT}/domain/Team.java": _entity("Team", "    @OneToOne\n    private Lead lead;\n"),
+        f"{ROOT}/domain/Lead.java": _entity("Lead", "    @ManyToOne\n    private Team team;\n"),
+    }
+    graph = jpa.link(_scanned(files))
+    columns = {n.key for n in graph.nodes if n.kind is NodeKind.COLUMN}
+    assert {"column employee.manager_id", "column team.lead_id", "column lead.team_id"} <= columns
+
+
+def test_a_join_tables_columns_are_named_wherever_name_is() -> None:
+    body = (
+        "    @ManyToMany\n"
+        '    @JoinTable(name = "member_roles",\n'
+        '        joinColumns = @JoinColumn(referencedColumnName = "id", name = "member_ref"),\n'
+        '        inverseJoinColumns = {@JoinColumn(name = "role_ref")})\n'
+        "    private java.util.Set<Role> roles;\n"
+    )
+    files = {
+        f"{ROOT}/domain/Member.java": _entity("Member", body),
+        f"{ROOT}/domain/Role.java": _entity("Role", ""),
+    }
+    graph = jpa.link(_scanned(files))
+    columns = {n.key for n in graph.nodes if n.kind is NodeKind.COLUMN}
+    assert {"column member_roles.member_ref", "column member_roles.role_ref"} <= columns
+
+
+def test_a_commented_or_profile_naming_strategy_is_not_the_apps() -> None:
+    """``#``/``!`` lines never count, and the app's own config wins over a profile's or a
+    test's (``application-local.properties`` sorts first, but applies only under its profile)."""
+    standard = "org.hibernate.boot.model.naming.PhysicalNamingStrategyStandardImpl"
+    key = "spring.jpa.hibernate.naming.physical-strategy"
+    entity = {f"{ROOT}/domain/OrderLine.java": _entity("OrderLine", "    private String note;\n")}
+
+    def naming(configs: Mapping[str, str]) -> str:
+        return jpa.link(_scanned({**entity, **configs})).report.naming
+
+    main = "src/main/resources/application"
+    assert naming({f"{main}.properties": f"#{key}={standard}\n"}) == "spring"
+    assert naming({f"{main}.properties": f"! {key}={standard}\n"}) == "spring"
+    profiled = {f"{main}-local.properties": f"{key}={standard}\n", f"{main}.properties": "x=1\n"}
+    assert naming(profiled) == "standard"  # the only one that names it
+    spring_own = "org.springframework.boot.orm.jpa.hibernate.SpringPhysicalNamingStrategy"
+    assert naming({**profiled, f"{main}.yml": f"{key}: {spring_own}\n"}) == "spring"
+
+
+def test_migrations_keep_their_tables_past_quotes_comments_and_escapes() -> None:
+    script = (
+        "INSERT INTO settings VALUES ('--verbose', 'it\\'s', '/* not a comment');\n"
+        "CREATE TABLE users (id int);\n"
+        "-- a comment; with a semicolon\n"
+        "/* and ; another */ CREATE TABLE roles (id int, note text DEFAULT 'a''b;c');\n"
+        "CREATE FUNCTION f() RETURNS int AS $$ select 1; $$ LANGUAGE sql;\n"
+        "CREATE TABLE grants (id int);\n"
+    )
+    assert [(c.table, c.line) for c in ddl(script)] == [("users", 2), ("roles", 4), ("grants", 6)]
+    # An unclosed comment or string runs to the end, without rescanning it each time.
+    assert ddl("CREATE TABLE a (id int); /* never closed ; CREATE TABLE b (id int);") == [
+        ddl("CREATE TABLE a (id int);")[0]
+    ]
+
+
+def test_sql_nested_past_the_parsers_depth_is_unread_not_a_crash() -> None:
+    deep = "SELECT * FROM t WHERE " + "(" * 80 + "a = 1" + ")" * 80
+    found = tables(deep)
+    assert (found.reads, found.writes, found.error) == ((), (), "too deeply nested to read")
+
+
+def test_changelogs_are_read_in_linear_time() -> None:
+    yaml = "databaseChangeLog:\n" + ("a:" + " " * 2000 + "x" + " " * 2000 + "'z\n") * 20
+    xml = "<databaseChangeLog>" + '<createTable tableName="t">' * 5000
+    started = time.monotonic()
+    assert jpa.scan_text("db/changelog/master.yaml", yaml.encode()).migrations == ()
+    assert jpa.scan_text("db/changelog/master.xml", xml.encode()).migrations == ()
+    assert time.monotonic() - started < 2
+
+
+def test_one_linkers_bug_costs_its_own_facts_not_the_stages(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A linker that raises answers as it would for no files, and the details say it failed;
+    the other linkers' reports are all still there."""
+    project = Project(frozenset())
+    calm = resolve_links(project, {})
+    real = jpa.link
+    tries: list[int] = []
+
+    def flaky(files: Any, known: Any = ()) -> JpaGraph:
+        tries.append(1)
+        if len(tries) == 1:  # the stage's run; its fallback (no files) then works
+            raise RecursionError("maximum recursion depth exceeded")
+        return real(files, known)
+
+    monkeypatch.setattr(jpa, "link", flaky)
+    build = resolve_links(project, {})
+    assert build.details["failed"] == {"jpa": "RecursionError: maximum recursion depth exceeded"}
+    assert {k: v for k, v in build.details.items() if k != "failed"} == calm.details
+    assert "failed" not in calm.details
