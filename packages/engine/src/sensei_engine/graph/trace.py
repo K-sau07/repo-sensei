@@ -52,7 +52,7 @@ import heapq
 import re
 import weakref
 from collections import deque
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence, Set
 from dataclasses import dataclass, field, replace
 from math import prod
 from typing import Literal
@@ -457,6 +457,18 @@ def _resolve(graph: GraphSnapshot, entry: str, kind: EntryKind) -> tuple[list[No
     )
 
 
+@dataclass(frozen=True, slots=True)
+class _Feature:
+    """The feature a trace follows: its words (the entry's, and what was asked for), and the
+    HTTP methods the verbs asked for mean (``add variable``: POST). An entry's name is never
+    read for verbs: ``SessionView`` is a view, not "view"."""
+
+    words: frozenset[str]
+    methods: frozenset[str] = frozenset()
+
+
+# A request's nodes, named by method first (``POST /api/v1/variables/``).
+REQUEST_KINDS = frozenset({NodeKind.HTTP_CLIENT_CALL.value, NodeKind.API_ENDPOINT.value})
 # What a feature's verb asks of an endpoint: the methods that do it ("add item" → POST).
 VERB_METHODS: dict[str, frozenset[str]] = {
     **dict.fromkeys(
@@ -553,7 +565,7 @@ def _alike(word: str, other: str) -> bool:
     return min(len(word), len(other)) >= 4 and (word.startswith(other) or other.startswith(word))
 
 
-def _shares(words: set[str], node: Node) -> int:
+def _shares(words: Set[str], node: Node) -> int:
     """How much ``node`` is named for ``words``: 2 with one of them, 1 with only a longer or
     shorter form of one (sign, signup; ``trace`` for ``traces``), 0 with none."""
     named = _words(node.name)
@@ -570,7 +582,7 @@ class _Partial:
 
 
 def _score(
-    hops: Sequence[TraceHop], goal_distance: int | None, feature: set[str]
+    hops: Sequence[TraceHop], goal_distance: int | None, feature: _Feature
 ) -> tuple[float, ...]:
     """Lower is better: reachable goal first, nearer it, fewer detours, more of the entry's
     feature, surer, more layers, shorter (as :func:`_best` ranks)."""
@@ -592,25 +604,38 @@ def _detours(hops: Sequence[TraceHop]) -> int:
     return sum(hop.edge_type is EdgeType.INJECTS for hop in hops)
 
 
-def _affinity(hops: Sequence[TraceHop], feature: set[str]) -> int:
+def _affinity(hops: Sequence[TraceHop], feature: _Feature) -> int:
     """How much the hops past the entry are named for its feature (:func:`_shares`), or, past a
     request, for what the request is about (``POST /api/invoices``: on to the ``invoice`` table,
     not the ``account`` one its handler looks the caller up in on the way)."""
     count = 0
-    words = feature
+    words = set(feature.words)
     for hop in hops[1:]:
-        count += _shares(words, hop.node)
+        count += _shares(words, hop.node) + _asked(feature.methods, hop.node)
         if hop.node.kind == NodeKind.API_ENDPOINT:
             words = words | _route_words(hop.node)
     return count
 
 
-def _path_words(hops: Sequence[TraceHop], feature: set[str]) -> set[str]:
+def _asked_methods(words: Iterable[str]) -> frozenset[str]:
+    """The HTTP methods the verbs of what was asked for mean (``add variable``: POST)."""
+    return frozenset(m for word in words for m in VERB_METHODS.get(word, ()))
+
+
+def _asked(methods: frozenset[str], node: Node) -> int:
+    """2 for a request (or an endpoint) of a method the feature's verb asks for: of an upsert's
+    POST and PATCH, ``add variable`` is the POST's."""
+    if not methods or node.kind not in REQUEST_KINDS:
+        return 0
+    return 2 if node.name.partition(" ")[0].upper() in methods else 0
+
+
+def _path_words(hops: Sequence[TraceHop], feature: _Feature) -> set[str]:
     """The entry's feature and the words of the routes ``hops`` went through."""
-    words = feature
+    words = set(feature.words)
     for hop in hops:
         if hop.node.kind == NodeKind.API_ENDPOINT:
-            words = words | _route_words(hop.node)
+            words |= _route_words(hop.node)
     return words
 
 
@@ -714,16 +739,18 @@ def trace_feature(
     return TraceResult(entries, goal_node, _returning(index, _joined(downs, ups)))
 
 
-def _wanted(entries: Sequence[Node], feature: str | None, searched: str | None) -> set[str]:
+def _wanted(entries: Sequence[Node], feature: str | None, searched: str | None) -> _Feature:
     """The feature a trace follows: its entries' own words (a name, a file's), the ``feature``
-    asked for, and the words an entry was found by (``searched``)."""
+    asked for, and the words an entry was found by (``searched``); the methods only of what was
+    asked for or searched."""
     wanted: set[str] = set()
     for node in entries:
         wanted |= _words(node.name) | _words((node.path or "").rsplit("/", 1)[-1].split(".")[0])
+    asked: set[str] = set()
     for words in (feature, searched):
         if words:
-            wanted |= _words(words)
-    return wanted
+            asked |= _words(words)
+    return _Feature(frozenset(wanted | asked), _asked_methods(asked))
 
 
 def _finish(partial: _Partial, goals: set[int], why: str) -> TracePath:
@@ -759,7 +786,7 @@ def _breaks(hops: Sequence[TraceHop], why: str) -> list[TraceBreak]:
     return [TraceBreak(at, reason, node.symbol_key)]
 
 
-def _best(paths: Sequence[TracePath], feature: set[str]) -> list[TracePath]:
+def _best(paths: Sequence[TracePath], feature: _Feature) -> list[TracePath]:
     """The top paths: reaching the goal, fewer detours, more of the entry's feature, surer,
     covering more layers, shorter (see the module); none the same nodes as another, or what
     another one continues."""
@@ -823,7 +850,7 @@ class _Up:
     steps: tuple[_Step, ...] = field(compare=False)  # steps[i]: from nodes[i + 1] to nodes[i]
 
 
-def _upstream(index: _Index, start: int, feature: set[str], min_conf: float) -> list[TracePath]:
+def _upstream(index: _Index, start: int, feature: _Feature, min_conf: float) -> list[TracePath]:
     """Where ``start`` is reached from, best first: the trace's edges walked back (callers, the
     components rendering it, the endpoint handing off to it, the client call targeting that
     endpoint, ...) until a page (:attr:`_Index.ui_roots`) or nothing reaches further (an origin:
@@ -838,7 +865,7 @@ def _upstream(index: _Index, start: int, feature: set[str], min_conf: float) -> 
         return (
             near.get(last, MAX_DEPTH + 1),
             sum(step.edge_type is EdgeType.INJECTS for step in steps),
-            -sum(_shares(feature, nodes[i]) for i in path[1:]),
+            -sum(_shares(feature.words, nodes[i]) for i in path[1:]),
             -prod(step.edge.confidence for step in steps),
             len(path),
         )
@@ -857,7 +884,7 @@ def _upstream(index: _Index, start: int, feature: set[str], min_conf: float) -> 
             steps.sort(
                 key=lambda s: (
                     near.get(s.there, MAX_DEPTH + 1),
-                    -_shares(feature, nodes[s.there]),
+                    -_shares(feature.words, nodes[s.there]),
                     s.edge_type is EdgeType.INJECTS,
                     -s.edge.confidence,
                     nodes[s.there].symbol_key,
@@ -892,7 +919,7 @@ def _up_path(index: _Index, partial: _Up) -> TracePath:
     )
 
 
-def _best_up(paths: Sequence[TracePath], feature: set[str]) -> list[TracePath]:
+def _best_up(paths: Sequence[TracePath], feature: _Feature) -> list[TracePath]:
     """The top ways to the entry: from a page first, then fewer detours, more of the entry's
     feature before it (the ``Login`` page for ``/login/access-token``), surer, shorter; none the
     same nodes as another, or the tail of one. Test code is never on one (:data:`TEST_PATH`)."""
@@ -924,9 +951,9 @@ def _is_test(node: Node) -> bool:
     return node.path is not None and TEST_PATH.search(node.path) is not None
 
 
-def _affinity_up(hops: Sequence[TraceHop], feature: set[str]) -> int:
+def _affinity_up(hops: Sequence[TraceHop], feature: _Feature) -> int:
     """How much the hops before the entry are named for its feature (the page most of all)."""
-    return sum(_shares(feature, hop.node) for hop in hops[:-1])
+    return sum(_shares(feature.words, hop.node) for hop in hops[:-1])
 
 
 def _join(up: TracePath, down: TracePath) -> TracePath:

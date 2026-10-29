@@ -613,6 +613,12 @@ def _endpoint(method: str, route: str) -> Node:
     )
 
 
+def _request(method: str, url: str, line: int) -> Node:
+    name = f"{method} {url}"
+    key = f"http_client_call {name} hooks.ts:{line}"
+    return Node(key, NodeKind.HTTP_CLIENT_CALL.value, name, name, "hooks.ts", line, line, "", "ui")
+
+
 def _table(name: str) -> Node:
     return Node(f"table {name}", NodeKind.TABLE.value, name, name, None, 0, 0, "", "db")
 
@@ -703,3 +709,36 @@ def test_a_name_with_one_of_the_words_counts_more_than_a_longer_form() -> None:
     assert _shares(words, _node("ts t.ts/useGetTracesQuery().", NodeKind.HOOK)) == 2
     assert _shares(words, _node("ts t.ts/useGetTraceQuery().", NodeKind.HOOK)) == 1
     assert _shares(words, _node("ts t.ts/useGetFlows().", NodeKind.HOOK)) == 0
+
+
+def test_the_verb_asked_for_picks_the_request_of_its_method() -> None:
+    """An upsert hook that POSTs a new invoice or PATCHes one: ``add invoice`` is the POST's way,
+    ``update invoice`` the PATCH's; a page's name says no verb (``InvoiceView`` is a view)."""
+    page = _node("ts view.tsx/InvoiceView().", NodeKind.COMPONENT, path="view.tsx", lane_="ui")
+    upsert = _node("ts hooks.ts/useUpsertInvoice().", NodeKind.HOOK, path="hooks.ts", lane_="ui")
+    post_call, patch_call = _request("POST", "/invoices", 4), _request("PATCH", "/invoices/{}", 9)
+    create, change = _endpoint("POST", "/api/invoices"), _endpoint("PATCH", "/api/invoices/{id}")
+    create_invoice, change_invoice = _handler("create_invoice"), _handler("change_invoice")
+    invoice = _table("invoice")
+    sure = 0.9
+    edges = [
+        (page, upsert, _edge(EdgeType.USES_HOOK, sure)),
+        (upsert, post_call, _edge(EdgeType.ISSUES_REQUEST, sure)),
+        (upsert, patch_call, _edge(EdgeType.ISSUES_REQUEST, sure)),
+        (post_call, create, _edge(EdgeType.TARGETS, sure)),
+        (patch_call, change, _edge(EdgeType.TARGETS, sure)),
+        (create, create_invoice, _edge(EdgeType.HANDLED_BY, sure)),
+        (change, change_invoice, _edge(EdgeType.HANDLED_BY, sure)),
+        (create_invoice, invoice, _edge(EdgeType.WRITES, 0.8)),
+        (change_invoice, invoice, _edge(EdgeType.WRITES, sure)),
+    ]
+    nodes = [page, upsert, post_call, patch_call, create, change, create_invoice, change_invoice]
+    graph = _graph([*nodes, invoice], [(a.symbol_key, b.symbol_key, e) for a, b, e in edges])
+
+    def method(feature: str | None) -> str:
+        best = trace_feature(graph, page.symbol_key, feature=feature).paths[0]
+        return next(h.node.name for h in best.hops if h.node.kind == NodeKind.API_ENDPOINT)
+
+    assert method("add invoice") == "POST /api/invoices"
+    assert method("update invoice") == "PATCH /api/invoices/{id}"
+    assert method(None) == "PATCH /api/invoices/{id}"  # the surer; "view" is no verb asked
