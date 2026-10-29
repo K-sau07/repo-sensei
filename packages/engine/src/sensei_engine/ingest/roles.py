@@ -6,10 +6,11 @@ Checked in order, first match wins:
 2. ``docs``: prose (Markdown, reStructuredText), READMEs, licences and changelogs, ``docs/``;
 3. ``config``: data and build files (JSON, YAML, TOML, Dockerfiles, CI), ``*.config.*``,
    dotfiles, settings modules and scripts;
-4. ``db``: SQL, schemas and migrations, models and repositories;
+4. ``db``: SQL, schemas and migrations, models and repositories; JVM code (Java, Kotlin) by
+   the package it is in too: ``entity``, ``model``, ``domain``, ``dao`` and the like;
 5. ``api``: route handlers and applications by framework decorator or registration anywhere,
    and by directory (``api``, ``routes``, ``controllers``, ``endpoints``) outside frontend
-   packages;
+   packages; JVM code in a ``controller``, ``web`` or ``rest`` package;
 6. ``ui``: components that return JSX, Vue/Svelte/Astro files, stylesheets, HTML, and any
    JavaScript or TypeScript in a frontend package (one whose manifest uses React, Vue, Svelte,
    Angular or Next.js), except its server endpoints (Next.js ``route.ts``, SvelteKit
@@ -121,6 +122,14 @@ _ORM_MODEL = re.compile(
     re.MULTILINE,
 )
 _ORM_LANGUAGES = frozenset({"python", "java", "kotlin"})
+# Spring's layers are packages, and a JVM file's package is its directory: the one it is in
+# decides, not any above it (domain/service/PricingService.java is a service, the classes in
+# domain/ entities). What the code says comes first (@Entity, @RestController, a repository
+# interface); these catch the rest of a layer's package: embeddables, enums, DAOs on
+# JdbcTemplate, exception handlers, filters.
+_JVM_LANGUAGES = frozenset({"java", "kotlin"})
+_JVM_DB_PACKAGES = frozenset({"entity", "entities", "model", "models", "domain", "dao", "daos"})
+_JVM_API_PACKAGES = frozenset({"controller", "controllers", "web", "rest"})
 
 _API_DIRS = frozenset(
     {"api", "routes", "routers", "router", "controllers", "endpoints", "handlers"}
@@ -167,6 +176,13 @@ class _File:
     code: str
     ui_package: bool
 
+    @property
+    def jvm_package(self) -> str | None:
+        """The directory a JVM file is in (its package's last part), lowercased."""
+        if self.language not in _JVM_LANGUAGES:
+            return None
+        return PurePosixPath(self.path).parent.name.lower()
+
 
 def _test(f: _File) -> bool:
     return bool(f.directories & _TEST_DIRS or _TEST_NAME.match(f.name))
@@ -195,6 +211,7 @@ def _db(f: _File) -> bool:
         or f.directories & _DB_DIRS
         or _DB_NAME.match(f.name)
         or (f.language in _ORM_LANGUAGES and _ORM_MODEL.search(f.code))
+        or f.jvm_package in _JVM_DB_PACKAGES
     )
 
 
@@ -202,6 +219,8 @@ def _api(f: _File) -> bool:
     if _FRONTEND_HANDLER.search(f.path):
         return True
     if f.language in CODE_LANGUAGES and _API_CODE.search(f.code):
+        return True
+    if f.jvm_package in _JVM_API_PACKAGES:
         return True
     frontend = f.ui_package and f.language in _FRONTEND_LANGUAGES
     return not frontend and bool(f.directories & _API_DIRS or _API_NAME.match(f.name))

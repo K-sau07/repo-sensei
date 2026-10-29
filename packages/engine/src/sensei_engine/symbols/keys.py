@@ -2,18 +2,23 @@
 
 A key is ``<lang> <relpath>/<descriptors>``:
 
-- ``lang`` is ``py``, ``ts``, ``tsx``, ``js`` or ``jsx`` (from the file's language);
+- ``lang`` is ``py``, ``ts``, ``tsx``, ``js``, ``jsx`` or ``java`` (from the file's language);
 - the descriptors name the definition and its containers, outermost first:
   ``Name#`` for a type (class, interface, type alias, enum, namespace), ``name().`` for a
   callable (function, method, component, hook), ``name.`` for a value (variable, field);
 - the module itself has no descriptor (``py backend/app/models.py/``);
 - a name that isn't a plain identifier is quoted in backticks (a backtick inside is doubled);
 - a key already taken in the file (overloads, a property's setter, redefinitions) gets
-  ``~<n>`` after its descriptor, by source order: the second ``f`` is ``f().~1``.
+  ``~<n>`` after its descriptor, by source order: the second ``f`` is ``f().~1``. Java's
+  overloaded methods and constructors are numbered so too, not keyed by their parameter types:
+  a method's key then stays put when its parameters change, and a method that isn't overloaded
+  keeps the plain key. An overload added after the others leaves their keys alone; one added
+  before them renumbers those after it.
 
 Examples: ``py backend/app/api/routes/items.py/read_items().``,
 ``py backend/app/models.py/Item#``, ``py backend/app/core/config.py/Settings#emails_enabled().``,
-``tsx frontend/src/components/Items/AddItem.tsx/AddItem().onSubmit().``.
+``tsx frontend/src/components/Items/AddItem.tsx/AddItem().onSubmit().``,
+``java src/main/java/com/acme/shop/web/OrderController.java/OrderController#getOrders().``.
 """
 
 from __future__ import annotations
@@ -27,6 +32,7 @@ KEY_LANGUAGES: dict[str, str] = {
     "tsx": "tsx",
     "javascript": "js",
     "jsx": "jsx",
+    "java": "java",
 }
 
 _PLAIN = re.compile(r"[\w$]+")

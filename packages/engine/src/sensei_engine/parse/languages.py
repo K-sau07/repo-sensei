@@ -1,8 +1,8 @@
 """The grammars we parse with, and their queries.
 
 A file's language id (from :mod:`sensei_engine.ingest.languages`) picks a grammar: ``python``,
-``javascript`` (``.js`` and ``.jsx``: the JavaScript grammar reads JSX), ``typescript`` or
-``tsx``. Each grammar has one query per :class:`QueryKind`, read from
+``javascript`` (``.js`` and ``.jsx``: the JavaScript grammar reads JSX), ``typescript``, ``tsx``
+or ``java``. Each grammar has one query per :class:`QueryKind`, read from
 ``queries/<dir>/<kind>.scm``. A grammar's query is its own directory's file followed by those of
 the directories it inherits (:data:`INHERITS`): TypeScript and TSX share most patterns with
 JavaScript, and the JSX dialects share the component and element patterns.
@@ -29,6 +29,7 @@ from dataclasses import dataclass
 from functools import cache
 from importlib import resources
 
+import tree_sitter_java
 import tree_sitter_javascript
 import tree_sitter_python
 import tree_sitter_typescript
@@ -64,6 +65,7 @@ GRAMMAR_BY_LANGUAGE: dict[str, str] = {
     "jsx": "javascript",
     "typescript": "typescript",
     "tsx": "tsx",
+    "java": "java",
 }
 
 # Query directories each grammar inherits, nearest first (``ecma`` and ``jsx`` aren't grammars:
@@ -73,6 +75,7 @@ INHERITS: dict[str, tuple[str, ...]] = {
     "javascript": ("jsx", "ecma"),
     "typescript": ("ecma",),
     "tsx": ("jsx", "typescript"),
+    "java": (),
     "jsx": (),
     "ecma": (),
 }
@@ -82,9 +85,14 @@ _LANGUAGES: dict[str, Callable[[], object]] = {
     "javascript": tree_sitter_javascript.language,
     "typescript": tree_sitter_typescript.language_typescript,
     "tsx": tree_sitter_typescript.language_tsx,
+    "java": tree_sitter_java.language,
 }
 
 SUPPORTED_LANGUAGES = frozenset(GRAMMAR_BY_LANGUAGE)
+
+# Comment node types: ``comment`` in Python and ECMAScript, ``line_comment`` and ``block_comment``
+# (Javadoc among them) in Java.
+COMMENTS = frozenset({"comment", "line_comment", "block_comment"})
 
 
 @dataclass(frozen=True, slots=True)

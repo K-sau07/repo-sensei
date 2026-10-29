@@ -111,10 +111,13 @@ def lines(node: Node) -> tuple[int, int]:
 def decorated(decorator: Node) -> Node | None:
     """What a decorator node decorates: the function or class definition (Python); the class,
     method, field or parameter (JavaScript and TypeScript, where a method's decorators precede
-    it in the class body)."""
+    it in the class body); the declaration whose modifiers hold an annotation (Java: a type,
+    method, constructor, field declaration, parameter or enum constant)."""
     parent = decorator.parent
     if parent is None:
         return None
+    if parent.type == "modifiers":
+        return parent.parent
     if parent.type == "decorated_definition":
         return parent.child_by_field_name("definition")
     if parent.type == "class_body":

@@ -42,7 +42,7 @@ from sensei_engine.chunk.model import (
     fold_scraps,
     merge_small,
 )
-from sensei_engine.parse.languages import QueryKind
+from sensei_engine.parse.languages import COMMENTS, QueryKind
 from sensei_engine.parse.parser import ParseResult
 from sensei_engine.symbols.extract import Symbol, SymbolKind
 
@@ -51,9 +51,18 @@ _CALLABLE = frozenset(
 )
 _MEMBER_UNITS = _CALLABLE | {SymbolKind.CLASS, SymbolKind.MODULE}  # what ends a class header
 _WORD = re.compile(r"\w")
-# Imports that name nothing local (or that the queries capture as a whole statement too).
+# Imports that name nothing local (or that the queries capture as a whole statement too), and
+# Java's package declaration.
 _UNNAMED_IMPORTS = frozenset(
-    {"import.wildcard", "import.future", "import.module", "import.dynamic", "import.reexport"}
+    {
+        "import.wildcard",
+        "import.future",
+        "import.module",
+        "import.dynamic",
+        "import.reexport",
+        "import.static.wildcard",
+        "import.package",
+    }
 )
 
 
@@ -93,7 +102,7 @@ def _layout(root: Node, source: bytes) -> _Layout:
         if node.is_named and depth > 0 and starts_line:
             line = start.row + 1
             cuts[line] = min(depth, cuts.get(line, depth))
-        if node.type == "comment":
+        if node.type in COMMENTS:
             if starts_line and end.row < len(raw) and not raw[end.row][end.column :].strip():
                 comments.update(range(start.row + 1, end.row + 2))
             continue
@@ -125,9 +134,13 @@ def imported_names(result: ParseResult) -> list[str]:
     return names
 
 
-def _is_class(symbol: Symbol) -> bool:
-    """A class (or a class component): not an interface, a type alias or an enum."""
+def _is_class(symbol: Symbol, language: str) -> bool:
+    """A class (or a class component): not an interface, a type alias or an enum, which hold no
+    code in TypeScript. Java's do (default methods, an enum's constructor and methods), so there
+    every type is a class, as a record and an annotation type are."""
     subkind = symbol.attrs.get("subkind")
+    if language == "java":
+        return symbol.kind is SymbolKind.CLASS
     return (symbol.kind is SymbolKind.CLASS and subkind is None) or subkind == "class_component"
 
 
@@ -215,7 +228,7 @@ class _CodeChunker:
 
     def _entry(self, start: int, end: int, symbols: list[Symbol]) -> _Entry:
         tokens = self.lines.tokens(start, end)
-        mergeable = tokens < MIN_TOKENS and not any(_is_class(s) for s in symbols)
+        mergeable = tokens < MIN_TOKENS and not any(_is_class(s, self.language) for s in symbols)
         return _Entry(Unit(start, end, tokens, mergeable), symbols)
 
     def _expand(self, entry: _Entry) -> list[Chunk] | None:
@@ -224,7 +237,7 @@ class _CodeChunker:
         if len(entry.symbols) != 1 or entry.unit.tokens < MIN_TOKENS:
             return None
         symbol = entry.symbols[0]
-        if not _is_class(symbol):
+        if not _is_class(symbol, self.language):
             return None  # a function component's handlers are part of it
         members = [
             m

@@ -206,6 +206,20 @@ def test_framework_root_is_the_deepest() -> None:
             False,
             Role.DB,
         ),
+        # Spring's layer packages, by the package a file is in (what its code says first).
+        (
+            "src/main/java/com/acme/web/ApiErrors.java",
+            "java",
+            "@RestControllerAdvice",
+            False,
+            Role.API,
+        ),
+        ("src/main/java/com/acme/controller/Paging.java", "java", "", False, Role.API),
+        ("src/main/java/com/acme/dao/UserDao.java", "java", "@Repository", False, Role.DB),
+        ("src/main/java/com/acme/domain/Address.java", "java", "@Embeddable", False, Role.DB),
+        ("src/main/java/com/acme/domain/service/Pricing.java", "java", "", False, Role.SERVICE),
+        ("src/main/kotlin/com/acme/model/Status.kt", "kotlin", "", False, Role.DB),
+        ("app/model/train.py", "python", "", False, Role.SERVICE),  # not JVM: no package rule
         ("cmd/server/main.go", "go", 'http.HandleFunc("/health", ok)', False, Role.API),
         ("internal/http/routes.go", "go", 'r.GET("/users", list)', False, Role.API),
         ("mysite/settings/base.py", "python", "", False, Role.CONFIG),  # Django settings package

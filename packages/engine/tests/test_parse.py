@@ -30,7 +30,7 @@ from sensei_engine.parse.parser import (
     parse_file,
 )
 
-GRAMMARS = ("python", "javascript", "typescript", "tsx")
+GRAMMARS = ("python", "javascript", "typescript", "tsx", "java")
 
 
 def _patterns(source: str) -> Iterator[str]:
@@ -100,6 +100,7 @@ def test_inheritance_puts_a_grammars_own_patterns_first() -> None:
 def test_language_ids_map_to_grammars() -> None:
     assert grammar_for("jsx") is grammar("javascript")
     assert grammar_for("tsx") is grammar("tsx")
+    assert grammar_for("java") is grammar("java")
     assert grammar_for("go") is None
     assert grammar_for(None) is None
 
