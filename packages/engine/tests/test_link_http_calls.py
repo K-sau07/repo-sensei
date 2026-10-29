@@ -339,3 +339,30 @@ def test_aliases_come_from_real_tsconfigs() -> None:
         }
     )
     assert [c.url for c in graph.calls] == ["/api/users"]
+
+
+def test_a_query_string_chosen_in_the_url_is_no_path() -> None:
+    """`${base}/${qs ? `?${qs}` : ""}`: a query string or none is not a path segment; a
+    ternary of two paths is a hole unless both are the same."""
+    graph = _graph(
+        {
+            "a.ts": textwrap.dedent(
+                """
+                import axios from "axios"
+                const api = axios.create({ baseURL: "/api" })
+                export async function add(qs: string, archived: boolean) {
+                  await api.post(`/variables/${qs ? `?${qs}` : ""}`, {})
+                  await api.get(`/items${archived ? "#old" : ""}`)
+                  await api.get(`/items/${archived ? "old" : "new"}`)
+                  await api.get(`/same/${archived ? "x" : "x"}`)
+                }
+                """
+            )
+        }
+    )
+    assert {(c.method, c.url) for c in graph.calls} == {
+        ("POST", "/variables/"),
+        ("GET", "/items"),
+        ("GET", "/items/{}"),
+        ("GET", "/same/x"),
+    }

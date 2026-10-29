@@ -381,6 +381,7 @@ class _Scanner:
             "template_string": self.template,
             "binary_expression": self.binary,
             "identifier": self.identifier,
+            "ternary_expression": self.ternary,
         }
         reader = readers.get(node.type)
         return reader(node, params, depth) if reader is not None else None
@@ -397,6 +398,17 @@ class _Scanner:
                 value = self.url(inner, params, depth + 1)
                 parts.append(HOLE if value is None else value)
         return "".join(parts)
+
+    def ternary(self, node: Node, params: Sequence[str], depth: int) -> str | None:
+        """``a ? b : c`` in a URL: a query string or none (`${qs ? `?${qs}` : ""}`) is no path;
+        the same either way is that; else not known."""
+        then = self.url(node.child_by_field_name("consequence"), params, depth + 1)
+        otherwise = self.url(node.child_by_field_name("alternative"), params, depth + 1)
+        if then is None or otherwise is None:
+            return None
+        if all(branch == "" or branch[:1] in "?#" for branch in (then, otherwise)):
+            return ""
+        return then if then == otherwise else None
 
     def binary(self, node: Node, params: Sequence[str], depth: int) -> str | None:
         left, right = node.child_by_field_name("left"), node.child_by_field_name("right")
@@ -564,6 +576,9 @@ class _Scanner:
             condition = _unwrap_opt(node.child_by_field_name("condition"))
             then = again(node.child_by_field_name("consequence"))
             otherwise = again(node.child_by_field_name("alternative"))
+            if _query_only(then) and _query_only(otherwise):
+                # `${qs ? `?${qs}` : ""}`: a query string or none, never a path segment.
+                return Text("")
             name = _text(condition) if condition is not None else ""
             if condition is not None and condition.type == "identifier" and name in params:
                 if context.caller:
@@ -879,6 +894,16 @@ def _callee(call: Node) -> Node | None:
     if function.type == "await_expression" and function.named_children:
         function = _unwrap(function.named_children[0])
     return function
+
+
+def _query_only(expr: Expr | None) -> bool:
+    """Whether ``expr`` is no path: empty, or a query string or fragment (``?…``, ``#…``)."""
+    if isinstance(expr, Text):
+        return expr.value == "" or expr.value[:1] in "?#"
+    if isinstance(expr, Concat):
+        first = next((p for p in expr.parts if p != Text("")), None)
+        return first is None or (isinstance(first, Text) and first.value[:1] in "?#")
+    return False
 
 
 def _unwrap_opt(node: Node | None) -> Node | None:
