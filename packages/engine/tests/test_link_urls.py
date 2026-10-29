@@ -372,3 +372,12 @@ def test_the_template_by_operation_id_from_the_running_app(tmp_path: Path) -> No
     )
     assert by_url.report.contract == 0
     assert {(e.src, e.dst) for e in by_url.edges} == {(e.src, e.dst) for e in contract.edges}
+
+
+def test_a_malformed_url_in_the_source_is_read_as_far_as_it_goes() -> None:
+    """``http://[::1/x`` (a bracket never closed) raised from ``urlsplit``: its path is cut
+    after the host by hand, and it is no local host's."""
+    assert normalize("GET", "http://[::1/x/items").path == "/x/items"
+    assert normalize("GET", "http://[::1").path == "/"
+    calls = [_call("http_client_call GET http://[::1/x a.ts:1", "GET", "http://[::1/x")]
+    assert link_calls(calls, []).edges == []

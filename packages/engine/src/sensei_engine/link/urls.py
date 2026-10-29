@@ -89,12 +89,21 @@ def _segment(raw: str) -> str:
     return raw
 
 
+def _url_path(url: str) -> str:
+    """A full URL's path; one ``urlsplit`` can't read (``http://[::1/x``, a bracket never
+    closed) is cut after its host by hand."""
+    try:
+        return urlsplit(url).path or "/"
+    except ValueError:
+        rest = url.split("://", 1)[-1]
+        return "/" + rest.split("/", 1)[1] if "/" in rest else "/"
+
+
 def normalize(method: str, url: str, *, base: str = "") -> Normalized:
     """``url`` (a path, a full URL, or a template with ``{}``/``${x}`` holes) as matched."""
     text = url.strip()
     if "://" in text or text.startswith("//"):
-        parts = urlsplit(text if "://" in text else "http:" + text)
-        text = parts.path or "/"
+        text = _url_path(text if "://" in text else "http:" + text)
     text = re.split(r"[?#]", text, maxsplit=1)[0]
     raw_segments = [s for s in text.split("/") if s]
     # An environment value, or a value nobody worked out, before the first slash: the base.
@@ -281,7 +290,10 @@ def _local(url: str) -> bool:
     text = url.strip()
     if "://" not in text and not text.startswith("//"):
         return True
-    host = urlsplit(text if "://" in text else "http:" + text).hostname
+    try:
+        host = urlsplit(text if "://" in text else "http:" + text).hostname
+    except ValueError:  # http://[::1/x: no host to read
+        return False
     return host is None or host in LOCAL_HOSTS
 
 
