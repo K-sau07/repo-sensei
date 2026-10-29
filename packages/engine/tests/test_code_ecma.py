@@ -195,7 +195,8 @@ def test_an_object_literal_s_methods_are_called_through_its_name() -> None:
     assert {e.dst for e in edges if e.type is EdgeType.CALLS} == {
         "ts web/api.ts/api.list().",
         "ts web/a.ts/local.save().",
-    }  # get is an arrow function in a property: not a definition
+        "ts web/api.ts/api.get().",  # an arrow function in a property is a method too
+    }
 
 
 def test_this_binds_to_the_enclosing_class_at_the_receiver_heuristic() -> None:

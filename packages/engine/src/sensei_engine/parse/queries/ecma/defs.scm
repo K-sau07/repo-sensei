@@ -47,6 +47,15 @@
 (method_definition
   name: (_) @name) @definition.method
 
+; An object held in a variable whose properties are functions: a service module's
+; `export const api = { list: async () => {...} }`, as its methods (not an inline options object:
+; `useMutation({ onSuccess: () => ... })`'s callbacks stay their function's own code).
+(variable_declarator
+  value: (object
+    (pair
+      key: [(property_identifier) (string) (number)] @name
+      value: [(arrow_function) (function_expression) (generator_function)]) @definition.method))
+
 ; Module-level variables (functions and classes among them are taken above).
 (program
   [(lexical_declaration (variable_declarator name: (identifier) @name) @definition.variable)
