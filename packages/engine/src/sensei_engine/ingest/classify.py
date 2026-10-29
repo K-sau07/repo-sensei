@@ -32,7 +32,7 @@ from charset_normalizer import from_bytes
 from identify import identify
 
 from sensei_engine.ingest.ignore import Attribute
-from sensei_engine.ingest.languages import detect_language
+from sensei_engine.ingest.languages import HEAD_BYTES, detect_language
 from sensei_engine.ingest.walk import WalkedFile
 
 MAX_PARSE_BYTES = 1024 * 1024  # bigger files are too_large
@@ -228,7 +228,7 @@ def classify(walked: WalkedFile) -> FileFacts:
     if size <= LFS_POINTER_MAX_BYTES and head.startswith(LFS_POINTER_PREFIX):
         flags.add(Flag.LFS_POINTER)
         flags.discard(Flag.BINARY)
-    language = None if Flag.BINARY in flags else detect_language(walked.path, head[:256])
+    language = None if Flag.BINARY in flags else detect_language(walked.path, head[:HEAD_BYTES])
     if (
         Attribute.GENERATED in walked.attributes
         or _GENERATED_NAMES.search(name)

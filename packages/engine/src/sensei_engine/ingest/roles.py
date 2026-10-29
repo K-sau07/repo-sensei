@@ -2,7 +2,8 @@
 
 Checked in order, first match wins:
 
-1. ``test``: test directories and test file names (``test_*.py``, ``*.spec.ts``, ``conftest.py``);
+1. ``test``: test directories and test file names (``test_*.py``, ``*.spec.ts``, ``conftest.py``,
+   C's ``test_*.c`` and GoogleTest's ``*_test.cc``);
 2. ``docs``: prose (Markdown, reStructuredText), READMEs, licences and changelogs, ``docs/``;
 3. ``config``: data and build files (JSON, YAML, TOML, Dockerfiles, CI), ``*.config.*``,
    dotfiles, settings modules and scripts;
@@ -53,7 +54,9 @@ _TEST_DIRS = frozenset(
 )
 _TEST_NAME = re.compile(
     r"^(?:test_.+\.py|.+_test\.(?:py|go|rb|exs?)|conftest\.py|.+\.(?:test|spec)\.[cm]?[jt]sx?"
-    r"|.+_spec\.rb|.+(?:Test|Tests|IT)\.(?:java|kt|cs|swift))$"
+    r"|.+_spec\.rb|.+(?:Test|Tests|IT)\.(?:java|kt|cs|swift)"
+    # C's test_list.c, GoogleTest's list_test.cc
+    r"|(?:test_.+|.+_(?:unit)?test)\.(?:c|cc|cpp|cxx))$"
 )
 
 _DOC_LANGUAGES = frozenset({"markdown", "mdx", "rst", "asciidoc"})

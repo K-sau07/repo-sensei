@@ -201,6 +201,11 @@ def test_a_symlink_swapped_in_is_not_followed(tmp_path: Path) -> None:
         ("main.go", b"", "go"),
         ("Main.java", b"", "java"),
         ("lib.rs", b"", "rust"),
+        ("src/list.c", b"", "c"),
+        ("include/list.h", b"", "c"),
+        ("include/box.h", b"namespace acme {\n", "cpp"),
+        ("include/box.ipp", b"", "cpp"),
+        ("include/box.inl", b"", "cpp"),
         ("bin/run", b"#!/usr/bin/env python3\nprint(1)\n", "python"),
         ("bin/serve", b"#!/usr/bin/env -S node --no-warnings\n", "javascript"),
         ("bin/deploy", b"#!/bin/bash\nset -e\n", "shell"),
@@ -211,3 +216,9 @@ def test_a_symlink_swapped_in_is_not_followed(tmp_path: Path) -> None:
 )
 def test_languages(path: str, head: bytes, language: str | None) -> None:
     assert detect_language(path, head) == language
+
+
+def test_a_headers_language_is_read_past_its_first_lines(tmp_path: Path) -> None:
+    licence = b"".join(b"/* licence line %d */\n" % i for i in range(40))
+    header = _file(tmp_path, "include/box.h", licence + b"namespace acme {\nclass Box;\n}\n")
+    assert header.language == "cpp"

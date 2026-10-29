@@ -28,7 +28,7 @@ from typing import Literal
 from tree_sitter import Node, Query, QueryCursor, Tree
 
 from sensei_engine.ingest.classify import MAX_PARSE_BYTES, decode_text
-from sensei_engine.ingest.languages import detect_language
+from sensei_engine.ingest.languages import HEAD_BYTES, detect_language
 from sensei_engine.parse.languages import (
     MAIN_CAPTURES,
     Grammar,
@@ -229,7 +229,11 @@ def parse_file(
     by default). ``language`` is the file's language id; detected from the path when None."""
     started = clock()
     if language is None:
-        head = src[:256] if isinstance(src, bytes) else src[:256].encode("utf-8", "replace")
+        head = (
+            src[:HEAD_BYTES]
+            if isinstance(src, bytes)
+            else src[:HEAD_BYTES].encode("utf-8", "replace")
+        )
         language = detect_language(path, head)
     found = grammar_for(language)
     if found is None:

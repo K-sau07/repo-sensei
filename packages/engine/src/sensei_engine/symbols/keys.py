@@ -3,12 +3,13 @@
 A key is ``<lang> <relpath>/<descriptors>``:
 
 - ``lang`` is ``py``, ``ts``, ``tsx``, ``js``, ``jsx``, ``java``, ``kt``, ``go``, ``cs``, ``php``,
-  ``rb`` or ``rs`` (from the file's language);
+  ``rb``, ``rs``, ``c`` or ``cpp`` (from the file's language);
 - the descriptors name the definition and its containers, outermost first:
   ``Name#`` for a type (class, interface, type alias, enum, namespace, module), ``name().`` for a
   callable (function, method, component, hook), ``name.`` for a value (variable, field); a Go
-  method and a Rust impl's function are under their type's descriptor though declared outside
-  it (``Server#Handle().``), and a C# or PHP namespace is no container;
+  method, a Rust impl's function and a C++ method defined outside its class
+  (``void Box::run() {}``) are under their type's descriptor though declared outside it
+  (``Server#Handle().``), and a C#, PHP or C++ namespace is no container;
 - the module itself has no descriptor (``py backend/app/models.py/``);
 - a name that isn't a plain identifier is quoted in backticks (a backtick inside is doubled);
 - a key already taken in the file (overloads, a property's setter, redefinitions) gets
@@ -16,14 +17,22 @@ A key is ``<lang> <relpath>/<descriptors>``:
   overloaded methods and constructors are numbered so too, not keyed by their parameter types:
   a method's key then stays put when its parameters change, and a method that isn't overloaded
   keeps the plain key. An overload added after the others leaves their keys alone; one added
-  before them renumbers those after it. Kotlin's and C#'s overloads are numbered the same way.
+  before them renumbers those after it. Kotlin's, C#'s and C++'s overloads are numbered the
+  same way;
+- a C or C++ function declared (a prototype, a method declared in its class) and defined in the
+  same file is one symbol, the definition: the declaration takes no key (so too a variable's
+  ``extern`` declaration, and a class's ``static`` member defined below it). One declared in a
+  header and defined in a source file is a symbol in each, as every key is its file's
+  (``c include/list.h/list_push().`` and ``c src/list.c/list_push().``): which definition a
+  declaration is for is the call graph's to resolve.
 
 Examples: ``py backend/app/api/routes/items.py/read_items().``,
 ``py backend/app/models.py/Item#``, ``py backend/app/core/config.py/Settings#emails_enabled().``,
 ``tsx frontend/src/components/Items/AddItem.tsx/AddItem().onSubmit().``,
 ``java src/main/java/com/acme/shop/web/OrderController.java/OrderController#getOrders().``,
 ``go internal/handlers/orders.go/OrderHandler#Get().``,
-``rs src/models/order.rs/Order#new().``,
+``rs src/models/order.rs/Order#new().``, ``c src/list.c/list_push().``,
+``cpp src/server/router.cpp/Router#add_route().``,
 ``rb app/controllers/api/v1/orders_controller.rb/Api#V1#OrdersController#show().``.
 """
 
@@ -45,6 +54,8 @@ KEY_LANGUAGES: dict[str, str] = {
     "php": "php",
     "ruby": "rb",
     "rust": "rs",
+    "c": "c",
+    "cpp": "cpp",
 }
 
 _PLAIN = re.compile(r"[\w$]+")

@@ -29,25 +29,42 @@ From a file's ``defs`` captures (:mod:`sensei_engine.parse`) come:
   methods, class methods (``def self.x`` and those in ``class << self``), constants;
 - Rust: modules, structs, enums, unions, traits and type aliases, functions, an ``impl``'s
   functions and constants keyed under its type (``impl Repo for PgRepo``: ``PgRepo#find().``),
-  a trait's methods, fields and enum variants, constants and statics, ``macro_rules!``.
+  a trait's methods, fields and enum variants, constants and statics, ``macro_rules!``;
+- C: functions (named through pointer and parenthesized declarators: ``int *(*f(int))(void)``
+  is ``f``), prototypes (subkind ``signature``), structs, unions and enums with their fields
+  and enumerators, typedefs (``typedef struct { ... } point_t;`` is the struct ``point_t``),
+  globals (one per declarator; a function's locals aren't symbols), macros (a function-like
+  one a callable, one with a value a constant; an include guard's isn't one);
+- C++: what C has, and namespaces, classes and structs (a template's name without its
+  arguments), methods defined or declared in a class body (constructors, destructors
+  ``~Box``, operators ``operator==``), methods defined outside their class keyed under it
+  (``void Box::run() {}``: ``Box#run().``, a namespace the file declares or opens left out of
+  ``acme::Box::run``), ``using`` aliases, lambdas held in a variable (functions).
 
-A C# or PHP namespace is a symbol but not a container: a class is keyed by its file and name
-alike in a file-scoped and a block namespace, as Java's are without their package.
+A C#, PHP or C++ namespace is a symbol but not a container: a class is keyed by its file and
+name alike in a file-scoped and a block namespace, as Java's are without their package. A C or
+C++ function declared and defined in the same file (a prototype above its definition, a method
+declared in its class and defined below it; so too an extern variable, a static member) is one
+symbol, the definition; one declared in a header and defined in a source file is a symbol in
+each (see :mod:`sensei_engine.symbols.keys`).
 
 ``kind`` is one of :class:`SymbolKind` (what the API and ⌘K show); the finer kind (``field``,
 ``interface``, ``type``, ``enum``, ``record``, ``annotation``, ``namespace``, ``signature``,
-``constructor``, ``struct``, ``trait``, ``union``, ``object``, ``companion``, ``data_class``,
-``property``, ``classmethod``, ``macro``, ``package``, ``module``) is ``attrs["subkind"]``.
+``constructor``, ``destructor``, ``struct``, ``trait``, ``union``, ``object``, ``companion``,
+``data_class``, ``property``, ``classmethod``, ``macro``, ``package``, ``module``) is
+``attrs["subkind"]``.
 A symbol's lines span the whole definition: decorators (Java's and Kotlin's annotations, C#'s,
-PHP's and Rust's attributes), ``export`` and the ``const`` a function is declared with included.
+PHP's and Rust's attributes), ``export``, the ``const`` a function is declared with and a C++
+``template <...>`` included.
 ``signature`` is the source up to the body (whitespace collapsed, decorators left out),
 ``docstring`` the docstring or the comment just above (JSDoc, Javadoc, KDoc, PHPDoc, C#'s
 ``///`` XML (its ``<summary>`` tags dropped), Rust's ``///``; ``#`` or ``//`` lines; not a plain
-``/* */`` outside JavaScript and TypeScript, where that is usually a licence or code commented
-out, nor Rust's ``//!``, which documents the module it is in). ``bases`` are what a type
-extends and implements, as written: superclasses and interfaces, Kotlin's delegation
-specifiers, Go's embedded types, PHP's traits, Ruby's included modules, a Rust trait's
-supertraits and the traits a type implements in its file. Columns count characters, from 0.
+``/* */`` outside JavaScript, TypeScript, C and C++ (where it is how functions are documented),
+as elsewhere that is usually a licence or code commented out, nor Rust's ``//!``, which
+documents the module it is in). ``bases`` are what a type extends and implements, as written:
+superclasses and interfaces, Kotlin's delegation specifiers, Go's embedded types, PHP's traits,
+Ruby's included modules, a Rust trait's supertraits and the traits a type implements in its
+file, a C++ class's base classes. Columns count characters, from 0.
 """
 
 from __future__ import annotations
@@ -114,6 +131,8 @@ _DEFINITIONS: dict[str, tuple[SymbolKind, Descriptor, str | None]] = {
     "definition.property": (SymbolKind.VARIABLE, Descriptor.VALUE, "property"),
     "definition.classmethod": (SymbolKind.METHOD, Descriptor.CALLABLE, "classmethod"),
     "definition.macro": (SymbolKind.FUNCTION, Descriptor.CALLABLE, "macro"),
+    # A C object-like macro with a value (#define MAX_CONN 64).
+    "definition.macro_value": (SymbolKind.VARIABLE, Descriptor.VALUE, "macro"),
 }
 # The name of a definition the source leaves unnamed.
 _UNNAMED = {"definition.companion": "Companion"}
@@ -151,6 +170,22 @@ _XML_DOC_TAGS = re.compile(r"</?(?:summary|remarks)>")
 _RUBY_MIXINS = frozenset({"include", "prepend"})
 _ASYNC = frozenset({"async", "suspend"})
 _MODIFIER_NODES = frozenset({"modifiers", "modifier", "function_modifiers", "function_modifier"})
+# C and C++: the declarations that hold declarators (int a, *b;), and the declarators a name is
+# seen through without changing what it declares (int (f)(void), int x = 1); a pointer, a
+# reference or an array to what is inside them does (int (*f)(void) is a variable).
+_C_HOLDERS = frozenset({"declaration", "field_declaration", "type_definition"})
+_C_TRANSPARENT = frozenset({"parenthesized_declarator", "init_declarator", "attributed_declarator"})
+# The names a declarator ends in (the C grammar reads uint8_t and size_t as primitive types:
+# typedef unsigned char uint8_t;).
+_C_NAMES = frozenset({"identifier", "field_identifier", "type_identifier", "primitive_type"})
+_C_TYPES = frozenset({"struct_specifier", "union_specifier", "enum_specifier"})
+_C_BODIED = _C_TYPES | {"class_specifier", "function_definition"}
+# A declarator's children that aren't the declarator it holds (int *const p).
+_C_QUALIFIERS = frozenset(
+    {"type_qualifier", "ms_pointer_modifier", "ms_based_modifier", "attribute_specifier"}
+)
+_C_LOCAL_SCOPES = frozenset({"compound_statement", "function_definition"})
+_OPERATOR_SPACE = re.compile(r" ?([^\w ]) ?")
 _SPACE = re.compile(r"\s+")
 _OPEN_SPACE = re.compile(r"([(\[{]) ")
 _CLOSE_SPACE = re.compile(r",? ?([)\]}])")
@@ -184,9 +219,63 @@ class _Def:
     suffix: Descriptor
     subkind: str | None
     owner: tuple[str, ...] = ()  # the type it is keyed under (a Go receiver's, an impl's)
+    # A C or C++ function's parameter types (names and defaults left out: (int,char*)const),
+    # and whether this is only its declaration (a prototype, a method declared in its class).
+    parameters: str | None = None
+    declaration: bool = False
     container: _Def | None = None
     key: str = ""
     qualified: str = ""
+
+
+@dataclass(slots=True)
+class _Declared:
+    """What a C or C++ declarator declares: its name (``operator==``, ``~Box``, ``f`` for
+    ``f<int>``), the scopes it is qualified with (``Box`` in ``Box::run``), the node naming it,
+    and the function declarator whose parameters it has if it declares a function."""
+
+    name: str
+    scopes: tuple[str, ...]
+    node: Node
+    function: Node | None
+
+
+def _declared(node: Node, text: Callable[[Node], str]) -> _Declared | None:
+    """The name a C or C++ declarator declares, through any nesting of pointers, arrays,
+    parentheses and function declarators (``int *(*handlers(int))(void)`` declares the function
+    ``handlers``; ``int (*handler)(void)`` a variable)."""
+    function: Node | None = None
+    scopes: list[str] = []
+    while True:
+        kind = node.type
+        if kind in _C_NAMES:
+            return _Declared(text(node), tuple(scopes), node, function)
+        if kind in ("destructor_name", "operator_name"):
+            name = _OPERATOR_SPACE.sub(r"\1", _SPACE.sub(" ", text(node)))
+            return _Declared(name, tuple(scopes), node, function)
+        if kind == "operator_cast":  # operator bool() const: its own parameters
+            cast = node.child_by_field_name("type")
+            name = f"operator {_collapse(text(cast), 80)}" if cast is not None else text(node)
+            return _Declared(name, tuple(scopes), node, node.child_by_field_name("declarator"))
+        if kind == "template_function":  # a specialization: template <> void f<int>(int)
+            inner = node.child_by_field_name("name")
+        elif kind == "qualified_identifier":
+            scope = node.child_by_field_name("scope")
+            if scope is not None:
+                named = scope.child_by_field_name("name") if scope.type == "template_type" else None
+                scopes.append(text(named if named is not None else scope))
+            inner = node.child_by_field_name("name")
+        else:
+            if kind == "function_declarator":
+                function = node
+            elif kind not in _C_TRANSPARENT:
+                function = None  # a pointer or an array of it: a variable
+            inner = node.child_by_field_name("declarator") or next(
+                (c for c in node.named_children if c.type not in _C_QUALIFIERS), None
+            )
+        if inner is None:
+            return None
+        node = inner
 
 
 def _rust_type_name(node: Node) -> Node | None:
@@ -274,12 +363,15 @@ class _Extractor:
         self.php = language == "php"
         self.ruby = language == "ruby"
         self.rust = language == "rust"
+        self.cpp = language == "cpp"
+        self.c_family = language in ("c", "cpp")
         self.jvm = self.java or self.kotlin
         self.ecma = language in _ECMA
         self.source = _Source(result)
         self.keys = KeyAllocator(language, result.path)
         self.root: Node | None = None
         self._implemented: dict[str, list[Node]] | None = None
+        self._namespaces: frozenset[str] | None = None
 
     def run(self, root: Node) -> list[Symbol]:
         self.root = root
@@ -288,6 +380,8 @@ class _Extractor:
         by_node = {d.node.id: d for d in defs}
         for d in defs:
             d.container = self._container(d, by_node)
+        if self.c_family:
+            defs = self._c_defined(defs)
         exports = self._exports(matches)
         module = self._module(root)
         symbols = [module]
@@ -309,6 +403,8 @@ class _Extractor:
         kind, suffix, subkind = found
         node = match.node
         name_node = match.role("name")
+        if name_node is None and self.c_family:
+            return self._c_definition(match, kind, suffix, subkind)
         if name_node is not None:
             name = self.source.node(name_node)
         else:
@@ -330,6 +426,191 @@ class _Extractor:
             kind, subkind = SymbolKind.COMPONENT, "class_component"
         span, first = self._span(node)
         return _Def(match, node, span, first, name, kind, suffix, subkind, owner)
+
+    def _c_definition(
+        self, match: Match, kind: SymbolKind, suffix: Descriptor, subkind: str | None
+    ) -> _Def | None:
+        """A C or C++ definition named by its declarator (a function's, or one of a
+        declaration's): a function or a variable by what the declarator declares, keyed under
+        the class a qualified name is in (``Box::run``). A function's locals (its variables and
+        typedefs; not a lambda it holds in one), and a typedef that only names the struct it
+        declares, are none."""
+        node = match.node
+        defined = node.type == "function_definition"
+        declarator = node.child_by_field_name("declarator") if defined else node
+        found = _declared(declarator, self.source.node) if declarator is not None else None
+        if found is None:
+            return None
+        if match.kind in ("definition.variable", "definition.type") and self._local(node):
+            return None
+        if match.kind == "definition.type" and self._names_its_type(node, found.name):
+            return None
+        value = node.child_by_field_name("value") if node.type == "init_declarator" else None
+        held = value is not None and value.type == "lambda_expression"
+        if match.kind == "definition.type":
+            pass  # typedef int handler_fn(int); names a function type
+        elif found.function is not None or defined:
+            if kind is SymbolKind.VARIABLE:
+                kind = SymbolKind.METHOD if subkind == "field" else SymbolKind.FUNCTION
+            suffix, subkind = Descriptor.CALLABLE, None if defined else "signature"
+        elif kind in (SymbolKind.FUNCTION, SymbolKind.METHOD) and not held:
+            # A declaration in a class body that declares no function: a field.
+            kind, suffix, subkind = SymbolKind.VARIABLE, Descriptor.VALUE, "field"
+        owner = self._unqualified(found.scopes)
+        if owner and kind is SymbolKind.FUNCTION:
+            kind = SymbolKind.METHOD
+        elif not owner and kind is SymbolKind.METHOD and found.scopes:
+            kind = SymbolKind.FUNCTION  # void acme::helper() {}: a namespace's function
+        elif owner and kind is SymbolKind.VARIABLE:
+            subkind = "field"  # int Box::count = 0; a static member's definition
+        if found.function is not None:
+            declaration = not defined
+        else:
+            declaration = kind is SymbolKind.VARIABLE and self._declares_only(node)
+        span, first = self._span(node)
+        return _Def(
+            match,
+            node,
+            span,
+            first,
+            found.name,
+            kind,
+            suffix,
+            subkind,
+            owner,
+            parameters=self._parameters(found.function) if found.function is not None else None,
+            declaration=declaration,
+        )
+
+    def _declares_only(self, declarator: Node) -> bool:
+        """A variable declared, not defined: extern int count; and a C++ class's static
+        int count; without a value (defined as int Box::count = 0;)."""
+        holder = self._holder(declarator)
+        if holder is None or declarator.type == "init_declarator":
+            return False
+        storage = {
+            self.source.node(c) for c in holder.children if c.type == "storage_class_specifier"
+        }
+        if holder.type == "declaration":
+            return "extern" in storage
+        static = holder.type == "field_declaration" and "static" in storage
+        return static and holder.child_by_field_name("default_value") is None
+
+    @staticmethod
+    def _local(node: Node) -> bool:
+        """In a function's body (or a K&R function's parameter declarations)."""
+        parent = node.parent
+        while parent is not None:
+            if parent.type in _C_LOCAL_SCOPES:
+                return True
+            parent = parent.parent
+        return False
+
+    def _names_its_type(self, declarator: Node, name: str) -> bool:
+        """A typedef's name that is its struct's, union's or enum's: the first one of an
+        anonymous type (typedef struct { ... } point_t;, the struct point_t), or the type's own
+        tag (typedef struct node { ... } node;)."""
+        holder = declarator.parent
+        kind = holder.child_by_field_name("type") if holder is not None else None
+        if holder is None or kind is None or kind.type not in _C_TYPES:
+            return False
+        if kind.child_by_field_name("body") is None:
+            return False
+        tag = kind.child_by_field_name("name")
+        if tag is None:
+            first = holder.child_by_field_name("declarator")
+            return first is not None and first.id == declarator.id
+        return self.source.node(tag) == name
+
+    def _unqualified(self, scopes: tuple[str, ...]) -> tuple[str, ...]:
+        """A qualified name's scopes but the namespaces the file declares or opens with using
+        namespace, leading them (acme in acme::Box::run): what a definition is keyed under."""
+        if not scopes:
+            return ()
+        namespaces = self._file_namespaces()
+        start = 0
+        while start < len(scopes) and scopes[start] in namespaces:
+            start += 1
+        return scopes[start:]
+
+    def _file_namespaces(self) -> frozenset[str]:
+        """The names of the namespaces a C++ file declares (each part of namespace a::b) or
+        opens (using namespace a::b), outside functions, found once."""
+        if self._namespaces is None:
+            names: set[str] = set()
+            stack = [self.root] if self.root is not None and self.cpp else []
+            while stack:
+                node = stack.pop()
+                if node.type == "namespace_definition":
+                    name = node.child_by_field_name("name")
+                    if name is not None:
+                        names.update(self.source.node(name).replace(" ", "").split("::"))
+                elif node.type == "using_declaration" and "namespace" in (
+                    c.type for c in node.children
+                ):
+                    target = node.named_children[-1] if node.named_children else None
+                    if target is not None:
+                        names.update(self.source.node(target).replace(" ", "").split("::"))
+                    continue
+                if node.type not in _C_LOCAL_SCOPES:
+                    stack.extend(node.named_children)
+            self._namespaces = frozenset(names)
+        return self._namespaces
+
+    def _parameters(self, function: Node) -> str:
+        """A function's parameter types, its parameters' names and default values left out,
+        whitespace dropped (``(int,char*)const`` for ``(int n, char *name = 0) const``): what a
+        declaration and its definition share."""
+        parameters = function.child_by_field_name("parameters")
+        types: list[str] = []
+        for parameter in parameters.named_children if parameters is not None else ():
+            if parameter.type in COMMENTS:
+                continue
+            start, end = parameter.start_byte, parameter.end_byte
+            declarator = parameter.child_by_field_name("declarator")
+            if declarator is not None and parameter.child_by_field_name("default_value"):
+                end = declarator.end_byte
+            data = self.source.data[start:end]
+            found = _declared(declarator, self.source.node) if declarator is not None else None
+            if found is not None and found.node.type == "identifier":
+                cut = (found.node.start_byte - start, found.node.end_byte - start)
+                data = data[: cut[0]] + data[cut[1] :]
+            types.append(_SPACE.sub("", data.decode("utf-8", "replace")))
+        if types == ["void"]:
+            types = []  # f(void) is f()
+        qualifiers = "".join(
+            self.source.node(c) for c in function.children if c.type == "type_qualifier"
+        )
+        return f"({','.join(types)}){qualifiers}"
+
+    def _c_defined(self, defs: list[_Def]) -> list[_Def]:
+        """C and C++ definitions once their containers are known: a constructor or destructor
+        told apart (a method named after its class, or ~ it), and a function's or a variable's
+        declaration dropped where the file defines it (same scopes, name and parameter
+        types)."""
+        for d in defs:
+            if d.kind is not SymbolKind.METHOD:
+                continue
+            container = d.container
+            holder = container.name if container is not None else None
+            if d.owner:
+                holder = d.owner[-1]
+            if d.name == holder:
+                d.subkind = "constructor"
+            elif d.name.startswith("~"):
+                d.subkind = "destructor"
+        defined = {
+            self._path(d)
+            for d in defs
+            if not d.declaration and (d.parameters is not None or d.kind is SymbolKind.VARIABLE)
+        }
+        return [d for d in defs if not (d.declaration and self._path(d) in defined)]
+
+    def _path(self, d: _Def) -> tuple[str, ...]:
+        """Where ``d`` is keyed (its containers' names and owners, then its name) and its
+        parameter types: one function's declaration and definition share it."""
+        outer = self._path(d.container)[:-1] if d.container is not None else ()
+        return (*outer, *d.owner, d.name, d.parameters or "")
 
     def _owner(self, node: Node) -> tuple[str, ...]:
         """The type a definition is keyed under, as descriptors: Go's receiver type, a Rust
@@ -386,11 +667,16 @@ class _Extractor:
     def _declared_span(self, node: Node) -> tuple[Node, Node]:
         """A field's annotations and modifiers are its declaration's: the field spans that,
         unless the declaration has several (private int a, b;). A Rust item's attributes stand
-        before it, doc comments maybe among them."""
+        before it, doc comments maybe among them. A C struct in a typedef spans the typedef; a
+        C++ template its ``template <...>``."""
         span = node
         holder = self._holder(node)
         if holder is not None and len(self._declarators(holder)) == 1:
             span = holder
+        elif node.type in _C_TYPES and node.parent is not None:
+            span = node.parent if node.parent.type == "type_definition" else node
+        while self.cpp and span.parent is not None and span.parent.type == "template_declaration":
+            span = span.parent
         first = span
         previous = span.prev_named_sibling if self.rust else None
         while previous is not None and previous.type in _RUST_PREFIX:
@@ -415,7 +701,14 @@ class _Extractor:
         return span
 
     def _holder(self, node: Node) -> Node | None:
-        """The declaration holding a declarator (a Java, C# or PHP field, a Go spec), if any."""
+        """The declaration holding a declarator (a Java, C# or PHP field, a Go spec, a C
+        declaration, field or typedef), if any."""
+        if self.c_family:
+            parent = node.parent
+            if parent is None or parent.type not in _C_HOLDERS:
+                return None
+            declarators = parent.children_by_field_name("declarator")
+            return parent if any(d.id == node.id for d in declarators) else None
         holders = _HOLDERS.get(node.type)
         parent = node.parent
         if holders is None or parent is None:
@@ -424,9 +717,10 @@ class _Extractor:
             parent = parent.parent
         return parent if parent is not None and parent.type in holders else None
 
-    @staticmethod
-    def _declarators(holder: Node) -> list[Node]:
+    def _declarators(self, holder: Node) -> list[Node]:
         """The declarators a declaration holds (a Go type declaration's specs and aliases)."""
+        if self.c_family:
+            return holder.children_by_field_name("declarator")
         children: list[Node] = []
         for child in holder.named_children:
             listed = child.type in _DECLARATOR_LISTS
@@ -443,10 +737,10 @@ class _Extractor:
         return None
 
     def _passes_over(self, d: _Def, outer: _Def) -> bool:
-        """Definitions that hold ``d`` without being what it is keyed under: a C# or PHP
+        """Definitions that hold ``d`` without being what it is keyed under: a C#, PHP or C++
         namespace (see the module), and the constructor a PHP property is promoted in (a
         property of the class)."""
-        if (self.csharp or self.php) and outer.subkind == "namespace":
+        if (self.csharp or self.php or self.cpp) and outer.subkind == "namespace":
             return True
         return d.node.type == "property_promotion_parameter" and outer.kind is SymbolKind.METHOD
 
@@ -606,7 +900,7 @@ class _Extractor:
         return found
 
     def _base_nodes(self, node: Node) -> list[Node]:
-        """What a Kotlin, Go, C#, PHP, Ruby or Rust type extends and implements, in source
+        """What a Kotlin, Go, C#, PHP, Ruby, Rust or C++ type extends and implements, in source
         order."""
         finders: dict[str, Callable[[Node], list[Node]]] = {
             "kotlin": self._kotlin_bases,
@@ -615,6 +909,7 @@ class _Extractor:
             "php": self._php_bases,
             "ruby": self._ruby_bases,
             "rust": self._rust_bases,
+            "cpp": self._cpp_bases,
         }
         finder = finders.get(self.language)
         return finder(node) if finder is not None else []
@@ -702,6 +997,15 @@ class _Extractor:
             return []
         return self._traits().get(self.source.node(name), [])
 
+    @staticmethod
+    def _cpp_bases(node: Node) -> list[Node]:
+        """A class's or struct's base classes, as written (Repository<Order>), without their
+        access (public) or virtual."""
+        clause = next((c for c in node.named_children if c.type == "base_class_clause"), None)
+        if clause is None:
+            return []
+        return [c for c in clause.named_children if c.type not in ("access_specifier", "virtual")]
+
     def _traits(self) -> dict[str, list[Node]]:
         """The traits each type of the file is implemented for (impl Display for Order), in
         source order, found once."""
@@ -782,6 +1086,8 @@ class _Extractor:
 
     def _signature(self, d: _Def) -> str | None:
         node = d.node
+        if self.c_family and (text := self._c_signature(d)) is not None:
+            return text
         if d.kind is SymbolKind.VARIABLE or d.subkind == "type":
             return self._value_signature(d)
         if node.type == "variable_declarator":
@@ -800,6 +1106,38 @@ class _Extractor:
         if self.go and node.type == "type_spec":
             text = f"type {text}"  # its declaration's keyword (type Server struct)
         return _collapse(text, MAX_SIGNATURE) or None
+
+    def _c_signature(self, d: _Def) -> str | None:
+        """A C or C++ declarator's declaration (one of several: its head and this declarator:
+        int a = 1 and int *b for int a = 1, *b;), a lambda's up to its body; a function's or a
+        type's source up to its body, its template <...> included (a typedef'd struct's body
+        elided: typedef struct {...} point_t). None for the others (macros, enumerators,
+        namespaces): the common rules."""
+        node, span = d.node, d.span
+        value = d.kind is SymbolKind.VARIABLE or d.subkind == "type"
+        limit = MAX_VALUE_SIGNATURE if value else MAX_SIGNATURE
+        lambda_value = node.child_by_field_name("value") if node.type == "init_declarator" else None
+        lambda_body = lambda_value.child_by_field_name("body") if lambda_value is not None else None
+        holder = self._holder(node)
+        if holder is not None:
+            declarators = self._declarators(holder)
+            end = lambda_body.start_byte if lambda_body is not None else holder.end_byte
+            if len(declarators) == 1:
+                text = self.source.code(span, span.start_byte, end)
+            else:
+                head = self.source.code(holder, holder.start_byte, declarators[0].start_byte)
+                own_end = lambda_body.start_byte if lambda_body is not None else node.end_byte
+                text = f"{head} {self.source.code(node, node.start_byte, own_end)}"
+        elif node.type in _C_BODIED:
+            body = node.child_by_field_name("body")
+            end = body.start_byte if body is not None else node.end_byte
+            text = self.source.code(span, span.start_byte, end)
+            if span.type == "type_definition" and body is not None:
+                rest = self.source.code(span, body.end_byte, span.end_byte)
+                text = f"{text}{{ ... }}{rest}"
+        else:
+            return None
+        return _collapse(text.rstrip().rstrip(";").rstrip(), limit) or None
 
     def _body(self, node: Node) -> Node | None:
         """Where a definition's body starts: its ``body``; a Kotlin class's or function's (an
@@ -821,9 +1159,9 @@ class _Extractor:
 
     def _header_end(self, node: Node) -> int:
         """Where a definition without a body ends: Ruby's at its name, superclass or parameters
-        (class Error < StandardError; end), a Rust macro's at its name, any other's at its
-        end."""
-        if self.ruby or node.type == "macro_definition":
+        (class Error < StandardError; end), a Rust macro's at its name, a C macro's at its
+        parameters, any other's at its end."""
+        if self.ruby or node.type in ("macro_definition", "preproc_function_def"):
             parts = [
                 p
                 for f in ("name", "superclass", "parameters")
@@ -933,7 +1271,8 @@ class _Extractor:
             raw = self.source.node(previous)
             if raw.startswith(("//!", "/*!")):
                 break  # Rust: the docs of the module it is in
-            if not self.ecma and raw.startswith("/*") and not raw.startswith("/**"):
+            plain = raw.startswith("/*") and not raw.startswith("/**")
+            if plain and not self.ecma and not self.c_family:
                 break  # a licence or code commented out, not Javadoc
             comments.insert(0, previous)
             expected_row = previous.start_point.row

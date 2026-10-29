@@ -12,6 +12,7 @@ import pytest
 from tree_sitter import Query
 
 from sensei_engine.ingest.classify import MAX_PARSE_BYTES
+from sensei_engine.ingest.languages import detect_language
 from sensei_engine.parse.languages import (
     INHERITS,
     MAIN_CAPTURES,
@@ -43,6 +44,8 @@ GRAMMARS = (
     "php",
     "ruby",
     "rust",
+    "c",
+    "cpp",
 )
 
 
@@ -105,6 +108,7 @@ def test_every_pattern_has_exactly_one_main_capture(name: str, kind: QueryKind) 
 def test_inheritance_puts_a_grammars_own_patterns_first() -> None:
     assert query_dirs("tsx") == ["tsx", "jsx", "typescript", "ecma"]
     assert query_dirs("javascript") == ["javascript", "jsx", "ecma"]
+    assert query_dirs("cpp") == ["cpp", "c"]
     assert set(INHERITS) >= set(GRAMMARS)
     source = query_source("typescript", QueryKind.DEFS)
     assert source.index("typescript/defs.scm") < source.index("ecma/defs.scm")
@@ -114,7 +118,7 @@ def test_language_ids_map_to_grammars() -> None:
     assert grammar_for("jsx") is grammar("javascript")
     assert grammar_for("tsx") is grammar("tsx")
     assert grammar_for("java") is grammar("java")
-    for language in ("kotlin", "go", "csharp", "php", "ruby", "rust"):
+    for language in ("kotlin", "go", "csharp", "php", "ruby", "rust", "c", "cpp"):
         assert grammar_for(language) is grammar(language)
     assert grammar_for("scala") is None
     assert grammar_for(None) is None
@@ -135,6 +139,16 @@ def test_language_ids_map_to_grammars() -> None:
         ("public/index.php", "<?php\nfunction main() {}\n", "php", ["main()."]),
         ("app/models/order.rb", "class Order; end\n", "ruby", ["Order#"]),
         ("src/main.rs", "fn main() {}\n", "rust", ["main()."]),
+        ("src/main.c", "int main(void) { return 0; }\n", "c", ["main()."]),
+        ("include/list.h", "void list_push(int v);\n", "c", ["list_push()."]),
+        ("src/app.cc", "int main() { return 0; }\n", "cpp", ["main()."]),
+        ("src/app.cpp", "class App {};\n", "cpp", ["App#"]),
+        ("src/app.cxx", "struct App {};\n", "cpp", ["App#"]),
+        ("include/app.hpp", "namespace app { int run(); }\n", "cpp", ["app#", "run()."]),
+        ("include/app.hh", "enum class Mode { On };\n", "cpp", ["Mode#", "Mode#On."]),
+        ("include/app.hxx", "using Id = long;\n", "cpp", ["Id#"]),
+        ("include/app.ipp", "inline int twice(int x) { return 2 * x; }\n", "cpp", ["twice()."]),
+        ("include/app.inl", "template <class T> T id(T x) { return x; }\n", "cpp", ["id()."]),
     ],
 )
 def test_each_new_language_is_detected_parsed_and_has_a_module_symbol(
@@ -148,6 +162,44 @@ def test_each_new_language_is_detected_parsed_and_has_a_module_symbol(
     assert prefix.endswith(f" {path}/")
     assert module.kind is SymbolKind.MODULE
     assert [s.symbol_key.removeprefix(prefix) for s in symbols[1:]] == keys
+
+
+@pytest.mark.parametrize(
+    ("source", "language"),
+    [
+        ("#ifndef LIST_H\n#define LIST_H\nstruct list { int n; };\n#endif\n", "c"),
+        # A C header's C++ guard tests __cplusplus, no more: still C.
+        ('#ifdef __cplusplus\nextern "C" {\n#endif\nint f(void);\n', "c"),
+        ("#pragma once\nnamespace acme {\nint f();\n}\n", "cpp"),
+        ("#pragma once\nclass Box {\n public:\n  int n;\n};\n", "cpp"),
+        ("template <typename T>\nT twice(T x);\n", "cpp"),
+        ("#include <vector>\nint f(std::vector<int> v);\n", "cpp"),
+        ("void f(std::string s);\n", "cpp"),
+        ("int class_count(void);\n", "c"),  # a name starting with class isn't the keyword
+        ("#import <Foundation/Foundation.h>\n@interface Box : NSObject\n@end\n", "objective-c"),
+        # A Doxygen command in a comment is no Objective-C.
+        ("/**\n  @interface kv\n */\nint kv_open(void);\n", "c"),
+    ],
+)
+def test_a_dot_h_header_is_c_unless_it_reads_as_cpp_or_objective_c(
+    source: str, language: str
+) -> None:
+    assert detect_language("include/x.h", source.encode()) == language
+    assert detect_language("include/x.h") == "c"  # nothing to read: the default
+    # Parsed as what it is (C's extern "C" { split by #ifdef is a syntax error in either);
+    # Objective-C isn't parsed.
+    result = parse_file("include/x.h", source.encode())
+    assert result.language == (None if language == "objective-c" else language)
+
+
+def test_a_header_reads_as_cpp_past_its_first_lines() -> None:
+    licence = "".join(f"/* licence line {i} */\n" for i in range(40))  # well past 256 bytes
+    source = f"{licence}#pragma once\nnamespace acme {{\nclass Box;\n}}\n"
+    assert detect_language("include/box.h", source.encode()) == "cpp"
+    result = parse_file("include/box.h", source)
+    assert result.language == "cpp"
+    keys = [s.symbol_key for s in extract_symbols(result, "cpp")]
+    assert keys == ["cpp include/box.h/", "cpp include/box.h/acme#"]
 
 
 def test_each_thread_gets_its_own_parser() -> None:
@@ -165,7 +217,7 @@ def test_each_thread_gets_its_own_parser() -> None:
 
 
 def test_unsupported_binary_and_too_large_files_have_no_tree() -> None:
-    assert parse_file("main.c", b"int main(void) { return 0; }\n").status is ParseStatus.UNSUPPORTED
+    assert parse_file("Main.scala", b"object Main\n").status is ParseStatus.UNSUPPORTED
     binary = parse_file("blob.py", b"\x00\x01\x02" * 10)
     assert (binary.status, binary.tree) == (ParseStatus.BINARY, None)
     large = parse_file("big.py", b"x = 1\n" * (MAX_PARSE_BYTES // 6 + 1))

@@ -1,5 +1,11 @@
 """A file's language: by name, then extension, then shebang, then ``identify``'s tags.
 
+A ``.h`` header is C's, C++'s or Objective-C's: it is C unless its first bytes read as one of the
+others (after GitHub Linguist's heuristics, so the language bar reads as GitHub's): a template,
+a class or namespace declaration, ``using namespace``, an access specifier, a C++ standard
+header or ``std::`` for C++; ``@interface``, ``@protocol`` or ``#import`` for Objective-C. A C++
+header with none of those (only prototypes and structs) parses as C, which reads it the same.
+
 Language ids are short lowercase names (``python``, ``tsx``, ``dockerfile``). ``DISPLAY_NAMES``
 maps the programming and markup ones to GitHub's names, so per-language byte counts read the same
 as GitHub's language bar; data formats (JSON, YAML) and prose (Markdown) are left out there, as
@@ -105,13 +111,15 @@ BY_EXTENSION: dict[str, str] = {
     ".rb": "ruby",
     ".php": "php",
     ".c": "c",
-    ".h": "c",
+    ".h": "c",  # or C++, or Objective-C: see the module
     ".cc": "cpp",
     ".cpp": "cpp",
     ".cxx": "cpp",
     ".hh": "cpp",
     ".hpp": "cpp",
     ".hxx": "cpp",
+    ".ipp": "cpp",
+    ".inl": "cpp",
     ".m": "objective-c",
     ".mm": "objective-cpp",
     ".cs": "csharp",
@@ -267,8 +275,23 @@ CODE_LANGUAGES = frozenset(DISPLAY_NAMES) - {
     "sql",
 }
 
+HEAD_BYTES = 16 * 1024  # what detect_language reads of a file: its shebang, a header's markers
+
 _SHEBANG = re.compile(rb"^#!\s*(\S+)(?:[ \t]+(\S+))?")
 _VERSION_SUFFIX = re.compile(r"[\d.]+$")
+# Not try, catch or constexpr (C23 has constexpr; try_lock is C), nor a bare __cplusplus: a C
+# header's extern "C" guard tests it.
+_CPP_HEADER = re.compile(
+    rb"^[ \t]*(?:template[ \t]*<|(?:class|namespace)[ \t]+\w|using[ \t]+namespace\b"
+    rb"|(?:public|private|protected)[ \t]*:[ \t]*$"
+    rb"|#[ \t]*include[ \t]*<(?:cstdint|cstddef|cstdlib|string|string_view|vector|map|set|list"
+    rb"|array|memory|functional|optional|utility|algorithm|unordered_map|unordered_set|iosfwd"
+    rb"|[io]?stream|sstream|fstream)>)"
+    rb"|\bstd::\w|__cplusplus[ \t]*>=",
+    re.MULTILINE,
+)
+# At the start of a line, not indented: a Doxygen comment's @interface or @class is.
+_OBJC_HEADER = re.compile(rb"^(?:@(?:interface|protocol)\b|#[ \t]*import[ \t]*[<\"])", re.MULTILINE)
 
 
 def _interpreter(head: bytes) -> str | None:
@@ -296,10 +319,20 @@ def _by_name(lowered: str) -> str | None:
     return BY_EXTENSION.get(PurePosixPath(lowered).suffix)
 
 
+def _header_language(head: bytes) -> str:
+    """A ``.h`` header's language, from its first bytes (see the module)."""
+    if _OBJC_HEADER.search(head):
+        return "objective-c"
+    return "cpp" if _CPP_HEADER.search(head) else "c"
+
+
 def detect_language(path: str, head: bytes = b"") -> str | None:
-    """``path`` is relative and POSIX; ``head`` the file's first bytes (for the shebang)."""
+    """``path`` is relative and POSIX; ``head`` the file's first bytes (for the shebang and a
+    ``.h`` header's language: :data:`HEAD_BYTES` of them)."""
     name = PurePosixPath(path).name
     language = _by_name(name.lower())
+    if language == "c" and name.lower().endswith(".h") and head:
+        language = _header_language(head[:HEAD_BYTES])
     if language is None and head.startswith(b"#!"):
         language = BY_INTERPRETER.get(_interpreter(head) or "")
     if language is None:

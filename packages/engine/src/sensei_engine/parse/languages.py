@@ -3,11 +3,11 @@
 A file's language id (from :mod:`sensei_engine.ingest.languages`) picks a grammar: ``python``,
 ``javascript`` (``.js`` and ``.jsx``: the JavaScript grammar reads JSX), ``typescript``, ``tsx``,
 ``java``, ``kotlin``, ``go``, ``csharp``, ``php`` (PHP with the HTML around it: a template's
-``<?php`` blocks parse, its markup is text), ``ruby`` or ``rust``. Each grammar has one query
-per :class:`QueryKind`, read from ``queries/<dir>/<kind>.scm``. A grammar's query is its own
-directory's file followed by those of the directories it inherits (:data:`INHERITS`): TypeScript
-and TSX share most patterns with JavaScript, and the JSX dialects share the component and
-element patterns.
+``<?php`` blocks parse, its markup is text), ``ruby``, ``rust``, ``c`` or ``cpp``. Each grammar
+has one query per :class:`QueryKind`, read from ``queries/<dir>/<kind>.scm``. A grammar's query
+is its own directory's file followed by those of the directories it inherits (:data:`INHERITS`):
+TypeScript and TSX share most patterns with JavaScript, the JSX dialects share the component and
+element patterns, and C++ (whose grammar extends C's) shares C's.
 
 Query conventions (relied on by :func:`sensei_engine.parse.parser.parse_file`):
 
@@ -31,7 +31,9 @@ from dataclasses import dataclass
 from functools import cache
 from importlib import resources
 
+import tree_sitter_c
 import tree_sitter_c_sharp
+import tree_sitter_cpp
 import tree_sitter_go
 import tree_sitter_java
 import tree_sitter_javascript
@@ -80,6 +82,8 @@ GRAMMAR_BY_LANGUAGE: dict[str, str] = {
     "php": "php",
     "ruby": "ruby",
     "rust": "rust",
+    "c": "c",
+    "cpp": "cpp",
 }
 
 # Query directories each grammar inherits, nearest first (``ecma`` and ``jsx`` aren't grammars:
@@ -96,6 +100,8 @@ INHERITS: dict[str, tuple[str, ...]] = {
     "php": (),
     "ruby": (),
     "rust": (),
+    "c": (),
+    "cpp": ("c",),
     "jsx": (),
     "ecma": (),
 }
@@ -112,12 +118,15 @@ _LANGUAGES: dict[str, Callable[[], object]] = {
     "php": tree_sitter_php.language_php,
     "ruby": tree_sitter_ruby.language,
     "rust": tree_sitter_rust.language,
+    "c": tree_sitter_c.language,
+    "cpp": tree_sitter_cpp.language,
 }
 
 SUPPORTED_LANGUAGES = frozenset(GRAMMAR_BY_LANGUAGE)
 
-# Comment node types: ``comment`` in Python, ECMAScript, Go, C#, PHP and Ruby; ``line_comment``
-# and ``block_comment`` in Java, Kotlin and Rust (Javadoc, KDoc and Rust's ``///`` among them).
+# Comment node types: ``comment`` in Python, ECMAScript, Go, C#, PHP, Ruby, C and C++;
+# ``line_comment`` and ``block_comment`` in Java, Kotlin and Rust (Javadoc, KDoc and Rust's
+# ``///`` among them).
 COMMENTS = frozenset({"comment", "line_comment", "block_comment"})
 
 

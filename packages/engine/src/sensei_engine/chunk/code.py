@@ -70,9 +70,15 @@ _UNNAMED_IMPORTS = frozenset(
 )
 # Languages whose types hold their code (methods, an enum's constructor), every one a class here
 # but a type alias; where they don't, only a class is (TypeScript), or a Rust trait or module, a
-# Ruby class or module. Go's methods stand outside their types: none is.
+# Ruby class or module, a C++ class or struct. Go's methods stand outside their types, and C's
+# structs hold data only: none is.
 _TYPES_HOLD_CODE = frozenset({"java", "kotlin", "csharp", "php"})
-_CODE_HOLDERS = {"rust": frozenset({"trait", "module"}), "ruby": frozenset({None, "module"})}
+_CODE_HOLDERS = {
+    "rust": frozenset({"trait", "module"}),
+    "ruby": frozenset({None, "module"}),
+    "cpp": frozenset({None, "struct"}),
+}
+_NO_CODE_HOLDERS = frozenset({"go", "c"})
 
 
 @dataclass(slots=True)
@@ -161,22 +167,22 @@ def _is_class(symbol: Symbol, language: str) -> bool:
     """A class (or a class component): not an interface, a type alias or an enum, which hold no
     code in TypeScript. Java's do (default methods, an enum's constructor and methods), so there
     every type is a class, as a record and an annotation type are; so in Kotlin, C# and PHP.
-    Rust's code is in traits and modules, Ruby's in classes and modules (see
-    :data:`_TYPES_HOLD_CODE`)."""
+    Rust's code is in traits and modules, Ruby's in classes and modules, C++'s in classes and
+    structs (see :data:`_TYPES_HOLD_CODE`)."""
     subkind = symbol.attrs.get("subkind")
     if language in _TYPES_HOLD_CODE:
         return symbol.kind is SymbolKind.CLASS and subkind != "type"
     if language in _CODE_HOLDERS:
         holds = symbol.kind in (SymbolKind.CLASS, SymbolKind.MODULE)
         return holds and subkind in _CODE_HOLDERS[language]
-    if language == "go":
+    if language in _NO_CODE_HOLDERS:
         return False
     return (symbol.kind is SymbolKind.CLASS and subkind is None) or subkind == "class_component"
 
 
 def _wraps(symbol: Symbol, members: list[Symbol]) -> bool:
-    """A C# or PHP namespace block around its types: a symbol but not their container (they are
-    its siblings), so its lines are theirs and the code between them."""
+    """A C#, PHP or C++ namespace block around its types: a symbol but not their container (they
+    are its siblings), so its lines are theirs and the code between them."""
     return symbol.kind is SymbolKind.MODULE and any(
         m is not symbol and symbol.start_line <= m.start_line and m.end_line <= symbol.end_line
         for m in members
