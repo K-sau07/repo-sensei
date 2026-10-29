@@ -1,5 +1,5 @@
 // The trace endpoint's types (3.12) and what the trace view reads from them.
-import { EDGE_VERBS, provenanceTag } from "./graph";
+import { provenanceTag, type EdgeType } from "./graph";
 import type { Schemas } from "./types";
 
 export type Trace = Schemas["TraceOut"];
@@ -41,10 +41,55 @@ export function pipOf(edge: TraceEdge | null): Pip | null {
 export const isAmbiguous = (edge: TraceEdge | null): edge is TraceEdge =>
   edge !== null && edge.alternatives >= 2;
 
-/** How a hop was reached, from the hop before ("uses", "is handled by", ...). */
-export function edgeLabel(edge: TraceEdge): string {
+/** How a hop is reached, said of the hop itself, before the place that proves it: a method is
+ * "called at" its call site, a page "rendered at", a table "read at" the query, the handler
+ * "handles it at" its mapping. */
+const REACHED: Record<EdgeType, string> = {
+  contains: "contained",
+  defines: "defined",
+  imports: "imported",
+  calls: "called",
+  references: "referenced",
+  inherits: "inherited",
   // An override step: the method the trace reached does nothing, the subclass's does.
-  return edge.type === "implements" ? "is implemented by" : EDGE_VERBS[edge.type];
+  implements: "implements it",
+  renders: "rendered",
+  uses_hook: "used",
+  injects: "injected",
+  issues_request: "sent",
+  targets: "called",
+  handled_by: "handles it",
+  resolves: "resolved",
+  publishes: "published",
+  consumes: "consumed",
+  maps_to: "mapped",
+  reads: "read",
+  writes: "written",
+  tests: "tested",
+  produces: "produced",
+};
+
+/** How a hop was reached, said of it ("called", "rendered", "handles it", ...). */
+export function edgeLabel(edge: TraceEdge): string {
+  return REACHED[edge.type];
+}
+
+/** A hop's name as the trace shows it: a method with its owner (`AuthService.login`, so three
+ * `login`s in a row read apart), a request by its method and path (`POST /auth/login`: the
+ * origin is in its title), anything else by its own name. */
+export function hopName(node: TraceNode): string {
+  if (node.kind === "method") {
+    const parts = node.qualified_name.split(".").filter(Boolean);
+    return parts.length >= 2 ? parts.slice(-2).join(".") : node.name;
+  }
+  if (node.kind === "http_client_call") {
+    const match = /^(\S+)\s+[a-z][a-z\d+.-]*:\/\/[^/\s]+(\S*)$/i.exec(node.name);
+    if (match) {
+      const rest = match[2] ?? "";
+      return `${match[1] ?? ""} ${rest === "" ? "/" : rest}`;
+    }
+  }
+  return node.name;
 }
 
 /** The hops on the way down: the path without its return leg. */
@@ -82,6 +127,14 @@ export function howReached(path: TracePath, index: number): string {
   }
   if (edge) return edgeLabel(edge);
   return index === path.entry_index ? "entry" : "starts here";
+}
+
+/** How a hop is reached as its card says it, before its place: "called at" the call site that
+ * proves it, or (no such line: the place is its own) just "called". */
+export function reachedAt(path: TracePath, index: number): string {
+  const how = howReached(path, index);
+  const edge = path.hops[index]?.edge;
+  return edge?.evidence && !isReturn(path, index) ? `${how} at` : how;
 }
 
 /** An outcome as its chip reads: `localStorage.setItem access_token`, `→ /dashboard`,
@@ -124,7 +177,8 @@ export const isMidEntry = (path: TracePath, index: number) =>
  * first code that reaches it when no page does. */
 export function pathStart(path: TracePath): string | null {
   if (path.entry_index === 0) return null;
-  const first = path.hops[0]?.node.name ?? "";
+  const node = path.hops[0]?.node;
+  const first = node ? hopName(node) : "";
   return path.reaches_origin ? `Starts at ${first}` : `Reached from ${first}; no page leads there`;
 }
 
@@ -169,9 +223,10 @@ export function breaksByHop(path: TracePath): Map<number, TraceBreak> {
 /** A path in a few words, for its tab: where it starts and where it ends (on the way down). */
 export function pathTitle(path: TracePath): string {
   const hops = downHops(path);
-  const first = hops[0]?.node.name ?? "";
-  const last = hops.at(-1)?.node.name ?? "";
-  return hops.length > 1 ? `${first} → ${last}` : first;
+  const first = hops[0]?.node;
+  const last = hops.at(-1)?.node;
+  const name = (node: TraceNode | undefined) => (node ? hopName(node) : "");
+  return hops.length > 1 ? `${name(first)} → ${name(last)}` : name(first);
 }
 
 /** What a path comes to: it reaches the goal, or where and why it stops. */
@@ -182,7 +237,10 @@ export function pathOutcome(path: TracePath, goal: TraceNode | null): string {
     return last?.kind === "table" ? `Reaches the ${last.name} table` : "Reaches the data";
   }
   const [stop] = path.breaks;
-  return stop ? `Stops: ${stop.reason}` : "Stops short of the data";
+  if (!stop) return "Stops short of the data";
+  if (stop.kind === "end") return `Ends: ${stop.reason}`;
+  if (stop.kind === "limit") return `${stop.reason.charAt(0).toUpperCase()}${stop.reason.slice(1)}`;
+  return `Stops: ${stop.reason}`;
 }
 
 /** The files a path passes through, in order, each once (a table at its ORM class's file). */

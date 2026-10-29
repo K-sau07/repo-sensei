@@ -111,7 +111,7 @@ describe("the mock traces", () => {
     expect(downHops(best).map((hop) => hop.layer)).toEqual([
       "ui",
       "state",
-      "ui",
+      "state", // the SDK's LoginService.loginAccessToken: client code, not the page
       "client",
       "route",
       "handler",
@@ -139,6 +139,7 @@ describe("the mock traces", () => {
     expect(gap?.breaks).toEqual([
       {
         after_hop: 2,
+        kind: "gap",
         reason: "client call has no matching endpoint",
         detail: "no POST endpoint at /api/v1/items/export (it has DELETE, GET, PUT)",
       },

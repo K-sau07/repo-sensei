@@ -25,7 +25,8 @@ path on through a helper that writes another one (an audit row, a default folder
 cover the service layer. The top
 :data:`TOP_PATHS` distinct ones are returned, each with its **breaks**: where it stops short of
 the goal, and why (a client call no endpoint matches, an endpoint with no handler in the
-repository, code that calls nothing further).
+repository, client code that calls nothing further: gaps; server code that calls no more of
+the repository's, a DTO built or a token signed: an end; the hop limit).
 
 A path that went down through a client call comes back up (3.22): after its deepest hop, a
 **return leg** (from :attr:`TracePath.return_index`) goes back to the function that made the call
@@ -46,7 +47,7 @@ import re
 import weakref
 from collections import deque
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from math import prod
 from typing import Literal
 
@@ -87,6 +88,11 @@ CALLABLE_KINDS = frozenset({
 ENTRY_KINDS = (NodeKind.COMPONENT, NodeKind.HOOK, NodeKind.FUNCTION, NodeKind.METHOD)
 
 Layer = Literal["ui", "state", "client", "route", "handler", "service", "db", "other"]
+# Why a path stops short of the goal: a ``gap`` the graph has (a client call no endpoint matches,
+# an endpoint with no handler, client code calling nothing further), an ``end`` (server code that
+# calls no more of the repository's: a DTO built, a library called) or the ``limit``
+# (:data:`MAX_DEPTH` hops, where it goes on).
+BreakKind = Literal["gap", "end", "limit"]
 EntryKind = Literal["auto", "ui", "route", "symbol"]
 # down: from the entry to the data; up: from where the entry is reached (a page, an endpoint) to
 # it; both: the two joined at the entry.
@@ -111,6 +117,7 @@ class TraceBreak:
     after_hop: int  # the index of the hop it stops after
     reason: str
     node: str  # that hop's key
+    kind: BreakKind = "gap"
 
 
 @dataclass(slots=True)
@@ -266,12 +273,43 @@ KIND_LAYERS: dict[str, Layer] = {
 LANE_LAYERS: dict[str, Layer] = {"ui": "ui", "api": "handler", "svc": "service", "db": "db"}
 
 
+# The layers a request reaches once it is on the server.
+SERVER_LAYERS: frozenset[Layer] = frozenset({"route", "handler", "service", "db"})
+
+
 def layer_of(node: Node, reached_by: EdgeType | None) -> Layer:
     """A hop's layer: what an endpoint is handled by ``handler``; a boundary, a table, a hook or
-    a component by its kind; anything else by its file's lane."""
+    a component by its kind; anything else by its file's lane (see :func:`_client_code`)."""
     if reached_by is EdgeType.HANDLED_BY:
         return "handler"
     return KIND_LAYERS.get(node.kind) or LANE_LAYERS.get(node.lane, "other")
+
+
+# The code a UI file holds between the page and its request (``authService.login``).
+CLIENT_CODE_KINDS = frozenset({NodeKind.FUNCTION.value, NodeKind.METHOD.value})
+
+
+def _client_code(path: TracePath) -> TracePath:
+    """``path`` with the functions of UI files it calls on its way to a request (an API
+    client's methods: ``authService.login``) in the client's layer (``state``) rather than the
+    page's; a helper the page calls on a way with no request (``cn``) stays the page's."""
+    request = next(
+        (
+            i
+            for i, hop in enumerate(path.hops)
+            if i >= path.entry_index and hop.node.kind == NodeKind.HTTP_CLIENT_CALL
+        ),
+        None,
+    )
+    if request is None:
+        return path
+    hops = [
+        replace(hop, layer="state")
+        if i < request and hop.layer == "ui" and hop.node.kind in CLIENT_CODE_KINDS
+        else hop
+        for i, hop in enumerate(path.hops)
+    ]
+    return replace(path, hops=hops)
 
 
 def _override(index: _Index, here: int) -> list[_Step]:
@@ -518,7 +556,17 @@ def trace_feature(
         beam = heapq.nsmallest(BEAM_WIDTH, [p for p in grown if p.nodes[-1] not in goal_set])
         if not beam:
             break
-    done.extend(_finish(p, goal_set, "depth") for p in beam)
+    # Out of hops: a way that could go on stops at the limit; one that couldn't has ended.
+    done.extend(
+        _finish(
+            p,
+            goal_set,
+            "depth"
+            if any(s.there not in p.nodes for s in _steps(index, p.nodes[-1], min_conf))
+            else "nothing_further",
+        )
+        for p in beam
+    )
     downs = _best(done, feature)
     if direction == "down":
         return TraceResult(entries, goal_node, _returning(index, downs))
@@ -547,14 +595,21 @@ def _breaks(hops: Sequence[TraceHop], why: str) -> list[TraceBreak]:
     last = hops[-1]
     at = len(hops) - 1
     node = last.node
+    name = node.qualified_name or node.name
     if node.kind == NodeKind.HTTP_CLIENT_CALL:
-        reason = "client call has no matching endpoint"
-    elif node.kind == NodeKind.API_ENDPOINT:
-        reason = "endpoint has no handler in the repository"
-    elif why == "depth":
-        reason = f"the trace stops at {MAX_DEPTH} hops"
-    else:
-        reason = f"{node.qualified_name or node.name} calls nothing the trace follows further"
+        return [TraceBreak(at, "client call has no matching endpoint", node.symbol_key)]
+    if node.kind == NodeKind.API_ENDPOINT:
+        return [TraceBreak(at, "endpoint has no handler in the repository", node.symbol_key)]
+    if why == "depth":
+        reason = f"the trace shows {MAX_DEPTH} hops; {name} goes on"
+        return [TraceBreak(at, reason, node.symbol_key, "limit")]
+    if any(hop.layer in SERVER_LAYERS for hop in hops):
+        # On the server already: code that does its work without the data (a DTO built, a token
+        # signed) is where this way ends, not a gap.
+        reason = f"{name} calls no more of the repository's code"
+        return [TraceBreak(at, reason, node.symbol_key, "end")]
+    # Still in the client: the request it leads to is missing.
+    reason = f"{name} calls nothing the trace follows further"
     return [TraceBreak(at, reason, node.symbol_key)]
 
 
@@ -735,7 +790,7 @@ def _join(up: TracePath, down: TracePath) -> TracePath:
         [*up.hops, *down.hops[1:]],
         up.confidence * down.confidence,
         reaches_goal=down.reaches_goal,
-        breaks=[TraceBreak(b.after_hop + shift, b.reason, b.node) for b in down.breaks],
+        breaks=[replace(b, after_hop=b.after_hop + shift) for b in down.breaks],
         entry_index=shift,
         reaches_origin=up.reaches_origin,
     )
@@ -842,7 +897,7 @@ def _return_leg(index: _Index, path: TracePath) -> TracePath:
 
 
 def _returning(index: _Index, paths: Sequence[TracePath]) -> list[TracePath]:
-    return [_return_leg(index, path) for path in paths]
+    return [_return_leg(index, _client_code(path)) for path in paths]
 
 
 def table_model(graph: GraphSnapshot, table: Node) -> Node | None:

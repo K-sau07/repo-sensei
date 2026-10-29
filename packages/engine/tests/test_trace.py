@@ -280,9 +280,41 @@ def test_an_endpoint_without_a_handler_and_code_that_goes_nowhere_are_breaks() -
     )
     [path] = trace_feature(graph, PAGE.symbol_key).paths
     assert path.breaks[0].reason == "endpoint has no handler in the repository"
+    assert path.breaks[0].kind == "gap"
     lonely = _graph([HANDLER], [])
     [alone] = trace_feature(lonely, HANDLER.symbol_key).paths
-    assert alone.breaks[0].reason == "read_x calls nothing the trace follows further"
+    assert alone.breaks[0].reason == "read_x calls no more of the repository's code"
+    assert alone.breaks[0].kind == "end"  # on the server: where this way ends, not a gap
+
+
+def test_client_code_that_calls_nothing_is_a_gap() -> None:
+    """Before the request leaves the client, code calling nothing further means the request is
+    missing: a gap, and the page's helper on it stays in the page's layer."""
+    helper = _node("ts ui.tsx/cn().", NodeKind.FUNCTION, path="ui.tsx", lane_="ui")
+    graph = _graph([PAGE, helper], [(PAGE.symbol_key, helper.symbol_key, _edge(EdgeType.CALLS))])
+    [path] = trace_feature(graph, PAGE.symbol_key).paths
+    assert [h.layer for h in path.hops] == ["ui", "ui"]
+    assert path.breaks[0].kind == "gap"
+    assert path.breaks[0].reason == "cn calls nothing the trace follows further"
+
+
+def test_the_ui_code_on_the_way_to_a_request_is_the_clients() -> None:
+    """An API client's method between the page and its request is the client's layer, not the
+    page's (the Hook / client lane, not three components in a row)."""
+    client = _node("ts api.ts/authService.login().", NodeKind.METHOD, path="api.ts", lane_="ui")
+    request = _node("http_client_call POST /x api.ts:3", NodeKind.HTTP_CLIENT_CALL, path="api.ts")
+    graph = _graph(
+        [PAGE, client, request, ENDPOINT, HANDLER, TABLE],
+        [
+            (PAGE.symbol_key, client.symbol_key, _edge(EdgeType.CALLS)),
+            (client.symbol_key, request.symbol_key, _edge(EdgeType.ISSUES_REQUEST)),
+            (request.symbol_key, ENDPOINT.symbol_key, _edge(EdgeType.TARGETS)),
+            (ENDPOINT.symbol_key, HANDLER.symbol_key, _edge(EdgeType.HANDLED_BY)),
+            (HANDLER.symbol_key, TABLE.symbol_key, _edge(EdgeType.READS)),
+        ],
+    )
+    [path] = trace_feature(graph, PAGE.symbol_key).paths
+    assert [h.layer for h in path.hops] == ["ui", "state", "client", "route", "handler", "db"]
 
 
 def test_an_ambiguous_call_gives_a_path_per_endpoint_with_its_share() -> None:
@@ -455,7 +487,14 @@ def test_externals_are_never_on_a_path_and_depth_is_bounded() -> None:
     paths = trace_feature(_graph([*chain, library], edges), chain[0].symbol_key).paths
     assert all(h.node.kind != NodeKind.EXTERNAL_SYMBOL for p in paths for h in p.hops)
     assert len(paths[0].hops) == MAX_DEPTH + 1
-    assert paths[0].breaks[0].reason == f"the trace stops at {MAX_DEPTH} hops"
+    assert paths[0].breaks[0].reason == f"the trace shows {MAX_DEPTH} hops; f{MAX_DEPTH} goes on"
+    assert paths[0].breaks[0].kind == "limit"
+    # A way whose last hop calls nothing more has ended there, however long it is.
+    exact = chain[: MAX_DEPTH + 1]
+    edges = [(a.symbol_key, b.symbol_key, _edge(EdgeType.CALLS)) for a, b in pairwise(exact)]
+    [ended] = trace_feature(_graph(exact, edges), exact[0].symbol_key).paths
+    assert len(ended.hops) == MAX_DEPTH + 1
+    assert ended.breaks[0].kind != "limit"
 
 
 def test_an_entry_is_a_key_a_route_a_file_or_a_name() -> None:

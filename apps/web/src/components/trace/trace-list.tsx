@@ -9,8 +9,9 @@ import { cn } from "cn";
 
 import {
   downHops,
+  hopName,
   hopPlace,
-  howReached,
+  reachedAt,
   isMidEntry,
   percent,
   type TracePath,
@@ -69,10 +70,10 @@ export function TraceList({
               >
                 <span className="sr-only">{hopSummary(path, i)}</span>
                 <span aria-hidden className="shrink-0 font-mono text-fg">
-                  {hop.node.name}
+                  {hopName(hop.node)}
                 </span>
                 <span aria-hidden className="shrink-0 text-xs text-fg-muted">
-                  {kindLabel(hop.node.kind)} · {howReached(path, i)}
+                  {kindLabel(hop.node.kind)} · {reachedAt(path, i)}
                 </span>
                 {isMidEntry(path, i) && (
                   <span

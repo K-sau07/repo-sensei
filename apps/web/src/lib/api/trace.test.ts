@@ -5,6 +5,7 @@ import {
   definitionPlace,
   downHops,
   edgeLabel,
+  hopName,
   hopPlace,
   howReached,
   isAmbiguous,
@@ -15,7 +16,9 @@ import {
   pathOutcome,
   pathTitle,
   pipOf,
+  reachedAt,
   resolveQuestion,
+  type TraceBreak,
   type TraceEdge,
   type TraceHop,
   type TraceNode,
@@ -83,9 +86,26 @@ describe("pipOf and isAmbiguous", () => {
     expect(isAmbiguous(null)).toBe(false);
   });
 
-  it("reads an override step in its own words", () => {
-    expect(edgeLabel(edge({ type: "implements" }))).toBe("is implemented by");
-    expect(edgeLabel(edge({ type: "uses_hook" }))).toBe("uses");
+  it("says how a hop is reached of the hop itself, an override step in its own words", () => {
+    expect(edgeLabel(edge({ type: "implements" }))).toBe("implements it");
+    expect(edgeLabel(edge({ type: "uses_hook" }))).toBe("used");
+    expect(edgeLabel(edge({ type: "handled_by" }))).toBe("handles it");
+    expect(edgeLabel(edge({ type: "reads" }))).toBe("read");
+  });
+
+  it("names a method with its owner and a request by its path", () => {
+    const at = (overrides: Partial<TraceNode>) => hopName(node("login", overrides));
+    expect(at({ kind: "method", qualified_name: "AuthService.login" })).toBe("AuthService.login");
+    expect(at({ kind: "method", qualified_name: "app.crud.UserCrud.login" })).toBe(
+      "UserCrud.login",
+    );
+    expect(at({ kind: "method", qualified_name: "login" })).toBe("login");
+    expect(at({ kind: "function", qualified_name: "app.crud.login" })).toBe("login");
+    const call = (name: string) => hopName(node(name, { kind: "http_client_call" }));
+    expect(call("POST http://localhost:8080/auth/login")).toBe("POST /auth/login");
+    expect(call("GET https://api.example.com")).toBe("GET /");
+    expect(call("GET /api/v1/items/")).toBe("GET /api/v1/items/");
+    expect(call("GET ${API_BASE}/items")).toBe("GET ${API_BASE}/items");
   });
 });
 
@@ -134,8 +154,9 @@ describe("a path in words", () => {
   });
 
   it("says where a broken one stops, and asks about the gap", () => {
-    const gap = {
+    const gap: TraceBreak = {
       after_hop: 1,
+      kind: "gap",
       reason: "client call has no matching endpoint",
       detail: "no POST endpoint at /x (it has GET)",
     };
@@ -152,6 +173,17 @@ describe("a path in words", () => {
       "The trace from Export stops after POST /x (e.tsx:7): client call has no matching " +
         "endpoint (no POST endpoint at /x (it has GET)). Where does it go next, and what in the " +
         "code connects them?",
+    );
+  });
+
+  it("says an end and the hop limit as what they are, not as gaps", () => {
+    const stop = (kind: TraceBreak["kind"], reason: string) =>
+      path([hop("a", null)], { reaches_goal: false, breaks: [{ after_hop: 0, kind, reason }] });
+    expect(
+      pathOutcome(stop("end", "AuthResponse calls no more of the repository's code"), null),
+    ).toBe("Ends: AuthResponse calls no more of the repository's code");
+    expect(pathOutcome(stop("limit", "the trace shows 8 hops; getSignKey goes on"), null)).toBe(
+      "The trace shows 8 hops; getSignKey goes on",
     );
   });
 });
@@ -208,7 +240,9 @@ describe("the return leg", () => {
     expect(howReached(returning, 4)).toBe("stores");
     expect(howReached(returning, 5)).toBe("navigates");
     expect(howReached(returning, 6)).toBe("on error, sets");
-    expect(howReached(returning, 1)).toBe("calls");
+    expect(howReached(returning, 1)).toBe("called");
+    expect(reachedAt(returning, 1)).toBe("called at");
+    expect(reachedAt(returning, 3)).toBe("returns to");
     expect(outcomeLabel(token)).toBe("localStorage.setItem token");
     expect(outcomeLabel(home)).toBe("→ /dashboard");
     expect(outcomeLabel(failed)).toBe("setError");

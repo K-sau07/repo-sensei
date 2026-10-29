@@ -19,8 +19,10 @@ import { useLayoutEffect, useRef, useState, type CSSProperties } from "react";
 import {
   breaksByHop,
   downHops,
+  hopName,
   hopPlace,
   howReached,
+  reachedAt,
   isAmbiguous,
   isMidEntry,
   TRACE_LAYERS,
@@ -76,7 +78,7 @@ export function hopSummary(path: TracePath, index: number): string {
   return [
     `Step ${String(index + 1)} of ${String(steps)}`,
     TRACE_LANES[hop.layer].label,
-    `${kindLabel(hop.node.kind)} ${hop.node.name}`,
+    `${kindLabel(hop.node.kind)} ${hopName(hop.node)}`,
     howReached(path, index),
     isMidEntry(path, index) ? "the entry traced" : null,
     place ? `${place.path}:${String(place.start)}` : null,
@@ -147,11 +149,11 @@ function HopCard({
           <span className="truncate">{kindLabel(hop.node.kind)}</span>
         </span>
         <span aria-hidden className="truncate font-mono text-sm text-fg">
-          {hop.node.name}
+          {hopName(hop.node)}
         </span>
         <span className="flex min-w-0 items-center gap-1.5 text-fg-muted">
           <span aria-hidden className="shrink-0">
-            {howReached(path, index)}
+            {reachedAt(path, index)}
           </span>
           {place && (
             <span aria-hidden className="truncate font-mono text-fg-faint">
@@ -187,7 +189,8 @@ export function TraceSwimlane({
   const breaks = breaksByHop(path);
   const gap = path.breaks.at(-1) ?? null;
   const gapAt = gap ? path.hops[gap.after_hop] : undefined;
-  const gapRow = gapAt ? gapLane(gapAt.layer) : null;
+  // A gap is drawn where the missing hop would be; an end or the limit beside the last hop.
+  const gapRow = gapAt ? (gap?.kind === "gap" ? gapLane(gapAt.layer) : gapAt.layer) : null;
   if (gapRow) used.add(gapRow);
   const row = (layer: TraceLayer) => lanes.indexOf(layer) + 1;
   const gapColumn = gap ? gap.after_hop + 3 : null;

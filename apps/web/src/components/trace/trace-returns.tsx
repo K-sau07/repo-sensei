@@ -10,6 +10,7 @@ import { cn } from "cn";
 import { Undo2 } from "lucide-react";
 
 import {
+  hopName,
   hopPlace,
   howReached,
   outcomeLabel,
@@ -33,7 +34,9 @@ export function returnSummary(path: TracePath, index: number): string {
   const hop = path.hops[index];
   if (!hop) return "";
   const outcome = hop.node.outcome;
-  const what = outcome ? `${OUTCOMES[outcome.kind].label} ${outcomeLabel(outcome)}` : hop.node.name;
+  const what = outcome
+    ? `${OUTCOMES[outcome.kind].label} ${outcomeLabel(outcome)}`
+    : hopName(hop.node);
   return ["Returns", howReached(path, index), what, placeOf(hop)].filter(Boolean).join(", ");
 }
 
@@ -83,7 +86,7 @@ export function TraceReturns({
                   ↩
                 </span>
                 <span aria-hidden className="font-mono text-fg">
-                  {group.hop.node.name}
+                  {hopName(group.hop.node)}
                 </span>
                 {place && (
                   <span aria-hidden className="font-mono text-xs text-fg-faint">
@@ -92,7 +95,7 @@ export function TraceReturns({
                 )}
               </button>
               <ul
-                aria-label={`What ${group.hop.node.name} does with it`}
+                aria-label={`What ${hopName(group.hop.node)} does with it`}
                 className="flex flex-wrap items-center gap-1"
               >
                 {group.outcomes.map(({ index, hop }) => {

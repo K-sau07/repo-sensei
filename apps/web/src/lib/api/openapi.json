@@ -3436,6 +3436,16 @@
             ],
             "title": "Detail"
           },
+          "kind": {
+            "default": "gap",
+            "enum": [
+              "gap",
+              "end",
+              "limit"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
           "reason": {
             "title": "Reason",
             "type": "string"

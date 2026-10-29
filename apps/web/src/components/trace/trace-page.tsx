@@ -34,8 +34,9 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { ApiError } from "@/lib/api/errors";
 import {
   downHops,
+  hopName,
   hopPlace,
-  howReached,
+  reachedAt,
   pathOutcome,
   pathStart,
   pathTitle,
@@ -199,7 +200,7 @@ function PathSummary({ path, trace }: { path: TracePath; trace: Trace }) {
         {percent(path.path_confidence)} sure
         {returnGroups(path).length > 0 &&
           `, then back to ${returnGroups(path)
-            .map((group) => group.hop.node.name)
+            .map((group) => hopName(group.hop.node))
             .join(", ")}`}
       </span>
       <span className="flex flex-wrap items-center gap-1.5 text-xs">
@@ -385,7 +386,7 @@ function TraceView({ entry }: { entry: string }) {
         <HopCode
           key={`${String(at)}:${String(selected)}`}
           hop={hop}
-          how={path && selected !== null ? howReached(path, selected) : "entry"}
+          how={path && selected !== null ? reachedAt(path, selected) : "entry"}
           onClose={() => {
             select(null);
           }}

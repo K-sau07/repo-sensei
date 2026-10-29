@@ -39,7 +39,7 @@ describe("the swimlanes", () => {
       "Step 1 of 9, Component, component Login, entry, frontend/src/routes/login.tsx:53",
     );
     expect(hopSummary(login, 1)).toBe(
-      "Step 2 of 9, Hook / client, hook useAuth, uses, frontend/src/routes/login.tsx:54",
+      "Step 2 of 9, Hook / client, hook useAuth, used, frontend/src/routes/login.tsx:54",
     );
     // The return leg says itself: back to useAuth, then what it does there.
     expect(hopSummary(login, 9)).toBe(

@@ -2324,6 +2324,12 @@ export interface components {
             after_hop: number;
             /** Detail */
             detail?: string | null;
+            /**
+             * Kind
+             * @default gap
+             * @enum {string}
+             */
+            kind: "gap" | "end" | "limit";
             /** Reason */
             reason: string;
         };

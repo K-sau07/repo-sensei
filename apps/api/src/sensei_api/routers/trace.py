@@ -43,6 +43,7 @@ from sensei_core.models import CodeNode, EdgeType, NodeKind, Provenance, Snapsho
 from sensei_core.storage import ObjectStorage
 from sensei_engine.graph.snapshot import GraphSnapshot, Node
 from sensei_engine.graph.trace import (
+    BreakKind,
     Direction,
     EntryKind,
     Layer,
@@ -134,6 +135,9 @@ class TraceHopOut(BaseModel):
 class TraceBreakOut(BaseModel):
     after_hop: int
     reason: str
+    # gap: the graph is missing the next hop; end: server code that touches no data (a DTO
+    # built); limit: the trace's hop limit, the code goes on
+    kind: BreakKind = "gap"
     detail: str | None = None  # what the graph knows of why
 
 
@@ -215,7 +219,9 @@ def _path(
         reaches_origin=path.reaches_origin,
         return_index=path.return_index,
         breaks=[
-            TraceBreakOut(after_hop=b.after_hop, reason=b.reason, detail=details.get(b.node))
+            TraceBreakOut(
+                after_hop=b.after_hop, reason=b.reason, kind=b.kind, detail=details.get(b.node)
+            )
             for b in path.breaks
         ],
     )

@@ -16,6 +16,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { ApiError } from "@/lib/api/errors";
 import {
   definitionPlace,
+  hopName,
   hopPlace,
   placeLabel,
   type HopPlace,
@@ -92,7 +93,7 @@ export function HopCode({
   onClose,
 }: {
   hop: TraceHop;
-  /** How the hop is reached (see `howReached`): "starts here", "entry", or the edge's verb. */
+  /** How the hop is reached (see `reachedAt`): "starts here", "entry", or "called at". */
   how: string;
   onClose: () => void;
 }) {
@@ -104,7 +105,7 @@ export function HopCode({
     codePath(org, repo, at.path, { ref, lines: formatLines({ start: at.start, end: at.end }) });
   return (
     <section
-      aria-label={`Code of ${hop.node.name}`}
+      aria-label={`Code of ${hopName(hop.node)}`}
       data-testid="hop-code"
       className="flex h-80 shrink-0 flex-col overflow-hidden rounded-[10px] border border-line bg-surface-1"
     >
@@ -112,10 +113,10 @@ export function HopCode({
         <span aria-hidden className={lane.text}>
           {lane.glyph}
         </span>
-        <h2 className="truncate font-mono font-medium">{hop.node.name}</h2>
+        <h2 className="truncate font-mono font-medium">{hopName(hop.node)}</h2>
         <span className="shrink-0 text-xs text-fg-muted">
           {kindLabel(hop.node.kind)}
-          {hop.edge ? `, ${how} at` : `, ${how === "entry" ? "the entry" : "where it starts"}, at`}
+          {hop.edge ? `, ${how}` : `, ${how === "entry" ? "the entry" : "where it starts"}, at`}
         </span>
         {place && (
           <span className="min-w-0 truncate font-mono text-xs text-fg-faint">

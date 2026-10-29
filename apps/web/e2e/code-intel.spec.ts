@@ -173,17 +173,18 @@ test.describe("code intelligence", () => {
       `/acme/api/trace?from=${encodeURIComponent("py backend/app/api/deps.py/get_db().")}`,
     );
     // The trace renders: get_db is a dependency, reached from the page whose request a handler
-    // injects it into, and it calls nothing the trace follows further.
+    // injects it into, and it is where this way ends (it calls no more of the repository's code:
+    // an end, not a gap).
     const view = page.getByTestId("trace-view");
     await expect(view.getByRole("heading", { name: /Trace from\s*get_db/ })).toBeVisible();
     await expect(view.getByText(/^Starts at /)).toBeVisible();
     await expect(
       view.getByRole("button", {
-        name: /^Step 6 of 6, Handler, function get_db, injects, the entry traced/,
+        name: /^Step 6 of 6, Handler, function get_db, injected, the entry traced/,
       }),
     ).toBeVisible();
-    await expect(view.getByRole("group", { name: "Gap in the trace" })).toContainText(
-      "get_db calls nothing the trace follows further",
-    );
+    const end = view.getByRole("group", { name: "Where this path ends" });
+    await expect(end).toContainText("get_db calls no more of the repository's code");
+    await expect(end.getByRole("button", { name: /Help me resolve/ })).toHaveCount(0);
   });
 });
