@@ -124,7 +124,7 @@ async def test_a_run_calls_tools_answers_them_together_and_cites(tmp_path: Path)
         _answer([{"type": "thinking", "thinking": "", "signature": "sig"}, READ, LIST], "tool_use"),
         _answer([CITED], "end_turn"),
     )
-    agent = AskAgent(fake.client(), costs=CostCalculator(DEFAULT_PRICE_TABLE))
+    agent = AskAgent(fake.client(), pre_retrieval=False, costs=CostCalculator(DEFAULT_PRICE_TABLE))
     events = await _events(agent, "where is an item saved?", _ctx(tmp_path))
 
     kinds = [type(e).__name__ for e in events]
@@ -175,7 +175,7 @@ async def test_the_last_turn_is_an_answer(tmp_path: Path) -> None:
     fake = _fake(
         _answer([READ], "tool_use"), _answer([{"type": "text", "text": "So."}], "end_turn")
     )
-    agent = AskAgent(fake.client(), budget=Budget(max_turns=2))
+    agent = AskAgent(fake.client(), pre_retrieval=False, budget=Budget(max_turns=2))
     events = await _events(agent, "where is an item saved?", _ctx(tmp_path))
     starts = [e for e in events if isinstance(e, StepStarted)]
     assert [s.tools for s in starts] == [True, False]
@@ -192,7 +192,7 @@ async def test_a_run_past_its_budget_answers_with_what_it_has(tmp_path: Path) ->
         _answer([READ], "tool_use", input_tokens=5000),
         _answer([{"type": "text", "text": "Partly."}], "end_turn"),
     )
-    agent = AskAgent(fake.client(), budget=Budget(max_input_tokens=4000))
+    agent = AskAgent(fake.client(), pre_retrieval=False, budget=Budget(max_input_tokens=4000))
     events = await _events(agent, "where is an item saved?", _ctx(tmp_path))
     last = fake.bodies(PATH)[-1]
     assert last["tool_choice"] == {"type": "none"}
@@ -204,7 +204,7 @@ async def test_a_run_past_its_budget_answers_with_what_it_has(tmp_path: Path) ->
 
 async def test_the_answer_streams_and_a_refusal_says_so(tmp_path: Path) -> None:
     fake = _fake(_answer([{"type": "text", "text": "No."}], "refusal"))
-    events = await _events(AskAgent(fake.client()), "x", _ctx(tmp_path))
+    events = await _events(AskAgent(fake.client(), pre_retrieval=False), "x", _ctx(tmp_path))
     assert [e.text for e in events if isinstance(e, TextDelta)] == ["No."]
     done = events[-1]
     assert isinstance(done, Done)
@@ -214,7 +214,12 @@ async def test_the_answer_streams_and_a_refusal_says_so(tmp_path: Path) -> None:
 async def test_earlier_exchanges_are_the_conversation(tmp_path: Path) -> None:
     fake = _fake(_answer([{"type": "text", "text": "Yes."}], "end_turn"))
     earlier = (Exchange("where is an item saved?", "In create_item."),)
-    await _events(AskAgent(fake.client()), "and deleted?", _ctx(tmp_path), conversation=earlier)
+    await _events(
+        AskAgent(fake.client(), pre_retrieval=False),
+        "and deleted?",
+        _ctx(tmp_path),
+        conversation=earlier,
+    )
     (body,) = fake.bodies(PATH)
     assert body["messages"] == [
         {"role": "user", "content": "where is an item saved?"},
@@ -242,7 +247,9 @@ def test_the_question_picks_the_model_and_effort(
 
 async def test_deep_runs_on_the_deep_model(tmp_path: Path) -> None:
     fake = _fake(_answer([{"type": "text", "text": "Yes."}], "end_turn"))
-    events = await _events(AskAgent(fake.client()), "x", _ctx(tmp_path), mode=Mode.DEEP)
+    events = await _events(
+        AskAgent(fake.client(), pre_retrieval=False), "x", _ctx(tmp_path), mode=Mode.DEEP
+    )
     (body,) = fake.bodies(PATH)
     assert (body["model"], body["output_config"]) == ("claude-opus-5-5", {"effort": "high"})
     done = events[-1]
@@ -252,7 +259,7 @@ async def test_deep_runs_on_the_deep_model(tmp_path: Path) -> None:
 
 async def test_prewarm_writes_the_prefix_only(tmp_path: Path) -> None:
     fake = _fake()
-    await AskAgent(fake.client()).prewarm(_ctx(tmp_path), overview=OVERVIEW)
+    await AskAgent(fake.client(), pre_retrieval=False).prewarm(_ctx(tmp_path), overview=OVERVIEW)
     (body,) = fake.bodies(PATH)
     assert body["max_tokens"] == 0
     assert "stream" not in body

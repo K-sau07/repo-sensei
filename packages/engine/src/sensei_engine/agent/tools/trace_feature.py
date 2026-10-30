@@ -89,14 +89,16 @@ async def run(ctx: ToolContext, args: Mapping[str, Any]) -> ToolResult:
     )
     out.text(f"From {starts}." if starts else "No entry.")
     for n, path in enumerate(traced.paths, start=1):
-        out.text(_path(n, path))
+        out.text(describe_path(n, path))
     if not traced.paths:
         out.text("No path leads on from the entry: it calls nothing the graph links.")
     narrow = "trace from a later hop, or with a feature"
     return out.done(f"{len(traced.paths)} paths", hits=len(traced.paths), narrow=narrow)
 
 
-def _path(n: int, path: TracePath) -> str:
+def describe_path(n: int, path: TracePath) -> str:
+    """A path as the agent reads it: its layers, then each hop (layer, id, place, how it was
+    reached), then where it stops short."""
     layers = " → ".join(layer for layer in path.layers)
     reached = "reaches the data" if path.reaches_goal else "stops before the data"
     lines = [f"Path {n} ({layers}; {reached}; confidence {path.confidence:.2f}):"]

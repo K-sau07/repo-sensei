@@ -3,7 +3,7 @@ page runs it: each result the definition (or the lines) it found, as a citable b
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from pathlib import PurePosixPath
 from typing import Any
 
@@ -26,6 +26,7 @@ from sensei_engine.agent.tools.base import (
 )
 from sensei_engine.search.hybrid import WorktreeGrep
 from sensei_engine.search.service import (
+    Answer,
     ChunkText,
     Result,
     SearchMode,
@@ -131,25 +132,7 @@ async def run(ctx: ToolContext, args: Mapping[str, Any]) -> ToolResult:
     key = args_key("code_search", args)
     offset = offset_of(args.get("cursor"), key)
     lang = args.get("lang") or None
-    query = SearchQuery(text, mode, (lang,) if lang else (), _prefix(glob))
-    grep = ctx.grep_legs or WorktreeGrep(ctx.root, search=ctx.exact, files=ctx.searchable)
-    try:
-        answer = await ctx.search.search(
-            ctx.db,
-            query,
-            repo_id=ctx.repo_id,
-            snapshot_id=ctx.snapshot_id,
-            scope=str(ctx.org_id),
-            grep=grep,
-            dense=ctx.dense,
-            graph=ctx.graph,
-        )
-    except SemanticNotReadyError as exc:
-        raise ToolError(
-            "Semantic search isn't ready for this snapshot yet (embeddings are still being "
-            "made). Search with mode auto or keyword.",
-            example=f'code_search({{"query": "{text[:40]}", "mode": "keyword"}})',
-        ) from exc
+    answer = await search(ctx, SearchQuery(text, mode, (lang,) if lang else (), _prefix(glob)))
     found = sorted(
         (
             r
@@ -163,35 +146,67 @@ async def run(ctx: ToolContext, args: Mapping[str, Any]) -> ToolResult:
     page = found[offset : offset + limit]
     out = Results()
     out.text(_interpretation(answer.interpretation.rewrites, answer.semantic_pending))
-    chunks = await read_contents(ctx.db, ctx.repo_id, [r.chunk_id for r in page])
-    names = await _qualified_names(ctx, [r.symbol_key for r in page if r.symbol_key])
+    shown = await add_results(ctx, out, page, answer.terms, detailed=detailed)
+    narrow = "narrow with path_glob, lang or layer"
+    out.text(page_note(offset, len(page), len(found), key, exact=True, narrow=narrow))
+    files = len({r.path for r in page})
+    return out.done(f"{shown} results in {files} files", hits=len(found), narrow=narrow)
+
+
+async def search(ctx: ToolContext, query: SearchQuery) -> Answer:
+    """The hybrid search's answer on the snapshot, its exact legs on the unpacked files."""
+    grep = ctx.grep_legs or WorktreeGrep(ctx.root, search=ctx.exact, files=ctx.searchable)
+    try:
+        return await ctx.search.search(
+            ctx.db,
+            query,
+            repo_id=ctx.repo_id,
+            snapshot_id=ctx.snapshot_id,
+            scope=str(ctx.org_id),
+            grep=grep,
+            dense=ctx.dense,
+            graph=ctx.graph,
+        )
+    except SemanticNotReadyError as exc:
+        raise ToolError(
+            "Semantic search isn't ready for this snapshot yet (embeddings are still being "
+            "made). Search with mode auto or keyword.",
+            example=f'code_search({{"query": "{query.text[:40]}", "mode": "keyword"}})',
+        ) from exc
+
+
+async def add_results(
+    ctx: ToolContext,
+    out: Results,
+    results: Sequence[Result],
+    terms: Sequence[str],
+    *,
+    detailed: bool = False,
+) -> int:
+    """Each result as a citable block, in order, while they fit: its definition (detailed), or
+    the lines around its first match. How many were added."""
+    chunks = await read_contents(ctx.db, ctx.repo_id, [r.chunk_id for r in results])
+    names = await _qualified_names(ctx, [r.symbol_key for r in results if r.symbol_key])
     shown = 0
-    for result in page:
+    for result in results:
         chunk = chunks.get(result.chunk_id)
         if chunk is None:
             continue
         if detailed:
             first, lines = _definition(result, chunk)
         else:
-            cut = snippet(result, chunk, answer.terms)
+            cut = snippet(result, chunk, terms)
             first, lines = cut.start_line, cut.lines
         if not lines:
             continue
         lines = lines[: max(1, lines_within(lines, out.left))]
+        title = _title(result, names)
         block = code_result(
-            ctx,
-            result.path,
-            first,
-            lines,
-            title=_title(result, names),
-            symbol_key=result.symbol_key,
+            ctx, result.path, first, lines, title=title, symbol_key=result.symbol_key
         )
         if out.code(*block):
             shown += 1
-    narrow = "narrow with path_glob, lang or layer"
-    out.text(page_note(offset, len(page), len(found), key, exact=True, narrow=narrow))
-    files = len({r.path for r in page})
-    return out.done(f"{shown} results in {files} files", hits=len(found), narrow=narrow)
+    return shown
 
 
 async def _qualified_names(ctx: ToolContext, keys: list[str]) -> dict[str, str]:

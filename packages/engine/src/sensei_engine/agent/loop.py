@@ -8,6 +8,8 @@
   (``tool_choice`` auto; it is told to call independent ones together), and every result of a
   turn goes back in one message. The last turn, or the first past the budget's tokens or
   dollars, is an answer: no tools, and a note of why.
+* **Round 0** (:mod:`.round0`): the question's search results, and its flow traced, go into
+  the first turn, so most answers start with their evidence.
 * **Cached**: the tools and the system prompt (instructions, then the repository's overview)
   are one stable prefix, the conversation's tail cached as it grows (:meth:`AnthropicClient.
   turn`); :meth:`AskAgent.prewarm` writes the prefix before the first question.
@@ -32,6 +34,7 @@ from typing import Any, Literal
 
 from sensei_core.usage import CostCalculator
 from sensei_engine.agent.overview import repo_overview
+from sensei_engine.agent.round0 import pre_retrieve
 from sensei_engine.agent.tools import CitationIndex, ToolContext, definitions, run_tool
 from sensei_engine.agent.tools.base import Cited, Evidence
 from sensei_engine.llm.anthropic_client import (
@@ -98,6 +101,16 @@ class StepStarted:
 
 
 @dataclass(frozen=True, slots=True)
+class PreRetrieved:
+    """Round 0 (4.3): what the question started with."""
+
+    results: int
+    files: int
+    traced: int
+    ms: int
+
+
+@dataclass(frozen=True, slots=True)
 class ToolCalled:
     id: str
     name: str
@@ -137,6 +150,8 @@ class CitationFound:
 
 
 Stop = Literal["answered", "turns", "budget", "truncated", "refused"]
+# The stop reasons of an answer that isn't whole: what the run says it stopped by.
+CUT_SHORT: dict[str, Stop] = {"max_tokens": "truncated", "refusal": "refused"}
 
 
 @dataclass(frozen=True, slots=True)
@@ -158,7 +173,9 @@ class Done:
     answer: Answer
 
 
-AgentEvent = StepStarted | ToolCalled | ToolAnswered | TextDelta | CitationFound | Done
+AgentEvent = (
+    PreRetrieved | StepStarted | ToolCalled | ToolAnswered | TextDelta | CitationFound | Done
+)
 
 
 # ---------------------------------------------------------------- the loop
@@ -229,11 +246,13 @@ class AskAgent:
         budget: Budget | None = None,
         costs: CostCalculator | None = None,
         on_usage: LLMUsageSink | None = None,
+        pre_retrieval: bool = True,
     ) -> None:
         self.client = client
         self.budget = budget or Budget()
         self.costs = costs
         self.on_usage = on_usage
+        self.pre_retrieval = pre_retrieval
 
     async def prewarm(self, ctx: ToolContext, *, overview: str | None = None) -> None:
         """Write the run's shared prefix to the cache (an Ask page opening): Sonnet's, at the
@@ -258,6 +277,8 @@ class AskAgent:
         tools = definitions()
         messages = _history(conversation, question)
         index = CitationIndex()
+        if self.pre_retrieval and (found := await _round0(ctx, question, messages, index)):
+            yield found
         spent = _Spent(self.budget, self.costs)
         stopped: Stop = "answered"
         result: LLMTurnResult | None = None
@@ -291,10 +312,7 @@ class AskAgent:
             messages.append({"role": "user", "content": answered})
         if result is None:
             raise RuntimeError(NO_RESULT)
-        if result.stop_reason == "max_tokens":
-            stopped = "truncated"
-        elif result.stop_reason == "refusal":
-            stopped = "refused"
+        stopped = CUT_SHORT.get(result.stop_reason or "", stopped)
         text, citations, dropped = _answer(result.content, index)
         for n, citation in enumerate(citations, start=1):
             yield CitationFound(n, citation)
@@ -331,6 +349,19 @@ class AskAgent:
             if not running.done():
                 running.cancel()
         yield await running
+
+
+async def _round0(
+    ctx: ToolContext, question: str, messages: list[dict[str, Any]], index: CitationIndex
+) -> PreRetrieved | None:
+    """Round 0's evidence into the question's message, before the question; its search results
+    the request's first, so the index counts from them."""
+    found = await pre_retrieve(ctx, question)
+    if found is None:
+        return None
+    index.add(found.sources)
+    messages[-1] = {"role": "user", "content": [*found.content, {"type": "text", "text": question}]}
+    return PreRetrieved(found.results, found.files, found.traced, found.ms)
 
 
 def _history(conversation: Sequence[Exchange], question: str) -> list[dict[str, Any]]:
