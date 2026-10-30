@@ -908,6 +908,11 @@ def test_a_backslash_escapes_only_where_the_script_says_it_does() -> None:
         "CREATE TABLE c (id int);\n"
     )
     assert [c.table for c in ddl(postgres)] == ["a", "b", "c"]
+    # MySQL's words in a comment or a string are no MySQL: the backslash is still a character.
+    for mention in ("-- the `a` table holds rows\n", "/* was MySQL AUTO_INCREMENT */\n"):
+        assert [c.table for c in ddl(mention + postgres)] == ["a", "b", "c"]
+    quoted = postgres.replace("CREATE TABLE b", "INSERT INTO a VALUES ('`');\nCREATE TABLE b")
+    assert [c.table for c in ddl(quoted)] == ["a", "b", "c"]
     # One string in MySQL's (backslash-escaped quote), never a table x.
     mysql = (
         "INSERT INTO `a` VALUES ('a\\'; CREATE TABLE x (id int); --');\nCREATE TABLE b (id int);\n"

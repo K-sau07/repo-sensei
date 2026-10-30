@@ -128,8 +128,9 @@ class TableChange:
 
 
 _DOLLAR_RE = re.compile(r"\$\w*\$")
-# What only MySQL writes: a quoted name (`name`), a table's engine, an AUTO_INCREMENT column.
-_MYSQL_RE = re.compile(r"`|\bENGINE\s*=|\bAUTO_INCREMENT\b", re.IGNORECASE)
+# What only MySQL writes, besides a quoted name (`name`): a table's engine, an AUTO_INCREMENT
+# column.
+_MYSQL_RE = re.compile(r"\bENGINE\s*=|\bAUTO_INCREMENT\b", re.IGNORECASE)
 
 
 def _unquoted(name: str) -> str:
@@ -143,15 +144,17 @@ def _statements(script: str) -> list[tuple[str, int]]:
 
     A backslash is a character like any other, as the standard has it (Postgres's
     ``ESCAPE '\\'``), except in an ``E'…'`` string. It escapes the character after it
-    (``'it\\'s'``) in every string of a script that reads as MySQL's (:data:`_MYSQL_RE`), or
+    (``'it\\'s'``) in every string of a script that reads as MySQL's in its code (a quoted
+    name, :data:`_MYSQL_RE`; not in a comment or a string), or
     that the standard can't read: a string left unclosed, or closed by a backslash's quote right
     before a word (``'it\\'`` then ``s``)."""
     script = script[: MAX_SQL_CHARS * 10]
-    escapes = _MYSQL_RE.search(script) is not None
-    text, read = _uncommented(script, escapes=escapes)
-    if not read and not escapes:
-        again, read = _uncommented(script, escapes=True)
-        if read:
+    text, read = _uncommented(script, escapes=False)
+    mysql = _reads_as_mysql(text)
+    escapes = False
+    if mysql or not read:
+        again, read_again = _uncommented(script, escapes=True)
+        if mysql or read_again:
             text, escapes = again, True
     found: list[tuple[str, int]] = []
     start = 0
@@ -165,6 +168,29 @@ def _statements(script: str) -> list[tuple[str, int]]:
         if statement.strip():
             lines.append((statement, text.count("\n", 0, offset + lead) + 1))
     return lines
+
+
+def _reads_as_mysql(text: str) -> bool:
+    """Whether ``text`` (comments blanked, read as the standard reads it) writes what only
+    MySQL does, in its code: a quoted name, or :data:`_MYSQL_RE`'s words outside its strings
+    (a comment or a string that mentions them is no MySQL)."""
+    code: list[str] = []
+    i, n = 0, len(text)
+    while i < n:
+        opened = _opened(text, i, escapes=False)
+        if opened is None:
+            code.append(text[i])
+            i += 1
+            continue
+        quote, _ = opened
+        if quote == "`":
+            return True
+        end = _quoted_end(text, i + len(quote), quote, escaped=False)
+        if end is None:
+            break
+        code.append(" ")
+        i = end
+    return _MYSQL_RE.search("".join(code)) is not None
 
 
 def _opened(text: str, i: int, *, escapes: bool) -> tuple[str, bool] | None:
