@@ -174,3 +174,35 @@ class FeatureMap(IdMixin, OrgScopedMixin, Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
+
+
+FEEDBACK_KINDS = (
+    "helpful",
+    "wrong_file",
+    "outdated",
+    "missing_context",
+    "invented_symbol",
+    "other",
+)
+
+
+class MessageFeedback(IdMixin, OrgScopedMixin, Base):
+    """What a user said of an answer (4.11): helpful, or what was wrong with it (one of a few
+    kinds, for the evals), with a note. One per user and answer: saying again replaces it."""
+
+    __tablename__ = "message_feedback"
+    __table_args__ = (
+        UniqueConstraint("message_id", "user_id"),
+        CheckConstraint(f"kind IN ({', '.join(repr(k) for k in FEEDBACK_KINDS)})", name="kind"),
+        ForeignKeyConstraint(
+            ["message_id", "org_id"], ["messages.id", "messages.org_id"], ondelete="CASCADE"
+        ),
+    )
+
+    message_id: Mapped[uuid.UUID] = mapped_column()
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    kind: Mapped[str] = mapped_column(String(32))
+    note: Mapped[str] = mapped_column(Text, default="", server_default="")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )

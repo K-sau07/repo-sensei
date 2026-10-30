@@ -17,6 +17,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 ORG_SETTING = "app.org_id"
 USER_SETTING = "app.user_id"
 INVITE_SETTING = "app.invite_token_hash"
+SHARE_SETTING = "app.share_token_hash"
 APP_ROLE = "sensei_app"
 SYSTEM_ROLE = "sensei_system"
 
@@ -24,6 +25,7 @@ _POLICY_EXPR = f"org_id = NULLIF(current_setting('{ORG_SETTING}', true), '')::uu
 _USER_EXPR = f"user_id = NULLIF(current_setting('{USER_SETTING}', true), '')::uuid"
 _ACTOR_EXPR = f"actor_user_id = NULLIF(current_setting('{USER_SETTING}', true), '')::uuid"
 _INVITE_EXPR = f"token_hash = decode(NULLIF(current_setting('{INVITE_SETTING}', true), ''), 'hex')"
+_SHARE_EXPR = f"share_token_hash = NULLIF(current_setting('{SHARE_SETTING}', true), '')"
 
 
 class OrgScopedMixin:
@@ -70,6 +72,12 @@ def invitations_rls_sql(table: str = "invitations") -> list[str]:
     ]
 
 
+def shared_rls_sql(table: str = "conversations") -> list[str]:
+    """Shared conversations: besides the org's rows, the single row whose share token hash the
+    caller presents (so a share link opens without signing in). Only for reading."""
+    return [f'CREATE POLICY share_by_token ON "{table}" FOR SELECT USING ({_SHARE_EXPR})']
+
+
 def audit_log_rls_sql(table: str = "audit_log") -> list[str]:
     """Audit log: the current org's rows, plus the signed-in user's own account-level events
     (``org_id`` null, e.g. sign-ins), which only that user can write or read. Other users'
@@ -107,6 +115,7 @@ def disable_org_rls_sql(table: str) -> list[str]:
         f'DROP POLICY IF EXISTS org_isolation ON "{table}"',
         f'DROP POLICY IF EXISTS own_memberships ON "{table}"',
         f'DROP POLICY IF EXISTS invite_by_token ON "{table}"',
+        f'DROP POLICY IF EXISTS share_by_token ON "{table}"',
         f'DROP POLICY IF EXISTS own_account_events ON "{table}"',
         f'ALTER TABLE "{table}" NO FORCE ROW LEVEL SECURITY',
         f'ALTER TABLE "{table}" DISABLE ROW LEVEL SECURITY',
@@ -134,6 +143,14 @@ async def set_invite_context(session: AsyncSession, token_hash: bytes) -> None:
     await session.execute(
         text("SELECT set_config(:name, :value, true)"),
         {"name": INVITE_SETTING, "value": token_hash.hex()},
+    )
+
+
+async def set_share_context(session: AsyncSession, token_hash: str) -> None:
+    """Let the current transaction read the one conversation shared as ``token_hash``."""
+    await session.execute(
+        text("SELECT set_config(:name, :value, true)"),
+        {"name": SHARE_SETTING, "value": token_hash},
     )
 
 

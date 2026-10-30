@@ -284,7 +284,7 @@ def test_a_full_run_streams_its_stages_in_order(
     ]
     unlocks = [e["unlocks"] for e in events if e["type"] == "unlock"]
     assert unlocks == [
-        ["code_browser"], ["goto_definition"], ["keyword_search"], ["graph_view", "callers"],
+        ["code_browser"], ["goto_definition"], ["keyword_search", "ask"], ["graph_view", "callers"],
         ["trace", "diagrams", "fixes", "changes"],
     ]  # fmt: skip
     progress = [e for e in events if e["type"] == "progress"]

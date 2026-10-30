@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import uuid
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
@@ -25,18 +26,22 @@ from sensei_core.mail import MemoryMailer
 from sensei_core.models import (
     AnswerCacheEntry,
     AuditEvent,
+    Conversation,
     FeatureMap,
     IndexJob,
     JobKind,
     JobStatus,
+    MessageFeedback,
     Repo,
     RepoSource,
     Snapshot,
     UsageEvent,
     UsageKind,
+    User,
 )
 from sensei_core.models.indexing import SnapshotStatus
 from sensei_core.orgs.service import OrgService
+from sensei_core.repos.access import RepoAccess
 from sensei_engine.agent.tools import ToolContext
 from sensei_testing import sign_in
 from sensei_testing.anthropic import FakeAnthropic, message, sse
@@ -452,9 +457,8 @@ def _cited_run() -> list[dict[str, Any]]:
     return [read, submit, answered]
 
 
-async def test_the_same_question_again_is_answered_from_the_cache(
-    app: FastAPI, client: httpx.AsyncClient, db_session: AsyncSession
-) -> None:
+def _answers_citing(app: FastAPI) -> list[dict[str, Any]]:
+    """The model answers once, citing the README (:func:`_cited_run`); its streamed turns."""
     turns = _cited_run()
     streamed: list[dict[str, Any]] = []
 
@@ -473,6 +477,13 @@ async def test_the_same_question_again_is_answered_from_the_cache(
         return httpx2.Response(200, json=message(json.dumps(whole)))
 
     app.state.ask_client = FakeAnthropic(routes={"/v1/messages": model}).client()
+    return streamed
+
+
+async def test_the_same_question_again_is_answered_from_the_cache(
+    app: FastAPI, client: httpx.AsyncClient, db_session: AsyncSession
+) -> None:
+    streamed = _answers_citing(app)
     org, headers = await _setup(app, client, db_session)
     first, _ = await _ask(app, client, org, headers, message="What does the README say?")
     assert first.status_code == 200
@@ -568,3 +579,150 @@ async def test_a_repositorys_feature_maps_are_listed_by_path(
     assert [(m["path"], m["title"], m["stale"]) for m in listed["maps"]] == [
         ("api", "The api", False), ("web", "The web", False),
     ]  # fmt: skip
+
+
+# ---------------------------------------------------------------- feedback, history, sharing (4.11)
+
+
+async def test_feedback_on_an_answer_is_one_per_user_and_replaced(
+    app: FastAPI, client: httpx.AsyncClient, db_session: AsyncSession
+) -> None:
+    org, headers = await _setup(app, client, db_session)
+    response, _ = await _ask(app, client, org, headers, message="Where are items saved?")
+    conversation_id = response.headers["x-conversation-id"]
+    question, answer = (await client.get(f"{org}/conversations/{conversation_id}")).json()[
+        "messages"
+    ]
+    url = f"{org}/messages/{answer['id']}/feedback"
+
+    said = await client.post(url, json={"kind": "helpful"}, headers=headers)
+    assert said.status_code == 200, said.text
+    assert said.json()["kind"] == "helpful"
+    again = await client.post(
+        url, json={"kind": "wrong_file", "note": "  it's in services  "}, headers=headers
+    )
+    assert (again.json()["kind"], again.json()["note"]) == ("wrong_file", "it's in services")
+    assert await db_session.scalar(select(func.count()).select_from(MessageFeedback)) == 1
+    stored = (await client.get(f"{org}/conversations/{conversation_id}")).json()["messages"]
+    assert stored[0]["feedback"] is None
+    assert stored[1]["feedback"]["kind"] == "wrong_file"
+
+    unknown = await client.post(url, json={"kind": "rude"}, headers=headers)
+    assert unknown.status_code == 422
+    on_a_question = await client.post(
+        f"{org}/messages/{question['id']}/feedback", json={"kind": "helpful"}, headers=headers
+    )
+    assert on_a_question.status_code == 404
+    assert on_a_question.json()["error"]["code"] == "message_not_found"
+
+    taken_back = await client.delete(url, headers=headers)
+    assert taken_back.status_code == 204
+    stored = (await client.get(f"{org}/conversations/{conversation_id}")).json()["messages"]
+    assert stored[1]["feedback"] is None
+
+
+async def test_a_conversation_is_renamed_and_found_by_its_title(
+    app: FastAPI, client: httpx.AsyncClient, db_session: AsyncSession
+) -> None:
+    org, headers = await _setup(app, client, db_session)
+    response, _ = await _ask(app, client, org, headers, message="Where are items saved?")
+    conversation_id = response.headers["x-conversation-id"]
+
+    renamed = await client.patch(
+        f"{org}/conversations/{conversation_id}",
+        json={"title": "  Saving   items_100%  "},
+        headers=headers,
+    )
+    assert renamed.status_code == 200, renamed.text
+    assert renamed.json()["title"] == "Saving items_100%"
+    blank = await client.patch(
+        f"{org}/conversations/{conversation_id}", json={"title": "   "}, headers=headers
+    )
+    assert blank.status_code == 422
+
+    async def found(q: str) -> list[str]:
+        listed = await client.get(f"{org}/repos/items/conversations", params={"q": q})
+        return [c["id"] for c in listed.json()["conversations"]]
+
+    assert await found("ITEMS") == [conversation_id]
+    assert await found("items_1") == [conversation_id]
+    assert await found("deleting") == []
+    assert await found("s%i") == []  # its wildcards are words
+    assert await found("_") == [conversation_id]
+    assert await found("x_x") == []
+
+
+async def test_a_shared_conversation_hides_its_citations_from_who_cant_read_the_repo(
+    app: FastAPI,
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _answers_citing(app)
+    org, headers = await _setup(app, client, db_session)
+    response, _ = await _ask(app, client, org, headers, message="What does the README say?")
+    conversation_id = response.headers["x-conversation-id"]
+    conversation = await db_session.get(Conversation, uuid.UUID(conversation_id))
+    assert conversation is not None
+    owner = await db_session.get(User, conversation.user_id)
+    assert owner is not None
+    repo = await db_session.get(Repo, conversation.repo_id)
+    assert repo is not None
+    repo.source = RepoSource.GITHUB_APP  # read only by who GitHub lets read it: the owner
+    await db_session.flush()
+
+    async def readable(_: RepoAccess, user: User, repos: list[Repo]) -> list[Repo]:
+        return repos if user.id == owner.id else []
+
+    monkeypatch.setattr(RepoAccess, "readable", readable)
+
+    first = await client.post(f"{org}/conversations/{conversation_id}/share", headers=headers)
+    assert first.status_code == 200, first.text
+    shared = await client.post(f"{org}/conversations/{conversation_id}/share", headers=headers)
+    token = shared.json()["token"]
+    assert shared.json()["path"] == f"/s/{token}"
+    listed = (await client.get(f"{org}/repos/items/conversations")).json()["conversations"]
+    assert listed[0]["shared"] is True
+    actions = await db_session.scalars(
+        select(AuditEvent.action).where(AuditEvent.target_id == conversation_id)
+    )
+    assert list(actions) == ["conversation.shared", "conversation.shared"]
+
+    # The owner, who can read the repository: all of it, but for the run behind it.
+    seen = (await client.get(f"{API}/s/{token}")).json()
+    assert (seen["redacted"], seen["repo"], seen["title"]) == (False, "o/items", "The README")
+    answer = seen["messages"][-1]
+    assert [c["path"] for c in answer["citations"]] == ["README.md"]
+    kinds = {p["type"] for p in answer["parts"]}
+    assert "tool-read_code" in kinds
+    assert "data-conversation" not in kinds
+    assert answer["feedback"] is None
+
+    # Anyone else: the words, and of each citation only its number and place in the text.
+    for viewer in ("anonymous", "another user"):
+        client.cookies.clear()
+        if viewer == "another user":
+            await sign_in(app, client, db_session)
+        _assert_redacted((await client.get(f"{API}/s/{token}")).json())
+
+    # The first link was replaced; unsharing ends the second.
+    assert (await client.get(f"{API}/s/{first.json()['token']}")).status_code == 404
+    _, headers = await sign_in(app, client, db_session, owner)
+    gone = await client.delete(f"{org}/conversations/{conversation_id}/share", headers=headers)
+    assert gone.status_code == 204
+    client.cookies.clear()
+    missing = await client.get(f"{API}/s/{token}")
+    assert missing.status_code == 404
+    assert missing.json()["error"]["code"] == "share_not_found"
+
+
+def _assert_redacted(seen: dict[str, Any]) -> None:
+    assert (seen["redacted"], seen["repo"]) == (True, None)
+    answer = seen["messages"][-1]
+    assert answer["citations"] == []
+    kinds = {p["type"] for p in answer["parts"]}
+    assert kinds <= {"text", "data-confidence", "data-citation", "data-abstain"}
+    cited = [p["data"] for p in answer["parts"] if p["type"] == "data-citation"]
+    assert cited
+    assert all(set(c) == {"n", "span", "redacted"} for c in cited)
+    assert "README.md" not in json.dumps(answer["parts"])

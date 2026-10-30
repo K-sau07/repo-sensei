@@ -124,7 +124,9 @@
           "repo.disconnected",
           "repo.index_started",
           "repo.index_cancelled",
-          "agent.cost_cap_warning"
+          "agent.cost_cap_warning",
+          "conversation.shared",
+          "conversation.unshared"
         ],
         "title": "AuditAction",
         "type": "string"
@@ -704,6 +706,10 @@
             "title": "Repo Id",
             "type": "string"
           },
+          "shared": {
+            "title": "Shared",
+            "type": "boolean"
+          },
           "title": {
             "title": "Title",
             "type": "string"
@@ -718,6 +724,7 @@
           "id",
           "repo_id",
           "title",
+          "shared",
           "created_at",
           "updated_at",
           "messages"
@@ -770,6 +777,10 @@
             "title": "Repo Id",
             "type": "string"
           },
+          "shared": {
+            "title": "Shared",
+            "type": "boolean"
+          },
           "title": {
             "title": "Title",
             "type": "string"
@@ -784,10 +795,26 @@
           "id",
           "repo_id",
           "title",
+          "shared",
           "created_at",
           "updated_at"
         ],
         "title": "ConversationOut",
+        "type": "object"
+      },
+      "ConversationUpdate": {
+        "properties": {
+          "title": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "title"
+        ],
+        "title": "ConversationUpdate",
         "type": "object"
       },
       "EdgeType": {
@@ -1221,6 +1248,65 @@
           "stale"
         ],
         "title": "FeatureMapOut",
+        "type": "object"
+      },
+      "FeedbackIn": {
+        "properties": {
+          "kind": {
+            "enum": [
+              "helpful",
+              "wrong_file",
+              "outdated",
+              "missing_context",
+              "invented_symbol",
+              "other"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "note": {
+            "default": "",
+            "maxLength": 2000,
+            "title": "Note",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "title": "FeedbackIn",
+        "type": "object"
+      },
+      "FeedbackOut": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "helpful",
+              "wrong_file",
+              "outdated",
+              "missing_context",
+              "invented_symbol",
+              "other"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "note": {
+            "title": "Note",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "note",
+          "created_at"
+        ],
+        "title": "FeedbackOut",
         "type": "object"
       },
       "FileOut": {
@@ -2327,6 +2413,16 @@
             "format": "date-time",
             "title": "Created At",
             "type": "string"
+          },
+          "feedback": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FeedbackOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "id": {
             "format": "uuid",
@@ -3850,6 +3946,74 @@
           "current"
         ],
         "title": "SessionInfo",
+        "type": "object"
+      },
+      "ShareOut": {
+        "properties": {
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "token": {
+            "title": "Token",
+            "type": "string"
+          }
+        },
+        "required": [
+          "token",
+          "path"
+        ],
+        "title": "ShareOut",
+        "type": "object"
+      },
+      "SharedConversation": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "messages": {
+            "items": {
+              "$ref": "#/components/schemas/MessageOut"
+            },
+            "title": "Messages",
+            "type": "array"
+          },
+          "redacted": {
+            "title": "Redacted",
+            "type": "boolean"
+          },
+          "repo": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Repo"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "repo",
+          "redacted",
+          "created_at",
+          "updated_at",
+          "messages"
+        ],
+        "title": "SharedConversation",
         "type": "object"
       },
       "SlugAvailability": {
@@ -6100,6 +6264,170 @@
         "tags": [
           "ask"
         ]
+      },
+      "patch": {
+        "description": "Rename a conversation.",
+        "operationId": "rename_conversation_api_v1_orgs__org__conversations__conversation_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Organization slug",
+            "in": "path",
+            "name": "org",
+            "required": true,
+            "schema": {
+              "description": "Organization slug",
+              "title": "Org",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConversationUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConversationOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Rename Conversation",
+        "tags": [
+          "ask"
+        ]
+      }
+    },
+    "/api/v1/orgs/{org}/conversations/{conversation_id}/share": {
+      "delete": {
+        "description": "Stop the conversation's share link working.",
+        "operationId": "unshare_conversation_api_v1_orgs__org__conversations__conversation_id__share_delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Organization slug",
+            "in": "path",
+            "name": "org",
+            "required": true,
+            "schema": {
+              "description": "Organization slug",
+              "title": "Org",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Unshare Conversation",
+        "tags": [
+          "ask"
+        ]
+      },
+      "post": {
+        "description": "A link that opens the conversation read-only, signed in or not (its citations hidden\nfrom a viewer who can't read the repository). Asked again, a new link: the old one stops\nworking (the \"reset link\").",
+        "operationId": "share_conversation_api_v1_orgs__org__conversations__conversation_id__share_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Organization slug",
+            "in": "path",
+            "name": "org",
+            "required": true,
+            "schema": {
+              "description": "Organization slug",
+              "title": "Org",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ShareOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Share Conversation",
+        "tags": [
+          "ask"
+        ]
       }
     },
     "/api/v1/orgs/{org}/events": {
@@ -6609,6 +6937,117 @@
         "summary": "Change Member Role",
         "tags": [
           "orgs"
+        ]
+      }
+    },
+    "/api/v1/orgs/{org}/messages/{message_id}/feedback": {
+      "delete": {
+        "description": "Take back what was said of an answer.",
+        "operationId": "take_back_feedback_api_v1_orgs__org__messages__message_id__feedback_delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "message_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Message Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Organization slug",
+            "in": "path",
+            "name": "org",
+            "required": true,
+            "schema": {
+              "description": "Organization slug",
+              "title": "Org",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Take Back Feedback",
+        "tags": [
+          "ask"
+        ]
+      },
+      "post": {
+        "description": "Say what an answer was: helpful, or what was wrong with it. Said again, it replaces what\nwas said before.",
+        "operationId": "give_feedback_api_v1_orgs__org__messages__message_id__feedback_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "message_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Message Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Organization slug",
+            "in": "path",
+            "name": "org",
+            "required": true,
+            "schema": {
+              "description": "Organization slug",
+              "title": "Org",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FeedbackIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FeedbackOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Give Feedback",
+        "tags": [
+          "ask"
         ]
       }
     },
@@ -7235,7 +7674,7 @@
     },
     "/api/v1/orgs/{org}/repos/{repo}/conversations": {
       "get": {
-        "description": "The signed-in user's conversations about the repository, the latest first.",
+        "description": "The signed-in user's conversations about the repository, the latest first; with ``q``,\nthose whose title has it in it.",
         "operationId": "conversations_api_v1_orgs__org__repos__repo__conversations_get",
         "parameters": [
           {
@@ -7288,6 +7727,23 @@
                 }
               ],
               "title": "Cursor"
+            }
+          },
+          {
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 200,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Q"
             }
           }
         ],
@@ -9200,6 +9656,49 @@
         "summary": "Readyz",
         "tags": [
           "health"
+        ]
+      }
+    },
+    "/api/v1/s/{token}": {
+      "get": {
+        "description": "A shared conversation: its questions and finished answers, read-only.",
+        "operationId": "shared_api_v1_s__token__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "token",
+            "required": true,
+            "schema": {
+              "title": "Token",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SharedConversation"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Shared",
+        "tags": [
+          "ask"
         ]
       }
     },

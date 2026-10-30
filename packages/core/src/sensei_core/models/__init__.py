@@ -12,6 +12,7 @@ from sensei_core.models.conversations import (
     ConversationMessage,
     FeatureMap,
     MessageCitation,
+    MessageFeedback,
 )
 from sensei_core.models.embeddings import EmbeddingCache
 from sensei_core.models.evals import EvalRun
@@ -74,6 +75,7 @@ __all__ = [
     "LLMBatchStatus",
     "Membership",
     "MessageCitation",
+    "MessageFeedback",
     "NodeKind",
     "OAuthToken",
     "Org",

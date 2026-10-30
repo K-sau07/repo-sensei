@@ -38,9 +38,11 @@ from sensei_api.ratelimit import TokenBucket
 from sensei_api.repos import RepoDep
 from sensei_api.routers import browse, search
 from sensei_api.runs import Recorder
+from sensei_api.sharing import new_share_token, share_token_hash
 from sensei_api.spend import remaining_today
 from sensei_api.streams import HEADERS, HEARTBEAT_SECONDS, READ_BLOCK_MS, last_event_id
 from sensei_api.ui_stream import DONE, HEADER, UIStream, confidence_data, replayed, text_of
+from sensei_core.audit import AuditAction, audit
 from sensei_core.config import Settings
 from sensei_core.db.tenancy import set_org_context, set_user_context
 from sensei_core.errors import ConflictError, InvalidError, NotFoundError, RateLimitedError
@@ -51,6 +53,7 @@ from sensei_core.models import (
     Conversation,
     ConversationMessage,
     MessageCitation,
+    MessageFeedback,
     Repo,
     RepoFile,
     Snapshot,
@@ -108,6 +111,22 @@ class CitationOut(BaseModel):
     verified: bool
 
 
+FeedbackKind = Literal[
+    "helpful", "wrong_file", "outdated", "missing_context", "invented_symbol", "other"
+]
+
+
+class FeedbackIn(BaseModel):
+    kind: FeedbackKind
+    note: str = Field(default="", max_length=2_000)
+
+
+class FeedbackOut(BaseModel):
+    kind: FeedbackKind
+    note: str
+    created_at: datetime
+
+
 class MessageOut(BaseModel):
     id: uuid.UUID
     role: Literal["user", "assistant"]
@@ -117,14 +136,25 @@ class MessageOut(BaseModel):
     abstained: bool
     created_at: datetime
     citations: list[CitationOut]
+    feedback: FeedbackOut | None = None  # what the signed-in user said of it
 
 
 class ConversationOut(BaseModel):
     id: uuid.UUID
     repo_id: uuid.UUID
     title: str
+    shared: bool  # a share link opens it
     created_at: datetime
     updated_at: datetime
+
+
+class ConversationUpdate(BaseModel):
+    title: str = Field(min_length=1, max_length=200)
+
+
+class ShareOut(BaseModel):
+    token: str  # shown once: only its hash is kept
+    path: str  # the web page it opens, "/s/<token>"
 
 
 class ConversationDetail(ConversationOut):
@@ -361,11 +391,15 @@ async def conversations(
     db: DbSession,
     limit: Annotated[int, Query(ge=1, le=100)] = 30,
     cursor: Annotated[str | None, Query(max_length=64)] = None,
+    q: Annotated[str | None, Query(max_length=200)] = None,
 ) -> ConversationList:
-    """The signed-in user's conversations about the repository, the latest first."""
+    """The signed-in user's conversations about the repository, the latest first; with ``q``,
+    those whose title has it in it."""
     query = select(Conversation).where(
         Conversation.repo_id == repo.id, Conversation.user_id == access.user.id
     )
+    if q and q.strip():
+        query = query.where(Conversation.title.ilike(f"%{_escaped(q.strip())}%", escape="\\"))
     if cursor is not None:
         query = query.where(Conversation.updated_at < _cursor_time(cursor))
     rows = list(
@@ -392,42 +426,35 @@ async def conversation(
             .order_by(ConversationMessage.created_at, ConversationMessage.id)
         )
     )
-    cited: dict[uuid.UUID, list[CitationOut]] = {}
+    cited = await citations_of(db, messages)
+    said: dict[uuid.UUID, FeedbackOut] = {}
     if messages:
         rows = await db.scalars(
-            select(MessageCitation)
-            .where(MessageCitation.message_id.in_([m.id for m in messages]))
-            .order_by(MessageCitation.message_id, MessageCitation.idx)
-        )
-        for row in rows:
-            cited.setdefault(row.message_id, []).append(
-                CitationOut(
-                    idx=row.idx,
-                    sha=row.sha,
-                    path=row.path,
-                    start_line=row.start_line,
-                    end_line=row.end_line,
-                    symbol_key=row.symbol_key,
-                    provenance=row.provenance,
-                    verified=row.verified,
-                )
+            select(MessageFeedback).where(
+                MessageFeedback.message_id.in_([m.id for m in messages]),
+                MessageFeedback.user_id == access.user.id,
             )
+        )
+        said = {row.message_id: _feedback_out(row) for row in rows}
     return ConversationDetail(
         **_out(found).model_dump(),
-        messages=[
-            MessageOut(
-                id=m.id,
-                role=cast("Literal['user', 'assistant']", m.role),
-                parts=m.parts,
-                status=cast("Literal['streaming', 'done', 'failed']", m.status),
-                confidence=m.confidence,
-                abstained=m.abstained,
-                created_at=m.created_at,
-                citations=cited.get(m.id, []),
-            )
-            for m in messages
-        ],
+        messages=[message_out(m, m.parts, cited.get(m.id, []), said.get(m.id)) for m in messages],
     )
+
+
+@router.patch("/conversations/{conversation_id}", response_model=ConversationOut)
+async def rename_conversation(
+    *, access: OrgAccessDep, db: DbSession, conversation_id: uuid.UUID, body: ConversationUpdate
+) -> ConversationOut:
+    """Rename a conversation."""
+    found = await _owned(db, conversation_id, access.user.id)
+    title = " ".join(body.title.split())
+    if not title:
+        raise InvalidError("A title needs a word in it.", code="title_empty")
+    found.title = title
+    await db.flush()
+    await db.refresh(found)
+    return _out(found)
 
 
 @router.delete("/conversations/{conversation_id}", status_code=204)
@@ -437,6 +464,87 @@ async def delete_conversation(
     """Delete a conversation, its messages and their citations."""
     found = await _owned(db, conversation_id, access.user.id)
     await db.execute(delete(Conversation).where(Conversation.id == found.id))
+    return Response(status_code=204)
+
+
+@router.post("/conversations/{conversation_id}/share", response_model=ShareOut)
+async def share_conversation(
+    *, access: OrgAccessDep, db: DbSession, conversation_id: uuid.UUID
+) -> ShareOut:
+    """A link that opens the conversation read-only, signed in or not (its citations hidden
+    from a viewer who can't read the repository). Asked again, a new link: the old one stops
+    working (the "reset link")."""
+    found = await _owned(db, conversation_id, access.user.id)
+    token = new_share_token()
+    found.share_token_hash = share_token_hash(token)
+    await audit(
+        db,
+        AuditAction.CONVERSATION_SHARED,
+        actor_user_id=access.user.id,
+        org_id=access.org.id,
+        target_type="conversation",
+        target_id=found.id,
+    )
+    return ShareOut(token=token, path=f"/s/{token}")
+
+
+@router.delete("/conversations/{conversation_id}/share", status_code=204)
+async def unshare_conversation(
+    *, access: OrgAccessDep, db: DbSession, conversation_id: uuid.UUID
+) -> Response:
+    """Stop the conversation's share link working."""
+    found = await _owned(db, conversation_id, access.user.id)
+    if found.share_token_hash is not None:
+        found.share_token_hash = None
+        await audit(
+            db,
+            AuditAction.CONVERSATION_UNSHARED,
+            actor_user_id=access.user.id,
+            org_id=access.org.id,
+            target_type="conversation",
+            target_id=found.id,
+        )
+    return Response(status_code=204)
+
+
+# ---------------------------------------------------------------- feedback
+
+
+@router.post("/messages/{message_id}/feedback", response_model=FeedbackOut)
+async def give_feedback(
+    *, access: OrgAccessDep, db: DbSession, message_id: uuid.UUID, body: FeedbackIn
+) -> FeedbackOut:
+    """Say what an answer was: helpful, or what was wrong with it. Said again, it replaces what
+    was said before."""
+    answer = await _answer_of(db, message_id, access.user.id)
+    row = await db.scalar(
+        select(MessageFeedback).where(
+            MessageFeedback.message_id == answer.id, MessageFeedback.user_id == access.user.id
+        )
+    )
+    if row is None:
+        row = MessageFeedback(
+            org_id=access.org.id, message_id=answer.id, user_id=access.user.id, kind=body.kind
+        )
+        db.add(row)
+    row.kind = body.kind
+    row.note = body.note.strip()
+    await db.flush()
+    await db.refresh(row)
+    return _feedback_out(row)
+
+
+@router.delete("/messages/{message_id}/feedback", status_code=204)
+async def take_back_feedback(
+    *, access: OrgAccessDep, db: DbSession, message_id: uuid.UUID
+) -> Response:
+    """Take back what was said of an answer."""
+    answer = await _answer_of(db, message_id, access.user.id)
+    await db.execute(
+        delete(MessageFeedback).where(
+            MessageFeedback.message_id == answer.id, MessageFeedback.user_id == access.user.id
+        )
+    )
     return Response(status_code=204)
 
 
@@ -786,6 +894,82 @@ async def _owned(db: AsyncSession, conversation_id: uuid.UUID, user_id: uuid.UUI
     return found
 
 
+async def _answer_of(
+    db: AsyncSession, message_id: uuid.UUID, user_id: uuid.UUID
+) -> ConversationMessage:
+    """An answer in one of the user's conversations (a question, or another's, is not found)."""
+    found = await db.scalar(
+        select(ConversationMessage)
+        .join(Conversation, Conversation.id == ConversationMessage.conversation_id)
+        .where(
+            ConversationMessage.id == message_id,
+            ConversationMessage.role == "assistant",
+            Conversation.user_id == user_id,
+        )
+    )
+    if found is None:
+        raise NotFoundError("Answer not found.", code="message_not_found")
+    return found
+
+
+async def citations_of(
+    db: AsyncSession, messages: list[ConversationMessage]
+) -> dict[uuid.UUID, list[CitationOut]]:
+    """The messages' citations, by message, in their order in each answer."""
+    cited: dict[uuid.UUID, list[CitationOut]] = {}
+    if not messages:
+        return cited
+    rows = await db.scalars(
+        select(MessageCitation)
+        .where(MessageCitation.message_id.in_([m.id for m in messages]))
+        .order_by(MessageCitation.message_id, MessageCitation.idx)
+    )
+    for row in rows:
+        cited.setdefault(row.message_id, []).append(
+            CitationOut(
+                idx=row.idx,
+                sha=row.sha,
+                path=row.path,
+                start_line=row.start_line,
+                end_line=row.end_line,
+                symbol_key=row.symbol_key,
+                provenance=row.provenance,
+                verified=row.verified,
+            )
+        )
+    return cited
+
+
+def message_out(
+    m: ConversationMessage,
+    parts: list[dict[str, Any]],
+    citations: list[CitationOut],
+    feedback: FeedbackOut | None = None,
+) -> MessageOut:
+    return MessageOut(
+        id=m.id,
+        role=cast("Literal['user', 'assistant']", m.role),
+        parts=parts,
+        status=cast("Literal['streaming', 'done', 'failed']", m.status),
+        confidence=m.confidence,
+        abstained=m.abstained,
+        created_at=m.created_at,
+        citations=citations,
+        feedback=feedback,
+    )
+
+
+def _feedback_out(row: MessageFeedback) -> FeedbackOut:
+    return FeedbackOut(
+        kind=cast("FeedbackKind", row.kind), note=row.note, created_at=row.created_at
+    )
+
+
+def _escaped(words: str) -> str:
+    """``words`` matched as they are by LIKE (its wildcards and escape character escaped)."""
+    return words.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
 async def _exchanges(db: AsyncSession, conversation_id: uuid.UUID) -> list[Exchange]:
     """The conversation's earlier questions and their answers' text, oldest first."""
     rows = list(
@@ -834,6 +1018,7 @@ def _out(found: Conversation) -> ConversationOut:
         id=found.id,
         repo_id=found.repo_id,
         title=found.title,
+        shared=found.share_token_hash is not None,
         created_at=found.created_at,
         updated_at=found.updated_at,
     )

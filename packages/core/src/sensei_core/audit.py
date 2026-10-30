@@ -48,6 +48,8 @@ class AuditAction(enum.StrEnum):
     REPO_INDEX_STARTED = "repo.index_started"
     REPO_INDEX_CANCELLED = "repo.index_cancelled"
     AGENT_COST_CAP_WARNING = "agent.cost_cap_warning"
+    CONVERSATION_SHARED = "conversation.shared"
+    CONVERSATION_UNSHARED = "conversation.unshared"
 
 
 def _clean_meta(meta: dict[str, Any] | None) -> dict[str, Any]:

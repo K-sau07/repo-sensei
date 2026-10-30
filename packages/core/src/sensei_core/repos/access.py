@@ -62,7 +62,7 @@ class RepoAccess:
         answers: dict[uuid.UUID, bool] = {}
         unknown: list[tuple[Repo, str]] = []
         for repo in repos:
-            if _public(repo):
+            if open_to_all(repo):
                 answers[repo.id] = True
                 continue
             key = await self._key(user.id, repo.id)
@@ -125,5 +125,6 @@ class RepoAccess:
         return True
 
 
-def _public(repo: Repo) -> bool:
+def open_to_all(repo: Repo) -> bool:
+    """A public repository imported by its URL: anyone may read it, signed in or not."""
     return repo.source is RepoSource.PUBLIC_URL and repo.status is not RepoStatus.ACCESS_LOST

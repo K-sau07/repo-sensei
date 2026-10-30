@@ -23,6 +23,8 @@ from sensei_core.db.tenancy import (
     disable_org_rls_sql,
     enable_org_rls_sql,
     set_org_context,
+    set_share_context,
+    shared_rls_sql,
 )
 
 pytestmark = pytest.mark.integration
@@ -137,6 +139,55 @@ async def test_cannot_move_row_to_other_org(probe: str, app_engine: AsyncEngine)
         await _execute_as_org(app_engine, ORG_A, move, {"b": ORG_B})
 
 
+@pytest.fixture
+async def shared_probe(migrated_test_db: Settings) -> AsyncGenerator[str]:
+    """Conversations as the share policy sees them: two shared (in two orgs), one not."""
+    table = f"_share_probe_{uuid.uuid4().hex[:8]}"
+    owner = create_async_engine(migrated_test_db.database.migrate_url.get_secret_value())
+    async with owner.begin() as conn:
+        await conn.execute(
+            text(
+                f"CREATE TABLE {table} (id int PRIMARY KEY, org_id uuid NOT NULL, title text,"
+                " share_token_hash varchar(64) UNIQUE)"
+            )
+        )
+        for statement in [*enable_org_rls_sql(table), *shared_rls_sql(table)]:
+            await conn.execute(text(statement))
+        await conn.execute(
+            text(
+                f"INSERT INTO {table} VALUES"
+                " (1, :a, '', 'aa'), (2, :b, '', 'bb'), (3, :a, '', NULL)"
+            ),
+            {"a": ORG_A, "b": ORG_B},
+        )
+    try:
+        yield table
+    finally:
+        async with owner.begin() as conn:
+            await conn.execute(text(f"DROP TABLE IF EXISTS {table}"))
+        await owner.dispose()
+
+
+async def test_a_share_token_reads_its_one_row_and_writes_nothing(
+    shared_probe: str, app_engine: AsyncEngine
+) -> None:
+    async with AsyncSession(app_engine) as session, session.begin():
+        assert await _ids(session, shared_probe) == []
+        await set_share_context(session, "bb")
+        assert await _ids(session, shared_probe) == [2]  # in any org, no org context needed
+        await set_share_context(session, "cc")
+        assert await _ids(session, shared_probe) == []
+        await set_share_context(session, "")
+        assert await _ids(session, shared_probe) == []  # not the rows never shared
+    async with AsyncSession(app_engine) as session, session.begin():
+        await set_share_context(session, "aa")
+        changed = cast(
+            "CursorResult[Any]",
+            await session.execute(text(f"UPDATE {shared_probe} SET title = 'x' WHERE id = 1")),
+        )
+        assert changed.rowcount == 0
+
+
 async def test_system_role_sees_every_org(probe: str, system_engine: AsyncEngine) -> None:
     async with AsyncSession(system_engine) as session, session.begin():
         assert await _ids(session, probe) == [1, 2, 3]
@@ -148,3 +199,4 @@ def test_rls_sql_round_trip() -> None:
     assert any("FORCE ROW LEVEL SECURITY" in s for s in enable)
     assert any("CREATE POLICY org_isolation" in s for s in enable)
     assert any("DROP POLICY IF EXISTS org_isolation" in s for s in disable)
+    assert any("DROP POLICY IF EXISTS share_by_token" in s for s in disable)

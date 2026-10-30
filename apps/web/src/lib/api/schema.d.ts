@@ -423,6 +423,36 @@ export interface paths {
         delete: operations["delete_conversation_api_v1_orgs__org__conversations__conversation_id__delete"];
         options?: never;
         head?: never;
+        /**
+         * Rename Conversation
+         * @description Rename a conversation.
+         */
+        patch: operations["rename_conversation_api_v1_orgs__org__conversations__conversation_id__patch"];
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/conversations/{conversation_id}/share": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Share Conversation
+         * @description A link that opens the conversation read-only, signed in or not (its citations hidden
+         *     from a viewer who can't read the repository). Asked again, a new link: the old one stops
+         *     working (the "reset link").
+         */
+        post: operations["share_conversation_api_v1_orgs__org__conversations__conversation_id__share_post"];
+        /**
+         * Unshare Conversation
+         * @description Stop the conversation's share link working.
+         */
+        delete: operations["unshare_conversation_api_v1_orgs__org__conversations__conversation_id__share_delete"];
+        options?: never;
+        head?: never;
         patch?: never;
         trace?: never;
     };
@@ -575,6 +605,31 @@ export interface paths {
         head?: never;
         /** Change Member Role */
         patch: operations["change_member_role_api_v1_orgs__org__members__user_id__patch"];
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/messages/{message_id}/feedback": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Give Feedback
+         * @description Say what an answer was: helpful, or what was wrong with it. Said again, it replaces what
+         *     was said before.
+         */
+        post: operations["give_feedback_api_v1_orgs__org__messages__message_id__feedback_post"];
+        /**
+         * Take Back Feedback
+         * @description Take back what was said of an answer.
+         */
+        delete: operations["take_back_feedback_api_v1_orgs__org__messages__message_id__feedback_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/api/v1/orgs/{org}/repos": {
@@ -738,7 +793,8 @@ export interface paths {
         };
         /**
          * Conversations
-         * @description The signed-in user's conversations about the repository, the latest first.
+         * @description The signed-in user's conversations about the repository, the latest first; with ``q``,
+         *     those whose title has it in it.
          */
         get: operations["conversations_api_v1_orgs__org__repos__repo__conversations_get"];
         put?: never;
@@ -1140,6 +1196,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/s/{token}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Shared
+         * @description A shared conversation: its questions and finished answers, read-only.
+         */
+        get: operations["shared_api_v1_s__token__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/webhooks/github": {
         parameters: {
             query?: never;
@@ -1201,7 +1277,7 @@ export interface components {
          * AuditAction
          * @enum {string}
          */
-        AuditAction: "auth.login" | "auth.logout" | "auth.logout_all" | "org.create" | "org.update" | "org.delete" | "invitation.create" | "invitation.revoke" | "invitation.accept" | "member.role_change" | "member.remove" | "member.leave" | "github.install.linked" | "github.install.deleted" | "github.install.suspended" | "github.install.unsuspended" | "github.install.permissions_accepted" | "repo.connected" | "repo.settings_update" | "repo.disconnected" | "repo.index_started" | "repo.index_cancelled" | "agent.cost_cap_warning";
+        AuditAction: "auth.login" | "auth.logout" | "auth.logout_all" | "org.create" | "org.update" | "org.delete" | "invitation.create" | "invitation.revoke" | "invitation.accept" | "member.role_change" | "member.remove" | "member.leave" | "github.install.linked" | "github.install.deleted" | "github.install.suspended" | "github.install.unsuspended" | "github.install.permissions_accepted" | "repo.connected" | "repo.settings_update" | "repo.disconnected" | "repo.index_started" | "repo.index_cancelled" | "agent.cost_cap_warning" | "conversation.shared" | "conversation.unshared";
         /** AuditEventOut */
         AuditEventOut: {
             /** Action */
@@ -1430,6 +1506,8 @@ export interface components {
              * Format: uuid
              */
             repo_id: string;
+            /** Shared */
+            shared: boolean;
             /** Title */
             title: string;
             /**
@@ -1462,6 +1540,8 @@ export interface components {
              * Format: uuid
              */
             repo_id: string;
+            /** Shared */
+            shared: boolean;
             /** Title */
             title: string;
             /**
@@ -1469,6 +1549,11 @@ export interface components {
              * Format: date-time
              */
             updated_at: string;
+        };
+        /** ConversationUpdate */
+        ConversationUpdate: {
+            /** Title */
+            title: string;
         };
         /**
          * EdgeType
@@ -1666,6 +1751,34 @@ export interface components {
             summary: string;
             /** Title */
             title: string;
+        };
+        /** FeedbackIn */
+        FeedbackIn: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "helpful" | "wrong_file" | "outdated" | "missing_context" | "invented_symbol" | "other";
+            /**
+             * Note
+             * @default
+             */
+            note: string;
+        };
+        /** FeedbackOut */
+        FeedbackOut: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "helpful" | "wrong_file" | "outdated" | "missing_context" | "invented_symbol" | "other";
+            /** Note */
+            note: string;
         };
         /**
          * FileOut
@@ -2136,6 +2249,7 @@ export interface components {
              * Format: date-time
              */
             created_at: string;
+            feedback?: components["schemas"]["FeedbackOut"] | null;
             /**
              * Id
              * Format: uuid
@@ -2659,6 +2773,34 @@ export interface components {
             last_seen_at: string;
             /** User Agent */
             user_agent: string | null;
+        };
+        /** ShareOut */
+        ShareOut: {
+            /** Path */
+            path: string;
+            /** Token */
+            token: string;
+        };
+        /** SharedConversation */
+        SharedConversation: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Messages */
+            messages: components["schemas"]["MessageOut"][];
+            /** Redacted */
+            redacted: boolean;
+            /** Repo */
+            repo: string | null;
+            /** Title */
+            title: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
         };
         /** SlugAvailability */
         SlugAvailability: {
@@ -3785,6 +3927,107 @@ export interface operations {
             };
         };
     };
+    rename_conversation_api_v1_orgs__org__conversations__conversation_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                conversation_id: string;
+                /** @description Organization slug */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConversationUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConversationOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    share_conversation_api_v1_orgs__org__conversations__conversation_id__share_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                conversation_id: string;
+                /** @description Organization slug */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ShareOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    unshare_conversation_api_v1_orgs__org__conversations__conversation_id__share_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                conversation_id: string;
+                /** @description Organization slug */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     org_events_api_v1_orgs__org__events_get: {
         parameters: {
             query?: never;
@@ -4102,6 +4345,74 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["MemberOut"];
                 };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    give_feedback_api_v1_orgs__org__messages__message_id__feedback_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                message_id: string;
+                /** @description Organization slug */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FeedbackIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FeedbackOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    take_back_feedback_api_v1_orgs__org__messages__message_id__feedback_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                message_id: string;
+                /** @description Organization slug */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Validation Error */
             422: {
@@ -4474,6 +4785,7 @@ export interface operations {
             query?: {
                 limit?: number;
                 cursor?: string | null;
+                q?: string | null;
             };
             header?: never;
             path: {
@@ -5410,6 +5722,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ReadinessResponse"];
+                };
+            };
+        };
+    };
+    shared_api_v1_s__token__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                token: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SharedConversation"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
