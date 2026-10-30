@@ -26,6 +26,8 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from sensei_core.db.base import Base, IdMixin, TimestampMixin
 from sensei_core.db.tenancy import OrgScopedMixin
+from sensei_core.db.types import HalfVector
+from sensei_core.models.chunks import EMBEDDING_DIMENSIONS
 
 
 class Conversation(IdMixin, OrgScopedMixin, TimestampMixin, Base):
@@ -103,3 +105,37 @@ class MessageCitation(IdMixin, OrgScopedMixin, Base):
     symbol_key: Mapped[str | None] = mapped_column(Text)
     provenance: Mapped[str] = mapped_column(String(32))  # what found it: evidence, a tool
     verified: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+
+
+class AnswerCacheEntry(IdMixin, OrgScopedMixin, Base):
+    """An answer kept for the same question again (4.9): at the same commit and mode, asked in
+    the same words (or, with embeddings, nearly), it is served again after its cited files are
+    checked unchanged. Gone with the answer."""
+
+    __tablename__ = "answer_cache"
+    __table_args__ = (
+        Index("ix_answer_cache_lookup", "snapshot_id", "mode", "question_key"),
+        Index("ix_answer_cache_repo_id", "repo_id"),
+        ForeignKeyConstraint(
+            ["message_id", "org_id"], ["messages.id", "messages.org_id"], ondelete="CASCADE"
+        ),
+        ForeignKeyConstraint(
+            ["repo_id", "org_id"], ["repos.id", "repos.org_id"], ondelete="CASCADE"
+        ),
+        ForeignKeyConstraint(
+            ["snapshot_id", "org_id"], ["snapshots.id", "snapshots.org_id"], ondelete="CASCADE"
+        ),
+    )
+
+    repo_id: Mapped[uuid.UUID] = mapped_column()
+    snapshot_id: Mapped[uuid.UUID] = mapped_column()
+    mode: Mapped[str] = mapped_column(String(16))
+    question_key: Mapped[str] = mapped_column(String(64))  # sha256 of the question, normalized
+    question: Mapped[str] = mapped_column(Text)
+    embedding: Mapped[list[float] | None] = mapped_column(HalfVector(EMBEDDING_DIMENSIONS))
+    message_id: Mapped[uuid.UUID] = mapped_column(index=True)
+    # The files its citations are in, by content hash, when it was kept.
+    file_hashes: Mapped[dict[str, str]] = mapped_column(JSONB, default=dict, server_default="{}")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )

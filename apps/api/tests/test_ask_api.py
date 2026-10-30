@@ -20,8 +20,10 @@ from fastapi import FastAPI, Request
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from sensei_api.answer_cache import lookup, question_key
 from sensei_core.mail import MemoryMailer
 from sensei_core.models import (
+    AnswerCacheEntry,
     AuditEvent,
     IndexJob,
     JobKind,
@@ -397,3 +399,133 @@ async def test_an_org_past_its_daily_cap_starts_no_run(
     error = refused.json()["error"]
     assert error["code"] == "cost_cap_reached"
     assert datetime.fromisoformat(error["details"]["resets_at"]) > datetime.now(UTC)
+
+
+# ---------------------------------------------------------------- the answer cache (4.9)
+
+
+def _cited_run() -> list[dict[str, Any]]:
+    """A run that reads the README, commits to it, and answers citing it."""
+    read = message("", stop_reason="tool_use")
+    read["content"] = [
+        {"type": "tool_use", "id": "t1", "name": "read_code", "input": {"path": "README.md"}}
+    ]
+    submit = message("", stop_reason="tool_use")
+    candidates = [
+        {"target": "README.md", "start_line": 1, "end_line": 1, "layer": "other", "why": "it"}
+    ]
+    submit["content"] = [
+        {
+            "type": "tool_use",
+            "id": "t2",
+            "name": "submit_evidence",
+            "input": {"candidates": candidates},
+        }
+    ]
+    answered = message("", stop_reason="end_turn")
+    answered["content"] = [
+        {
+            "type": "text",
+            "text": "The README names the items.",
+            "citations": [
+                {
+                    "type": "search_result_location",
+                    "source": "s",
+                    "title": "t",
+                    "cited_text": "c",
+                    "search_result_index": 0,
+                    "start_block_index": 0,
+                    "end_block_index": 1,
+                }
+            ],
+        }
+    ]
+    return [read, submit, answered]
+
+
+async def test_the_same_question_again_is_answered_from_the_cache(
+    app: FastAPI, client: httpx.AsyncClient, db_session: AsyncSession
+) -> None:
+    turns = _cited_run()
+    streamed: list[dict[str, Any]] = []
+
+    def model(request: httpx2.Request) -> httpx2.Response:
+        body = json.loads(request.content)
+        if body.get("stream"):
+            streamed.append(body)
+            return sse(turns.pop(0))
+        system = body["system"][0]["text"]
+        if system.startswith("Title this question"):
+            return httpx2.Response(200, json=message("The README"))
+        if "against the code it cites" in system:
+            verdicts = {"claims": [{"n": 1, "verdict": "supported"}]}
+            return httpx2.Response(200, json=message(json.dumps(verdicts)))
+        whole: dict[str, Any] = {"complete": True, "missing": [], "gap": ""}
+        return httpx2.Response(200, json=message(json.dumps(whole)))
+
+    app.state.ask_client = FakeAnthropic(routes={"/v1/messages": model}).client()
+    org, headers = await _setup(app, client, db_session)
+    first, _ = await _ask(app, client, org, headers, message="What does the README say?")
+    assert first.status_code == 200
+    assert "x-answer-cache" not in first.headers
+    asked = len(streamed)
+    conversation_id = first.headers["x-conversation-id"]
+
+    again, events = await _ask(
+        app,
+        client,
+        org,
+        headers,
+        message="what does the readme say",  # the same words, but case and the question mark
+        conversation_id=conversation_id,
+    )
+    assert again.headers["x-answer-cache"] == "hit"
+    assert len(streamed) == asked  # no new run
+    parts = [json.loads(data) for _, data in events[:-1]]
+    assert parts[0]["type"] == "start"
+    assert "".join(p["delta"] for p in parts if p["type"] == "text-delta") == (
+        "The README names the items."
+    )
+    assert {"type": "data-cache"}.items() <= next(
+        p for p in parts if p["type"] == "data-cache"
+    ).items()
+    stored = (await client.get(f"{org}/conversations/{conversation_id}")).json()
+    served = stored["messages"][-1]
+    assert served["status"] == "done"
+    assert [c["provenance"] for c in served["citations"]] == ["cache"]
+    assert served["citations"][0]["path"] == "README.md"
+
+
+async def test_a_kept_answer_whose_file_changed_is_not_served(
+    app: FastAPI, client: httpx.AsyncClient, db_session: AsyncSession
+) -> None:
+    turns = _cited_run()
+
+    def model(request: httpx2.Request) -> httpx2.Response:
+        body = json.loads(request.content)
+        if body.get("stream"):
+            return sse(turns.pop(0))
+        system = body["system"][0]["text"]
+        if "against the code it cites" in system:
+            verdicts = {"claims": [{"n": 1, "verdict": "supported"}]}
+            return httpx2.Response(200, json=message(json.dumps(verdicts)))
+        whole: dict[str, Any] = {"complete": True, "missing": [], "gap": ""}
+        return httpx2.Response(200, json=message(json.dumps(whole)))
+
+    app.state.ask_client = FakeAnthropic(routes={"/v1/messages": model}).client()
+    org, headers = await _setup(app, client, db_session)
+    await _ask(app, client, org, headers, message="What does the README say?")
+    entry = await db_session.scalar(select(AnswerCacheEntry))
+    assert entry is not None
+    asked = "What does the README say?"
+
+    async def found() -> AnswerCacheEntry | None:
+        return await lookup(
+            db_session, snapshot_id=entry.snapshot_id, mode="fast", question=asked, embedding=None
+        )
+
+    assert await found() == entry
+    entry.file_hashes = {"README.md": "ff" * 32}  # as if the file had changed since
+    await db_session.flush()
+    assert await found() is None
+    assert question_key("What does the README say?") == question_key("  what does the readme say ")

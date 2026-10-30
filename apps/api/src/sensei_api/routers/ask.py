@@ -31,6 +31,7 @@ from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sse_starlette import EventSourceResponse, ServerSentEvent
 
+from sensei_api import answer_cache
 from sensei_api.deps import DbSession, RedisClient
 from sensei_api.orgs import OrgAccessDep
 from sensei_api.ratelimit import TokenBucket
@@ -39,13 +40,14 @@ from sensei_api.routers import browse, search
 from sensei_api.runs import Recorder
 from sensei_api.spend import remaining_today
 from sensei_api.streams import HEADERS, HEARTBEAT_SECONDS, READ_BLOCK_MS, last_event_id
-from sensei_api.ui_stream import DONE, HEADER, UIStream, confidence_data, text_of
+from sensei_api.ui_stream import DONE, HEADER, UIStream, confidence_data, replayed, text_of
 from sensei_core.config import Settings
 from sensei_core.db.tenancy import set_org_context, set_user_context
 from sensei_core.errors import ConflictError, InvalidError, NotFoundError, RateLimitedError
 from sensei_core.indexing.snapshots import resolve_snapshot
 from sensei_core.models import (
     AgentRun,
+    AnswerCacheEntry,
     Conversation,
     ConversationMessage,
     MessageCitation,
@@ -53,9 +55,12 @@ from sensei_core.models import (
     RepoFile,
     Snapshot,
 )
+from sensei_core.models.chunks import EMBEDDING_DIMENSIONS
 from sensei_core.storage import Bucket, ObjectStorage
 from sensei_engine.agent.loop import Answer, AskAgent, Budget, Done, Exchange, Mode
 from sensei_engine.agent.tools import ToolContext
+from sensei_engine.embed.provider import InputType
+from sensei_engine.embed.provider import usage_ledger as embedding_ledger
 from sensei_engine.llm.anthropic_client import (
     AnthropicClient,
     LLMError,
@@ -247,6 +252,16 @@ async def ask(
         parts=[{"type": "text", "text": body.message}],
         snapshot_id=snapshot.id,
     )
+    embedding = await _embedded(request, db, repo.org_id, body.message)
+    kept = await answer_cache.lookup(
+        db,
+        snapshot_id=snapshot.id,
+        mode=body.mode.value,
+        question=body.message,
+        embedding=embedding,
+    )
+    if kept is not None:
+        return await _served(db, conversation, question, kept, snapshot)
     record = AgentRun(
         org_id=repo.org_id,
         repo_id=repo.id,
@@ -289,6 +304,7 @@ async def ask(
         repo_name=f"{repo.owner}/{repo.name}",
         run_id=record.id,
         remaining=remaining,
+        embedding=embedding,
     )
     key = f"{STREAM_PREFIX}{answer.id}"
     headers = {
@@ -449,6 +465,7 @@ class _Run:
     repo_name: str
     run_id: uuid.UUID
     remaining: Decimal | None  # what the org may still spend today (None: no cap)
+    embedding: list[float] | None  # the question's, for the answer cache
 
     def start(self) -> None:
         task = asyncio.create_task(self._run())
@@ -484,6 +501,18 @@ class _Run:
                         answer = event.answer
                 await recorder.finish(answer)
                 await self._store(db, stream, answer, ctx.sha)
+                if answer is not None and answer_cache.keepable(answer):
+                    await answer_cache.keep(
+                        db,
+                        org_id=self.org_id,
+                        repo_id=self.repo_id,
+                        snapshot_id=self.snapshot_id,
+                        mode=self.mode.value,
+                        question=self.question,
+                        embedding=self.embedding,
+                        message_id=self.message_id,
+                        cited=[c.cited.path for c in answer.citations],
+                    )
         except Exception as exc:  # the run's own failure: said in its stream and stored
             log.exception("ask run failed", message_id=str(self.message_id))
             await self._publish(key, stream.failed(_said(exc)))
@@ -621,6 +650,91 @@ class _Run:
                 .where(Conversation.id == self.conversation_id)
                 .values(title=title)
             )
+
+
+# ---------------------------------------------------------------- the answer cache
+
+
+async def _embedded(
+    request: Request, db: AsyncSession, org_id: uuid.UUID, question: str
+) -> list[float] | None:
+    """The question's embedding, for near matches in the answer cache (None without
+    embeddings, or when they can't be had: the cache then matches the same words only)."""
+    provider = search.embedding_provider(request)
+    if provider is None or provider.dims != EMBEDDING_DIMENSIONS:
+        return None
+    costs = search.cost_calculator(request)
+    try:
+        (vector,) = await provider.embed(
+            [question],
+            InputType.QUERY,
+            on_usage=embedding_ledger(db, costs, org_id=org_id, ref_type=REF_TYPE),
+        )
+    except Exception:  # the cache is a shortcut, never what an answer stands on
+        log.warning("question not embedded for the answer cache")
+        return None
+    return vector
+
+
+async def _served(
+    db: AsyncSession,
+    conversation: Conversation,
+    question: ConversationMessage,
+    kept: AnswerCacheEntry,
+    snapshot: Snapshot,
+) -> EventSourceResponse:
+    """The kept answer as this question's: its parts and citations copied, then streamed."""
+    source = await db.get(ConversationMessage, kept.message_id)
+    if source is None:
+        raise RuntimeError("a kept answer's message is gone")
+    cache = {"type": "data-cache", "id": "cache", "data": {"from": str(source.id)}}
+    answer = ConversationMessage(
+        org_id=conversation.org_id,
+        conversation_id=conversation.id,
+        role="assistant",
+        status="done",
+        parts=[*source.parts, cache],
+        confidence=source.confidence,
+        abstained=source.abstained,
+        snapshot_id=snapshot.id,
+    )
+    db.add_all([question, answer])
+    await db.flush()
+    cited = await db.scalars(select(MessageCitation).where(MessageCitation.message_id == source.id))
+    for row in list(cited):
+        db.add(
+            MessageCitation(
+                org_id=row.org_id,
+                message_id=answer.id,
+                idx=row.idx,
+                repo_id=row.repo_id,
+                sha=row.sha,
+                path=row.path,
+                start_line=row.start_line,
+                end_line=row.end_line,
+                symbol_key=row.symbol_key,
+                provenance="cache",
+                verified=row.verified,
+            )
+        )
+    await db.execute(
+        update(Conversation).where(Conversation.id == conversation.id).values(updated_at=func.now())
+    )
+    await db.flush()
+    headers = {
+        **HEADERS,
+        HEADER[0]: HEADER[1],
+        "x-conversation-id": str(conversation.id),
+        "x-answer-cache": "hit",
+    }
+    parts = replayed(str(answer.id), answer.parts)
+    return EventSourceResponse(_static(parts), ping=HEARTBEAT_SECONDS, headers=headers)
+
+
+async def _static(parts: list[dict[str, Any]]) -> AsyncGenerator[ServerSentEvent]:
+    for part in parts:
+        yield ServerSentEvent(data=orjson.dumps(part).decode())
+    yield ServerSentEvent(data=DONE)
 
 
 # ---------------------------------------------------------------- helpers

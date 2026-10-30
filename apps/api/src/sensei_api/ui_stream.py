@@ -238,3 +238,44 @@ def _verified(verification: Verification) -> dict[str, Any]:
 def text_of(parts: Sequence[Part]) -> str:
     """A message's answer text: its text parts, in order."""
     return "".join(part["text"] for part in parts if part["type"] == "text")
+
+
+def replayed(message_id: str, parts: Sequence[Part]) -> list[Part]:
+    """A stored message (its parts as the client keeps them) as a stream again, whole: what a
+    kept answer is served as."""
+    out: list[Part] = [{"type": "start", "messageId": message_id}]
+    step = False
+    for n, part in enumerate(parts):
+        kind = part["type"]
+        if kind == "step-start":
+            if step:
+                out.append({"type": "finish-step"})
+            out.append({"type": "start-step"})
+            step = True
+        elif kind in ("text", "reasoning"):
+            key = f"{kind}-{n}"
+            out += [
+                {"type": f"{kind}-start", "id": key},
+                {"type": f"{kind}-delta", "id": key, "delta": part["text"]},
+                {"type": f"{kind}-end", "id": key},
+            ]
+        elif kind.startswith("tool-"):
+            call, name = part["toolCallId"], kind.removeprefix("tool-")
+            out.append(
+                {
+                    "type": "tool-input-available",
+                    "toolCallId": call,
+                    "toolName": name,
+                    "input": part.get("input", {}),
+                }
+            )
+            if "output" in part:
+                out.append(
+                    {"type": "tool-output-available", "toolCallId": call, "output": part["output"]}
+                )
+        elif kind.startswith("data-"):
+            out.append(dict(part))
+    if step:
+        out.append({"type": "finish-step"})
+    out.append({"type": "finish"})
+    return out

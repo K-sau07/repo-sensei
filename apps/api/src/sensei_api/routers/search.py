@@ -232,7 +232,7 @@ def cost_calculator(request: Request) -> CostCalculator:
     return calc
 
 
-def _embeddings(request: Request) -> EmbeddingProvider | None:
+def embedding_provider(request: Request) -> EmbeddingProvider | None:
     """The deployment's embedding provider (the one the chunks were embedded with); None
     without a Voyage key. Tests set their own on ``app.state.embeddings``."""
     state = request.app.state
@@ -287,7 +287,7 @@ async def semantic_legs(
 ) -> EmbeddedLegs | None:
     """The semantic legs, once the snapshot's embeddings are ready (else None: partial mode);
     the query's embedding is billed to the org."""
-    provider = _embeddings(request)
+    provider = embedding_provider(request)
     if provider is None or not await embeddings_ready(db, redis, snapshot):
         return None
     return EmbeddedLegs(
