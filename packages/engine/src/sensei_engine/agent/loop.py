@@ -42,6 +42,17 @@ from sensei_engine.agent.overview import repo_overview
 from sensei_engine.agent.round0 import pre_retrieve
 from sensei_engine.agent.tools import CitationIndex, ToolContext, definitions, run_tool
 from sensei_engine.agent.tools.base import Cited, Evidence
+from sensei_engine.agent.verify import (
+    MAX_ROUNDS,
+    Checked,
+    Verification,
+    claims,
+    existing,
+    identifiers,
+    support,
+    unknown,
+    whole,
+)
 from sensei_engine.llm.anthropic_client import (
     PROVIDER,
     AnthropicClient,
@@ -52,6 +63,7 @@ from sensei_engine.llm.anthropic_client import (
     LLMUsageSink,
     Tier,
 )
+from sensei_engine.search.layers import lane_of
 from sensei_engine.search.rerank import Reranker, RerankUsageSink
 from sensei_engine.search.route import QueryClass, Route, classify
 
@@ -65,6 +77,11 @@ LAST_TURN_NOTE = (
 BUDGET_NOTE = (
     "Your research used its budget before you committed to evidence: answer from what is "
     "here, and say what you couldn't check."
+)
+GAP_TURNS = 2  # the turns a search for what an answer misses may take
+GAP_NOTE = (
+    "Your answer doesn't cover all of the question yet: {gap} Search for it, then call "
+    "submit_evidence again with what you found."
 )
 EVIDENCE_REMINDER = (
     "Before you answer, call submit_evidence with the code you will cite. The answer is "
@@ -118,6 +135,7 @@ class PreRetrieved:
     files: int
     traced: int
     ms: int
+    agreement: float | None = None  # of its two passes (flow, architecture)
 
 
 @dataclass(frozen=True, slots=True)
@@ -127,6 +145,21 @@ class EvidenceChosen:
 
     pieces: int
     submitted: int
+
+
+@dataclass(frozen=True, slots=True)
+class Verified:
+    """The answer's checks (4.5)."""
+
+    verification: Verification
+
+
+@dataclass(frozen=True, slots=True)
+class GapFound:
+    """The answer isn't whole: what it misses, searched for once more."""
+
+    missing: tuple[str, ...]
+    gap: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -185,7 +218,8 @@ class Answer:
     cost_usd: Decimal | None  # None: a model without a price
     evidence: tuple[Evidence, ...]
     escalated: bool
-    dropped_citations: int = 0  # citations that point at nothing the run gave
+    dropped_citations: int = 0  # citations that point at nothing the run gave, or no lines
+    verification: Verification | None = None  # None: not verified
 
 
 @dataclass(frozen=True, slots=True)
@@ -199,6 +233,8 @@ AgentEvent = (
     | ToolCalled
     | ToolAnswered
     | EvidenceChosen
+    | Verified
+    | GapFound
     | TextDelta
     | CitationFound
     | Done
@@ -279,6 +315,13 @@ class _Run:
     stopped: Stop = "answered"
     result: LLMTurnResult | None = None  # the last turn's
     turn: int = 0
+    evidence_blocks: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
+    shown: str = ""  # the answer turn's evidence, as text (what its names may come from)
+    text: str = ""  # the answer, read from its turn
+    citations: tuple[AnswerCitation, ...] = ()
+    dropped: int = 0
+    verification: Verification | None = None
+    agreement: float | None = None  # of round 0's two passes
 
 
 class AskAgent:
@@ -292,6 +335,7 @@ class AskAgent:
         pre_retrieval: bool = True,
         reranker: Reranker | None = None,
         on_rerank_usage: RerankUsageSink | None = None,
+        verify: bool = True,
     ) -> None:
         self.client = client
         self.budget = budget or Budget()
@@ -300,6 +344,7 @@ class AskAgent:
         self.pre_retrieval = pre_retrieval
         self.reranker = reranker  # 4.4's final rerank (None: the evidence in reading order)
         self.on_rerank_usage = on_rerank_usage
+        self.verify = verify  # 4.5's checks (False: the answer as it came)
 
     async def prewarm(self, ctx: ToolContext, *, overview: str | None = None) -> None:
         """Write the run's shared prefix to the cache (an Ask page opening): Sonnet's, at the
@@ -318,7 +363,8 @@ class AskAgent:
         overview: str | None = None,
         escalate: bool = False,
     ) -> AsyncIterator[AgentEvent]:
-        plan = plan_for(classify(question).route, mode, escalate=escalate)
+        route = classify(question).route
+        plan = plan_for(route, mode, escalate=escalate)
         run = _Run(
             plan,
             self.client.model_for(plan.tier),
@@ -329,38 +375,103 @@ class AskAgent:
             _Spent(self.budget, self.costs),
         )
         if self.pre_retrieval and (found := await _round0(ctx, question, run.messages, run.index)):
+            run.agreement = found.agreement
             yield found
-        async for event in self._research(run, ctx):
+        async for event in self._research(run, ctx, self.budget.max_turns - 1):
             yield event
         async for event in self._answer(run, ctx, question, conversation):
+            yield event
+        layers = tuple(dict.fromkeys(lane_of(layer).value for layer in route.layers))
+        async for event in self._verified(run, ctx, question, conversation, layers):
             yield event
         result = run.result
         if result is None:
             raise RuntimeError(NO_RESULT)
-        stopped = CUT_SHORT.get(result.stop_reason or "", run.stopped)
-        text, citations, dropped = _answer(result.content, run.index)
-        for n, citation in enumerate(citations, start=1):
+        for n, citation in enumerate(run.citations, start=1):
             yield CitationFound(n, citation)
         yield Done(
             Answer(
-                text,
-                citations,
-                stopped,
+                run.text,
+                run.citations,
+                CUT_SHORT.get(result.stop_reason or "", run.stopped),
                 result.model,
                 run.turn,
                 tuple(run.spent.usage),
                 run.spent.cost if self.costs is not None else None,
                 tuple(ctx.evidence),
                 plan.escalated,
-                dropped,
+                run.dropped,
+                run.verification,
             )
         )
 
-    async def _research(self, run: _Run, ctx: ToolContext) -> AsyncIterator[AgentEvent]:
-        """The turns with tools, until the agent commits to its evidence (or answers without,
-        reminded once), or its turns (all but the answer's) or budget run out."""
+    async def _verified(
+        self,
+        run: _Run,
+        ctx: ToolContext,
+        question: str,
+        conversation: Sequence[Exchange],
+        layers: tuple[str, ...],
+    ) -> AsyncIterator[AgentEvent]:
+        """The answer read from its turn, then verified (4.5); one that isn't whole searched
+        for what it misses and answered again, at most :data:`~.verify.MAX_ROUNDS` times."""
+        for rounds in range(MAX_ROUNDS + 1):
+            result = run.result
+            if result is None:
+                raise RuntimeError(NO_RESULT)
+            run.text, run.citations, run.dropped = _answer(result.content, run.index)
+            if not self.verify or result.stop_reason in CUT_SHORT:
+                return
+            run.verification = await self._verify(run, ctx, question, layers, rounds)
+            yield Verified(run.verification)
+            whole_answer = run.verification.whole
+            if whole_answer is None or whole_answer.complete or rounds == MAX_ROUNDS:
+                return
+            if run.spent.over:
+                return
+            yield GapFound(whole_answer.missing, whole_answer.gap)
+            run.messages.append({"role": "user", "content": GAP_NOTE.format(gap=whole_answer.gap)})
+            async for event in self._research(run, ctx, run.turn + GAP_TURNS):
+                yield event
+            async for event in self._answer(run, ctx, question, conversation):
+                yield event
+
+    async def _verify(
+        self, run: _Run, ctx: ToolContext, question: str, layers: tuple[str, ...], rounds: int
+    ) -> Verification:
+        """The answer's checks: its citations' lines exist (one that doesn't is dropped), its
+        names exist, its claims are supported, it is whole."""
+        exists, files = existing(ctx, [c.cited for c in run.citations])
+        kept = tuple(c for c, ok in zip(run.citations, exists, strict=True) if ok)
+        gone = [c for c, ok in zip(run.citations, exists, strict=True) if not ok]
+        run.dropped += len(gone)
+        run.citations = kept
+        found = claims(run.text, [(c.start, c.end, c.cited) for c in kept])
+        flagged = tuple(
+            claim.n
+            for claim in claims(run.text, [(c.start, c.end, c.cited) for c in gone])
+            if claim.cited
+        )
+        names = identifiers(run.text)
+        strange = tuple(await unknown(ctx, names, run.shown)) if names else ()
+        verdicts = await support(self.client, found, files, on_usage=self.on_usage)
+        evidence = [b["title"] for b in run.evidence_blocks if b["type"] == "search_result"]
+        answered = await whole(
+            self.client,
+            question,
+            run.text,
+            layers,
+            evidence,
+            deep=run.plan.escalated,
+            on_usage=self.on_usage,
+        )
+        checked = tuple(Checked(claim, verdicts.get(claim.n)) for claim in found)
+        return Verification(checked, len(gone), flagged, strange, answered, rounds, run.agreement)
+
+    async def _research(self, run: _Run, ctx: ToolContext, turns: int) -> AsyncIterator[AgentEvent]:
+        """The turns with tools, up to the ``turns``th of the run, until the agent commits to
+        its evidence (or answers without, reminded once), or its turns or budget run out."""
         reminded = False
-        turns = self.budget.max_turns - 1  # the last is the answer's
         while run.turn < turns:
             if run.spent.over:
                 run.stopped = "budget"
@@ -411,6 +522,8 @@ class AskAgent:
         blocks, sources = answer_blocks(ctx, final)
         run.index = CitationIndex()
         run.index.add(sources)
+        run.evidence_blocks = blocks
+        run.shown = "\n".join(_shown_text(block) for block in blocks)
         yield EvidenceChosen(len(sources), sum(piece.submitted for piece in final[: len(sources)]))
         note = STOPPED_NOTES.get(run.stopped)
         asked = question if note is None else f"{question}\n\n{note}"
@@ -475,7 +588,13 @@ async def _round0(
         return None
     index.add(found.sources)
     messages[-1] = {"role": "user", "content": [*found.content, {"type": "text", "text": question}]}
-    return PreRetrieved(found.results, found.files, found.traced, found.ms)
+    return PreRetrieved(found.results, found.files, found.traced, found.ms, found.agreement)
+
+
+def _shown_text(block: dict[str, Any]) -> str:
+    if block["type"] == "text":
+        return block["text"]
+    return "\n".join([block["title"], *(part["text"] for part in block["content"])])
 
 
 def _submitted(result: LLMTurnResult) -> bool:

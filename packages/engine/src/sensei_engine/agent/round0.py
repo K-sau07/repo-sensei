@@ -14,19 +14,23 @@ import asyncio
 import time
 from collections.abc import Sequence
 from dataclasses import dataclass
+from itertools import zip_longest
 from typing import Any
 
 from sensei_engine.agent.tools import ToolContext, ToolError
 from sensei_engine.agent.tools.base import LANES, Results, Source
 from sensei_engine.agent.tools.code_search import add_results, search
 from sensei_engine.agent.tools.trace_feature import describe_path
+from sensei_engine.agent.verify import agreement
 from sensei_engine.graph.snapshot import GraphSnapshot
 from sensei_engine.graph.trace import TraceError, trace_feature
-from sensei_engine.search.route import QueryClass, classify
-from sensei_engine.search.service import Result, SearchQuery
+from sensei_engine.search.route import QueryClass, Route
+from sensei_engine.search.service import Answer, Result, SearchQuery
 from sensei_engine.symbols.extract import SymbolKind
 
 ROUND0_TOKENS = 12_000
+AGREEMENT_TOP = 8  # the spans two passes are compared by
+TWO_PASSES = frozenset({QueryClass.FLOW, QueryClass.ARCHITECTURE})
 MAX_RESULTS = 16
 SEED_LANES = ("ui", "api")  # where a flow is traced from: its page, else its endpoint
 FLOW_KINDS = frozenset(
@@ -50,23 +54,28 @@ class Round0:
     files: int
     traced: int  # trace paths
     ms: int
+    agreement: float | None = None  # of the two passes, when it took two (4.5)
 
 
 async def pre_retrieve(ctx: ToolContext, question: str) -> Round0 | None:
     """Round 0's evidence for ``question``; None when nothing was found, or the search can't
     run (the run then starts with the question alone)."""
     started = time.monotonic()
-    route = classify(question).route
+    route = await ctx.search.route(question, scope=str(ctx.org_id))
+    passes = _passes(route, question)
     try:
-        answer = await search(ctx, SearchQuery(question))
+        answers = [await search(ctx, SearchQuery(text)) for text in passes]
     except ToolError:
         return None
-    best = sorted(
-        (result for results in answer.lanes.values() for result in results),
-        key=lambda r: (-r.score, r.path, r.start_line),
-    )[:MAX_RESULTS]
+    ranked = [_ranked(answer) for answer in answers]
+    best = _interleaved(ranked)[:MAX_RESULTS]
     if not best:
         return None
+    terms = tuple(dict.fromkeys(term for answer in answers for term in answer.terms))
+    agreed = None
+    if len(ranked) == 2:
+        first, second = ([(r.path, r.start_line) for r in one[:AGREEMENT_TOP]] for one in ranked)
+        agreed = agreement(first, second)
     out = Results(ROUND0_TOKENS)
     out.text(INTRO)
     paths = await _traced(ctx, question, best) if route.query_class is QueryClass.FLOW else ()
@@ -76,13 +85,46 @@ async def pre_retrieve(ctx: ToolContext, question: str) -> Round0 | None:
     for lane in LANES:
         grouped = _by_file([r for r in best if r.lane.value == lane])
         if grouped and out.text(f"Layer {lane}:"):
-            shown += (await add_results(ctx, out, grouped, answer.terms))[0]
+            shown += (await add_results(ctx, out, grouped, terms))[0]
     if not shown:
         return None
     result = out.done("", hits=shown, narrow="search with the tools for more")
     ms = round((time.monotonic() - started) * 1000)
     files = len({source.path for source in result.sources})
-    return Round0(tuple(result.content), tuple(result.sources), shown, files, len(paths), ms)
+    return Round0(
+        tuple(result.content), tuple(result.sources), shown, files, len(paths), ms, agreed
+    )
+
+
+def _passes(route: Route, question: str) -> list[str]:
+    """What round 0 searches for: a flow or architecture question in its two decompositions
+    (what the code is, what it does), when the router gave both; else the question."""
+    structural, behavioural = route.structural_rewrite, route.behavioural_rewrite
+    if route.query_class in TWO_PASSES and structural and behavioural:
+        return [structural, behavioural]
+    return [question]
+
+
+def _ranked(answer: Answer) -> list[Result]:
+    return sorted(
+        (result for results in answer.lanes.values() for result in results),
+        key=lambda r: (-r.score, r.path, r.start_line),
+    )
+
+
+def _interleaved(ranked: Sequence[Sequence[Result]]) -> list[Result]:
+    """Passes' results taken in turn (their scores aren't on one scale), each span once."""
+    seen: set[tuple[str, int, int]] = set()
+    merged: list[Result] = []
+    for row in zip_longest(*ranked):
+        for result in row:
+            if result is None:
+                continue
+            key = (result.path, result.start_line, result.end_line)
+            if key not in seen:
+                seen.add(key)
+                merged.append(result)
+    return merged
 
 
 def _by_file(results: Sequence[Result]) -> list[Result]:

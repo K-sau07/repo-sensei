@@ -17,6 +17,9 @@ from sensei_engine.agent.loop import AskAgent, Done, PreRetrieved
 from sensei_engine.agent.round0 import INTRO, ROUND0_TOKENS, pre_retrieve
 from sensei_engine.agent.tools import ToolContext
 from sensei_engine.chunk.tokens import count_tokens
+from sensei_engine.llm.anthropic_client import LLMUsageSink
+from sensei_engine.search.route import Route, classify
+from sensei_engine.search.service import SearchService
 from sensei_testing.anthropic import FakeAnthropic, message, sse
 from sensei_testing.indexed import ITEMS, ROUTE, SERVICE, index_repo
 
@@ -101,7 +104,7 @@ async def test_the_first_turn_starts_with_round0_and_cites_it(ctx: ToolContext) 
         return sse(answered)
 
     fake = FakeAnthropic(routes={"/v1/messages": reply})
-    events = [e async for e in AskAgent(fake.client()).run(FLOW, ctx, overview="o")]
+    events = [e async for e in AskAgent(fake.client(), verify=False).run(FLOW, ctx, overview="o")]
     retrieved = events[0]
     assert isinstance(retrieved, PreRetrieved)
     assert retrieved.results == found.results
@@ -118,3 +121,27 @@ async def test_the_first_turn_starts_with_round0_and_cites_it(ctx: ToolContext) 
     assert isinstance(done, Done)
     (citation,) = done.answer.citations
     assert citation.cited.path == SERVICE
+
+
+class _TwoWays(SearchService):
+    """A router that decomposes the question both ways (as the model's does)."""
+
+    async def route(
+        self, query: str, *, scope: str, on_llm_usage: LLMUsageSink | None = None
+    ) -> Route:
+        return dataclasses.replace(
+            classify(query).route,
+            structural_rewrite="create_item_route create_item",
+            behavioural_rewrite="add the item to the session",
+        )
+
+
+async def test_a_flow_is_searched_both_ways_and_their_agreement_kept(ctx: ToolContext) -> None:
+    found = await pre_retrieve(dataclasses.replace(ctx, search=_TwoWays()), FLOW)
+    assert found is not None
+    assert found.agreement is not None
+    assert 0.0 <= found.agreement <= 1.0
+    assert SERVICE in {s.path for s in found.sources}
+    once = await pre_retrieve(ctx, FLOW)  # the rules give no decomposition: one pass
+    assert once is not None
+    assert once.agreement is None

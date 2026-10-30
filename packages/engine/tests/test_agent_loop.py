@@ -163,7 +163,7 @@ async def test_research_commits_to_evidence_and_the_answer_cites_only_it(tmp_pat
         _answer([CITED], "end_turn"),
     )
     costs = CostCalculator(DEFAULT_PRICE_TABLE)
-    agent = AskAgent(fake.client(), pre_retrieval=False, costs=costs)
+    agent = AskAgent(fake.client(), pre_retrieval=False, verify=False, costs=costs)
     events = await _events(agent, QUESTION, _ctx(tmp_path))
 
     kinds = [type(e).__name__ for e in events]
@@ -221,7 +221,9 @@ async def test_an_answer_without_evidence_is_reminded_once(tmp_path: Path) -> No
         _answer([_text("In create_item.")], "end_turn"),
         _answer([_text("Still create_item.")], "end_turn"),
     )
-    events = await _events(AskAgent(fake.client(), pre_retrieval=False), QUESTION, _ctx(tmp_path))
+    events = await _events(
+        AskAgent(fake.client(), pre_retrieval=False, verify=False), QUESTION, _ctx(tmp_path)
+    )
     second = fake.bodies(PATH)[1]
     assert second["messages"][-1] == {"role": "user", "content": EVIDENCE_REMINDER}
     done = events[-1]
@@ -232,7 +234,7 @@ async def test_an_answer_without_evidence_is_reminded_once(tmp_path: Path) -> No
 
 async def test_research_out_of_turns_answers_from_what_it_read(tmp_path: Path) -> None:
     fake = _fake(_answer([READ], "tool_use"), _answer([_text("So.")], "end_turn"))
-    agent = AskAgent(fake.client(), pre_retrieval=False, budget=Budget(max_turns=2))
+    agent = AskAgent(fake.client(), pre_retrieval=False, verify=False, budget=Budget(max_turns=2))
     events = await _events(agent, QUESTION, _ctx(tmp_path))
     starts = [e for e in events if isinstance(e, StepStarted)]
     assert [s.tools for s in starts] == [True, False]
@@ -250,7 +252,9 @@ async def test_a_run_past_its_budget_answers_with_what_it_has(tmp_path: Path) ->
         _answer([READ], "tool_use", input_tokens=5000),
         _answer([_text("Partly.")], "end_turn"),
     )
-    agent = AskAgent(fake.client(), pre_retrieval=False, budget=Budget(max_input_tokens=4000))
+    agent = AskAgent(
+        fake.client(), pre_retrieval=False, verify=False, budget=Budget(max_input_tokens=4000)
+    )
     events = await _events(agent, QUESTION, _ctx(tmp_path))
     last = fake.bodies(PATH)[-1]
     assert last["tool_choice"] == {"type": "none"}
@@ -288,7 +292,7 @@ async def test_what_was_read_besides_is_reranked_against_the_question(tmp_path: 
         _answer([_text("create_item.")], "end_turn"),
     )
     reranker = _Reversing()
-    agent = AskAgent(fake.client(), pre_retrieval=False, reranker=reranker)
+    agent = AskAgent(fake.client(), pre_retrieval=False, verify=False, reranker=reranker)
     await _events(agent, QUESTION, _ctx(tmp_path))
     assert reranker.queries == [f"agent: {QUESTION}"]
     assert _titles(fake.bodies(PATH)[-1]) == [SERVICE, "README.md"]  # read the other way round
@@ -296,7 +300,9 @@ async def test_what_was_read_besides_is_reranked_against_the_question(tmp_path: 
 
 async def test_the_answer_streams_and_a_refusal_says_so(tmp_path: Path) -> None:
     fake = _fake(_answer([_text("No.")], "refusal"))
-    events = await _events(AskAgent(fake.client(), pre_retrieval=False), "x", _ctx(tmp_path))
+    events = await _events(
+        AskAgent(fake.client(), pre_retrieval=False, verify=False), "x", _ctx(tmp_path)
+    )
     assert [e.text for e in events if isinstance(e, TextDelta)] == ["No."]
     done = events[-1]
     assert isinstance(done, Done)
@@ -307,7 +313,7 @@ async def test_the_answer_streams_and_a_refusal_says_so(tmp_path: Path) -> None:
 async def test_earlier_exchanges_are_the_conversation(tmp_path: Path) -> None:
     fake = _fake(_answer([_text("Yes.")], "end_turn"), _answer([_text("Yes.")], "end_turn"))
     earlier = (Exchange("where is an item saved?", "In create_item."),)
-    agent = AskAgent(fake.client(), pre_retrieval=False)
+    agent = AskAgent(fake.client(), pre_retrieval=False, verify=False)
     await _events(agent, "and deleted?", _ctx(tmp_path), conversation=earlier)
     body = fake.bodies(PATH)[0]
     assert body["messages"] == [
@@ -337,7 +343,10 @@ def test_the_question_picks_the_model_and_effort(
 async def test_deep_runs_on_the_deep_model(tmp_path: Path) -> None:
     fake = _fake(_answer([_text("Yes.")], "end_turn"), _answer([_text("Yes.")], "end_turn"))
     events = await _events(
-        AskAgent(fake.client(), pre_retrieval=False), "x", _ctx(tmp_path), mode=Mode.DEEP
+        AskAgent(fake.client(), pre_retrieval=False, verify=False),
+        "x",
+        _ctx(tmp_path),
+        mode=Mode.DEEP,
     )
     body = fake.bodies(PATH)[0]
     assert (body["model"], body["output_config"]) == ("claude-opus-5-5", {"effort": "high"})
@@ -348,7 +357,9 @@ async def test_deep_runs_on_the_deep_model(tmp_path: Path) -> None:
 
 async def test_prewarm_writes_the_prefix_only(tmp_path: Path) -> None:
     fake = _fake()
-    await AskAgent(fake.client(), pre_retrieval=False).prewarm(_ctx(tmp_path), overview=OVERVIEW)
+    await AskAgent(fake.client(), pre_retrieval=False, verify=False).prewarm(
+        _ctx(tmp_path), overview=OVERVIEW
+    )
     (body,) = fake.bodies(PATH)
     assert body["max_tokens"] == 0
     assert "stream" not in body
