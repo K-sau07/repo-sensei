@@ -1,0 +1,457 @@
+[
+ {
+  "description": "Search the repository's code by meaning and by its words at once: hybrid keyword, symbol, semantic and call-graph search, reranked. Use it first for a question in words (\"where are passwords hashed?\", \"how is an item created\"), or to find the code of a feature, a layer or a concept when you don't know its names. Each result is the definition (or the lines) that matched, as a citable search result, best first. Don't use it for an exact string or a regular expression (use grep), for a name you know (use find_symbol), or to read more of a file you already found (use read_code). Narrow with path_glob (\"backend/**\"), lang (\"python\") or layer (ui, api, svc, db, other); page with the next_cursor a result ends with.",
+  "input_examples": [
+   {
+    "query": "where are passwords hashed"
+   },
+   {
+    "layer": "api",
+    "path_glob": "backend/**",
+    "query": "create item"
+   }
+  ],
+  "input_schema": {
+   "additionalProperties": false,
+   "properties": {
+    "cursor": {
+     "description": "A previous result's next_cursor.",
+     "type": "string"
+    },
+    "lang": {
+     "description": "A language id: \"python\", \"typescript\".",
+     "type": "string"
+    },
+    "layer": {
+     "description": "One layer only.",
+     "enum": [
+      "ui",
+      "api",
+      "svc",
+      "db",
+      "other"
+     ],
+     "type": "string"
+    },
+    "limit": {
+     "description": "Results per page, 1 to 20.",
+     "type": "integer"
+    },
+    "mode": {
+     "description": "auto (default) uses every leg; keyword skips embeddings; semantic searches by meaning only.",
+     "enum": [
+      "auto",
+      "keyword",
+      "semantic"
+     ],
+     "type": "string"
+    },
+    "path_glob": {
+     "description": "Only paths matching this glob: \"backend/**\", \"**/*.tsx\".",
+     "type": "string"
+    },
+    "query": {
+     "description": "What to find, in words or names.",
+     "type": "string"
+    },
+    "response_format": {
+     "description": "concise (default): the lines around each match; detailed: the whole definition, up to 60 lines.",
+     "enum": [
+      "concise",
+      "detailed"
+     ],
+     "type": "string"
+    }
+   },
+   "required": [
+    "query"
+   ],
+   "type": "object"
+  },
+  "name": "code_search",
+  "strict": true
+ },
+ {
+  "description": "Find an exact string, or a regular expression, in every file of the repository at this commit (ripgrep). Use it for a literal you know: an error message, a route path (\"/api/v1/items\"), a config key, an identifier's every use, a TODO. Each file with matches is one citable search result: its matching lines, two lines of context around each, files with more matches first. Don't use it to search by meaning (use code_search) or to find where a name is defined (use find_symbol). The pattern is a fixed string unless regex is true; matching is case-insensitive while the pattern is all lower case. Narrow with path_glob (\"frontend/src/**/*.tsx\"); page with next_cursor.",
+  "input_examples": [
+   {
+    "pattern": "/api/v1/items"
+   },
+   {
+    "path_glob": "backend/**",
+    "pattern": "def (create|update)_item",
+    "regex": true
+   }
+  ],
+  "input_schema": {
+   "additionalProperties": false,
+   "properties": {
+    "cursor": {
+     "description": "A previous result's next_cursor.",
+     "type": "string"
+    },
+    "limit": {
+     "description": "Matching lines per page, 1 to 200.",
+     "type": "integer"
+    },
+    "path_glob": {
+     "description": "Only these paths: \"backend/**/*.py\".",
+     "type": "string"
+    },
+    "pattern": {
+     "description": "The text (or regular expression).",
+     "type": "string"
+    },
+    "regex": {
+     "description": "The pattern is a regular expression.",
+     "type": "boolean"
+    }
+   },
+   "required": [
+    "pattern"
+   ],
+   "type": "object"
+  },
+  "name": "grep",
+  "strict": true
+ },
+ {
+  "description": "Find where a function, class, method, React component, hook or variable is defined, by its name (create_item, ItemsService, useAuth) or part of its qualified name (ItemsService.createItem). Use it when you know or can guess a name: it is faster and surer than code_search for that. Each match gives its symbol id (sym:<path>::<name>), kind, file and lines and signature; exact names come first, then prefixes, then near misses. Pass a match's symbol id to graph_neighbors or trace_feature, or its lines to read_code. With response_format detailed, each match also shows its definition's first lines, citable. Don't use it for text in the code (use grep) or a question in words (use code_search).",
+  "input_examples": [
+   {
+    "name": "create_item"
+   },
+   {
+    "kind": "hook",
+    "name": "useAuth"
+   }
+  ],
+  "input_schema": {
+   "additionalProperties": false,
+   "properties": {
+    "kind": {
+     "description": "Only definitions of this kind.",
+     "enum": [
+      "module",
+      "class",
+      "function",
+      "method",
+      "component",
+      "hook",
+      "variable"
+     ],
+     "type": "string"
+    },
+    "name": {
+     "description": "The name, or part of a qualified name.",
+     "type": "string"
+    },
+    "response_format": {
+     "description": "concise (default): ids, places and signatures; detailed: also each definition's first lines.",
+     "enum": [
+      "concise",
+      "detailed"
+     ],
+     "type": "string"
+    }
+   },
+   "required": [
+    "name"
+   ],
+   "type": "object"
+  },
+  "name": "find_symbol",
+  "strict": true
+ },
+ {
+  "description": "List what a symbol is connected to in the repository's graph: what it calls, renders, uses as a hook, injects, imports, inherits, the endpoint a request targets, the handler an endpoint runs, the tables code reads and writes (direction out); what calls or uses it (in); or both. Each neighbour comes with the edge's type, confidence (1.0: resolved by the compiler or a contract; lower: inferred from names or URLs) and the line the edge was found on. Use it to follow a flow one step at a time, to find callers before changing something, or to see where data is read and written. depth 2 also lists the neighbours' neighbours. The symbol is an id from find_symbol or code_search (sym:<path>::<name>) or a node key (\"api_endpoint POST /api/v1/items/\"). For a whole flow from a page to the database, use trace_feature; to read the code, read_code.",
+  "input_examples": [
+   {
+    "symbol": "sym:backend/app/api/routes/items.py::create_item"
+   },
+   {
+    "direction": "in",
+    "edge_types": [
+     "reads",
+     "writes"
+    ],
+    "symbol": "sym:backend/app/models.py::Item"
+   }
+  ],
+  "input_schema": {
+   "additionalProperties": false,
+   "properties": {
+    "depth": {
+     "description": "1 (default) or 2 hops.",
+     "type": "integer"
+    },
+    "direction": {
+     "description": "out (default): what it uses; in: what uses it.",
+     "enum": [
+      "out",
+      "in",
+      "both"
+     ],
+     "type": "string"
+    },
+    "edge_types": {
+     "description": "Only edges of these types (default: every type).",
+     "items": {
+      "enum": [
+       "contains",
+       "defines",
+       "imports",
+       "calls",
+       "references",
+       "inherits",
+       "implements",
+       "renders",
+       "uses_hook",
+       "injects",
+       "issues_request",
+       "targets",
+       "handled_by",
+       "resolves",
+       "publishes",
+       "consumes",
+       "maps_to",
+       "reads",
+       "writes",
+       "tests",
+       "produces"
+      ],
+      "type": "string"
+     },
+     "type": "array"
+    },
+    "min_conf": {
+     "description": "Only edges at least this sure, 0 to 1.",
+     "type": "number"
+    },
+    "symbol": {
+     "description": "A symbol id or a node key.",
+     "type": "string"
+    }
+   },
+   "required": [
+    "symbol"
+   ],
+   "type": "object"
+  },
+  "name": "graph_neighbors",
+  "strict": true
+ },
+ {
+  "description": "Trace a feature's flow across the layers of the repository: from a page or component, through its hooks and the HTTP request it sends, to the endpoint, its handler, the services it calls and the tables it reads and writes, and what comes back to the page. Use it for any question about how something works end to end (\"what happens when a user logs in\", \"how is an item created\"). The entry is a symbol id or node key, an endpoint (\"POST /api/v1/items/\"), a file path, a page or function name, or the feature in words (\"create item\"); feature says which of an entry's features to follow when a page has several (\"delete\" on a page that lists, adds and deletes). direction down (default: from the entry onward), up (where the entry is reached from) or both. Each path lists its hops with their layer, file and lines, and how each was reached; a gap says where the graph has no link, and why. The hops are graph facts: read the code with read_code before citing it.",
+  "input_examples": [
+   {
+    "entry": "sym:frontend/src/routes/login.tsx::Login"
+   },
+   {
+    "direction": "both",
+    "entry": "POST /api/v1/items/"
+   },
+   {
+    "entry": "ItemsPage",
+    "feature": "delete item"
+   }
+  ],
+  "input_schema": {
+   "additionalProperties": false,
+   "properties": {
+    "direction": {
+     "description": "down (default), up or both.",
+     "enum": [
+      "down",
+      "up",
+      "both"
+     ],
+     "type": "string"
+    },
+    "entry": {
+     "description": "Where to start (see the description).",
+     "type": "string"
+    },
+    "feature": {
+     "description": "Which feature, in words: \"add item\".",
+     "type": "string"
+    },
+    "min_conf": {
+     "description": "Only links at least this sure, 0 to 1.",
+     "type": "number"
+    }
+   },
+   "required": [
+    "entry"
+   ],
+   "type": "object"
+  },
+  "name": "trace_feature",
+  "strict": true
+ },
+ {
+  "description": "Read lines of a file of the repository at this commit, as a citable search result (each line after its number). Use it to read the code a search, a symbol or a trace hop points at before you describe or cite it, or to read on past where a result stopped. Give the lines you need: at most 300 a call (start_line 1, end_line 300 by default); a very long one may be cut shorter, and then says where to read on from. Don't use it to find code (use code_search, grep or find_symbol) or to list a directory (use list_dir).",
+  "input_examples": [
+   {
+    "end_line": 80,
+    "path": "backend/app/crud.py",
+    "start_line": 1
+   },
+   {
+    "path": "frontend/src/routes/login.tsx"
+   }
+  ],
+  "input_schema": {
+   "additionalProperties": false,
+   "properties": {
+    "end_line": {
+     "description": "The last line (inclusive).",
+     "type": "integer"
+    },
+    "path": {
+     "description": "The file, from the repository's root.",
+     "type": "string"
+    },
+    "start_line": {
+     "description": "The first line (1-based).",
+     "type": "integer"
+    }
+   },
+   "required": [
+    "path"
+   ],
+   "type": "object"
+  },
+  "name": "read_code",
+  "strict": true
+ },
+ {
+  "description": "List a directory of the repository at this commit: its subdirectories (with how many files each holds) and files. Use it to get your bearings in an unfamiliar repository or package, to find where a layer lives (routes, models, components), or to see a module's files before reading one. The root is \"\" (default). depth 2 also lists each subdirectory's entries. Ignored and vendored files aren't listed. Don't use it to search (use code_search, grep or find_symbol).",
+  "input_examples": [
+   {
+    "path": ""
+   },
+   {
+    "depth": 2,
+    "path": "backend/app"
+   }
+  ],
+  "input_schema": {
+   "additionalProperties": false,
+   "properties": {
+    "cursor": {
+     "description": "A previous result's next_cursor.",
+     "type": "string"
+    },
+    "depth": {
+     "description": "1 (default) or 2 levels.",
+     "type": "integer"
+    },
+    "path": {
+     "description": "The directory (\"\" for the root).",
+     "type": "string"
+    }
+   },
+   "required": [],
+   "type": "object"
+  },
+  "name": "list_dir",
+  "strict": true
+ },
+ {
+  "description": "Get the precomputed map of a feature or a module: what it is for, its entry points, its key symbols and how data flows through it, with citations. Use it first for a broad question about a feature or a part of the repository (\"how does billing work\", \"what is in backend/app/api\"), then read the code it cites. Give the feature in words or a directory path. When no map is available it says so: answer from code_search, trace_feature, list_dir and read_code instead.",
+  "input_examples": [
+   {
+    "feature_or_path": "item creation"
+   },
+   {
+    "feature_or_path": "backend/app/api"
+   }
+  ],
+  "input_schema": {
+   "additionalProperties": false,
+   "properties": {
+    "feature_or_path": {
+     "description": "The feature in words (\"item creation\") or a directory path.",
+     "type": "string"
+    }
+   },
+   "required": [
+    "feature_or_path"
+   ],
+   "type": "object"
+  },
+  "name": "get_feature_map",
+  "strict": true
+ },
+ {
+  "description": "Commit to the evidence your answer rests on, before you write the answer: for each piece, the symbol id or file path, the lines (a symbol's own by default), its layer (ui, api, svc, db, other) and in a few words why it answers the question. Call it once, when you have read enough, with every piece you will cite (at most 20), best first; call it again only to add what a later search found. Only code you read in this run belongs here. Each piece is checked: one whose symbol, file or lines don't exist at this commit is refused, with the reason.",
+  "input_examples": [
+   {
+    "candidates": [
+     {
+      "layer": "api",
+      "target": "sym:backend/app/api/routes/items.py::create_item",
+      "why": "the endpoint that creates an item"
+     },
+     {
+      "end_line": 52,
+      "layer": "db",
+      "start_line": 40,
+      "target": "backend/app/models.py",
+      "why": "the item table it writes"
+     }
+    ]
+   }
+  ],
+  "input_schema": {
+   "additionalProperties": false,
+   "properties": {
+    "candidates": {
+     "items": {
+      "additionalProperties": false,
+      "properties": {
+       "end_line": {
+        "type": "integer"
+       },
+       "layer": {
+        "enum": [
+         "ui",
+         "api",
+         "svc",
+         "db",
+         "other"
+        ],
+        "type": "string"
+       },
+       "start_line": {
+        "type": "integer"
+       },
+       "target": {
+        "description": "A symbol id or a file path.",
+        "type": "string"
+       },
+       "why": {
+        "description": "Why it answers the question.",
+        "type": "string"
+       }
+      },
+      "required": [
+       "target",
+       "layer",
+       "why"
+      ],
+      "type": "object"
+     },
+     "type": "array"
+    }
+   },
+   "required": [
+    "candidates"
+   ],
+   "type": "object"
+  },
+  "name": "submit_evidence",
+  "strict": true
+ }
+]

@@ -8,6 +8,8 @@ apps/web/public/mockServiceWorker.js
 apps/web/src/mocks/fixtures/trace.json
 # parse snapshots, written by packages/engine/tests/test_parse_golden.py
 packages/engine/tests/fixtures/parse/
+# the agent's tool definitions, written by packages/engine/tests/test_agent_tools.py
+packages/engine/tests/fixtures/agent_tools.json
 
 # build outputs
 next-env.d.ts
