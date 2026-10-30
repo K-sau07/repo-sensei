@@ -49,7 +49,7 @@ export function Question({ message }: { message: AskMessage }) {
       {scope ? (
         <span
           className="flex items-center gap-1 rounded-sm border border-border px-1.5 font-mono text-[11px] text-fg-muted"
-          title={scope.path}
+          title={scope.path ?? undefined}
           data-testid="question-scope"
         >
           <FileCode2 aria-hidden className="size-3" />

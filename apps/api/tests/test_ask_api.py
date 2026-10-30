@@ -935,7 +935,7 @@ async def test_a_scoped_question_tells_the_agent_where_the_user_was(
         {
             "type": "data-scope",
             "id": "scope",
-            "data": {"path": "README.md", "startLine": 1, "endLine": 1},
+            "data": {"path": "README.md", "startLine": 1, "endLine": 1, "layers": []},
         },
     ]
     assert await db_session.scalar(select(func.count()).select_from(AnswerCacheEntry)) == 0
@@ -947,3 +947,49 @@ async def test_a_scoped_question_tells_the_agent_where_the_user_was(
     )
     assert missing.status_code == 422
     assert missing.json()["error"]["code"] == "scope_not_found"
+
+
+async def test_a_question_scoped_to_a_directory_and_layers_says_so(
+    app: FastAPI, client: httpx.AsyncClient, db_session: AsyncSession, model: _Model
+) -> None:
+    org, headers = await _setup(app, client, db_session)
+    snapshot = await db_session.scalar(select(Snapshot).where(Snapshot.commit_sha == SHA))
+    assert snapshot is not None
+    db_session.add(
+        RepoFile(
+            org_id=snapshot.org_id, repo_id=snapshot.repo_id, snapshot_id=snapshot.id,
+            path="backend/app/crud.py", blob_sha="b" * 40, content_hash=b"\x01" * 32, size=8,
+            language="python", role="service",
+        )
+    )  # fmt: skip
+    await db_session.flush()
+    scope = {"path": "backend/app/", "layers": ["svc", "db", "svc"]}
+    response, _ = await _ask(app, client, org, headers, message="Where is it saved?", scope=scope)
+    assert response.status_code == 200, response.text
+    asked = str(model.turns[0]["messages"][-1]["content"])
+    assert "(Asked while looking at backend/app.)" in asked
+    assert "(Asked about the service and data layers.)" in asked
+    stored = await client.get(f"{org}/conversations/{response.headers['x-conversation-id']}")
+    (_, part) = stored.json()["messages"][0]["parts"]
+    assert part["data"] == {
+        "path": "backend/app", "startLine": None, "endLine": None, "layers": ["svc", "db"],
+    }  # fmt: skip
+
+    async def refused(body: dict[str, Any]) -> str:
+        sent = await client.post(
+            f"{org}/repos/items/ask", json={"message": "x", "scope": body}, headers=headers
+        )
+        assert sent.status_code == 422, sent.text
+        return str(sent.json()["error"]["code"])
+
+    assert await refused({"layers": ["ui"], "start_line": 3}) == "validation_failed"
+    assert await refused({"path": "backend", "start_line": 2}) == "scope_lines"  # a directory
+    assert await refused({"path": "back"}) == "scope_not_found"  # a prefix isn't a directory
+    before = len(model.turns)
+    only_layers, _ = await _ask(
+        app, client, org, headers, message="What does the UI do?", scope={"layers": ["ui"]}
+    )
+    assert only_layers.status_code == 200
+    first = str(model.turns[before]["messages"][-1]["content"])  # the run's first turn
+    assert "(Asked about the UI layer.)" in first
+    assert "looking at" not in first

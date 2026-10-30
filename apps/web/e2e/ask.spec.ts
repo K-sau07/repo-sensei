@@ -190,11 +190,55 @@ test.describe("ask: what the tools found", () => {
     expect(audit.violations).toEqual([]);
 
     await panel.getByRole("button", { name: "Close the artifact" }).click();
-    await expect(page.getByTestId("evidence-rail")).toBeVisible();
+    const rail = page.getByTestId("evidence-rail");
+    await expect(rail).toBeVisible();
+    // The rail's Graph tab: what the run walked; its searches run again on the search page.
+    await rail.getByRole("tab", { name: "Graph (2)" }).click();
+    await expect(rail.getByRole("list", { name: "Traced path" })).toBeVisible();
+    await rail.getByRole("tab", { name: /^Searches/ }).click();
+    await expect(rail.getByRole("link", { name: "code_search 'create item'" })).toHaveAttribute(
+      "href",
+      "/acme/api/search?q=create+item",
+    );
 
     const next = page.getByRole("navigation", { name: "Ask next" });
     await next.getByRole("button", { name: "Where is `Item` tested?" }).click();
     await expect(page.getByTestId("answer")).toHaveCount(2);
     await expect(page.getByText("Where is `Item` tested?").first()).toBeVisible();
+  });
+});
+
+test.describe("ask: scope and mentions", () => {
+  test("@ mentions a symbol, Scope picks layers and a folder, and the question keeps them", async ({
+    page,
+  }) => {
+    await page.goto("/acme/api/ask");
+    const box = page.getByRole("textbox", { name: "Ask about this repository" });
+    await box.fill("what calls @create_it");
+    const mentions = page.getByRole("listbox", { name: "Mention a file or symbol" });
+    await expect(mentions.getByRole("option").first()).toBeVisible();
+    await expect(box).toHaveAttribute("aria-activedescendant", /.+/);
+    await box.press("Enter"); // picks the first suggestion, it doesn't send
+    await expect(box).toHaveValue(/^what calls `[\w./-]+` $/);
+    await expect(mentions).toHaveCount(0);
+
+    await page.getByRole("button", { name: "Scope the question" }).click();
+    const picker = page.getByRole("dialog", { name: "Scope" });
+    await picker.getByRole("button", { name: "API" }).click();
+    await picker.getByRole("button", { name: "Data" }).click();
+    await picker.getByLabel("A file or folder").fill("backend/app/");
+    await picker.getByRole("button", { name: "Folder backend/app/" }).click();
+    const audit = await new AxeBuilder({ page }).include("main").analyze();
+    expect(audit.violations).toEqual([]);
+    await page.keyboard.press("Escape");
+    const chips = page.getByLabel("Scope of the question").getByTestId("scope-chip");
+    await expect(chips).toHaveText(["app/", "API", "Data"]);
+
+    await box.press("ControlOrMeta+Enter");
+    await expect(page.getByTestId("question-scope")).toHaveText(/app\/ · API · Data/);
+    await expect(page.getByTestId("answer")).toContainText("An item is created by the");
+    // The scope stays for the next question, until a chip is removed.
+    await page.getByRole("button", { name: "Remove the scope Data" }).click();
+    await expect(chips).toHaveText(["app/", "API"]);
   });
 });

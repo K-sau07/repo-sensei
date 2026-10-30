@@ -1326,13 +1326,16 @@ export interface components {
         };
         /**
          * AskScope
-         * @description What the user was looking at when asking (the Ask bar's context): a file, its lines.
+         * @description What the question is about: what the user was looking at (the Ask bar's context: a
+         *     file, its lines) or picked in the question box (a file or a directory, and layers).
          */
         AskScope: {
             /** End Line */
             end_line?: number | null;
+            /** Layers */
+            layers?: ("ui" | "api" | "svc" | "db")[];
             /** Path */
-            path: string;
+            path?: string | null;
             /** Start Line */
             start_line?: number | null;
         };

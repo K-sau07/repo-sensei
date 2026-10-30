@@ -41,7 +41,7 @@ function useOpenScope(): ScopeData | null {
 /** Where a question asked from the bar goes: the Ask tab, which asks it once it opens. */
 export function askHref(org: string, repo: string, question: string, scope: ScopeData | null) {
   const query = new URLSearchParams({ q: question });
-  if (scope) {
+  if (scope?.path) {
     query.set("scope", scope.path);
     if (scope.startLine !== null) {
       const end = scope.endLine ?? scope.startLine;
@@ -111,7 +111,7 @@ export function AskBar() {
           {scope ? (
             <span className="flex w-fit items-center gap-1 rounded-sm border border-border px-1.5 py-0.5 font-mono text-xs">
               <FileCode2 aria-hidden className="size-3.5 text-fg-muted" />
-              <span title={scope.path}>{scopeLabel(scope)}</span>
+              <span title={scope.path ?? undefined}>{scopeLabel(scope)}</span>
               <button
                 type="button"
                 aria-label={`Drop the scope ${scopeLabel(scope)}`}

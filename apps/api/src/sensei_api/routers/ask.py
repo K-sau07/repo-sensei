@@ -21,14 +21,14 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
 from itertools import pairwise
-from typing import Annotated, Any, Literal, cast
+from typing import Annotated, Any, Literal, Self, cast
 
 import orjson
 import structlog
 from fastapi import APIRouter, Query, Request, Response
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from redis.asyncio import Redis
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sse_starlette import EventSourceResponse, ServerSentEvent
 
@@ -97,12 +97,29 @@ ContextFactory = Callable[[Request, AsyncSession, Repo, Snapshot], Awaitable[Too
 # ---------------------------------------------------------------- shapes
 
 
-class AskScope(BaseModel):
-    """What the user was looking at when asking (the Ask bar's context): a file, its lines."""
+ScopeLayer = Literal["ui", "api", "svc", "db"]
+LAYER_WORDS: dict[str, str] = {"ui": "UI", "api": "API", "svc": "service", "db": "data"}
 
-    path: str = Field(min_length=1, max_length=1_024)
+
+class AskScope(BaseModel):
+    """What the question is about: what the user was looking at (the Ask bar's context: a
+    file, its lines) or picked in the question box (a file or a directory, and layers)."""
+
+    path: str | None = Field(default=None, min_length=1, max_length=1_024)
     start_line: int | None = Field(default=None, ge=1)
     end_line: int | None = Field(default=None, ge=1)
+    layers: list[ScopeLayer] = Field(default_factory=list[ScopeLayer], max_length=4)
+
+    @model_validator(mode="after")
+    def _something(self) -> Self:
+        if self.path is None and not self.layers:
+            msg = "a scope is a path, layers, or both"
+            raise ValueError(msg)
+        if self.path is None and self.start_line is not None:
+            msg = "lines need a path"
+            raise ValueError(msg)
+        self.layers = list(dict.fromkeys(self.layers))
+        return self
 
 
 class AskRequest(BaseModel):
@@ -1080,28 +1097,47 @@ async def _scope(
     in order), as the question's ``data-scope`` part keeps it."""
     if scope is None:
         return None
-    found = await db.scalar(
-        select(RepoFile.path).where(
-            RepoFile.snapshot_id == snapshot.id, RepoFile.path == scope.path
-        )
-    )
-    if found is None:
-        raise InvalidError("That file isn't in this commit.", code="scope_not_found")
     start, end = scope.start_line, scope.end_line
+    if scope.path is not None:
+        path = scope.path.strip("/")
+        found = await db.scalar(
+            select(RepoFile.path)
+            .where(
+                RepoFile.snapshot_id == snapshot.id,
+                or_(RepoFile.path == path, RepoFile.path.startswith(f"{path}/", autoescape=True)),
+            )
+            .limit(1)
+        )
+        if found is None:
+            raise InvalidError("That path isn't in this commit.", code="scope_not_found")
+        if found != path and start is not None:
+            raise InvalidError("A directory has no lines.", code="scope_lines")
     if start is not None and end is not None and end < start:
         raise InvalidError("The scope's lines end before they start.", code="scope_lines")
-    return {"path": scope.path, "startLine": start, "endLine": end if start else None}
+    return {
+        "path": scope.path.strip("/") if scope.path is not None else None,
+        "startLine": start,
+        "endLine": end if start else None,
+        "layers": list(scope.layers),
+    }
 
 
 def _scoped(question: str, scope: dict[str, Any] | None) -> str:
     """The question as the agent reads it: with what the user was looking at, if anything."""
     if scope is None:
         return question
-    start, end = scope["startLine"], scope["endLine"]
-    where = scope["path"]
-    if start is not None:
-        where += f" line {start}" if end in (None, start) else f" lines {start}-{end}"
-    return f"{question}\n\n(Asked while looking at {where}.)"
+    notes: list[str] = []
+    if scope.get("path") is not None:
+        start, end = scope["startLine"], scope["endLine"]
+        where = scope["path"]
+        if start is not None:
+            where += f" line {start}" if end in (None, start) else f" lines {start}-{end}"
+        notes.append(f"(Asked while looking at {where}.)")
+    layers = [LAYER_WORDS[layer] for layer in scope.get("layers") or ()]
+    if layers:
+        named = layers[0] if len(layers) == 1 else f"{', '.join(layers[:-1])} and {layers[-1]}"
+        notes.append(f"(Asked about the {named} {'layer' if len(layers) == 1 else 'layers'}.)")
+    return "\n\n".join([question, *notes])
 
 
 def _verified(answer: Answer) -> set[int]:

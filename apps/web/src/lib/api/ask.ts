@@ -53,10 +53,20 @@ export interface AbstainData {
 }
 
 /** What the user was looking at when asking (the Ask bar's context): a file, its lines. */
+export type ScopeLayer = "ui" | "api" | "svc" | "db";
+export const SCOPE_LAYERS: readonly ScopeLayer[] = ["ui", "api", "svc", "db"];
+
+/** What a question is about: a file (its lines) or a directory, layers, or both. */
 export interface ScopeData {
-  path: string;
+  path: string | null;
   startLine: number | null;
   endLine: number | null;
+  layers?: ScopeLayer[] | undefined; // none on questions asked before layers could be picked
+}
+
+/** A scope with nothing in it is none. */
+export function scopeOrNull(scope: ScopeData): ScopeData | null {
+  return scope.path === null && !scope.layers?.length ? null : scope;
 }
 
 // A type, not an interface: the AI SDK's data types want an index signature.
@@ -117,7 +127,14 @@ export function askTransport(options: {
           conversation_id: (body?.conversationId as string | null | undefined) ?? null,
           mode: (body?.mode as AskMode | undefined) ?? "fast",
           ...(scope
-            ? { scope: { path: scope.path, start_line: scope.startLine, end_line: scope.endLine } }
+            ? {
+                scope: {
+                  path: scope.path,
+                  start_line: scope.startLine,
+                  end_line: scope.endLine,
+                  layers: scope.layers ?? [],
+                },
+              }
             : {}),
         },
       };
@@ -171,11 +188,26 @@ export function scopeOf(message: AskMessage): ScopeData | null {
   return null;
 }
 
-/** `models.py:12–20` (a line: `models.py:12`; the file alone: `models.py`). */
-export function scopeLabel(scope: ScopeData): string {
+export const LAYER_LABELS: Record<ScopeLayer, string> = {
+  ui: "UI",
+  api: "API",
+  svc: "Service",
+  db: "Data",
+};
+
+/** Where a scope's path points: `models.py:12–20` (a line: `models.py:12`; the file alone:
+ * `models.py`; a directory: `app/`). */
+export function pathLabel(scope: ScopeData): string | null {
+  if (scope.path === null) return null;
   const name = scope.path.slice(scope.path.lastIndexOf("/") + 1);
-  if (scope.startLine === null) return name;
+  if (scope.startLine === null) return name.includes(".") ? name : `${name}/`;
   return chipLabel(name, [scope.startLine, scope.endLine ?? scope.startLine]);
+}
+
+/** The whole scope in a few words: `items.py:62–72 · API · Data`. */
+export function scopeLabel(scope: ScopeData): string {
+  const layers = (scope.layers ?? []).map((layer) => LAYER_LABELS[layer]);
+  return [pathLabel(scope), ...layers].filter(Boolean).join(" · ");
 }
 
 /** The run that wrote a streamed answer (a stored one's comes with the conversation). */
@@ -359,4 +391,12 @@ export function keepDraft(key: string, text: string): void {
   if (typeof localStorage === "undefined") return;
   if (text) localStorage.setItem(key, text);
   else localStorage.removeItem(key);
+}
+
+/** A logged search (``grep "items/{id}"``, as the run lists them): its tool and its query, for
+ * running it again on the search page; null for a call that isn't a search. */
+export function searchOf(logged: string): { tool: "code_search" | "grep"; query: string } | null {
+  const found = /^(code_search|grep) (['"])(.*)\2$/s.exec(logged);
+  if (!found?.[1] || found[3] === undefined) return null;
+  return { tool: found[1] as "code_search" | "grep", query: found[3] };
 }

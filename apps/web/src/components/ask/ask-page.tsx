@@ -36,7 +36,7 @@ import { codePath, repoPath } from "@/lib/routes";
 
 import { Answer, Question } from "./answer";
 import { ArtifactPanel, useArtifacts } from "./artifact-panel";
-import { Composer } from "./composer";
+import { Composer, NO_SCOPE } from "./composer";
 import { EvidenceRail } from "./evidence-rail";
 import { ConversationHistory } from "./history";
 import { ShareButton } from "./share-dialog";
@@ -96,6 +96,7 @@ function Ask() {
     window.history.replaceState(null, "", repoPath(org, repo, `ask/${id}`));
   });
   const [opened, setOpened] = useState<CitationData | null>(null);
+  const [scope, setScope] = useState<ScopeData>(NO_SCOPE);
   const artifacts = useArtifacts();
   const codeHref: CodeHref = (path, [start, end]) =>
     codePath(org, repo, path, { lines: start === end ? `${start}` : `${start}-${end}` });
@@ -186,7 +187,9 @@ function Ask() {
             busy={streaming}
             mode={chat.mode}
             onMode={chat.setMode}
-            onSend={(text) => void chat.ask(text)}
+            scope={scope}
+            onScope={setScope}
+            onSend={(text, scoped) => void chat.ask(text, scoped)}
             onStop={() => void chat.stop()}
           />
         </div>
@@ -212,7 +215,7 @@ function Ask() {
             traceHref={traceHref}
           />
         ) : (
-          <EvidenceRail message={latest} onOpen={setOpened} />
+          <EvidenceRail message={latest} onOpen={setOpened} codeHref={codeHref} />
         )}
       </div>
     </div>

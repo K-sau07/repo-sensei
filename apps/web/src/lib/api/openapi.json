@@ -140,7 +140,7 @@
         "type": "object"
       },
       "AskScope": {
-        "description": "What the user was looking at when asking (the Ask bar's context): a file, its lines.",
+        "description": "What the question is about: what the user was looking at (the Ask bar's context: a\nfile, its lines) or picked in the question box (a file or a directory, and layers).",
         "properties": {
           "end_line": {
             "anyOf": [
@@ -154,11 +154,32 @@
             ],
             "title": "End Line"
           },
+          "layers": {
+            "items": {
+              "enum": [
+                "ui",
+                "api",
+                "svc",
+                "db"
+              ],
+              "type": "string"
+            },
+            "maxItems": 4,
+            "title": "Layers",
+            "type": "array"
+          },
           "path": {
-            "maxLength": 1024,
-            "minLength": 1,
-            "title": "Path",
-            "type": "string"
+            "anyOf": [
+              {
+                "maxLength": 1024,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Path"
           },
           "start_line": {
             "anyOf": [
@@ -173,9 +194,6 @@
             "title": "Start Line"
           }
         },
-        "required": [
-          "path"
-        ],
         "title": "AskScope",
         "type": "object"
       },

@@ -9,6 +9,7 @@ import { cn } from "cn";
 import { BadgeCheck, FileCode2 } from "lucide-react";
 
 import { useFileAt } from "@/components/code/use-code";
+import { useHighlighted } from "@/components/code/use-highlighted";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { chipLabel, type CitationData } from "@/lib/api/ask";
@@ -60,7 +61,10 @@ function CitationPeek({
   const file = useFileAt(citation.path, citation.sha);
   const [start, end] = citation.lines;
   const content = file.data && "content" in file.data ? file.data.content : null;
-  const lines = content?.split("\n").slice(start - 1, Math.min(end, start + PEEK_LINES - 1)) ?? [];
+  const last = Math.min(end, start + PEEK_LINES - 1);
+  const lines = content?.split("\n").slice(start - 1, last) ?? [];
+  const language = file.data && "language" in file.data ? (file.data.language ?? null) : null;
+  const highlighted = useHighlighted(citation.path, language, content, start, last);
   return (
     <div className="flex flex-col">
       <div className="flex items-center gap-2 border-b border-border px-3 py-2 text-xs">
@@ -84,7 +88,15 @@ function CitationPeek({
           lines.map((line, i) => (
             <div key={start + i} className="flex gap-3">
               <span className="w-8 shrink-0 text-right text-fg-faint select-none">{start + i}</span>
-              <span className="whitespace-pre">{line}</span>
+              <span className="whitespace-pre">
+                {highlighted?.lines[i]
+                  ? highlighted.lines[i].map((token, t) => (
+                      <span key={t} style={token.tag ? highlighted.styles[token.tag] : undefined}>
+                        {token.text}
+                      </span>
+                    ))
+                  : line}
+              </span>
             </div>
           ))
         ) : (

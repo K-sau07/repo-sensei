@@ -135,7 +135,12 @@ export const askHandlers = [
     const body = (await request.json()) as {
       message?: string;
       conversation_id?: string | null;
-      scope?: { path: string; start_line: number | null; end_line: number | null } | null;
+      scope?: {
+        path: string | null;
+        start_line: number | null;
+        end_line: number | null;
+        layers?: string[];
+      } | null;
     };
     const question = body.message ?? "";
     const id = body.conversation_id ?? crypto.randomUUID();
@@ -164,6 +169,7 @@ export const askHandlers = [
                     path: body.scope.path,
                     startLine: body.scope.start_line,
                     endLine: body.scope.end_line,
+                    layers: body.scope.layers ?? [],
                   },
                 },
               ]

@@ -201,3 +201,37 @@ describe("the transport", () => {
     expect(sent[0]?.headers.get("X-CSRF-Token")).toBe("tok");
   });
 });
+
+describe("a question's scope", () => {
+  it("reads as its path and its layers", async () => {
+    const { scopeLabel, scopeOrNull } = await import("./ask");
+    const file = { path: "backend/app/api/routes/items.py", startLine: 62, endLine: 72 };
+    expect(scopeLabel(file)).toBe("items.py:62–72");
+    expect(scopeLabel({ path: "backend/app", startLine: null, endLine: null })).toBe("app/");
+    expect(scopeLabel({ path: null, startLine: null, endLine: null, layers: ["api", "db"] })).toBe(
+      "API · Data",
+    );
+    expect(scopeOrNull({ path: null, startLine: null, endLine: null, layers: [] })).toBeNull();
+  });
+
+  it("finds the @ mention being typed before the caret", async () => {
+    const { mentionAt } = await import("@/components/ask/composer");
+    expect(mentionAt("what calls @crea", 16)).toEqual({ start: 11, query: "crea" });
+    expect(mentionAt("@", 1)).toEqual({ start: 0, query: "" });
+    expect(mentionAt("mail me@example.com", 19)).toBeNull(); // not after a space
+    expect(mentionAt("what calls @crea and", 20)).toBeNull(); // the caret moved past it
+  });
+});
+
+describe("a logged search", () => {
+  it("is its tool and query, as the run wrote it (Python's quoting)", async () => {
+    const { searchOf } = await import("./ask");
+    expect(searchOf("code_search 'create item'")).toEqual({
+      tool: "code_search",
+      query: "create item",
+    });
+    expect(searchOf(`grep "user's id"`)).toEqual({ tool: "grep", query: "user's id" });
+    expect(searchOf("read_code 'backend/app/models.py'")).toBeNull(); // not a search
+    expect(searchOf("list_dir")).toBeNull();
+  });
+});
