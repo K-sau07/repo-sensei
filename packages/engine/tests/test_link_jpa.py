@@ -956,3 +956,33 @@ def test_one_linkers_bug_costs_its_own_facts_not_the_stages(
     assert build.details["failed"] == {"jpa": "RecursionError: maximum recursion depth exceeded"}
     assert {k: v for k, v in build.details.items() if k != "failed"} == calm.details
     assert "failed" not in calm.details
+
+
+def test_a_query_naming_an_entity_two_modules_have_reads_its_own_modules() -> None:
+    """billing and shop each map an OrderLine entity to a table of their own: a query of either
+    module naming OrderLine reads that module's table."""
+
+    def entity(table: str) -> str:
+        return (
+            "package com.example.store;\nimport jakarta.persistence.*;\n"
+            f'@Entity\n@Table(name = "{table}")\n'
+            "public class OrderLine {\n  @Id Long id;\n  String note;\n}\n"
+        )
+
+    repository = (
+        "package com.example.store;\nimport org.springframework.data.jpa.repository.*;\n"
+        "public interface Lines extends JpaRepository<OrderLine, Long> {\n"
+        '  @Query("select l from OrderLine l where l.note = ?1")\n'
+        "  java.util.List<OrderLine> byNote(String note);\n}\n"
+    )
+    files: dict[str, str] = {}
+    for module in ("billing", "shop"):
+        files[f"{module}/src/main/java/com/example/store/OrderLine.java"] = entity(f"{module}_line")
+        files[f"{module}/src/main/java/com/example/store/Lines.java"] = repository
+    graph = jpa.link(_scanned(files))
+    reads = {
+        (e.src.split(" ", 1)[1].split("/")[0], e.dst)
+        for e in graph.edges
+        if e.type is EdgeType.READS and "byNote" in e.src
+    }
+    assert reads == {("billing", "table billing_line"), ("shop", "table shop_line")}

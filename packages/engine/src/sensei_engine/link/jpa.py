@@ -95,6 +95,7 @@ from sensei_engine.graph.java.imports import (
     TypeIndex,
     TypeRef,
     base_name,
+    commonpath_prefix,
     type_arguments,
 )
 from sensei_engine.graph.writer import GraphEdge, GraphNode
@@ -1239,10 +1240,18 @@ class _Linker:
 
     def entity_named(self, name: str, path: str) -> _Entity | None:
         """The entity a JPQL name (in the file ``path``) means: its entity name, or its class's
-        FQN (of two modules' classes of one name, the nearer one's)."""
+        FQN; of two modules' entities of one name, the nearer one's (none when they are as
+        near: one module's two)."""
         found = self.by_name.get(name, [])
         if len(found) == 1:
             return found[0]
+        if found:  # two modules' entities of one name: the one sharing most of ``path``
+            near = sorted(
+                ((len(commonpath_prefix(e.declared.path, path)), e) for e in found),
+                key=lambda pair: -pair[0],
+            )
+            if near[0][0] > near[1][0]:
+                return near[0][1]
         declared = self.index.declared(name, near=path) if "." in name else None
         return self.entities.get(declared.type.key) if declared is not None else None
 
