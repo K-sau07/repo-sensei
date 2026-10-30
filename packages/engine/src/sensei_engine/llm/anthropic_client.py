@@ -43,7 +43,7 @@ from collections.abc import (
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 import anthropic
 import httpx2
@@ -160,6 +160,39 @@ class LLMRequest:
     # Mark the system prompt for prompt caching (many requests share it; too short a prompt
     # silently isn't cached).
     cache_system: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class LLMTurn:
+    """One turn of a conversation with tools (the agent's loop): the messages so far, sent as
+    they are (the assistant's blocks unchanged, thinking included); the system prompt's blocks,
+    stable first, the last one marked for caching (it closes the shared prefix: tools, then
+    system); and whether the model may call a tool this turn (``use_tools`` False: it answers).
+    The conversation's growing tail is cached automatically."""
+
+    messages: Sequence[Mapping[str, Any]]
+    system: Sequence[str] = ()
+    tools: Sequence[Mapping[str, Any]] = ()
+    tier: Tier = Tier.STANDARD
+    max_tokens: int = 32_000
+    effort: Effort | None = None
+    use_tools: bool = True
+
+
+@dataclass(frozen=True, slots=True)
+class LLMTurnResult:
+    """What a turn said: its blocks, to send back as they are on the next turn."""
+
+    content: tuple[dict[str, Any], ...]
+    stop_reason: str | None
+    refusal_category: str | None
+    model: str  # the model that answered (a fallback's, when one did)
+    usage: tuple[LLMUsage, ...]
+    request_id: str | None = None
+
+
+TextSink = Callable[[str], Awaitable[None]]
+WARMUP = "warmup"  # a pre-warm's placeholder question: read during prefill, never answered
 
 
 @dataclass(frozen=True, slots=True)
@@ -281,6 +314,72 @@ class AnthropicClient:
             # Public despite the underscore (the SDK's documented request id).
             request_id=message._request_id,  # pyright: ignore[reportPrivateUsage]
         )
+
+    async def turn(
+        self,
+        request: LLMTurn,
+        *,
+        on_text: TextSink | None = None,
+        on_usage: LLMUsageSink | None = None,
+    ) -> LLMTurnResult:
+        """One turn, streamed (``on_text`` gets the answer's text as it comes). Its stop reason
+        is the caller's to act on: a tool call, the end, ``max_tokens``, a refusal (after any
+        fallback). Raises :class:`LLMError` when there was no answer."""
+        with _sdk_errors():
+            async with self._sdk().beta.messages.stream(**self._turn_params(request)) as stream:
+                async for event in stream:
+                    if event.type == "text" and on_text is not None:
+                        await on_text(event.text)
+                message = await stream.get_final_message()
+                request_id = stream.response.headers.get("request-id")
+        usage = _beta_usage(message, self.model_for(request.tier))
+        if on_usage is not None:
+            for item in usage:
+                await on_usage(item)
+        category = message.stop_details.category if message.stop_details is not None else None
+        return LLMTurnResult(
+            tuple(block.to_dict(mode="json") for block in message.content),
+            message.stop_reason,
+            category,
+            message.model,
+            usage,
+            request_id,
+        )
+
+    async def prewarm(self, request: LLMTurn, *, on_usage: LLMUsageSink | None = None) -> None:
+        """Write ``request``'s shared prefix (its tools and system prompt) to the cache before
+        the first real turn: ``max_tokens`` 0, a placeholder question, the same model, effort
+        and tools (so the entry is the one real turns read), not streamed."""
+        params = self._turn_params(request)
+        params.update(max_tokens=0, messages=[{"role": "user", "content": WARMUP}])
+        del params["cache_control"]  # automatic caching would key the entry to the placeholder
+        with _sdk_errors():
+            # Not streamed: one message (the overloads can't tell from ``params``).
+            message = cast("BetaMessage", await self._sdk().beta.messages.create(**params))
+        if on_usage is not None:
+            for item in _beta_usage(message, self.model_for(request.tier)):
+                await on_usage(item)
+
+    def _turn_params(self, request: LLMTurn) -> dict[str, Any]:
+        fallback = self._settings.refusal_fallback
+        system: list[dict[str, Any]] = [{"type": "text", "text": text} for text in request.system]
+        if system:
+            system[-1]["cache_control"] = {"type": "ephemeral"}
+        params: dict[str, Any] = {
+            "model": self.model_for(request.tier),
+            "max_tokens": request.max_tokens,
+            "messages": list(request.messages),
+            "system": system or anthropic.omit,
+            "output_config": {"effort": request.effort} if request.effort else anthropic.omit,
+            "cache_control": {"type": "ephemeral"},
+            "betas": [FALLBACK_BETA] if fallback else anthropic.omit,
+            "fallbacks": "default" if fallback else anthropic.omit,
+        }
+        if request.tools:
+            params["tools"] = list(request.tools)
+            # Forced tool use is refused by the newest models: "none" is the only other choice.
+            params["tool_choice"] = {"type": "auto" if request.use_tools else "none"}
+        return params
 
     async def complete_within(
         self,

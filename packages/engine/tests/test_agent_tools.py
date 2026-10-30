@@ -4,6 +4,7 @@ writes."""
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import os
 from collections.abc import Mapping
@@ -18,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sensei_core.mail import MemoryMailer
 from sensei_core.models import Repo, RepoSource, Snapshot
 from sensei_core.orgs.service import OrgService
+from sensei_engine.agent.overview import repo_overview
 from sensei_engine.agent.tools import TOOLS, CitationIndex, ToolContext, definitions, run_tool
 from sensei_engine.agent.tools.base import (
     MAX_RESULT_TOKENS,
@@ -420,3 +422,13 @@ async def test_no_tool_writes(ctx: ToolContext, db_session: AsyncSession) -> Non
     finally:
         event.remove(connection.sync_connection, "before_cursor_execute", record)
     assert written == []
+
+
+async def test_the_overview_says_what_the_repository_holds(ctx: ToolContext) -> None:
+    overview = (await repo_overview(ctx)).splitlines()
+    assert overview[0] == f"Repository: o/items, at commit {'b' * 12}."
+    assert overview[1].startswith("5 files. Languages: python (3)")
+    assert overview[2] == "Top-level directories: backend/ (4 files)."
+    assert overview[3].startswith("The code graph has ")
+    without = await repo_overview(dataclasses.replace(ctx, graph=None))
+    assert without.splitlines()[-1].startswith("The code graph isn't built yet")

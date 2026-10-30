@@ -121,3 +121,55 @@ class FakeAnthropic:
 def jsonl(*lines: dict[str, Any]) -> httpx2.Response:
     content = "\n".join(json.dumps(line) for line in lines).encode()
     return httpx2.Response(200, content=content, headers={"content-type": "application/binary"})
+
+
+def sse(answer: dict[str, Any]) -> httpx2.Response:
+    """``answer`` (a :func:`message`, its content any text, thinking and tool_use blocks, text
+    with citations) as the streamed events the Messages API sends for it."""
+    events: list[dict[str, Any]] = [
+        {"type": "message_start", "message": {**answer, "content": [], "stop_reason": None}}
+    ]
+    for index, block in enumerate(answer["content"]):
+        kind = block["type"]
+        if kind == "text":
+            events.append(_start(index, {"type": "text", "text": ""}))
+            events.append(_delta(index, {"type": "text_delta", "text": block["text"]}))
+            for citation in block.get("citations") or ():
+                events.append(_delta(index, {"type": "citations_delta", "citation": citation}))
+        elif kind == "tool_use":
+            events.append(_start(index, {**block, "input": {}}))
+            partial = json.dumps(block["input"])
+            events.append(_delta(index, {"type": "input_json_delta", "partial_json": partial}))
+        elif kind == "thinking":
+            events.append(_start(index, {"type": "thinking", "thinking": "", "signature": ""}))
+            events.append(_delta(index, {"type": "thinking_delta", "thinking": block["thinking"]}))
+            signature = block.get("signature", "")
+            events.append(_delta(index, {"type": "signature_delta", "signature": signature}))
+        else:
+            msg = f"sse: no events for a {kind} block"
+            raise ValueError(msg)
+        events.append({"type": "content_block_stop", "index": index})
+    events.append(
+        {
+            "type": "message_delta",
+            "delta": {
+                "stop_reason": answer["stop_reason"],
+                "stop_sequence": None,
+                "stop_details": answer.get("stop_details"),
+            },
+            "usage": {"output_tokens": answer["usage"]["output_tokens"]},
+        }
+    )
+    events.append({"type": "message_stop"})
+    body = "".join(f"event: {e['type']}\ndata: {json.dumps(e)}\n\n" for e in events)
+    return httpx2.Response(
+        200, content=body.encode(), headers={"content-type": "text/event-stream"}
+    )
+
+
+def _start(index: int, block: dict[str, Any]) -> dict[str, Any]:
+    return {"type": "content_block_start", "index": index, "content_block": block}
+
+
+def _delta(index: int, delta: dict[str, Any]) -> dict[str, Any]:
+    return {"type": "content_block_delta", "index": index, "delta": delta}
