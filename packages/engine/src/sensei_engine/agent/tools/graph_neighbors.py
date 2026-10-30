@@ -8,6 +8,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from sensei_core.models import EdgeType
+from sensei_engine.agent.cards import graph_card
 from sensei_engine.agent.tools.base import (
     FIND_EXAMPLE,
     Results,
@@ -112,7 +113,9 @@ async def run(ctx: ToolContext, args: Mapping[str, Any]) -> ToolResult:
     )
     if truncated or taken < len(found):
         out.note(f"Only the first {taken} are shown: narrow with edge_types or min_conf.")
-    return out.done(f"{len(hops)} neighbours", hits=len(hops), narrow="narrow with edge_types")
+    result = out.done(f"{len(hops)} neighbours", hits=len(hops), narrow="narrow with edge_types")
+    result.card = graph_card(node, hops)
+    return result
 
 
 def _place(path: str | None, start: int, end: int) -> str:

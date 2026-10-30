@@ -8,6 +8,7 @@
  * page: the answer keeps streaming).
  */
 import { MessageSquare } from "lucide-react";
+import type { Route } from "next";
 import Link from "next/link";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
@@ -19,6 +20,7 @@ import { LockedState } from "@/components/feedback/locked-state";
 import { useRepoFeatures, useRepoSlug } from "@/components/repo/use-repo";
 import { Button } from "@/components/ui/button";
 import {
+  answerText,
   citationsOf,
   draftKey,
   runOf,
@@ -30,13 +32,15 @@ import {
 } from "@/lib/api/ask";
 import { parseLines } from "@/lib/code/lines";
 import { STAGE_LABELS } from "@/lib/indexing";
-import { repoPath } from "@/lib/routes";
+import { codePath, repoPath } from "@/lib/routes";
 
 import { Answer, Question } from "./answer";
+import { ArtifactPanel, useArtifacts } from "./artifact-panel";
 import { Composer } from "./composer";
 import { EvidenceRail } from "./evidence-rail";
 import { ConversationHistory } from "./history";
 import { ShareButton } from "./share-dialog";
+import type { CodeHref } from "./tool-cards";
 import { useAsk, useConversations } from "./use-ask";
 
 export function AskPage() {
@@ -92,6 +96,11 @@ function Ask() {
     window.history.replaceState(null, "", repoPath(org, repo, `ask/${id}`));
   });
   const [opened, setOpened] = useState<CitationData | null>(null);
+  const artifacts = useArtifacts();
+  const codeHref: CodeHref = (path, [start, end]) =>
+    codePath(org, repo, path, { lines: start === end ? `${start}` : `${start}-${end}` });
+  const traceHref = (entry: string) =>
+    `${repoPath(org, repo, "trace")}?from=${encodeURIComponent(entry)}` as Route;
   const streaming = chat.status === "submitted" || chat.status === "streaming";
   const latest = [...chat.messages].reverse().find((m) => m.role === "assistant");
   const announcement = useAnnouncement(latest, streaming);
@@ -105,6 +114,7 @@ function Ask() {
     const id = runOf(message) ?? runs.get(message.id);
     return id ? repoPath(org, repo, `runs/${id}`) : null;
   };
+  const asked = chat.messages.filter((m) => m.role === "user").map(answerText);
   const end = useRef<HTMLDivElement>(null);
   useEffect(() => {
     end.current?.scrollIntoView({ block: "end" });
@@ -151,6 +161,13 @@ function Ask() {
                   onAsk={streaming ? undefined : (text) => void chat.ask(text)}
                   feedback={said.get(message.id) ?? null}
                   runHref={runHref(message)}
+                  codeHref={codeHref}
+                  traceHref={traceHref}
+                  onPromote={(artifact) => {
+                    setOpened(null);
+                    artifacts.promote(artifact);
+                  }}
+                  asked={asked}
                 />
               ),
             )}
@@ -184,6 +201,15 @@ function Ask() {
             onClose={() => {
               setOpened(null);
             }}
+          />
+        ) : artifacts.current ? (
+          <ArtifactPanel
+            pinned={artifacts.pinned}
+            current={artifacts.current}
+            onShow={artifacts.show}
+            onClose={artifacts.close}
+            codeHref={codeHref}
+            traceHref={traceHref}
           />
         ) : (
           <EvidenceRail message={latest} onOpen={setOpened} />

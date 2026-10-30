@@ -7,6 +7,7 @@ import asyncio
 from collections.abc import Mapping
 from typing import Any
 
+from sensei_engine.agent.cards import trace_card
 from sensei_engine.agent.tools.base import (
     Results,
     Tool,
@@ -96,6 +97,7 @@ async def run(ctx: ToolContext, args: Mapping[str, Any]) -> ToolResult:
     narrow = "trace from a later hop, or with a feature"
     result = out.done(f"{len(traced.paths)} paths", hits=len(traced.paths), narrow=narrow)
     result.trail = trail_of(traced.paths[0]) if traced.paths else None
+    result.card = trace_card(entry, traced.paths) if traced.paths else None
     return result
 
 

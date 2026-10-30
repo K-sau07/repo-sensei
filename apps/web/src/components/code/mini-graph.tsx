@@ -17,7 +17,7 @@ import {
   type NodeTypes,
 } from "@xyflow/react";
 import { cn } from "cn";
-import type { CSSProperties } from "react";
+import { useEffect, useRef, type CSSProperties } from "react";
 
 import { LAYERS } from "@/components/primitives/layer-badge";
 import { badgeLayer, provenanceTag, type GraphHop, type GraphNode } from "@/lib/api/graph";
@@ -121,6 +121,12 @@ export function MiniGraph({
   /** A caller or callee was clicked: centre on it. */
   onSelect: (node: GraphNode) => void;
 }) {
+  const box = useRef<HTMLDivElement>(null);
+  // Hidden from assistive tech, so nothing in it may take focus: React Flow's attribution link
+  // stays on screen, out of the tab order.
+  useEffect(() => {
+    for (const link of box.current?.querySelectorAll("a") ?? []) link.tabIndex = -1;
+  });
   const left = column(callers, -COLUMN, "in");
   const right = column(callees, COLUMN, "out");
   const nodes: Node<SymbolData>[] = [
@@ -135,6 +141,7 @@ export function MiniGraph({
   ];
   return (
     <div
+      ref={box}
       className="h-64 rounded-md border border-line bg-surface-1"
       // Hidden from assistive tech: the lists beside it carry the same (and are reachable).
       aria-hidden

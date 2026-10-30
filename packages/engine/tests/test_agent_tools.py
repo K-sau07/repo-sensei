@@ -247,12 +247,41 @@ async def test_find_symbol_gives_ids_the_other_tools_take(ctx: ToolContext) -> N
     assert "← calls" in _text(callers)
 
 
+async def test_symbol_and_graph_tools_leave_cards_of_what_they_found(ctx: ToolContext) -> None:
+    found = await run_tool(ctx, "find_symbol", {"name": "create_item"})
+    assert found.card is not None
+    assert found.card["kind"] == "symbols"
+    first = found.card["symbols"][0]
+    assert (first["name"], first["path"]) == ("create_item", SERVICE)
+    assert first["symbolKey"]  # the index's key, as the symbols and graph APIs take it
+    assert first["lines"][0] >= 1
+    neighbours = await run_tool(
+        ctx, "graph_neighbors", {"symbol": f"sym:{ROUTE}::create_item_route"}
+    )
+    card = neighbours.card
+    assert card is not None
+    assert card["kind"] == "graph"
+    assert (card["root"]["name"], card["root"]["path"]) == ("create_item_route", ROUTE)
+    # As the graph API sends a hop, so the page's mini graph draws it as it is.
+    hop = next(h for h in card["hops"] if h["node"]["name"] == "create_item")
+    assert set(hop) == {"node", "edge", "depth", "via"}
+    assert (hop["edge"]["type"], hop["edge"]["direction"]) == ("calls", "out")
+    missing = await run_tool(ctx, "find_symbol", {"name": "nothing_named_this"})
+    assert missing.card is None
+
+
 async def test_trace_feature_lists_each_hop(ctx: ToolContext) -> None:
     traced = await run_tool(ctx, "trace_feature", {"entry": f"sym:{ROUTE}::create_item_route"})
     assert not traced.is_error, _text(traced)
     text = _text(traced)
     assert text.startswith(f"From sym:{ROUTE}::create_item_route.")
     assert f"sym:{SERVICE}::create_item" in text
+    assert traced.card is not None
+    (path, *_) = traced.card["paths"]
+    names = [(hop["node"]["name"], hop["node"]["path"]) for hop in path["hops"]]
+    assert names[:2] == [("create_item_route", ROUTE), ("create_item", SERVICE)]
+    assert path["hops"][0]["edge"] is None  # the entry
+    assert path["hops"][1]["edge"]["type"] == "calls"
 
 
 async def test_read_code_reads_lines_and_cuts_a_long_read(ctx: ToolContext) -> None:

@@ -198,6 +198,7 @@ class ToolResult:
     hits: int = 0
     is_error: bool = False
     trail: Trail | None = None  # a trace's best path
+    card: dict[str, Any] | None = None  # what it found, for the page to draw (agent.cards)
 
     def param(self, tool_use_id: str) -> dict[str, Any]:
         """The ``tool_result`` block that answers the call ``tool_use_id``."""

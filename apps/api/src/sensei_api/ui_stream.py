@@ -144,12 +144,14 @@ class UIStream:
         return out
 
     def _answered(self, event: ToolAnswered) -> list[Part]:
-        output = {
+        output: Part = {
             "summary": event.summary,
             "hits": event.hits,
             "isError": event.is_error,
             "ms": event.ms,
         }
+        if event.card is not None:
+            output["card"] = event.card
         call = self._calls.get(event.id)
         if call is not None:
             call.update(state="output-available", output=output)

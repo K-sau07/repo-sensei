@@ -159,3 +159,19 @@ def test_an_answer_in_a_research_turns_words_is_sent_as_the_answer() -> None:
         {"type": "text-end", "id": "text-answer"},
     ]
     assert text_of(stream.parts) == TEXT
+
+
+def test_a_tool_s_card_goes_with_its_output_and_stays_with_the_message() -> None:
+    card = {"kind": "symbols", "symbols": [{"name": "create_item", "path": "a.py"}], "more": 0}
+    stream = UIStream("m1", "o/items")
+    stream.start()
+    stream.encode(StepStarted(1, "claude-sonnet-5-5", "medium", tools=True))
+    stream.encode(ToolCalled("t1", "find_symbol", {"name": "create_item"}))
+    (part,) = stream.encode(
+        ToolAnswered("t1", "find_symbol", "1 definitions", 1, False, 3, (), card)
+    )
+    assert part["output"]["card"] == card
+    kept = next(p for p in stream.parts if p["type"] == "tool-find_symbol")
+    assert kept["output"]["card"] == card  # what the conversation keeps, and replays
+    (plain,) = stream.encode(ToolAnswered("t2", "read_code", "a.py:1-4", 1, False, 2))
+    assert "card" not in plain["output"]

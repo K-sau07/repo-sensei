@@ -6,6 +6,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
+from sensei_engine.agent.cards import symbols_card
 from sensei_engine.agent.tools.base import (
     Results,
     Tool,
@@ -91,7 +92,9 @@ async def run(ctx: ToolContext, args: Mapping[str, Any]) -> ToolResult:
                     )
                 )
     narrow = "ask for fewer with a fuller name or a kind"
-    return out.done(f"{len(hits)} definitions", hits=len(hits), narrow=narrow)
+    result = out.done(f"{len(hits)} definitions", hits=len(hits), narrow=narrow)
+    result.card = symbols_card(hits)
+    return result
 
 
 def _id(hit: SymbolHit) -> str:

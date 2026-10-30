@@ -181,6 +181,7 @@ class ToolAnswered:
     is_error: bool
     ms: int
     content: tuple[dict[str, Any], ...] = ()  # what the model was given (for the run's record)
+    card: dict[str, Any] | None = None  # what it found, for the page to draw (agent.cards)
 
 
 @dataclass(frozen=True, slots=True)
@@ -697,6 +698,7 @@ async def _call_tools(
             done.is_error,
             ms,
             tuple(done.content),
+            done.card,
         )
         answered.append(done.param(call["id"]))
 

@@ -34,15 +34,134 @@ function citation(n: number, path: string, lines: [number, number], span: [numbe
 
 const FIRST = MOCK_ANSWER.indexOf(". The row") + 1;
 
+const ADD_ITEM = "frontend/src/components/Items/AddItem.tsx";
+const SDK = "frontend/src/client/sdk.gen.ts";
+
+/** A graph node as the API sends one; its lines the mock snapshot's. */
+function node(
+  name: string,
+  kind: string,
+  path: string | null,
+  lines: [number, number],
+  lane: string,
+  lang = "python",
+) {
+  return {
+    symbol_key: `${lang} ${path ?? ""}/${name}`,
+    kind,
+    name,
+    qualified_name: name,
+    path,
+    start_line: lines[0],
+    end_line: lines[1],
+    lang,
+    lane,
+  };
+}
+
+const ROUTE_FN = node("create_item", "function", ROUTE, [62, 72], "api");
+const ITEM = node("Item", "class", MODEL, [87, 93], "db");
+const ENDPOINT = node("POST /api/v1/items/", "api_endpoint", ROUTE, [61, 61], "api");
+const edge = (type: string, provenance: string, evidence: [string, number] | null = null) => ({
+  type,
+  confidence: provenance === "scip" ? 1 : 0.9,
+  provenance,
+  evidence: evidence ? { path: evidence[0], line: evidence[1] } : null,
+});
+
+/** What the run's lookups found, as the tools' cards (sensei_engine.agent.cards). */
+export const MOCK_CARDS = {
+  symbols: {
+    kind: "symbols",
+    symbols: [
+      {
+        symbolKey: ROUTE_FN.symbol_key,
+        name: "create_item",
+        qualifiedName: "create_item",
+        kind: "function",
+        path: ROUTE,
+        lines: [62, 72],
+        signature:
+          "def create_item(*, session: SessionDep, current_user: CurrentUser, item_in: ItemCreate) -> Any",
+      },
+      {
+        symbolKey: "python backend/app/crud.py/create_item",
+        name: "create_item",
+        qualifiedName: "create_item",
+        kind: "function",
+        path: "backend/app/crud.py",
+        lines: [63, 68],
+        signature:
+          "def create_item(*, session: Session, item_in: ItemCreate, owner_id: uuid.UUID) -> Item",
+      },
+    ],
+    more: 0,
+  },
+  graph: {
+    kind: "graph",
+    root: ROUTE_FN,
+    hops: [
+      {
+        node: ENDPOINT,
+        edge: { ...edge("handled_by", "contract"), direction: "in" },
+        depth: 1,
+        via: ROUTE_FN.symbol_key,
+      },
+      {
+        node: ITEM,
+        edge: { ...edge("references", "scip", [ROUTE, 68]), direction: "out" },
+        depth: 1,
+        via: ROUTE_FN.symbol_key,
+      },
+    ],
+    more: 0,
+  },
+  trace: {
+    kind: "trace",
+    entry: "AddItem",
+    paths: [
+      {
+        confidence: 0.81,
+        reachesGoal: true,
+        layers: ["ui", "client", "api", "handler", "db"],
+        hops: [
+          {
+            layer: "ui",
+            node: node("AddItem", "component", ADD_ITEM, [40, 143], "ui", "typescript"),
+            edge: null,
+          },
+          {
+            layer: "client",
+            node: node("ItemsService.createItem", "method", SDK, [307, 317], "ui", "typescript"),
+            edge: edge("calls", "scip", [ADD_ITEM, 56]),
+          },
+          { layer: "api", node: ENDPOINT, edge: edge("targets", "url_literal", [SDK, 308]) },
+          { layer: "handler", node: ROUTE_FN, edge: edge("handled_by", "contract") },
+          { layer: "db", node: ITEM, edge: edge("references", "scip", [ROUTE, 68]) },
+        ],
+        cut: 0,
+        breaks: [],
+      },
+    ],
+    more: 0,
+  },
+} as const;
+
 /** The stream's parts for one answer, after its `start` (the message's id is the caller's). */
 export function mockAnswerParts(conversationId: string): Record<string, unknown>[] {
-  const tool = (id: string, name: string, input: Record<string, unknown>, summary: string) => [
+  const tool = (
+    id: string,
+    name: string,
+    input: Record<string, unknown>,
+    summary: string,
+    card?: unknown,
+  ) => [
     { type: "tool-input-start", toolCallId: id, toolName: name },
     { type: "tool-input-available", toolCallId: id, toolName: name, input },
     {
       type: "tool-output-available",
       toolCallId: id,
-      output: { summary, hits: 1, isError: false, ms: 40 },
+      output: { summary, hits: 1, isError: false, ms: 40, ...(card ? { card } : {}) },
     },
   ];
   const words = MOCK_ANSWER.split(/(?<= )/);
@@ -54,6 +173,15 @@ export function mockAnswerParts(conversationId: string): Record<string, unknown>
     },
     { type: "start-step" },
     ...tool("t1", "code_search", { query: "create item" }, "6 results in 4 files"),
+    ...tool("t4", "find_symbol", { name: "create_item" }, "2 definitions", MOCK_CARDS.symbols),
+    ...tool(
+      "t5",
+      "graph_neighbors",
+      { symbol: "sym:backend/app/api/routes/items.py::create_item", direction: "both" },
+      "2 neighbours",
+      MOCK_CARDS.graph,
+    ),
+    ...tool("t6", "trace_feature", { entry: "AddItem" }, "1 paths", MOCK_CARDS.trace),
     ...tool("t2", "read_code", { path: ROUTE, start_line: 55, end_line: 80 }, `${ROUTE}:55-80`),
     ...tool("t3", "read_code", { path: MODEL, start_line: 80, end_line: 95 }, `${MODEL}:80-95`),
     { type: "finish-step" },

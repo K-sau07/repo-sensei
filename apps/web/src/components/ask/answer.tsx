@@ -3,11 +3,12 @@
 /**
  * A message of the thread (4.10). A question is its text. An answer is its text as markdown
  * (Streamdown: rendered as it streams), each citation a chip after the words it backs; above
- * it, while it is written, what the run is doing; after it, an abstention if the run couldn't
- * stand behind it (4.11), how sure it is, what it searched (collapsed) and the user's feedback.
+ * it, while it is written, what the run is doing; after it, what its tools found as cards
+ * (4.11.3), an abstention if the run couldn't stand behind it (4.11), how sure it is, what it
+ * searched (collapsed), the user's feedback, and questions to ask next about what it found.
  */
 import { cn } from "cn";
-import { ChevronRight, FileCode2, Loader2 } from "lucide-react";
+import { ChevronRight, CornerDownRight, FileCode2, Loader2 } from "lucide-react";
 import type { Route } from "next";
 import NextLink from "next/link";
 import { useState, type ReactNode } from "react";
@@ -31,11 +32,13 @@ import {
   type ConfidenceData,
   type FeedbackKind,
 } from "@/lib/api/ask";
+import { cardsOf, followUps } from "@/lib/api/cards";
 
 import { AbstainCard } from "./abstain-card";
 import { CitationChip } from "./citation-chip";
 import { ConfidenceBadge } from "./confidence-badge";
 import { FeedbackButtons } from "./feedback";
+import { ToolCards, type Artifact, type CodeHref } from "./tool-cards";
 
 const MARKER = /^#cite-(\d+)$/;
 
@@ -69,6 +72,10 @@ export function Answer({
   feedback,
   chip,
   runHref,
+  codeHref,
+  traceHref,
+  onPromote,
+  asked = [],
 }: {
   message: AskMessage;
   streaming: boolean;
@@ -81,6 +88,14 @@ export function Answer({
   chip?: (citation: CitationData) => ReactNode;
   /** Its run's timeline (none on a shared page). */
   runHref?: Route | null | undefined;
+  /** Where the cards' code opens (none on a shared page: names without links). */
+  codeHref?: CodeHref | undefined;
+  /** A trace card's entry on the Trace tab. */
+  traceHref?: ((entry: string) => Route | null) | undefined;
+  /** Keeps a card open in the artifact panel (none: no Promote). */
+  onPromote?: ((artifact: Artifact) => void) | undefined;
+  /** The thread's questions so far, so a follow-up isn't one of them. */
+  asked?: readonly string[] | undefined;
 }) {
   const citations = citationsOf(message);
   const byNumber = new Map(citations.map((c) => [c.n, c]));
@@ -89,6 +104,8 @@ export function Answer({
   const sure = confidenceOf(message);
   const abstained = abstainedOf(message);
   const drawn = chip ?? ((c: CitationData) => <CitationChip citation={c} onOpen={onOpen} />);
+  const slots = cardsOf(message);
+  const next = onAsk && !streaming && !abstained && text ? followUps(slots, asked) : [];
 
   // A citation's marker (`[n](#cite-n)`) as its chip; any other link as a link.
   const Link: NonNullable<Components["a"]> = ({ href, children }) => {
@@ -127,6 +144,7 @@ export function Answer({
           </Streamdown>
         </div>
       ) : null}
+      <ToolCards slots={slots} codeHref={codeHref} traceHref={traceHref} onPromote={onPromote} />
       {abstained && !streaming ? <AbstainCard abstain={abstained} onAsk={onAsk} /> : null}
       {!streaming ? (
         <Footer
@@ -136,6 +154,21 @@ export function Answer({
           feedback={text ? feedback : undefined}
           runHref={runHref ?? null}
         />
+      ) : null}
+      {next.length > 0 ? (
+        <nav aria-label="Ask next" className="flex flex-col gap-1" data-testid="follow-ups">
+          {next.map((question) => (
+            <button
+              key={question}
+              type="button"
+              className="flex w-fit items-center gap-1.5 rounded-md px-1.5 py-0.5 text-left text-xs text-fg-muted hover:bg-surface-2 hover:text-fg"
+              onClick={() => onAsk?.(question)}
+            >
+              <CornerDownRight aria-hidden className="size-3 shrink-0" />
+              {question}
+            </button>
+          ))}
+        </nav>
       ) : null}
     </div>
   );

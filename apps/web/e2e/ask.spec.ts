@@ -159,3 +159,42 @@ test.describe("ask", () => {
     expect(audit.violations).toEqual([]);
   });
 });
+
+test.describe("ask: what the tools found", () => {
+  test("cards show the lookups, promote to the side panel, and suggest what to ask next", async ({
+    page,
+  }) => {
+    await page.goto("/acme/api/ask");
+    const box = page.getByRole("textbox", { name: "Ask about this repository" });
+    await box.fill("How is an item created?");
+    await box.press("ControlOrMeta+Enter");
+    const answer = page.getByTestId("answer");
+    await expect(answer).toContainText("An item is created by the");
+
+    const cards = page.getByTestId("tool-cards");
+    await expect(cards.getByTestId("tool-card")).toHaveCount(4); // three lookups and endpoints
+    const path = cards.getByRole("list", { name: "Traced path" });
+    await expect(path.getByRole("listitem")).toHaveCount(5);
+    await expect(cards.getByRole("table", { name: "Endpoints" })).toContainText("/api/v1/items/");
+
+    await cards
+      .getByRole("button", { name: "Promote Trace from AddItem to the side panel" })
+      .click();
+    const panel = page.getByRole("complementary", { name: "Artifact" });
+    await expect(panel).toContainText("Trace from AddItem");
+    await expect(panel.getByRole("link", { name: "Open in Trace" })).toHaveAttribute(
+      "href",
+      "/acme/api/trace?from=AddItem",
+    );
+    const audit = await new AxeBuilder({ page }).include("main").analyze();
+    expect(audit.violations).toEqual([]);
+
+    await panel.getByRole("button", { name: "Close the artifact" }).click();
+    await expect(page.getByTestId("evidence-rail")).toBeVisible();
+
+    const next = page.getByRole("navigation", { name: "Ask next" });
+    await next.getByRole("button", { name: "Where is `Item` tested?" }).click();
+    await expect(page.getByTestId("answer")).toHaveCount(2);
+    await expect(page.getByText("Where is `Item` tested?").first()).toBeVisible();
+  });
+});
