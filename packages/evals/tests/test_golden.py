@@ -422,15 +422,17 @@ def test_class_mix_departures_are_warnings() -> None:
     )
     items = [_item(n, cls) for n, cls in enumerate(mix)]
     assert check_mix("s", Suite(name="s", version=0, items=items)) == []
-    # Extra unanswerable items (langflow has three more) are fine.
-    extra = [_item(100 + n, QueryClass.UNANSWERABLE) for n in range(3)]
+    # More of any class (the 40-item suites of 4.14), or one the plan has none of, is fine.
+    extra = [_item(100 + n, cls) for n, cls in enumerate(
+        [QueryClass.UNANSWERABLE] * 3 + [QueryClass.FLOW] * 3 + [QueryClass.IMPACT]
+    )]  # fmt: skip
     assert check_mix("s", Suite(name="s", version=0, items=items + extra)) == []
-    off = [*items[1:-1], _item(99, QueryClass.IMPACT)]
+    off = items[1:-1]
     [problem] = check_mix("s", Suite(name="s", version=0, items=off))
     assert problem.warning
     assert problem.item == "repo r"
     assert problem.message == (
-        "class mix departs from the plan: conceptual 9 (planned 10), impact 1 (planned 0), "
+        "class mix departs from the plan: conceptual 9 (planned at least 10), "
         "unanswerable 1 (planned at least 2)"
     )
 

@@ -31,7 +31,8 @@ from __future__ import annotations
 
 import dataclasses
 import uuid
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping
+from contextlib import asynccontextmanager
 from decimal import Decimal
 from pathlib import Path
 
@@ -40,8 +41,9 @@ from sqlalchemy import select
 
 from sensei_core.config import get_settings
 from sensei_core.db import make_database
-from sensei_core.models import Org, Repo, Snapshot
+from sensei_core.models import Org, Repo, RepoFile, Snapshot
 from sensei_core.usage import CostCalculator
+from sensei_engine.agent.tools.base import ToolContext
 from sensei_engine.embed import store
 from sensei_engine.embed.provider import EmbeddingProvider, EmbeddingUsage
 from sensei_engine.embed.voyage import VoyageClient
@@ -52,7 +54,12 @@ from sensei_engine.search.hybrid import HybridRetriever, SearchHit, Weights, Wor
 from sensei_engine.search.plan import Leg, Mode, Origin, SearchPlan, plan
 from sensei_engine.search.rerank import LLMReranker, Reranker, RerankMode
 from sensei_engine.search.route import QueryClass, classify
-from sensei_engine.search.service import RERANK_CANDIDATES, read_contents, rerank
+from sensei_engine.search.service import (
+    RERANK_CANDIDATES,
+    SearchService,
+    read_contents,
+    rerank,
+)
 from sensei_evals.dense import embed_snapshot
 from sensei_evals.graph import link_snapshot
 from sensei_evals.keyword import KeywordRetriever, analyze_index
@@ -206,6 +213,44 @@ class HybridEvalRetriever(KeywordRetriever):
                 )
                 self.guard.check()  # past the budget: the run stops here
         return [to_hit(hit) for hit in hits[:k]]
+
+    @asynccontextmanager
+    async def agent_context(
+        self, *, search: SearchService | None = None
+    ) -> AsyncGenerator[ToolContext]:
+        """The prepared index as the Ask agent's tools read it (answer evals, 4.14): on a session
+        of its own, the checkout as its files, its graph and embeddings when it has them, and
+        ``search`` (default: the fused order, the rules route)."""
+        if self.snapshot is None:
+            msg = "prepare the index before asking of it"
+            raise RuntimeError(msg)
+        repo_id, snapshot_id = self.snapshot
+        async with self.sessions() as db:
+            repo = await db.get(Repo, repo_id)
+            snapshot = await db.get(Snapshot, snapshot_id)
+            if repo is None or snapshot is None:  # pragma: no cover - prepare made them
+                msg = "the eval index is gone"
+                raise RuntimeError(msg)
+            tree = list(
+                await db.scalars(
+                    select(RepoFile.path)
+                    .where(RepoFile.snapshot_id == snapshot_id)
+                    .order_by(RepoFile.path)
+                )
+            )
+            yield ToolContext(
+                db=db,
+                org_id=repo.org_id,
+                repo_id=repo_id,
+                snapshot_id=snapshot_id,
+                repo=f"{repo.owner}/{repo.name}",
+                sha=snapshot.commit_sha,
+                root=self._checkout_path,
+                tree=tree,
+                search=search or SearchService(weights=self.hybrid.weights),
+                graph=self._graph,
+                dense=self._dense,
+            )
 
     def report(self) -> Mapping[str, object]:
         """What Voyage was paid and what the cache held, for the run's notes."""

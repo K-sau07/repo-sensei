@@ -68,6 +68,8 @@ def render_run(run: RunRecord) -> str:
         from sensei_evals import crosslayer  # noqa: PLC0415 - it imports the renamer's engine
 
         return crosslayer.render_run(run)
+    if run.retriever.startswith("ask:"):  # an answer run (4.14): answers, not hits
+        return render_answers(run)
     k = _headline_k(run)
     overall: dict[str, Any] = run.metrics.get("overall", {})
     counts: dict[str, Any] = run.metrics.get("counts", {})
@@ -237,4 +239,113 @@ def render_comparison(comparison: Comparison) -> str:
         lines += _table(
             ["item", "A", "B", "query"], [(c.id, c.before, c.after, c.query) for c in items]
         )
+    return "\n".join(lines) + "\n"
+
+
+ANSWER_METRICS = (
+    "checklist",
+    "f0.5_file",
+    "f0.5_line",
+    "citation_recall",
+    "citation_supported",
+    "citation_in_gold",
+    "contradicted",
+    "cost_usd",
+)
+
+
+def render_answers(run: RunRecord) -> str:
+    """An answer run's report: the release gate, the answers' scores overall and by class,
+    latency and cost, and every item."""
+    overall: dict[str, Any] = run.metrics.get("overall", {})
+    counts: dict[str, Any] = run.metrics.get("counts", {})
+    answer: dict[str, Any] = run.metrics.get("answer", {})
+    misses: list[dict[str, Any]] = run.metrics.get("gate", [])
+    first_token: dict[str, Any] = answer.get("first_token_ms", {})
+    lines = [
+        f"# Answer eval `{run.id}`",
+        "",
+        f"- **Suite:** {run.suite} v{run.suite_version} ({counts.get('items', 0)} items asked, "
+        f"{counts.get('answerable', 0)} answerable)",
+        f"- **Agent:** {run.retriever}; judge {run.config.get('judge') or 'none'}",
+        f"- **Repository:** {run.config.get('repo')} @ `{run.repo_sha}`",
+        f"- **repo-sensei:** `{run.git_sha or 'unknown'}`"
+        + (" (uncommitted changes)" if run.config.get("dirty") else ""),
+        f"- **Spent:** ${run.metrics.get('spent_usd', '?')} of ${run.config.get('budget_usd')}"
+        + (f" (stopped: {run.config['stopped']})" if run.config.get("stopped") else ""),
+        f"- **Created:** {run.created_at.isoformat()}",
+        "",
+        "## Release gate",
+        "",
+        "Passed." if not misses else "Missed:",
+        "",
+        *(
+            _table(
+                ["metric", "value", "wants"],
+                [[m["metric"], m["value"], m["bound"]] for m in misses],
+            )
+            if misses
+            else []
+        ),
+        "",
+        "## Overall",
+        "",
+        *_table(
+            ["metric", "value"],
+            [[name, overall.get(name)] for name in (*ANSWER_METRICS, "abstention_accuracy")],
+        ),
+        "",
+        "## Latency (ms)",
+        "",
+        *_table(
+            ["", "p50", "p95"],
+            [
+                [
+                    "first event",
+                    answer.get("first_event_ms", {}).get("p50"),
+                    answer.get("first_event_ms", {}).get("p95"),
+                ],
+                [
+                    "first token (lookup)",
+                    first_token.get("lookup", {}).get("p50"),
+                    first_token.get("lookup", {}).get("p95"),
+                ],
+                [
+                    "first token (trace)",
+                    first_token.get("trace", {}).get("p50"),
+                    first_token.get("trace", {}).get("p95"),
+                ],
+                [
+                    "total",
+                    answer.get("total_ms", {}).get("p50"),
+                    answer.get("total_ms", {}).get("p95"),
+                ],
+            ],
+        ),
+        "",
+        "## By class",
+        "",
+    ]
+    by_class: dict[str, dict[str, Any]] = run.metrics.get("by_class", {})
+    class_counts: dict[str, int] = counts.get("by_class", {})
+    lines += _table(
+        ["class", "items", *ANSWER_METRICS[:5], "abstention"],
+        [
+            [name, class_counts.get(name, 0), *(scores.get(m) for m in ANSWER_METRICS[:5]),
+             scores.get("abstention_accuracy")]
+            for name, scores in by_class.items()
+        ],
+    )  # fmt: skip
+    lines += ["", "## Items", ""]
+    lines += _table(
+        ["item", "class", "checklist", "f0.5 file", "supported", "abstained", "first token",
+         "cost", "failed"],
+        [
+            [item.id, item.query_class, item.metrics.get("checklist"),
+             item.metrics.get("f0.5_file"), item.metrics.get("citation_supported"), item.abstained,
+             item.metrics.get("first_token_ms"), item.metrics.get("cost_usd"),
+             "yes" if item.metrics.get("failed") else ""]
+            for item in run.per_item
+        ],
+    )  # fmt: skip
     return "\n".join(lines) + "\n"

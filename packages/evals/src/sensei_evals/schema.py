@@ -15,6 +15,11 @@ A suite is a YAML file::
           - {layer: ui, path: frontend/src/routes/login.tsx, symbol: Login, lines: [43, 125]}
           - {layer: handler, path: backend/app/api/routes/login.py, symbol: login_access_token,
              lines: [22, 39]}
+        answer:  # optional: what a correct answer says, for answer evals
+          text: The form posts the credentials to /login/access-token, whose handler ...
+          checklist:
+            - {fact: the form posts to /login/access-token, weight: 4}
+            - {fact: crud.authenticate compares the password with its stored hash, weight: 3}
 
 Paths are relative to the repository root. ``lines`` are 1-based and inclusive. A target with
 a ``symbol`` must give the symbol's lines; a target without lines stands for the whole file.
@@ -92,6 +97,22 @@ class GoldTarget(_Strict):
         return self
 
 
+class ChecklistFact(_Strict):
+    """A fact a good answer states, weighted by how much it matters (RepoProbe's 1-4: 4 is the
+    point of the question, 1 a detail worth having)."""
+
+    fact: Annotated[str, Field(min_length=3)]
+    weight: Annotated[int, Field(ge=1, le=4)] = 1
+
+
+class ReferenceAnswer(_Strict):
+    """What a correct answer says (``text``, for a reader and the judge) and the facts it is
+    scored on. An unanswerable item's says what an honest answer admits."""
+
+    text: Annotated[str, Field(min_length=10)]
+    checklist: Annotated[list[ChecklistFact], Field(min_length=1)]
+
+
 class GoldenItem(_Strict):
     model_config = ConfigDict(validate_by_name=True)
 
@@ -103,6 +124,7 @@ class GoldenItem(_Strict):
     layers: list[Layer] = Field(default_factory=list[Layer])
     gold: list[GoldTarget] = Field(default_factory=list[GoldTarget])
     answerable: bool = True
+    answer: ReferenceAnswer | None = None  # for answer evals (4.14): retrieval ones ignore it
     notes: str = ""
 
     @field_validator("id")

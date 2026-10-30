@@ -10,6 +10,7 @@
     sensei-eval route --suite fastapi-template --suite langflow \\
         --extra evals/private/router/queries.yaml
     sensei-eval run --suite crosslayerbench-v0 --repo fastapi-template --retriever gold
+    sensei-eval answers --suite fastapi-template --budget 5 --opt reuse=1 --opt graph=1
 
 Runs are written to ``evals/private/reports/<id>.json`` and ``.md`` (private) and stored in
 ``eval_runs`` unless ``--no-store``. A run is named by its id (looked up in the reports folder,
@@ -21,6 +22,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import uuid
+from decimal import Decimal
 from pathlib import Path
 from typing import Annotated
 
@@ -35,7 +37,7 @@ from sensei_engine.search.route import QueryRouter
 from sensei_evals import crosslayer, paths, routing
 from sensei_evals import rename as rename_mod
 from sensei_evals.reports import compare, read_run, render_comparison, render_run, write_run
-from sensei_evals.repos import mapping_path, valid_repo_id
+from sensei_evals.repos import mapping_path, read_mapping, valid_repo_id
 from sensei_evals.retrieval import RETRIEVERS, RepoRef, RetrieverContext
 from sensei_evals.runner import DEFAULT_KS, RunRecord, run_suite
 from sensei_evals.schema import (
@@ -445,6 +447,127 @@ def route_queries(
     typer.echo(f"run {record.id}: {out} and {json_path}" + (" (stored)" if store else ""))
 
 
+def _picked(
+    items: list[GoldenItem],
+    query_class: QueryClass | None,
+    ids: list[str] | None,
+    limit: int | None,
+) -> list[GoldenItem]:
+    if query_class is not None:
+        items = [i for i in items if i.class_ is query_class]
+    if ids:
+        wanted = set(ids)
+        items = [i for i in items if i.id in wanted]
+    return items[:limit] if limit is not None else items
+
+
+def _budget(value: str) -> Decimal:
+    try:
+        limit = Decimal(value)
+    except ArithmeticError:
+        raise _fail(f"--budget must be a number of dollars, not {value!r}") from None
+    if limit <= 0:
+        raise _fail("--budget must be more than 0: every question is paid")
+    return limit
+
+
+def _gate_line(record: RunRecord) -> str:
+    misses = record.metrics.get("gate", [])
+    if not misses:
+        return "release gate: passed"
+    shown = "; ".join(f"{m['metric']} = {m['value']} (wants {m['bound']})" for m in misses)
+    return f"release gate: missed {shown}"
+
+
+@app.command("answers")
+def answer_eval(
+    *,
+    suite: Annotated[str, typer.Option(help="Suite name (evals/private/golden/<name>.yaml).")],
+    budget: Annotated[
+        str, typer.Option(help="The most the run may spend, in USD (every call is paid).")
+    ],
+    repo: Annotated[str | None, typer.Option(help="Benchmark repository id in the suite.")] = None,
+    checkout: Annotated[
+        Path | None,
+        typer.Option(help="Checkout of the pinned commit (default .cache/eval-repos/<repo>)."),
+    ] = None,
+    mode: Annotated[str, typer.Option(help="fast or deep, as the Ask page's toggle.")] = "fast",
+    judge: Annotated[bool, typer.Option(help="Score the checklists with the judge.")] = True,
+    limit: Annotated[int | None, typer.Option(help="Only the first N items.")] = None,
+    item: Annotated[
+        list[str] | None, typer.Option(help="Only these item ids (repeatable).")
+    ] = None,
+    query_class: Annotated[
+        QueryClass | None, typer.Option("--class", help="Only the items of this query class.")
+    ] = None,
+    opt: Annotated[
+        list[str] | None,
+        typer.Option(help="Index option key=value, as the hybrid retriever's (reuse=1, graph=1)."),
+    ] = None,
+    reports_dir: Annotated[Path | None, typer.Option(help="Where reports go.")] = None,
+    store: Annotated[bool, typer.Option(help="Also store the run in eval_runs.")] = True,
+) -> None:
+    """Ask the suite's questions of the Ask agent end to end and score its answers (4.14): F0.5
+    and citations against the gold, the checklist by a judge, abstention, latency and cost,
+    and the release gate's misses. Paid: it stops at ``--budget``."""
+    from sensei_engine.agent.loop import Mode  # noqa: PLC0415 - heavy, only here
+    from sensei_evals import answers  # noqa: PLC0415
+
+    root = paths.repo_root()
+    limit_usd = _budget(budget)
+    if mode not in {m.value for m in Mode}:
+        raise _fail("--mode is fast or deep")
+    if not get_settings().anthropic.configured:
+        raise _fail("answer evals need SENSEI_ANTHROPIC_API_KEY")
+    try:
+        loaded = load_suite(paths.suite_path(root, suite))
+    except FileNotFoundError as error:
+        raise _fail(str(error)) from None
+    except SuiteError as error:
+        raise _fail(f"invalid suite:\n{error}") from None
+    repo_id, sha, items = select_items(loaded, repo)
+    items = _picked(items, query_class, item, limit)
+    if not items:
+        raise _fail("no items to ask")
+    ref = RepoRef(id=repo_id, sha=sha, checkout=_checkout(root, repo_id, sha, checkout))
+    options = _options(opt or [])
+    config = {
+        "options": options,
+        "items": len(items),
+        "class": query_class.value if query_class is not None else None,
+        "dirty": paths.has_uncommitted_changes(root),
+        "suite_sha256": hashlib.sha256(paths.suite_path(root, suite).read_bytes()).hexdigest(),
+    }
+    try:
+        record, spent = asyncio.run(
+            answers.evaluate(
+                loaded,
+                items,
+                ref,
+                options=options,
+                budget=limit_usd,
+                mode=Mode(mode),
+                judge=judge,
+                config=config,
+                git_sha=paths.head_sha(root),
+            )
+        )
+    except ValueError as error:
+        raise _fail(str(error)) from None
+    json_path, md_path = write_run(record, reports_dir or paths.reports_dir(root))
+    if store:
+        try:
+            asyncio.run(_store(record))
+        except (OSError, SQLAlchemyError) as error:
+            raise _fail(
+                f"reports written, but storing the run failed ({_db_error(error)}); use --no-store"
+            ) from None
+    typer.echo(render_run(record))
+    typer.echo(_gate_line(record))
+    typer.echo(f"spent ${spent} of ${limit_usd}")
+    typer.echo(f"run {record.id}: {json_path} and {md_path}" + (" (stored)" if store else ""))
+
+
 @app.command("compare")
 def compare_runs(
     run_a: Annotated[str, typer.Argument(help="The baseline run (id or JSON path).")],
@@ -473,6 +596,47 @@ def report(
     _, md_path = write_run(record, reports)
     typer.echo(render_run(record))
     typer.echo(f"written to {md_path}")
+
+
+def _new_copy(
+    source: Path,
+    target: Path,
+    *,
+    symbols: Path | None,
+    names_from: rename_mod.NameSource,
+    seed: int,
+) -> rename_mod.RenameResult:
+    """A renamed copy of ``source`` made at ``target`` and committed."""
+    if symbols is not None:
+        names: rename_mod.Names = rename_mod.symbols_from_file(symbols)
+        names_source = f"file {symbols.name}"
+    else:
+        names = rename_mod.NAME_SOURCES[names_from](source)
+        names_source = names_from.value
+    plan = rename_mod.plan_for(source, names, seed=seed)
+    try:
+        result = rename_mod.rename_tree(source, target, plan)
+    except (FileExistsError, ValueError) as error:
+        raise _fail(f"{error} (pass --reuse-copy to keep it)") from None
+    result.sha = rename_mod.commit_tree(target)
+    result.repo = target.name
+    result.names = names_source
+    return result
+
+
+def _made_copy(target: Path, new_repo: str, sha: str) -> rename_mod.RenameResult:
+    """The rename that made the copy at ``target``, read back from its mapping; it must be of
+    the commit the suite is pinned to, and the copy still at the commit the mapping names."""
+    mapping = read_mapping(mapping_path(target.parent, new_repo))
+    if mapping is None:
+        raise _fail(f"no mapping for the copy {new_repo}: make it again without --reuse-copy")
+    result = rename_mod.RenameResult.from_mapping(mapping)
+    made_from = result.source.get("sha")
+    if made_from != sha:
+        raise _fail(f"the copy was made from {made_from}, the suite is pinned to {sha}")
+    if result.sha is None or paths.head_sha(target) != result.sha:
+        raise _fail(f"the copy at {target} isn't at the commit its mapping names ({result.sha})")
+    return result
 
 
 @app.command()
@@ -511,6 +675,13 @@ def rename(
             "Keep it beside the source suite: validation reads the source from there."
         ),
     ] = None,
+    reuse_copy: Annotated[
+        bool,
+        typer.Option(
+            help="Keep the copy made before and translate the suite again with its mapping (the "
+            "suite changed, the code didn't): the copy's names and commit stay as they are."
+        ),
+    ] = False,
 ) -> None:
     """Make a renamed copy of a repository, its mapping file and the translated suite."""
     root = paths.repo_root()
@@ -535,20 +706,13 @@ def rename(
             "--out must end in a folder named like a repository id (lowercase letters, digits, "
             f"'.', '_' or '-'), got {new_repo!r}"
         )
-    if symbols is not None:
-        names: rename_mod.Names = rename_mod.symbols_from_file(symbols)
-        names_source = f"file {symbols.name}"
-    else:
-        names = rename_mod.NAME_SOURCES[names_from](source)
-        names_source = names_from.value
-    plan = rename_mod.plan_for(source, names, seed=seed)
-    try:
-        result = rename_mod.rename_tree(source, target, plan)
-    except (FileExistsError, ValueError) as error:
-        raise _fail(str(error)) from None
-    result.sha = rename_mod.commit_tree(target)
-    result.repo = new_repo
-    result.names = names_source
+    result = (
+        _made_copy(target, new_repo, sha)
+        if reuse_copy
+        else _new_copy(source, target, symbols=symbols, names_from=names_from, seed=seed)
+    )
+    names_source = result.names or "the copy's mapping"
+    plan = result.plan
     origin = RenamedFrom(
         suite=suite_file.stem, repo=repo, sha=sha, sha256=hashlib.sha256(raw).hexdigest()
     )
@@ -572,7 +736,11 @@ def rename(
     typer.echo(
         f"{len(plan.tokens)} names renamed from {names_source} ({len(plan.kept)} kept, listed "
         "in the mapping), "
-        f"{result.rewritten} files rewritten, {result.copied} copied; "
-        f"{target} ({new_repo}) at {result.sha}\n"
+        + (
+            "the copy kept as it was made; "
+            if reuse_copy
+            else f"{result.rewritten} files rewritten, {result.copied} copied; "
+        )
+        + f"{target} ({new_repo}) at {result.sha}\n"
         f"mapping: {mapping}\nsuite: {suite_out} ({len(translated.items)} items)"
     )

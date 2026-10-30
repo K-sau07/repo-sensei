@@ -147,3 +147,27 @@ def test_queries_are_unique_per_repo() -> None:
     [(line, where, message)] = _problems(text)
     assert (line, where) == (1, "")
     assert message == "item 'demo-none-01' repeats an earlier query for demo"
+
+
+def test_an_item_may_carry_a_reference_answer_and_its_checklist() -> None:
+    answered = VALID.replace(
+        "      - layer: handler\n        path: api/login.py\n",
+        "      - layer: handler\n        path: api/login.py\n"
+        "    answer:\n"
+        "      text: The form posts to /login, whose handler checks the hash.\n"
+        "      checklist:\n"
+        "        - {fact: it posts to /login, weight: 4}\n"
+        "        - fact: the handler checks the hash\n",
+    )
+    assert answered != VALID
+    flow, none = parse_suite(answered, "suite.yaml").items
+    assert flow.answer is not None
+    assert [(f.fact, f.weight) for f in flow.answer.checklist] == [
+        ("it posts to /login", 4),
+        ("the handler checks the hash", 1),  # a detail, unless it says otherwise
+    ]
+    assert none.answer is None
+    bad = answered.replace("weight: 4", "weight: 5")
+    assert [(line, where) for line, where, _ in _problems(bad)] == [
+        (17, "items.0.answer.checklist.0.weight")
+    ]

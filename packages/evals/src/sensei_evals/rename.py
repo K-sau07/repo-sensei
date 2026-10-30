@@ -74,9 +74,11 @@ from sensei_evals.golden import MAX_FILES, TS_SUFFIXES, Problem, parse_python, s
 from sensei_evals.python_names import PYTHON_NAMES
 from sensei_evals.repos import mapping_path, read_mapping
 from sensei_evals.schema import (
+    ChecklistFact,
     GoldenItem,
     GoldTarget,
     QueryClass,
+    ReferenceAnswer,
     RenamedFrom,
     Suite,
     SuiteError,
@@ -1038,6 +1040,23 @@ def translate_query(
     return _BACKTICKED.sub(lambda m: f"`{plan.sub(m[1], languages)}`", query)
 
 
+def translate_answer(
+    answer: ReferenceAnswer, plan: RenamePlan, languages: Collection[str] | None = None
+) -> ReferenceAnswer:
+    """A reference answer for the renamed copy: it is plain language, so (as a conceptual
+    query) only what it quotes in backticks is renamed."""
+
+    def sub(text: str) -> str:
+        return _BACKTICKED.sub(lambda m: f"`{plan.sub(m[1], languages)}`", text)
+
+    return ReferenceAnswer(
+        text=sub(answer.text),
+        checklist=[
+            ChecklistFact(fact=sub(fact.fact), weight=fact.weight) for fact in answer.checklist
+        ],
+    )
+
+
 def _translate_item(item: GoldenItem, result: RenameResult, new_repo: str, sha: str) -> GoldenItem:
     languages = _languages(target.path for target in item.gold)
     try:
@@ -1052,6 +1071,11 @@ def _translate_item(item: GoldenItem, result: RenameResult, new_repo: str, sha: 
             "sha": sha,
             "query": translate_query(item.query, item.class_, result.plan, languages),
             "gold": gold,
+            "answer": (
+                translate_answer(item.answer, result.plan, languages)
+                if item.answer is not None
+                else None
+            ),
         }
     )
 
@@ -1094,6 +1118,8 @@ def suite_yaml(suite: Suite) -> str:
             data["gold"] = [t.model_dump(mode="json", exclude_none=True) for t in item.gold]
         if not item.answerable:
             data["answerable"] = False
+        if item.answer is not None:
+            data["answer"] = item.answer.model_dump(mode="json")
         if item.notes:
             data["notes"] = item.notes
         items.append(data)

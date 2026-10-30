@@ -44,11 +44,21 @@ from sensei_evals.rename import (
     rename_tree,
     split_words,
     suite_yaml,
+    translate_answer,
     translate_query,
     translate_suite,
 )
 from sensei_evals.repos import PinnedRepo, mapping_path
-from sensei_evals.schema import GoldenItem, GoldTarget, Layer, QueryClass, Suite, parse_suite
+from sensei_evals.schema import (
+    ChecklistFact,
+    GoldenItem,
+    GoldTarget,
+    Layer,
+    QueryClass,
+    ReferenceAnswer,
+    Suite,
+    parse_suite,
+)
 
 ROOT = Path(__file__).parents[3]
 FIXTURE = ROOT / "packages" / "engine" / "tests" / "fixtures" / "fastapi-template.tar.gz"
@@ -112,6 +122,24 @@ def test_protected_python_names_are_frozen() -> None:
     source = (ROOT / "packages/evals/src/sensei_evals/python_names.py").read_text("utf-8")
     assert "dir(builtins)" in source  # only in the comment saying how it was generated
     assert "import builtins" not in source
+
+
+def test_a_reference_answer_renames_only_what_it_quotes() -> None:
+    plan = RenamePlan(seed=0, tokens={"flow": "devi", "run_flow": "vare_devi"})
+    answer = ReferenceAnswer(
+        text="A flow is run by `run_flow`.",
+        checklist=[ChecklistFact(fact="the flow runs in `run_flow`", weight=4)],
+    )
+    assert translate_answer(answer, plan) == ReferenceAnswer(
+        text="A flow is run by `vare_devi`.",
+        checklist=[ChecklistFact(fact="the flow runs in `vare_devi`", weight=4)],
+    )
+    item = GoldenItem.model_validate(
+        {"id": "x", "repo": "r", "sha": "a" * 40, "query": "how?", "class": "unanswerable",
+         "answerable": False, "answer": answer.model_dump()}
+    )  # fmt: skip
+    written = suite_yaml(Suite(name="s", version=0, items=[item]))
+    assert parse_suite(written).items[0].answer == answer  # kept in the golden file
 
 
 def test_plans_are_deterministic_per_seed() -> None:
@@ -736,6 +764,30 @@ def test_rename_command(template: Path, tmp_path: Path) -> None:
     )  # fmt: skip
     assert code == 1
     assert "--out must end in a folder named like a repository id" in output
+
+    # The suite changes (an answer added), the code doesn't: the copy stays as it was made.
+    edited = _suite()
+    first = edited.items[0].model_copy(
+        update={"answer": ReferenceAnswer(text="It is the `Login` page.", checklist=[
+            ChecklistFact(fact="the `Login` page posts the form", weight=4)])}
+    )  # fmt: skip
+    edited = edited.model_copy(update={"items": [first, *edited.items[1:]]})
+    suite_file.write_text(suite_yaml(edited), encoding="utf-8")
+    again = ("--suite", suite_file, "--repo", "fastapi-template", "--checkout", template,
+             "--out", out, "--suite-out", tmp_path / "ft-renamed.yaml")  # fmt: skip
+    code, output = _rename(*again)
+    assert code == 1
+    assert "pass --reuse-copy" in output
+    code, output = _rename(*again, "--reuse-copy")
+    assert code == 0, output
+    retranslated = parse_suite((tmp_path / "ft-renamed.yaml").read_text(encoding="utf-8"))
+    assert retranslated.items[0].sha == mapping["sha"]  # the same copy, at the same commit
+    assert retranslated.items[0].answer is not None
+    assert retranslated.renamed_from is not None
+    remapped = json.loads(mapping_file.read_text(encoding="utf-8"))
+    assert remapped["tokens"] == mapping["tokens"]
+    assert remapped["source"]["suite_sha256"] == retranslated.renamed_from.sha256
+    assert remapped["source"]["suite_sha256"] != mapping["source"]["suite_sha256"]
 
 
 ValidateFn = Callable[..., int]

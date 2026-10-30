@@ -420,7 +420,8 @@ def _check_symbol(
     return ([message], []) if all(span.exact for span in found) else ([], [message])
 
 
-# The 2.2 mix per repository: answerable items by class, and at least this many unanswerable.
+# The 2.2 mix per repository, as minimums (4.14 grew the suites past it): answerable items by
+# class, and at least this many unanswerable.
 CLASS_MIX: dict[QueryClass, int] = {
     QueryClass.CONCEPTUAL: 10,
     QueryClass.FLOW: 10,
@@ -431,15 +432,15 @@ MIN_UNANSWERABLE = 2
 
 
 def check_mix(name: str, suite: Suite) -> list[Problem]:
-    """A warning for each repository whose items depart from the planned class mix."""
+    """A warning for each repository with fewer items of a class than the planned mix."""
     problems: list[Problem] = []
     for repo in suite.repos:
         counts = Counter(item.class_ for item in suite.for_repo(repo))
         unanswerable = counts.pop(QueryClass.UNANSWERABLE, 0)
         off = [
-            f"{cls.value} {counts.get(cls, 0)} (planned {CLASS_MIX.get(cls, 0)})"
+            f"{cls.value} {counts.get(cls, 0)} (planned at least {CLASS_MIX.get(cls, 0)})"
             for cls in QueryClass
-            if cls is not QueryClass.UNANSWERABLE and counts.get(cls, 0) != CLASS_MIX.get(cls, 0)
+            if cls is not QueryClass.UNANSWERABLE and counts.get(cls, 0) < CLASS_MIX.get(cls, 0)
         ]
         if unanswerable < MIN_UNANSWERABLE:
             off.append(f"unanswerable {unanswerable} (planned at least {MIN_UNANSWERABLE})")
