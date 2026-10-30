@@ -5,6 +5,7 @@ from __future__ import annotations
 from sensei_core.db.base import Base
 from sensei_core.models.audit import ActorType, AuditEvent, UsageEvent, UsageKind
 from sensei_core.models.chunks import CodeChunk
+from sensei_core.models.conversations import Conversation, ConversationMessage, MessageCitation
 from sensei_core.models.embeddings import EmbeddingCache
 from sensei_core.models.evals import EvalRun
 from sensei_core.models.files import RepoFile
@@ -45,6 +46,8 @@ __all__ = [
     "CodeChunk",
     "CodeEdge",
     "CodeNode",
+    "Conversation",
+    "ConversationMessage",
     "DeliveryStatus",
     "EdgeType",
     "EmbeddingCache",
@@ -59,6 +62,7 @@ __all__ = [
     "LLMBatch",
     "LLMBatchStatus",
     "Membership",
+    "MessageCitation",
     "NodeKind",
     "OAuthToken",
     "Org",
