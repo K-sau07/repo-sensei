@@ -376,7 +376,7 @@ class CallResolver:
                     continue
                 if not wildcard and item.name != call.name:
                     continue
-                declared = self.index.by_fqn.get(item.source)
+                declared = self.index.declared(item.source, near=path)
                 if declared is None:
                     if not wildcard:
                         return _external(f"{item.source}.{call.name}")
@@ -601,17 +601,17 @@ class CallResolver:
         ref = self.index.resolve(path, call.owner, name)
         if ref is not None:
             return Value("type", ref), parts[1:]
-        return self._qualified(parts)
+        return self._qualified(path, parts)
 
-    def _qualified(self, parts: tuple[str, ...]) -> tuple[Value, tuple[str, ...]]:
-        """A chain starting with a package: ``com.acme.Util.helper()``."""
+    def _qualified(self, path: str, parts: tuple[str, ...]) -> tuple[Value, tuple[str, ...]]:
+        """A chain starting with a package: ``com.acme.Util.helper()`` (written in ``path``)."""
         for end in range(len(parts), 1, -1):
-            declared = self.index.by_fqn.get(".".join(parts[:end]))
+            declared = self.index.declared(".".join(parts[:end]), near=path)
             if declared is not None:
                 return Value("type", declared.ref()), parts[end:]
         name = parts[0]
         if name[:1].islower() and len(parts) > 1 and parts[-1][:1].isupper():
-            return Value("type", self.index.fqn(".".join(parts))), ()
+            return Value("type", self.index.fqn(".".join(parts), near=path)), ()
         if name[:1].isupper() and not name.isupper():
             return DEAD, ()  # a type we can't name (a library's, imported on demand)
         return UNKNOWN, ()
@@ -692,7 +692,7 @@ class CallResolver:
         for item in self.index.facts[path].imports:
             if item.kind != "static" or item.name != name:
                 continue
-            declared = self.index.by_fqn.get(item.source)
+            declared = self.index.declared(item.source, near=path)
             if declared is None:
                 return DEAD
             variable = next((f for f in declared.type.fields if f.name == name), None)

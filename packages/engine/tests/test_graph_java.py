@@ -978,3 +978,37 @@ def test_two_modules_classes_of_one_name_resolve_to_each_ones_own() -> None:
         if e.type is EdgeType.CALLS and "Money" in e.dst
     }
     assert made == {("billing", "java billing"), ("shop", "java shop")}
+
+
+def test_a_static_import_and_a_qualified_name_reach_their_own_modules_class() -> None:
+    """Of two modules' ``com.example.util.Util``, a file's static import, its import edge and
+    a call through the fully qualified name all go to its own module's, as a plain one does."""
+    util = (
+        "package com.example.util;\n"
+        "public class Util {\n  public static int helper() { return 1; }\n}\n"
+    )
+    uses = (
+        "package com.example.store;\n"
+        "import static com.example.util.Util.helper;\n"
+        "import com.example.util.Util;\n"
+        "public class Till {\n"
+        "  int a() { return helper(); }\n"
+        "  int b() { return com.example.util.Util.helper(); }\n"
+        "  int c() { return Util.helper(); }\n"
+        "}\n"
+    )
+    facts: dict[str, JavaFacts] = {}
+    for module in ("billing", "shop"):
+        facts |= _facts({"Util.java": util}, f"{module}/src/main/java/com/example/util")
+        facts |= _facts({"Till.java": uses}, f"{module}/src/main/java/com/example/store")
+    _, edges, _ = java.resolve(Project(frozenset(facts)), facts)
+    made = {
+        (e.type, e.src.split(" ", 1)[1].split("/")[0], e.dst.split(" ", 1)[1].split("/")[0])
+        for e in edges
+        if e.type in (EdgeType.CALLS, EdgeType.IMPORTS) and "Util" in e.dst
+    }
+    assert made == {
+        (kind, module, module)
+        for kind in (EdgeType.CALLS, EdgeType.IMPORTS)
+        for module in ("billing", "shop")
+    }

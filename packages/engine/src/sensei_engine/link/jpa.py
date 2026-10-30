@@ -1220,7 +1220,7 @@ class _Linker:
         named = [(parsed.target, writes)] if parsed.target else []
         named += [(n, False) for n in parsed.names]
         for name, write in named:
-            entity = self.entity_named(name)
+            entity = self.entity_named(name, path)
             if entity is None:
                 continue
             self.access(
@@ -1237,12 +1237,13 @@ class _Linker:
             linked = True
         return linked
 
-    def entity_named(self, name: str) -> _Entity | None:
-        """The entity a JPQL name means: its entity name, or its class's FQN."""
+    def entity_named(self, name: str, path: str) -> _Entity | None:
+        """The entity a JPQL name (in the file ``path``) means: its entity name, or its class's
+        FQN (of two modules' classes of one name, the nearer one's)."""
         found = self.by_name.get(name, [])
         if len(found) == 1:
             return found[0]
-        declared = self.index.by_fqn.get(name) if "." in name else None
+        declared = self.index.declared(name, near=path) if "." in name else None
         return self.entities.get(declared.type.key) if declared is not None else None
 
     def statement(

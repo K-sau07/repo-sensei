@@ -32,7 +32,8 @@ out); the rest are **external**.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Generator, Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 
 from sensei_core.models import EdgeType, NodeKind, Provenance
@@ -262,13 +263,26 @@ class TypeIndex:
         finally:
             self._near = around
 
-    def declared(self, fqn: str) -> Declared | None:
+    def declared(self, fqn: str, near: str | None = None) -> Declared | None:
         """The repository's type of an FQN; of two modules' of one name, the one nearest the
-        file being resolved (the longest path they share: its own module's)."""
+        file ``near`` (by default the one being resolved): the longest path they share, its own
+        module's."""
         twins = self.twins.get(fqn)
         if not twins:
             return self.by_fqn.get(fqn)
-        return max(twins, key=lambda d: len(commonpath_prefix(d.path, self._near)))
+        at = self._near if near is None else near
+        return max(twins, key=lambda d: len(commonpath_prefix(d.path, at)))
+
+    @contextmanager
+    def _from(self, near: str | None) -> Generator[None]:
+        """Names resolved as written in the file ``near`` (None: where they already are)."""
+        around = self._near
+        if near is not None:
+            self._near = near
+        try:
+            yield
+        finally:
+            self._near = around
 
     def _resolve(self, path: str, owner: str | None, written: str) -> TypeRef | None:
         if not written or is_array(written):
@@ -374,13 +388,14 @@ class TypeIndex:
             return external(f"{libraries[0]}.{name}")
         return None
 
-    def in_package(self, source: str, name: str) -> TypeRef | None:
-        """``name`` in an on-demand import's package, or as a member of its type."""
+    def in_package(self, source: str, name: str, near: str | None = None) -> TypeRef | None:
+        """``name`` in an on-demand import's package, or as a member of its type (as written in
+        the file ``near``, see :meth:`declared`)."""
         fqn = self.packages.get(source, {}).get(name)
-        held = self.declared(fqn) if fqn else None
+        held = self.declared(fqn, near) if fqn else None
         if held is not None:
             return held.ref()
-        declared = self.declared(source)
+        declared = self.declared(source, near)
         if declared is not None:
             return self.member_type(declared.ref(), name)
         return None
@@ -399,9 +414,11 @@ class TypeIndex:
             return external(".".join(parts))
         return None
 
-    def fqn(self, dotted: str) -> TypeRef:
-        """A fully qualified type: the repository's, else an external."""
-        found = self._qualified(dotted.split("."))
+    def fqn(self, dotted: str, near: str | None = None) -> TypeRef:
+        """A fully qualified type: the repository's (the one nearest the file ``near`` of two
+        modules' of one name, see :meth:`declared`), else an external."""
+        with self._from(near):
+            found = self._qualified(dotted.split("."))
         return found if found is not None else external(dotted)
 
     # ------------------------------------------------------------------ supertypes
@@ -515,17 +532,19 @@ def _import_targets(
     internal = index.internal(item.source)
     targets: list[str] = []
     if item.kind == "single":
-        found = index.fqn(item.target)
+        found = index.fqn(item.target, near=path)
         targets = [found.key] if not (internal and found.external) else []
     elif item.kind == "wildcard":
         if internal:  # the package's (or the type's members') types the file uses
             used = sorted(file.type_names)
-            targets = [t.key for n in used if (t := index.in_package(item.source, n)) is not None]
+            targets = [
+                t.key for n in used if (t := index.in_package(item.source, n, path)) is not None
+            ]
             targets = list(dict.fromkeys(targets))
         else:
             targets = [package_key(item.source)]
     else:
-        targets = _static_targets(index, item, internal)
+        targets = _static_targets(index, item, internal, path)
     if internal:
         stats.internal += 1
         if targets or item.kind == "wildcard":
@@ -537,9 +556,10 @@ def _import_targets(
     return targets
 
 
-def _static_targets(index: TypeIndex, item: JavaImport, internal: bool) -> list[str]:
-    """What a static import names: the members (every overload) or the class."""
-    declared = index.by_fqn.get(item.source)
+def _static_targets(index: TypeIndex, item: JavaImport, internal: bool, path: str) -> list[str]:
+    """What a static import (in the file ``path``) names: the members (every overload) or the
+    class."""
+    declared = index.declared(item.source, near=path)
     if declared is None:
         if internal:
             return []

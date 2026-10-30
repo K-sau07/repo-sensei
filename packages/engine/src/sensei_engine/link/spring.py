@@ -608,7 +608,7 @@ class _Routes:
             around = self.index.by_key.get(around.type.outer or "")
         for item in declared.facts.imports:  # import static a.b.Paths.API / a.b.Paths.*
             if (item.kind == "static" and item.name == last) or item.kind == "static_wildcard":
-                ref = self.index.fqn(item.source)
+                ref = self.index.fqn(item.source, near=declared.path)
                 found = self.field_of(ref.key, last) if not ref.external else None
                 if found is not None:
                     return found
