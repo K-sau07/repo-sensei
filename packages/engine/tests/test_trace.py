@@ -388,11 +388,16 @@ def test_calls_on_their_own_lines_are_not_ambiguous() -> None:
 
 
 def test_min_conf_drops_what_is_less_sure() -> None:
+    """A link left out as less sure than asked for is where the trace stops, not where the
+    code ends: the path goes on, traced at a lower confidence."""
     graph = _graph(
         [HANDLER, TABLE], [(HANDLER.symbol_key, TABLE.symbol_key, _edge(EdgeType.READS, 0.4))]
     )
     assert trace_feature(graph, HANDLER.symbol_key).paths[0].reaches_goal
-    assert not trace_feature(graph, HANDLER.symbol_key, min_conf=0.5).paths[0].reaches_goal
+    unsure = trace_feature(graph, HANDLER.symbol_key, min_conf=0.5).paths[0]
+    assert not unsure.reaches_goal
+    assert unsure.breaks[0].kind == "limit"
+    assert "less sure" in unsure.breaks[0].reason
 
 
 def test_an_interface_method_steps_to_its_implementation() -> None:

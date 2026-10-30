@@ -694,7 +694,7 @@ def trace_feature(
                 )
             )
             if not steps:
-                done.append(_finish(partial, goal_set, "nothing_further"))
+                done.append(_finish(partial, goal_set, _why_stopped(index, partial, min_conf)))
                 continue
             for step in steps[:MAX_FANOUT]:
                 node = nodes[step.there]
@@ -716,16 +716,7 @@ def trace_feature(
         if not beam:
             break
     # Out of hops: a way that could go on stops at the limit; one that couldn't has ended.
-    done.extend(
-        _finish(
-            p,
-            goal_set,
-            "depth"
-            if any(s.there not in p.nodes for s in _steps(index, p.nodes[-1], min_conf))
-            else "nothing_further",
-        )
-        for p in beam
-    )
+    done.extend(_finish(p, goal_set, _why_stopped(index, p, min_conf)) for p in beam)
     downs = _best(done, wanted)
     if direction == "down":
         return TraceResult(entries, goal_node, _returning(index, downs))
@@ -753,6 +744,17 @@ def _wanted(entries: Sequence[Node], feature: str | None, searched: str | None) 
     return _Feature(frozenset(wanted | asked), _asked_methods(asked))
 
 
+def _why_stopped(index: _Index, partial: _Partial, min_conf: float) -> str:
+    """Why a path the beam kept stops where it does: the hop limit with steps still to take, only
+    steps less sure than ``min_conf`` left (a link the graph has, left out), or none at all."""
+    last = partial.nodes[-1]
+    if any(s.there not in partial.nodes for s in _steps(index, last, min_conf)):
+        return "depth"
+    if min_conf > 0 and any(s.there not in partial.nodes for s in _steps(index, last, 0.0)):
+        return "unsure"
+    return "nothing_further"
+
+
 def _finish(partial: _Partial, goals: set[int], why: str) -> TracePath:
     hops = list(partial.hops)
     reaches = partial.nodes[-1] in goals and len(hops) > 1
@@ -775,6 +777,9 @@ def _breaks(hops: Sequence[TraceHop], why: str) -> list[TraceBreak]:
         return [TraceBreak(at, "endpoint has no handler in the repository", node.symbol_key)]
     if why == "depth":
         reason = f"the trace shows {MAX_DEPTH} hops; {name} goes on"
+        return [TraceBreak(at, reason, node.symbol_key, "limit")]
+    if why == "unsure":
+        reason = f"{name} goes on only by links less sure than the trace was asked to show"
         return [TraceBreak(at, reason, node.symbol_key, "limit")]
     if any(hop.layer in SERVER_LAYERS for hop in hops):
         # On the server already: code that does its work without the data (a DTO built, a token

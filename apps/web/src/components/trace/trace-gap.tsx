@@ -76,7 +76,7 @@ export function TraceGap({
 const QUIET =
   "flex flex-col gap-1.5 rounded-[10px] border border-line bg-surface-1 px-2.5 py-2 text-xs";
 
-/** Where this way ends: nothing is missing, it just doesn't reach the data. */
+/** Where this way ends: the code here calls nothing more the graph knows of. */
 function TraceEnd({ gap, className }: { gap: TraceBreak; className?: string | undefined }) {
   return (
     <div
@@ -90,12 +90,17 @@ function TraceEnd({ gap, className }: { gap: TraceBreak; className?: string | un
         Ends here
       </p>
       <p className="text-sm text-fg">{gap.reason}</p>
-      <p className="text-fg-muted">This way doesn&apos;t reach the data; nothing is missing.</p>
+      <p className="text-fg-muted">
+        This way doesn&apos;t reach the data: the code here calls nothing more the graph knows of.
+      </p>
     </div>
   );
 }
 
-/** The trace's hop limit: the code goes on, and can be traced from where this stops. */
+/**
+ * Where the trace stops though the code goes on (its hop limit, or links less sure than it was
+ * asked to show): it can be traced from here.
+ */
 function TraceLimit({
   path,
   gap,
@@ -110,7 +115,7 @@ function TraceLimit({
   return (
     <div
       role="group"
-      aria-label="Where the trace's hop limit stops this path"
+      aria-label="Where the trace stops this path, though the code goes on"
       data-testid="trace-limit"
       className={cn(QUIET, className)}
     >
