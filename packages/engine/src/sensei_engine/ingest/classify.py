@@ -155,6 +155,16 @@ def _wide_encoding(head: bytes) -> str | None:
     return next((encoding for bom, encoding in _UNICODE_BOMS if head.startswith(bom)), None)
 
 
+def text_lines(text: str) -> list[str]:
+    """A text's lines as git, ripgrep and the parsers count them: split at ``\\n`` only (not at
+    the form feeds, ``\\x85`` or ``\\u2028`` that :meth:`str.splitlines` also breaks at), each
+    one's ``\\r`` dropped, no line after a final newline."""
+    lines = text.split("\n")
+    if lines and lines[-1] == "":
+        lines.pop()
+    return [line.removesuffix("\r") for line in lines]
+
+
 def decode_text(data: bytes) -> tuple[str, str] | None:
     """``(text, encoding)``, or None if no text encoding explains the bytes (binary)."""
     wide = _wide_encoding(data)

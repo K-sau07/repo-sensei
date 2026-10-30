@@ -40,6 +40,7 @@ DEFAULT_LIMIT = 8
 MAX_LIMIT = 20
 DETAILED_LINES = 60  # its definition's, in the detailed one
 GLOB_CHARS = frozenset("*?[")
+TITLE_TOKENS = 100  # a block's source and title, kept back when its lines are cut to fit
 
 DESCRIPTION = (
     "Search the repository's code by meaning and by its words at once: hybrid keyword, "
@@ -146,9 +147,9 @@ async def run(ctx: ToolContext, args: Mapping[str, Any]) -> ToolResult:
     page = found[offset : offset + limit]
     out = Results()
     out.text(_interpretation(answer.interpretation.rewrites, answer.semantic_pending))
-    shown = await add_results(ctx, out, page, answer.terms, detailed=detailed)
+    shown, consumed = await add_results(ctx, out, page, answer.terms, detailed=detailed)
     narrow = "narrow with path_glob, lang or layer"
-    out.text(page_note(offset, len(page), len(found), key, exact=True, narrow=narrow))
+    out.note(page_note(offset, consumed, len(found), key, exact=True, narrow=narrow))
     files = len({r.path for r in page})
     return out.done(f"{shown} results in {files} files", hits=len(found), narrow=narrow)
 
@@ -182,15 +183,17 @@ async def add_results(
     terms: Sequence[str],
     *,
     detailed: bool = False,
-) -> int:
-    """Each result as a citable block, in order, while they fit: its definition (detailed), or
-    the lines around its first match. How many were added."""
+) -> tuple[int, int]:
+    """Each result as a citable block, in order, until one doesn't fit: its definition
+    (detailed), or the lines around its first match. How many were added, and how many of the
+    results were gone through (a page goes on from the next)."""
     chunks = await read_contents(ctx.db, ctx.repo_id, [r.chunk_id for r in results])
     names = await _qualified_names(ctx, [r.symbol_key for r in results if r.symbol_key])
-    shown = 0
+    shown = consumed = 0
     for result in results:
         chunk = chunks.get(result.chunk_id)
         if chunk is None:
+            consumed += 1
             continue
         if detailed:
             first, lines = _definition(result, chunk)
@@ -198,15 +201,19 @@ async def add_results(
             cut = snippet(result, chunk, terms)
             first, lines = cut.start_line, cut.lines
         if not lines:
+            consumed += 1
             continue
-        lines = lines[: max(1, lines_within(lines, out.left))]
+        lines = lines[: max(1, lines_within(lines, out.left - TITLE_TOKENS))]
         title = _title(result, names)
         block = code_result(
             ctx, result.path, first, lines, title=title, symbol_key=result.symbol_key
         )
-        if out.code(*block):
-            shown += 1
-    return shown
+        if not out.code(*block):
+            out.left_out += len(results) - consumed - 1
+            break
+        shown += 1
+        consumed += 1
+    return shown, consumed
 
 
 async def _qualified_names(ctx: ToolContext, keys: list[str]) -> dict[str, str]:

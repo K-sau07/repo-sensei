@@ -76,7 +76,7 @@ async def pre_retrieve(ctx: ToolContext, question: str) -> Round0 | None:
     for lane in LANES:
         grouped = _by_file([r for r in best if r.lane.value == lane])
         if grouped and out.text(f"Layer {lane}:"):
-            shown += await add_results(ctx, out, grouped, answer.terms)
+            shown += (await add_results(ctx, out, grouped, answer.terms))[0]
     if not shown:
         return None
     result = out.done("", hits=shown, narrow="search with the tools for more")

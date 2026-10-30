@@ -39,6 +39,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sensei_core.logging import get_logger
 from sensei_core.models import CodeChunk
 from sensei_engine.graph.snapshot import GraphSnapshot, neighbourhood
+from sensei_engine.ingest.classify import text_lines
 from sensei_engine.llm.anthropic_client import LLMUsageSink
 from sensei_engine.search.bm25 import Filters
 from sensei_engine.search.hybrid import (
@@ -439,7 +440,7 @@ async def read_contents(
             CodeChunk.repo_id == repo_id, CodeChunk.id.in_(wanted)
         )
     )
-    return {row[0]: ChunkText(row[1], tuple(row[2].splitlines())) for row in rows}
+    return {row[0]: ChunkText(row[1], tuple(text_lines(row[2]))) for row in rows}
 
 
 def _definition_text(hit: SearchHit, chunk: ChunkText | None) -> str:

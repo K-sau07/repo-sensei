@@ -4,7 +4,9 @@ writes."""
 
 from __future__ import annotations
 
+import base64
 import dataclasses
+import hashlib
 import json
 import os
 from collections.abc import Mapping
@@ -22,6 +24,7 @@ from sensei_engine.agent.tools.base import (
     MAX_RESULT_TOKENS,
     Results,
     ToolResult,
+    args_key,
     block_spans,
     code_result,
     next_cursor,
@@ -346,3 +349,63 @@ async def test_the_overview_says_what_the_repository_holds(ctx: ToolContext) -> 
     assert overview[3].startswith("The code graph has ")
     without = await repo_overview(dataclasses.replace(ctx, graph=None))
     assert without.splitlines()[-1].startswith("The code graph isn't built yet")
+
+
+# ---------------------------------------------------------------- what fits (an audit's cases)
+
+
+def _plain(root: Path, files: dict[str, str]) -> ToolContext:
+    for path, content in files.items():
+        (root / path).parent.mkdir(parents=True, exist_ok=True)
+        (root / path).write_text(content)
+    return _context(root, tree=sorted(files))
+
+
+def _cursor_offset(note: str) -> int:
+    cursor = note.split("next_cursor: ")[1].split(" ", maxsplit=1)[0]
+    raw = base64.urlsafe_b64decode(cursor + "=" * (-len(cursor) % 4))
+    return int(json.loads(raw)["o"])
+
+
+async def test_a_page_too_big_to_show_whole_goes_on_from_what_it_showed(tmp_path: Path) -> None:
+    """60 matching minified lines: what fits is shown, said so, and the next page starts at the
+    first match that wasn't; a long listing likewise."""
+    noise = [hashlib.sha256(str(n).encode()).hexdigest() * 6 for n in range(60)]
+    long = "".join(f"needle {line}\n" for line in noise)
+    names = {f"gen/{hashlib.sha256(str(n).encode()).hexdigest()}.ts": "x\n" for n in range(450)}
+    ctx = _plain(tmp_path, {"big.min.js": long, **names})
+    found = await run_tool(ctx, "grep", {"pattern": "needle", "limit": 50})
+    shown = int(found.summary.split()[0])
+    assert 0 < shown < 50
+    assert _tokens(found) <= MAX_RESULT_TOKENS
+    notes = [b["text"] for b in found.content if b["type"] == "text"]
+    note = next(text for text in notes if "next_cursor" in text)
+    assert note.startswith(f"Showing 1-{shown} of")
+    assert _cursor_offset(note) == shown
+    listed = await run_tool(ctx, "list_dir", {"path": "gen"})
+    entries = listed.content[0]["text"].split("\n")[1:]
+    assert 0 < len(entries) < 450
+    page = listed.content[1]["text"]
+    assert page.startswith(f"Showing 1-{len(entries)} of 450.")
+    assert _cursor_offset(page) == len(entries)
+
+
+async def test_lines_are_counted_as_grep_and_the_index_count_them(tmp_path: Path) -> None:
+    """A form feed or a line separator in the code is no line break."""
+    separated = f"s = 'a{chr(0x2028)}b'\nf()\n"
+    ctx = _plain(tmp_path, {"a.py": "x = 1\n\f\ndef target():\n    pass\n", "b.js": separated})
+    read = await run_tool(ctx, "read_code", {"path": "a.py"})
+    assert read.content[0]["content"][0]["text"].split("\n")[2] == "3\tdef target():"
+    js = await run_tool(ctx, "read_code", {"path": "b.js", "start_line": 2})
+    assert js.content[0]["content"][0]["text"] == "2\tf()"
+
+
+async def test_a_cursor_whose_offset_is_no_whole_number_is_refused(tmp_path: Path) -> None:
+    ctx = _plain(tmp_path, {"a.py": "x\n"})
+    args: dict[str, Any] = {"path": ""}
+    key = args_key("list_dir", args)
+    for offset in ("1e400", "2.5", "true"):
+        raw = f'{{"k": "{key[:16]}", "o": {offset}}}'
+        cursor = base64.urlsafe_b64encode(raw.encode()).decode().rstrip("=")
+        refused = await run_tool(ctx, "list_dir", {**args, "cursor": cursor})
+        assert refused.is_error, offset

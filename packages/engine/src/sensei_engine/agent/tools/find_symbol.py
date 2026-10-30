@@ -78,7 +78,7 @@ async def run(ctx: ToolContext, args: Mapping[str, Any]) -> ToolResult:
             "code_search for the code in words."
         )
         return out.done("no definitions", hits=0, narrow="")
-    out.text("\n".join(_line(n, hit) for n, hit in enumerate(hits, start=1)))
+    out.lines([_line(n, hit) for n, hit in enumerate(hits, start=1)])
     if args.get("response_format") == "detailed":
         for hit in hits:
             lines = file_lines(ctx, hit.path, example=f'read_code({{"path": "{hit.path}"}})')

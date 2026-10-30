@@ -29,7 +29,7 @@ from sqlalchemy import select
 
 from sensei_core.models import CodeNode, RepoFile
 from sensei_engine.chunk.tokens import count_each, count_tokens
-from sensei_engine.ingest.classify import decode_text
+from sensei_engine.ingest.classify import decode_text, text_lines
 from sensei_engine.search.grep import ExactSearch
 from sensei_engine.search.service import SearchService
 from sensei_engine.snapshots import UnsafePathError, check_path, read_file
@@ -42,7 +42,7 @@ if TYPE_CHECKING:
     from sensei_engine.search.hybrid import DenseLegs, GrepLegs
 
 MAX_RESULT_TOKENS = 6_000  # a tool result's text, at most (cl100k tokens, near Claude's count)
-NOTE_TOKENS = 120  # kept back for the note of what was left out
+NOTE_TOKENS = 200  # kept back for the notes: a page's (its cursor), what was left out
 BLOCK_LINES = 12  # a search result's text blocks: this many lines, the last 5 to 20
 MIN_BLOCK_LINES = 5
 MAX_LINE_CHARS = 400  # a longer line is cut (minified code), with an ellipsis
@@ -202,6 +202,13 @@ class Tool:
         }
 
 
+def block_tokens(block: Mapping[str, Any]) -> int:
+    """The tokens a ``search_result`` block shows the model: its source, title and lines."""
+    return count_tokens(block["source"] + block["title"]) + sum(
+        count_tokens(part["text"]) for part in block["content"]
+    )
+
+
 def failed(error: ToolError) -> ToolResult:
     return ToolResult([{"type": "text", "text": error.text()}], [], error.message, is_error=True)
 
@@ -297,10 +304,34 @@ class Results:
         self.content.append({"type": "text", "text": text})
         return True
 
+    def lines(self, lines: Sequence[str], *, head: str | None = None) -> int:
+        """As many of ``lines``, from the first, as fit, as one text (after ``head``, if any):
+        how many."""
+        used = count_tokens(head + "\n") if head else 0
+        taken = 0
+        for tokens in count_each([f"{line}\n" for line in lines]):
+            if used + tokens > self.left:
+                break
+            used += tokens
+            taken += 1
+        if taken < len(lines):
+            self.left_out += len(lines) - taken
+        shown = [*([head] if head else []), *lines[:taken]]
+        if shown and (taken or not lines):
+            self.left -= used
+            self.content.append({"type": "text", "text": "\n".join(shown)})
+        return taken
+
+    def note(self, text: str) -> None:
+        """A short note (a page's, with its cursor) from the tokens kept back for notes: never
+        left out, whatever the content took."""
+        self.content.append({"type": "text", "text": text})
+
+    def fits(self, block: dict[str, Any]) -> bool:
+        return block_tokens(block) <= self.left
+
     def code(self, block: dict[str, Any], source: Source) -> bool:
-        tokens = count_tokens(block["source"] + block["title"]) + sum(
-            count_tokens(part["text"]) for part in block["content"]
-        )
+        tokens = block_tokens(block)
         if tokens > self.left:
             self.left_out += 1
             return False
@@ -346,11 +377,11 @@ def offset_of(cursor: str | None, key: str) -> int:
     try:
         raw = base64.urlsafe_b64decode(cursor + "=" * (-len(cursor) % 4))
         found = json.loads(raw)
-        offset = int(found["o"])
-        same = found["k"] == key[:16]
+        offset = found["o"]
+        same = found["k"] == key[:16] and isinstance(offset, int) and not isinstance(offset, bool)
     except (ValueError, KeyError, TypeError):
         same, offset = False, 0
-    if not same or offset < 0:
+    if not same or not isinstance(offset, int) or offset < 0:
         raise ToolError(
             "That cursor belongs to another call. Repeat the call with the same arguments and "
             "the next_cursor its own result gave, or without a cursor for the first page."
@@ -455,7 +486,7 @@ def file_lines(ctx: ToolContext, path: str, *, example: str) -> list[str]:
     decoded = decode_text(data)
     if decoded is None:
         raise ToolError(f"{path} is a binary file, not text.")
-    return decoded[0].splitlines()
+    return text_lines(decoded[0])
 
 
 def _recorded(tree: Sequence[str], path: str) -> bool:

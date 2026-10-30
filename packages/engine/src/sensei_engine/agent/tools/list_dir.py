@@ -59,9 +59,9 @@ async def run(ctx: ToolContext, args: Mapping[str, Any]) -> ToolResult:
     entries = _entries(files, path, depth)
     page = entries[offset : offset + PAGE]
     out = Results()
-    out.text(f"{path or '(root)'}/  ({len(files)} files)\n" + "\n".join(page))
+    taken = out.lines(page, head=f"{path or '(root)'}/  ({len(files)} files)")
     narrow = "list a subdirectory instead"
-    out.text(page_note(offset, len(page), len(entries), key, exact=True, narrow=narrow))
+    out.note(page_note(offset, taken, len(entries), key, exact=True, narrow=narrow))
     return out.done(
         f"{len(entries)} entries in {path or 'the root'}", hits=len(entries), narrow=narrow
     )

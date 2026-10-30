@@ -14,6 +14,7 @@ from sensei_engine.agent.tools.base import (
     ToolError,
     ToolResult,
     args_key,
+    lines_within,
     offset_of,
     page_note,
     runs_result,
@@ -33,6 +34,7 @@ from sensei_engine.search.grep import (
 DEFAULT_LIMIT = 50  # matching lines per page
 MAX_LIMIT = 200
 CONTEXT = 2  # lines shown before and after each match
+TITLE_TOKENS = 100  # a block's source and title, kept back when its lines are cut to fit
 
 DESCRIPTION = (
     "Find an exact string, or a regular expression, in every file of the repository at this "
@@ -99,18 +101,57 @@ async def run(ctx: ToolContext, args: Mapping[str, Any]) -> ToolResult:
     except GrepUnavailableError as exc:
         raise ToolError("Exact search isn't available right now; use code_search.") from exc
     hits = found.hits[offset : offset + limit]
-    more = len(found.hits) > offset + limit or found.truncated
     out = Results()
-    files = _by_file(hits)
-    for path, matched in files.items():
-        out.code(*runs_result(ctx, path, _runs(matched), title=path))
+    shown, files = _add(ctx, out, hits)
+    out.left_out = len(hits) - shown  # matches: the next page starts with the first of them
+    more = len(found.hits) > offset + shown or found.truncated
     narrow = "narrow with path_glob or a more precise pattern"
-    total = offset + len(hits) + (1 if more else 0)
-    note = page_note(offset, len(hits), total, key, exact=not more, narrow=narrow)
+    total = offset + shown + (1 if more else 0)
+    note = page_note(offset, shown, total, key, exact=not more, narrow=narrow)
     if found.timed_out:
         note += " (The search hit its time limit: there may be more matches than shown.)"
-    out.text(note)
-    return out.done(f"{len(hits)} matches in {len(files)} files", hits=len(hits), narrow=narrow)
+    out.note(note)
+    return out.done(f"{shown} matches in {files} files", hits=shown, narrow=narrow)
+
+
+def _add(ctx: ToolContext, out: Results, hits: Sequence[GrepHit]) -> tuple[int, int]:
+    """The matches, file by file and run by run, while they fit: how many matches were shown
+    (the first ones: a page goes on from the next), in how many files. A first run too long
+    to fit whole (a minified file) is cut to fit, its first match kept: a page always moves
+    on."""
+    shown = files = 0
+    for path, matched in _by_file(hits).items():
+        runs = _runs(matched)
+        kept: list[tuple[int, tuple[str, ...], int]] = []
+        for run in runs:
+            if not out.fits(runs_result(ctx, path, _lines(*kept, run), title=path)[0]):
+                break
+            kept.append(run)
+        if not kept and not shown:
+            kept = [_cut(runs[0], matched, out.left - TITLE_TOKENS)]
+        if kept:
+            out.code(*runs_result(ctx, path, _lines(*kept), title=path))
+            shown += sum(count for _, _, count in kept)
+            files += 1
+        if len(kept) < len(runs):
+            break
+    return shown, files
+
+
+def _cut(
+    run: tuple[int, tuple[str, ...], int], hits: Sequence[GrepHit], budget: int
+) -> tuple[int, tuple[str, ...], int]:
+    """As much of ``run`` as fits in ``budget``, down to its first match's line."""
+    first, lines, _ = run
+    matched = sorted(hit.line for hit in hits if first <= hit.line < first + len(lines))
+    taken = max(lines_within(lines, budget), matched[0] - first + 1)
+    return first, lines[:taken], sum(line < first + taken for line in matched)
+
+
+def _lines(
+    *runs: tuple[int, tuple[str, ...], int],
+) -> list[tuple[int, tuple[str, ...]]]:
+    return [(first, lines) for first, lines, _ in runs]
 
 
 def _by_file(hits: Sequence[GrepHit]) -> dict[str, list[GrepHit]]:
@@ -120,9 +161,9 @@ def _by_file(hits: Sequence[GrepHit]) -> dict[str, list[GrepHit]]:
     return files
 
 
-def _runs(hits: Sequence[GrepHit]) -> list[tuple[int, tuple[str, ...]]]:
+def _runs(hits: Sequence[GrepHit]) -> list[tuple[int, tuple[str, ...], int]]:
     """A file's matches with their context, as runs of consecutive lines (overlapping context
-    shown once): one result block each."""
+    shown once), each with how many matches it holds."""
     lines: dict[int, str] = {}
     for hit in hits:
         start = hit.line - len(hit.before)
@@ -134,7 +175,11 @@ def _runs(hits: Sequence[GrepHit]) -> list[tuple[int, tuple[str, ...]]]:
             runs[-1][1].append(lines[n])
         else:
             runs.append((n, [lines[n]]))
-    return [(first, tuple(text)) for first, text in runs]
+    matched = [hit.line for hit in hits]
+    return [
+        (first, tuple(text), sum(first <= line < first + len(text) for line in matched))
+        for first, text in runs
+    ]
 
 
 TOOL = Tool("grep", DESCRIPTION, SCHEMA, EXAMPLES, run)

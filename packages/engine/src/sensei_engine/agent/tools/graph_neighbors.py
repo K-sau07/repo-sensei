@@ -106,11 +106,12 @@ async def run(ctx: ToolContext, args: Mapping[str, Any]) -> ToolResult:
     )
     out = Results()
     head = readable_id(node.symbol_key, node.kind, node.path, node.qualified_name)
-    lines = [f"{head}  ({node.kind}){_place(node.path, node.start_line, node.end_line)}"]
-    lines += [_hop(hop) for hop in hops] or ["  (no neighbours with these filters)"]
-    if truncated:
-        lines.append(f"  … only the first {LIMIT}: narrow with edge_types or min_conf.")
-    out.text("\n".join(lines))
+    found = [_hop(hop) for hop in hops] or ["  (no neighbours with these filters)"]
+    taken = out.lines(
+        found, head=f"{head}  ({node.kind}){_place(node.path, node.start_line, node.end_line)}"
+    )
+    if truncated or taken < len(found):
+        out.note(f"Only the first {taken} are shown: narrow with edge_types or min_conf.")
     return out.done(f"{len(hops)} neighbours", hits=len(hops), narrow="narrow with edge_types")
 
 
