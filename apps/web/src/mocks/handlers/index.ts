@@ -7,6 +7,7 @@ import { meHandlers } from "./me";
 import { memberHandlers } from "./members";
 import { orgHandlers } from "./orgs";
 import { repoHandlers } from "./repos";
+import { runsHandlers } from "./runs";
 import { searchHandlers } from "./search";
 import { symbolHandlers } from "./symbols";
 import { traceHandlers } from "./trace";
@@ -22,6 +23,7 @@ export const handlers = [
   ...graphHandlers,
   ...traceHandlers,
   ...askHandlers,
+  ...runsHandlers,
   ...searchHandlers,
   ...repoHandlers,
   ...orgHandlers,

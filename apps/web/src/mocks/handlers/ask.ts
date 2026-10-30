@@ -14,6 +14,7 @@ import { delay, http, HttpResponse } from "msw";
 
 import { mockAbstainParts, mockAnswerParts } from "@/mocks/ask";
 import { apiError } from "@/mocks/handlers/errors";
+import { MOCK_RUN_ID } from "@/mocks/runs";
 import { mockScenario } from "@/mocks/scenario";
 
 const ASK_SCENARIO_KEY = "sensei.mock.ask";
@@ -84,6 +85,7 @@ function messagesOf(c: Stored, redact = false) {
     created_at: c.updated_at,
     citations: [],
     feedback: m.feedback ?? null,
+    run_id: redact || m.role === "user" ? null : MOCK_RUN_ID,
   }));
 }
 

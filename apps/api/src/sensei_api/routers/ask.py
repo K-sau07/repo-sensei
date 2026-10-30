@@ -141,6 +141,7 @@ class MessageOut(BaseModel):
     created_at: datetime
     citations: list[CitationOut]
     feedback: FeedbackOut | None = None  # what the signed-in user said of it
+    run_id: uuid.UUID | None = None  # the agent run that wrote it (its timeline)
 
 
 class ConversationOut(BaseModel):
@@ -1010,6 +1011,8 @@ def message_out(
     parts: list[dict[str, Any]],
     citations: list[CitationOut],
     feedback: FeedbackOut | None = None,
+    *,
+    with_run: bool = True,
 ) -> MessageOut:
     return MessageOut(
         id=m.id,
@@ -1021,6 +1024,7 @@ def message_out(
         created_at=m.created_at,
         citations=citations,
         feedback=feedback,
+        run_id=m.run_id if with_run else None,
     )
 
 

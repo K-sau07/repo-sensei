@@ -1,14 +1,14 @@
 import type { Metadata } from "next";
 import { Suspense } from "react";
 
-import { TabPlaceholder } from "@/components/repo/tab-placeholder";
+import { RunsList } from "@/components/runs/runs-list";
 
 export const metadata: Metadata = { title: "Runs" };
 
 export default function RunsPage() {
   return (
     <Suspense>
-      <TabPlaceholder tab="runs" />
+      <RunsList />
     </Suspense>
   );
 }

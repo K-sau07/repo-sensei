@@ -8,6 +8,8 @@
  */
 import { cn } from "cn";
 import { ChevronRight, Loader2 } from "lucide-react";
+import type { Route } from "next";
+import NextLink from "next/link";
 import { useState, type ReactNode } from "react";
 import { Streamdown, type Components } from "streamdown";
 
@@ -50,6 +52,7 @@ export function Answer({
   onAsk,
   feedback,
   chip,
+  runHref,
 }: {
   message: AskMessage;
   streaming: boolean;
@@ -60,6 +63,8 @@ export function Answer({
   feedback?: FeedbackKind | null | undefined;
   /** Draws a citation (default: its chip with a peek at the code). */
   chip?: (citation: CitationData) => ReactNode;
+  /** Its run's timeline (none on a shared page). */
+  runHref?: Route | null | undefined;
 }) {
   const citations = citationsOf(message);
   const byNumber = new Map(citations.map((c) => [c.n, c]));
@@ -113,6 +118,7 @@ export function Answer({
           confidence={sure}
           cached={fromCache(message)}
           feedback={text ? feedback : undefined}
+          runHref={runHref ?? null}
         />
       ) : null}
     </div>
@@ -124,11 +130,13 @@ function Footer({
   confidence,
   cached,
   feedback,
+  runHref,
 }: {
   message: AskMessage;
   confidence: ConfidenceData | null;
   cached: boolean;
   feedback: FeedbackKind | null | undefined;
+  runHref: Route | null;
 }) {
   const [open, setOpen] = useState(false);
   const searches = searchesOf(message);
@@ -149,6 +157,11 @@ function Footer({
           <ChevronRight aria-hidden className={cn("size-3 transition", open && "rotate-90")} />
           Show searches ({searches.length})
         </button>
+      ) : null}
+      {runHref ? (
+        <NextLink href={runHref} className="hover:text-fg hover:underline">
+          View run
+        </NextLink>
       ) : null}
       {feedback !== undefined ? (
         <div className="ml-auto">

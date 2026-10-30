@@ -71,6 +71,7 @@ describe("an answer as the page reads it", () => {
 
   it("counts the spans in code points, as the API does: an emoji is one", () => {
     const text = "🔐 Logins are checked in `verify_token`. Then saved.";
+    // eslint-disable-next-line @typescript-eslint/no-misused-spread -- code points, on purpose
     const end = [...text].indexOf("T"); // the second sentence, in code points
     const marked = withMarkers(text, [cite(1, "a.py", [1, 2], [0, end - 1]).data]);
     expect(marked).toBe("🔐 Logins are checked in `verify_token`.[1](#cite-1) Then saved.");

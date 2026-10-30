@@ -149,6 +149,15 @@ export function abstainedOf(message: AskMessage): AbstainData | null {
   return null;
 }
 
+/** The run that wrote a streamed answer (a stored one's comes with the conversation). */
+export function runOf(message: AskMessage): string | null {
+  for (const part of message.parts) {
+    const found = data(part, "conversation");
+    if (found !== null) return found.runId;
+  }
+  return null;
+}
+
 export function fromCache(message: AskMessage): boolean {
   return message.parts.some((part) => part.type === "data-cache");
 }

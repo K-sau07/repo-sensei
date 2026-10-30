@@ -2264,6 +2264,8 @@ export interface components {
              * @enum {string}
              */
             role: "user" | "assistant";
+            /** Run Id */
+            run_id?: string | null;
             /**
              * Status
              * @enum {string}

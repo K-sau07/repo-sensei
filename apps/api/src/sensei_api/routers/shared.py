@@ -88,7 +88,9 @@ async def shared(
         created_at=found.created_at,
         updated_at=found.updated_at,
         messages=[
-            message_out(m, shown(m.parts, redact=not readable), cited.get(m.id, []))
+            message_out(  # its run is the org's: not on a public page
+                m, shown(m.parts, redact=not readable), cited.get(m.id, []), with_run=False
+            )
             for m in messages
         ],
     )

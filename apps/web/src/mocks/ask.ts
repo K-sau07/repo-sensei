@@ -7,6 +7,7 @@
  */
 import type { CitationData } from "@/lib/api/ask";
 import { BROWSE_COMMIT } from "@/mocks/browse";
+import { MOCK_RUN_ID } from "@/mocks/runs";
 
 export const MOCK_SHA = BROWSE_COMMIT; // the mock snapshot's: what its citations are read at
 const ROUTE = "backend/app/api/routes/items.py";
@@ -46,7 +47,11 @@ export function mockAnswerParts(conversationId: string): Record<string, unknown>
   ];
   const words = MOCK_ANSWER.split(/(?<= )/);
   return [
-    { type: "data-conversation", id: "conversation", data: { id: conversationId, runId: null } },
+    {
+      type: "data-conversation",
+      id: "conversation",
+      data: { id: conversationId, runId: MOCK_RUN_ID },
+    },
     { type: "start-step" },
     ...tool("t1", "code_search", { query: "create item" }, "6 results in 4 files"),
     ...tool("t2", "read_code", { path: ROUTE, start_line: 55, end_line: 80 }, `${ROUTE}:55-80`),
@@ -96,7 +101,11 @@ export const MOCK_ABSTAIN_TEXT =
 /** An answer the run couldn't stand behind: it searched, the trail ended, and it says so. */
 export function mockAbstainParts(conversationId: string): Record<string, unknown>[] {
   return [
-    { type: "data-conversation", id: "conversation", data: { id: conversationId, runId: null } },
+    {
+      type: "data-conversation",
+      id: "conversation",
+      data: { id: conversationId, runId: MOCK_RUN_ID },
+    },
     { type: "start-step" },
     { type: "tool-input-start", toolCallId: "t1", toolName: "code_search" },
     {

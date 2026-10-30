@@ -81,6 +81,9 @@ export const queryKeys = {
   conversations: (slug: string, repo: string) => ["conversations", slug, repo] as const,
   /** One conversation, with its messages. */
   conversation: (slug: string, id: string) => ["conversation", slug, id] as const,
+  /** A repository's agent runs, and one run with its steps. */
+  runs: (slug: string, repo: string) => ["runs", slug, repo] as const,
+  run: (slug: string, id: string) => ["run", slug, id] as const,
   /** A trace from an entry (a node's key, a route, a file or a name), at the snapshot as above. */
   trace: (slug: string, repo: string, ref: string | null, version: string | null, entry: string) =>
     ["trace", slug, repo, ref ?? version, entry] as const,

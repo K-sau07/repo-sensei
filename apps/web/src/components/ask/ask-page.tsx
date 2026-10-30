@@ -21,9 +21,10 @@ import { Button } from "@/components/ui/button";
 import {
   citationsOf,
   draftKey,
+  runOf,
+  titleOr,
   type AskMessage,
   type CitationData,
-  titleOr,
   type FeedbackKind,
 } from "@/lib/api/ask";
 import { STAGE_LABELS } from "@/lib/indexing";
@@ -95,6 +96,13 @@ function Ask() {
   const said = new Map<string, FeedbackKind>(
     (chat.stored?.messages ?? []).flatMap((m) => (m.feedback ? [[m.id, m.feedback.kind]] : [])),
   );
+  const runs = new Map<string, string>(
+    (chat.stored?.messages ?? []).flatMap((m) => (m.run_id ? [[m.id, m.run_id]] : [])),
+  );
+  const runHref = (message: AskMessage) => {
+    const id = runOf(message) ?? runs.get(message.id);
+    return id ? repoPath(org, repo, `runs/${id}`) : null;
+  };
   const end = useRef<HTMLDivElement>(null);
   useEffect(() => {
     end.current?.scrollIntoView({ block: "end" });
@@ -139,6 +147,7 @@ function Ask() {
                   onOpen={setOpened}
                   onAsk={streaming ? undefined : (text) => void chat.ask(text)}
                   feedback={said.get(message.id) ?? null}
+                  runHref={runHref(message)}
                 />
               ),
             )}

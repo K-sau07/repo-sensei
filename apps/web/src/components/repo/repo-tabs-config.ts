@@ -111,7 +111,7 @@ export const PRIMARY_TABS: RepoTab[] = [
     feature: "changes",
     phase: 9,
   },
-  { id: "runs", label: "Runs", section: "runs", icon: Activity, phase: 8 },
+  { id: "runs", label: "Runs", section: "runs", icon: Activity },
 ];
 
 export const OVERFLOW_TABS: RepoTab[] = [

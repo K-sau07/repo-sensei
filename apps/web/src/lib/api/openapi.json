@@ -2445,6 +2445,18 @@
             "title": "Role",
             "type": "string"
           },
+          "run_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Id"
+          },
           "status": {
             "enum": [
               "streaming",

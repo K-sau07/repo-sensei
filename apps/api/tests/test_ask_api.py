@@ -234,6 +234,7 @@ async def test_a_question_streams_its_answer_and_is_stored(
         [{"type": "text", "text": "Where are items saved?"}],
     )
     assert (assistant["role"], assistant["status"]) == ("assistant", "done")
+    assert assistant["run_id"] == response.headers["x-agent-run-id"]
     assert assistant["id"] == parts[0]["messageId"]
     assert assistant["confidence"]["level"] in ("high", "medium", "low")
     kinds = [p["type"] for p in assistant["parts"]]
@@ -704,6 +705,7 @@ async def test_a_shared_conversation_hides_its_citations_from_who_cant_read_the_
     assert "tool-read_code" in kinds
     assert "data-conversation" not in kinds
     assert answer["feedback"] is None
+    assert answer["run_id"] is None  # the run behind it is the org's
 
     # Anyone else: the words, and of each citation only its number and place in the text.
     for viewer in ("anonymous", "another user"):
