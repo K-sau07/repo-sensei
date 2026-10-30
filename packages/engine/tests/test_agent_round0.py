@@ -105,12 +105,15 @@ async def test_the_first_turn_starts_with_round0_and_cites_it(ctx: ToolContext) 
     retrieved = events[0]
     assert isinstance(retrieved, PreRetrieved)
     assert retrieved.results == found.results
-    (body,) = fake.bodies("/v1/messages")
-    content = body["messages"][0]["content"]
+    # Research starts with round 0; reminded once, it submits nothing; the answer is written
+    # from what round 0 found (read in its order: no reranker), and cites it.
+    first_turn, _, answer_turn = fake.bodies("/v1/messages")
+    content = first_turn["messages"][0]["content"]
     assert content[0] == {"type": "text", "text": INTRO}
     assert content[-1] == {"type": "text", "text": FLOW}
-    kinds = {b["type"] for b in content}
-    assert kinds == {"text", "search_result"}
+    assert {b["type"] for b in content} == {"text", "search_result"}
+    shown = [b for b in answer_turn["messages"][-1]["content"] if b["type"] == "search_result"]
+    assert shown[first]["title"].startswith(SERVICE)
     done = events[-1]
     assert isinstance(done, Done)
     (citation,) = done.answer.citations

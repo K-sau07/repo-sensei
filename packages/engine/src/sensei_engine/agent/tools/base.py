@@ -143,6 +143,10 @@ class CitationIndex:
     def add(self, sources: Iterable[Source]) -> None:
         self._sources.extend(sources)
 
+    @property
+    def sources(self) -> tuple[Source, ...]:
+        return tuple(self._sources)
+
     def resolve(self, result_index: int, start_block: int, end_block: int) -> Cited | None:
         """The lines of blocks ``start_block`` up to ``end_block`` (exclusive) of the result,
         or None for a citation that points at nothing the run gave."""

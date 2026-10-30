@@ -4,10 +4,14 @@
   ``low`` for a lookup (a name, a string), ``medium`` for the rest; **Opus** at ``high`` for a
   question that cuts across the repository (its architecture, a change's impact), in deep mode,
   or when the caller escalates (a verifier that found the answer short, 4.5).
-* **At most** :attr:`Budget.max_turns` **turns**. The model calls tools as it likes
-  (``tool_choice`` auto; it is told to call independent ones together), and every result of a
-  turn goes back in one message. The last turn, or the first past the budget's tokens or
-  dollars, is an answer: no tools, and a note of why.
+* **At most** :attr:`Budget.max_turns` **turns**: research, then the answer. In research the
+  model calls tools as it likes (``tool_choice`` auto; it is told to call independent ones
+  together), every result of a turn going back in one message, until it commits to its
+  evidence (``submit_evidence``; one reminder if it answers without), or its turns or budget
+  (tokens, dollars) run out.
+* **The answer** (4.4) is written in a turn of its own, from only the final evidence: what the
+  agent committed to, then the best of the rest of what it read, reranked
+  (:mod:`.evidence`); no tools, and a note when the research was cut short.
 * **Round 0** (:mod:`.round0`): the question's search results, and its flow traced, go into
   the first turn, so most answers start with their evidence.
 * **Cached**: the tools and the system prompt (instructions, then the repository's overview)
@@ -33,6 +37,7 @@ from importlib import resources
 from typing import Any, Literal
 
 from sensei_core.usage import CostCalculator
+from sensei_engine.agent.evidence import answer_blocks, final_set, gather
 from sensei_engine.agent.overview import repo_overview
 from sensei_engine.agent.round0 import pre_retrieve
 from sensei_engine.agent.tools import CitationIndex, ToolContext, definitions, run_tool
@@ -47,18 +52,23 @@ from sensei_engine.llm.anthropic_client import (
     LLMUsageSink,
     Tier,
 )
+from sensei_engine.search.rerank import Reranker, RerankUsageSink
 from sensei_engine.search.route import QueryClass, Route, classify
 
 PROMPT_VERSION = "ask_system.v1"
 LOOKUPS = frozenset({QueryClass.SYMBOL, QueryClass.REGEX})
 CROSS_CUTTING = frozenset({QueryClass.ARCHITECTURE, QueryClass.IMPACT})
 LAST_TURN_NOTE = (
-    "That was your last turn of tool calls. Answer now from what you have read, and say what "
-    "you couldn't check."
+    "Your research reached its last turn before you committed to evidence: answer from what "
+    "is here, and say what you couldn't check."
 )
 BUDGET_NOTE = (
-    "This question has used its budget. Answer now from what you have read, and say what you "
-    "couldn't check."
+    "Your research used its budget before you committed to evidence: answer from what is "
+    "here, and say what you couldn't check."
+)
+EVIDENCE_REMINDER = (
+    "Before you answer, call submit_evidence with the code you will cite. The answer is "
+    "written from that evidence."
 )
 
 
@@ -111,6 +121,15 @@ class PreRetrieved:
 
 
 @dataclass(frozen=True, slots=True)
+class EvidenceChosen:
+    """The evidence the answer is written from (4.4): how many pieces, how many of them the
+    agent submitted."""
+
+    pieces: int
+    submitted: int
+
+
+@dataclass(frozen=True, slots=True)
 class ToolCalled:
     id: str
     name: str
@@ -152,6 +171,7 @@ class CitationFound:
 Stop = Literal["answered", "turns", "budget", "truncated", "refused"]
 # The stop reasons of an answer that isn't whole: what the run says it stopped by.
 CUT_SHORT: dict[str, Stop] = {"max_tokens": "truncated", "refusal": "refused"}
+STOPPED_NOTES: dict[Stop, str] = {"turns": LAST_TURN_NOTE, "budget": BUDGET_NOTE}
 
 
 @dataclass(frozen=True, slots=True)
@@ -174,7 +194,14 @@ class Done:
 
 
 AgentEvent = (
-    PreRetrieved | StepStarted | ToolCalled | ToolAnswered | TextDelta | CitationFound | Done
+    PreRetrieved
+    | StepStarted
+    | ToolCalled
+    | ToolAnswered
+    | EvidenceChosen
+    | TextDelta
+    | CitationFound
+    | Done
 )
 
 
@@ -238,6 +265,22 @@ class _Spent:
         )
 
 
+@dataclass(slots=True)
+class _Run:
+    """One run's state, as its phases (round 0, research, answer) leave it."""
+
+    plan: Plan
+    model: str
+    system: tuple[str, str]
+    tools: list[dict[str, Any]]
+    messages: list[dict[str, Any]]  # the research's conversation
+    index: CitationIndex  # the search results the model has been shown, in order
+    spent: _Spent
+    stopped: Stop = "answered"
+    result: LLMTurnResult | None = None  # the last turn's
+    turn: int = 0
+
+
 class AskAgent:
     def __init__(
         self,
@@ -247,12 +290,16 @@ class AskAgent:
         costs: CostCalculator | None = None,
         on_usage: LLMUsageSink | None = None,
         pre_retrieval: bool = True,
+        reranker: Reranker | None = None,
+        on_rerank_usage: RerankUsageSink | None = None,
     ) -> None:
         self.client = client
         self.budget = budget or Budget()
         self.costs = costs
         self.on_usage = on_usage
         self.pre_retrieval = pre_retrieval
+        self.reranker = reranker  # 4.4's final rerank (None: the evidence in reading order)
+        self.on_rerank_usage = on_rerank_usage
 
     async def prewarm(self, ctx: ToolContext, *, overview: str | None = None) -> None:
         """Write the run's shared prefix to the cache (an Ask page opening): Sonnet's, at the
@@ -272,48 +319,26 @@ class AskAgent:
         escalate: bool = False,
     ) -> AsyncIterator[AgentEvent]:
         plan = plan_for(classify(question).route, mode, escalate=escalate)
-        model = self.client.model_for(plan.tier)
-        system = (system_prompt(), overview or await repo_overview(ctx))
-        tools = definitions()
-        messages = _history(conversation, question)
-        index = CitationIndex()
-        if self.pre_retrieval and (found := await _round0(ctx, question, messages, index)):
+        run = _Run(
+            plan,
+            self.client.model_for(plan.tier),
+            (system_prompt(), overview or await repo_overview(ctx)),
+            definitions(),
+            _history(conversation, question),
+            CitationIndex(),
+            _Spent(self.budget, self.costs),
+        )
+        if self.pre_retrieval and (found := await _round0(ctx, question, run.messages, run.index)):
             yield found
-        spent = _Spent(self.budget, self.costs)
-        stopped: Stop = "answered"
-        result: LLMTurnResult | None = None
-        turn = 0
-        while turn < self.budget.max_turns:
-            turn += 1
-            last = turn == self.budget.max_turns or spent.over
-            if last and turn > 1:
-                stopped = "budget" if spent.over else "turns"
-                note = BUDGET_NOTE if stopped == "budget" else LAST_TURN_NOTE
-                messages[-1]["content"].append({"type": "text", "text": note})
-            yield StepStarted(turn, model, plan.effort, tools=not last)
-            result = None
-            request = LLMTurn(
-                tuple(messages), system, tools, plan.tier, effort=plan.effort, use_tools=not last
-            )
-            async for event in self._turn(request, turn):
-                if isinstance(event, LLMTurnResult):
-                    result = event
-                else:
-                    yield event
-            if result is None:
-                raise RuntimeError(NO_RESULT)
-            spent.add(result.usage)
-            messages.append({"role": "assistant", "content": list(result.content)})
-            if result.stop_reason != "tool_use" or last:
-                break
-            answered: list[dict[str, Any]] = []
-            async for event in _call_tools(ctx, result, index, answered):
-                yield event
-            messages.append({"role": "user", "content": answered})
+        async for event in self._research(run, ctx):
+            yield event
+        async for event in self._answer(run, ctx, question, conversation):
+            yield event
+        result = run.result
         if result is None:
             raise RuntimeError(NO_RESULT)
-        stopped = CUT_SHORT.get(result.stop_reason or "", stopped)
-        text, citations, dropped = _answer(result.content, index)
+        stopped = CUT_SHORT.get(result.stop_reason or "", run.stopped)
+        text, citations, dropped = _answer(result.content, run.index)
         for n, citation in enumerate(citations, start=1):
             yield CitationFound(n, citation)
         yield Done(
@@ -322,14 +347,103 @@ class AskAgent:
                 citations,
                 stopped,
                 result.model,
-                turn,
-                tuple(spent.usage),
-                spent.cost if self.costs is not None else None,
+                run.turn,
+                tuple(run.spent.usage),
+                run.spent.cost if self.costs is not None else None,
                 tuple(ctx.evidence),
                 plan.escalated,
                 dropped,
             )
         )
+
+    async def _research(self, run: _Run, ctx: ToolContext) -> AsyncIterator[AgentEvent]:
+        """The turns with tools, until the agent commits to its evidence (or answers without,
+        reminded once), or its turns (all but the answer's) or budget run out."""
+        reminded = False
+        turns = self.budget.max_turns - 1  # the last is the answer's
+        while run.turn < turns:
+            if run.spent.over:
+                run.stopped = "budget"
+                return
+            run.turn += 1
+            async for event in self._step(run, run.messages, tools=True):
+                yield event
+            result = run.result
+            if result is None:
+                raise RuntimeError(NO_RESULT)
+            run.messages.append({"role": "assistant", "content": list(result.content)})
+            if result.stop_reason == "tool_use":
+                answered: list[dict[str, Any]] = []
+                async for event in _call_tools(ctx, result, run.index, answered):
+                    yield event
+                run.messages.append({"role": "user", "content": answered})
+                if ctx.evidence and _submitted(result):
+                    return
+                continue
+            if result.stop_reason in CUT_SHORT or ctx.evidence or reminded:
+                return
+            reminded = True
+            run.messages.append({"role": "user", "content": EVIDENCE_REMINDER})
+        if turns > 0:
+            run.stopped = "turns"
+
+    async def _answer(
+        self, run: _Run, ctx: ToolContext, question: str, conversation: Sequence[Exchange]
+    ) -> AsyncIterator[AgentEvent]:
+        """The answer turn: the question, after only the final evidence (4.4: what the agent
+        committed to, then the best of the rest of what it read), no tools. None when the
+        research was refused or cut off, or answered with nothing read to cite (its text is
+        the answer)."""
+        last = run.result
+        if last is not None and last.stop_reason in CUT_SHORT:
+            return
+        pieces = gather(ctx.evidence, run.index.sources)
+        if not pieces and last is not None and last.stop_reason != "tool_use":
+            return
+        final = await final_set(
+            ctx,
+            question,
+            pieces,
+            self.reranker,
+            on_rerank_usage=self.on_rerank_usage,
+            on_llm_usage=self.on_usage,
+        )
+        blocks, sources = answer_blocks(ctx, final)
+        run.index = CitationIndex()
+        run.index.add(sources)
+        yield EvidenceChosen(len(sources), sum(piece.submitted for piece in final[: len(sources)]))
+        note = STOPPED_NOTES.get(run.stopped)
+        asked = question if note is None else f"{question}\n\n{note}"
+        messages = [
+            *_history(conversation, question)[:-1],
+            {"role": "user", "content": [*blocks, {"type": "text", "text": asked}]},
+        ]
+        run.turn += 1
+        async for event in self._step(run, messages, tools=False):
+            yield event
+
+    async def _step(
+        self, run: _Run, messages: Sequence[dict[str, Any]], *, tools: bool
+    ) -> AsyncIterator[AgentEvent]:
+        """One turn on ``messages``: its start, its text as it streams; its result kept."""
+        yield StepStarted(run.turn, run.model, run.plan.effort, tools=tools)
+        run.result = None
+        request = LLMTurn(
+            tuple(messages),
+            run.system,
+            run.tools,
+            run.plan.tier,
+            effort=run.plan.effort,
+            use_tools=tools,
+        )
+        async for event in self._turn(request, run.turn):
+            if isinstance(event, LLMTurnResult):
+                run.result = event
+            else:
+                yield event
+        if run.result is None:
+            raise RuntimeError(NO_RESULT)
+        run.spent.add(run.result.usage)
 
     async def _turn(self, request: LLMTurn, turn: int) -> AsyncIterator[TextDelta | LLMTurnResult]:
         """One turn, its text yielded as it streams, then its result."""
@@ -362,6 +476,13 @@ async def _round0(
     index.add(found.sources)
     messages[-1] = {"role": "user", "content": [*found.content, {"type": "text", "text": question}]}
     return PreRetrieved(found.results, found.files, found.traced, found.ms)
+
+
+def _submitted(result: LLMTurnResult) -> bool:
+    return any(
+        block["type"] == "tool_use" and block["name"] == "submit_evidence"
+        for block in result.content
+    )
 
 
 def _history(conversation: Sequence[Exchange], question: str) -> list[dict[str, Any]]:

@@ -23,4 +23,4 @@ The repository's code is read in five layers: **ui** (pages, components, hooks, 
 
 ## Committing to evidence
 
-Before you write the answer, call `submit_evidence` once with every piece of code you will cite: its symbol id or path and lines, its layer, and in a few words why it answers the question. Only code you read in this conversation belongs there. Then write the answer, citing from that evidence.
+When you have read enough, call `submit_evidence` once with every piece of code you will cite: its symbol id or path and lines, its layer, and in a few words why it answers the question. Only code you read in this conversation belongs there. You are then shown that evidence, with the best of the rest of what you read, and write the answer from it: cite only what is shown there.
