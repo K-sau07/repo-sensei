@@ -549,6 +549,7 @@ class _Routes:
             k: v for f in files.values() for k, v in f.constants.items()
         }
         self.values: dict[str, list[str] | None] = {}  # each constant's, once worked out
+        self.heights: dict[str, int] = {}  # how many constants deep each is built
         self.prefixes = servlet_prefixes(project.configs)
         for root, prefix in sorted(self.prefixes.items()):
             if prefix.path:
@@ -629,13 +630,52 @@ class _Routes:
                     return None, False
                 key, where = found
                 if key not in self.values:
-                    inner, _ = self.strings(where, parse_value(self.constants[key]), depth + 1)
-                    self.values[key] = inner
+                    self.work_out(key, where)
                 return self.values[key], True
             case Array(items):
                 return self.each(declared, items, depth, joined=False)
             case Concat(parts):
                 return self.each(declared, parts, depth, joined=True)
+
+    def work_out(self, key: str, where: Declared) -> None:
+        """The values of the constant ``key`` (declared in ``where``) and of the constants it is
+        built from, each from its own declaration: the same whichever route reads one first. The
+        ones it is built from come first, on a stack of their own, so a chain of any length is
+        no deeper a call; one built more than :data:`MAX_DEPTH` constants deep is None, as is
+        one built from itself."""
+        stack = [(key, where)]
+        pending = {key}
+        read: dict[str, tuple[Value | None, list[tuple[str, Declared]]]] = {}
+        while stack:
+            at, declared = stack[-1]
+            if at not in read:
+                parsed = parse_value(self.constants[at])
+                read[at] = parsed, self.built_from(declared, parsed)
+            value, below = read[at]
+            todo = next((b for b in below if b[0] not in self.values and b[0] not in pending), None)
+            if todo is not None:
+                stack.append(todo)
+                pending.add(todo[0])
+                continue
+            stack.pop()
+            pending.discard(at)
+            if any(b in pending or b == at for b, _ in below):  # a cycle: never known
+                self.values[at], self.heights[at] = None, MAX_DEPTH + 1
+                continue
+            height = 1 + max((self.heights[b] for b, _ in below), default=0)
+            self.heights[at] = height
+            self.values[at] = self.strings(declared, value)[0] if height <= MAX_DEPTH else None
+
+    def built_from(self, declared: Declared, value: Value | None) -> list[tuple[str, Declared]]:
+        """The constants ``value`` (written in ``declared``) names."""
+        match value:
+            case Name(dotted):
+                found = self.constant(declared, dotted)
+                return [found] if found is not None else []
+            case Array(parts) | Concat(parts):
+                return [found for part in parts for found in self.built_from(declared, part)]
+            case _:
+                return []
 
     def each(
         self, declared: Declared, values: Sequence[Value], depth: int, *, joined: bool

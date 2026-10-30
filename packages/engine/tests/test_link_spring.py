@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pickle
 import time
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -655,3 +655,44 @@ def test_constants_of_constants_are_worked_out_once_and_never_grow_a_route_past_
     endpoints = _endpoints(build)
     assert "api_endpoint GET /a/b" in endpoints
     assert all(len(key) < 4096 for key in endpoints)
+
+
+def _routes_of(tmp_path: Path, constants: Sequence[str], mapped: Sequence[str]) -> list[str]:
+    """The routes of a controller mapping each of ``mapped`` (in order) over ``constants``."""
+    methods = "".join(
+        f'    @GetMapping(Paths.{name})\n    public String m{i}() {{ return ""; }}\n\n'
+        for i, name in enumerate(mapped)
+    )
+    files = {
+        f"{JAVA}/web/Paths.java": (
+            "package org.acme.shop.web;\n\npublic final class Paths {\n"
+            + "".join(f"    static final String {line};\n" for line in constants)
+            + "}\n"
+        ),
+        f"{JAVA}/web/Api.java": (
+            "package org.acme.shop.web;\n\nimport org.springframework.web.bind.annotation.*;\n\n"
+            f"@RestController\npublic class Api {{\n{methods}}}\n"
+        ),
+    }
+    root = tmp_path / str(len(list(tmp_path.iterdir())))
+    build, _ = _build(root, files)
+    return sorted(key.removeprefix("api_endpoint GET ") for key in _endpoints(build))
+
+
+def test_a_constant_has_one_value_whichever_route_reads_it_first(tmp_path: Path) -> None:
+    """A constant is worked out from its own declaration: ``L2`` is a route after ``L5`` read it
+    on the way as before; one built more than MAX_DEPTH constants deep, or from itself, is no
+    route; a chain of thousands, or a diamond of them doubling, costs one pass."""
+    chain = ['L0 = "/api"', *(f'L{i} = L{i - 1} + "/s{i}"' for i in range(1, 12))]
+    both = ["/api/s1/s2", "/api/s1/s2/s3/s4/s5"]
+    assert _routes_of(tmp_path, chain, ["L5", "L2"]) == both
+    assert _routes_of(tmp_path, chain, ["L2", "L5"]) == both
+    assert _routes_of(tmp_path, chain, ["L7", "L8"]) == ["/api/s1/s2/s3/s4/s5/s6/s7"]
+    cycle = ['A = B + "/x"', 'B = A + "/y"', 'C = "/c"']
+    assert _routes_of(tmp_path, cycle, ["A", "B", "C"]) == ["/c"]
+    started = time.monotonic()
+    long = ['K0 = "/k"', *(f"K{i} = K{i - 1}" for i in range(1, 5000))]
+    assert _routes_of(tmp_path, long, ["K4999", "K3"]) == ["/k"]
+    diamond = ['D0 = ""', *(f"D{i} = D{i - 1} + D{i - 1}" for i in range(1, 60))]
+    assert _routes_of(tmp_path, diamond, ["D59"]) == []
+    assert time.monotonic() - started < 10
