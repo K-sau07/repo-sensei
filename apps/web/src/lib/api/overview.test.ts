@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { mockModules, mockOverview } from "@/mocks/overview";
+import { mockModules, mockOverview, moduleOf } from "@/mocks/overview";
 
 import {
   dominantLayer,
@@ -62,11 +62,49 @@ describe("the health tiles", () => {
 describe("the mock overview", () => {
   it("reads the mock tree's modules the way the API does", () => {
     const { modules, rest } = mockModules();
-    expect(modules[0]).toMatchObject({ path: "frontend", files: 119 });
+    expect(modules.map((m) => m.path).slice(0, 3)).toEqual([
+      "backend/app",
+      "backend/app/api/routes",
+      "frontend/src/components",
+    ]);
     expect(modules.reduce((n, m) => n + m.files, 0) + rest).toBe(245);
     const paths = new Set(modules.map((m) => m.path));
     for (const link of mockOverview().architecture.links) {
       expect(paths.has(link.source) && paths.has(link.target)).toBe(true);
     }
   });
+
+  // The API's own cases (test_overview_api.py), so the two split alike.
+  it("splits where the code is, a layer weighing as much as another", () => {
+    const java = "server/src/main/java/org/shop";
+    const files = [
+      ...range(8).map((n) => ({ path: `web/src/pages/p${String(n)}.tsx`, role: "ui" })),
+      ...range(8).map((n) => ({ path: `web/src/components/c${String(n)}.tsx`, role: "ui" })),
+      ...(
+        [
+          ["controller", "api"],
+          ["service", "service"],
+          ["repository", "db"],
+        ] as const
+      ).flatMap(([part, role]) =>
+        range(3).map((n) => ({ path: `${java}/${part}/${part}${String(n)}.java`, role })),
+      ),
+      ...range(40).map((n) => ({ path: `docs/page${String(n)}.html`, role: "docs" })),
+      { path: "README.md", role: "docs" },
+    ];
+    const of = moduleOf(files);
+    expect(of.get("web/src/pages/p0.tsx")).toBe("web/src/pages");
+    expect(of.get(`${java}/controller/controller0.java`)).toBe(`${java}/controller`);
+    expect(of.get("docs/page0.html")).toBe("docs");
+    expect(of.get("README.md")).toBe(".");
+  });
+
+  it("doesn't split into more modules than the map holds", () => {
+    const files = range(30).map((n) => ({ path: `pkg/m${String(n)}/x.py`, role: "service" }));
+    expect(new Set(moduleOf(files).values())).toEqual(new Set(["pkg"]));
+  });
 });
+
+function range(n: number): number[] {
+  return Array.from({ length: n }, (_, i) => i);
+}

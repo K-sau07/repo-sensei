@@ -60,10 +60,9 @@ export const Indexed: Story = {
   play: async ({ canvas }) => {
     await expect(await canvas.findByRole("heading", { name: "What this repo does" })).toBeVisible();
     const modules = canvas.getByRole("table", { name: "Modules" });
-    await expect(within(modules).getByRole("link", { name: "frontend/" })).toHaveAttribute(
-      "href",
-      "/acme/api/code/frontend",
-    );
+    await expect(
+      within(modules).getByRole("link", { name: "frontend/src/components/" }),
+    ).toHaveAttribute("href", "/acme/api/code/frontend/src/components");
     await expect(
       canvas.getByRole("link", { name: "What happens when POST /api/v1/items/ is called?" }),
     ).toHaveAttribute("href", expect.stringContaining("/acme/api/ask?q=") as string);

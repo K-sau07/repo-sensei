@@ -1,23 +1,27 @@
 "use client";
 
 /**
- * A repository's overview once it is indexed (4.13): what it does (the summaries stage's
- * rollups), how it is laid out (its modules as a map and a table), questions worth asking, its
- * feature maps, how well the index understood it, and the last index itself (with the
- * constellation as a strip). A missing piece says so instead of being made up.
+ * A repository's overview once it is indexed (4.13): the last index first, as it ran (its
+ * stages, the constellation, what it counted and found), then what the repository does (the
+ * summaries stage's rollups, kept short until asked for more), how it is laid out (its modules
+ * as a map and a table), questions worth asking, its feature maps and how well the index
+ * understood it. A missing piece says so instead of being made up.
  */
 import { cn } from "cn";
-import { MessageCircleQuestion } from "lucide-react";
+import { ChevronDown, MessageCircleQuestion } from "lucide-react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { useState } from "react";
 
 import { askHref } from "@/components/ask/ask-bar";
 import { ErrorState } from "@/components/feedback/error-state";
-import { Constellation } from "@/components/indexing/constellation";
+import { IndexView } from "@/components/indexing/index-view";
 import { RelativeTime } from "@/components/primitives/relative-time";
 import { LanguageBar } from "@/components/repos/language-bar";
+import { plural } from "@/components/search/meta";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Table,
@@ -43,7 +47,7 @@ import { codePath, repoPath } from "@/lib/routes";
 
 const ArchitectureMap = dynamic(
   () => import("./architecture-map").then((module) => module.ArchitectureMap),
-  { ssr: false, loading: () => <Skeleton className="h-80" /> },
+  { ssr: false, loading: () => <Skeleton className="h-96" /> },
 );
 
 const LAYER_NAMES: Record<string, string> = {
@@ -87,25 +91,66 @@ function Section({
 
 function WhatItDoes({ org, repo, overview }: { org: string; repo: string; overview: Overview }) {
   const { summary } = overview;
+  const [more, setMore] = useState(false);
+  const [folders, setFolders] = useState(false);
   return (
     <Section id="overview-summary" title="What this repo does">
       {summary ? (
         <>
-          <p className="text-sm leading-6 text-pretty">{summary.text}</p>
+          <div className="flex flex-col items-start gap-1">
+            <p
+              id="overview-summary-text"
+              className={cn("text-sm leading-6 text-pretty", !more && "line-clamp-3")}
+            >
+              {summary.text}
+            </p>
+            <Button
+              variant="link"
+              size="sm"
+              className="h-auto p-0 text-xs"
+              aria-expanded={more}
+              aria-controls="overview-summary-text"
+              onClick={() => {
+                setMore(!more);
+              }}
+            >
+              {more ? "Show less" : "Show more"}
+            </Button>
+          </div>
           {summary.directories.length > 0 && (
-            <ul className="grid gap-2 sm:grid-cols-2">
-              {summary.directories.map((d) => (
-                <li key={d.path} className="flex flex-col gap-0.5 text-sm">
-                  <Link
-                    href={codePath(org, repo, d.path)}
-                    className="w-fit font-mono text-xs underline underline-offset-4"
-                  >
-                    {d.path}/
-                  </Link>
-                  <span className="text-fg-muted">{d.summary}</span>
-                </li>
-              ))}
-            </ul>
+            <div className="flex flex-col gap-2">
+              <Button
+                variant="ghost"
+                size="sm"
+                className="w-fit gap-1 px-1.5 text-xs text-fg-muted"
+                aria-expanded={folders}
+                aria-controls="overview-folders"
+                onClick={() => {
+                  setFolders(!folders);
+                }}
+              >
+                <ChevronDown
+                  aria-hidden
+                  className={cn("size-3.5 transition-transform", folders && "rotate-180")}
+                />
+                What each folder holds ({summary.directories.length})
+              </Button>
+              <ul id="overview-folders" hidden={!folders} className="grid gap-3 sm:grid-cols-2">
+                {summary.directories.map((d) => (
+                  <li key={d.path} className="flex flex-col gap-0.5 text-sm">
+                    <Link
+                      href={codePath(org, repo, d.path)}
+                      className="w-fit font-mono text-xs underline underline-offset-4"
+                    >
+                      {d.path}/
+                    </Link>
+                    <span className="line-clamp-4 text-fg-muted" title={d.summary}>
+                      {d.summary}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
           )}
         </>
       ) : (
@@ -124,6 +169,14 @@ function layersOf(module: Module): string {
     .join(", ");
 }
 
+/** What the map draws: modules with code or a link (folders of docs or CI alone are left to the
+ * table), unless that leaves fewer than two. */
+function mapped(modules: readonly Module[], links: Overview["architecture"]["links"]) {
+  const linked = new Set(links.flatMap((link) => [link.source, link.target]));
+  const kept = modules.filter((m) => dominantLayer(m.layers) !== "other" || linked.has(m.path));
+  return kept.length >= 2 ? kept : modules;
+}
+
 function Architecture({ org, repo, overview }: { org: string; repo: string; overview: Overview }) {
   const router = useRouter();
   const { modules, links, rest } = overview.architecture;
@@ -134,9 +187,9 @@ function Architecture({ org, repo, overview }: { org: string; repo: string; over
       title="Architecture"
       aside={
         <span className="text-xs text-fg-muted">
-          {modules.length} modules
-          {rest > 0 ? ` · ${rest.toLocaleString("en")} files in smaller ones` : ""} · {links.length}{" "}
-          links between them
+          {plural(modules.length, "module")}
+          {rest > 0 ? ` · ${plural(rest, "file")} in the rest` : ""} ·{" "}
+          {plural(links.length, "link")} between them
         </span>
       }
     >
@@ -145,7 +198,7 @@ function Architecture({ org, repo, overview }: { org: string; repo: string; over
       ) : (
         <>
           <ArchitectureMap
-            modules={modules}
+            modules={mapped(modules, links)}
             links={links}
             onOpen={(module) => {
               router.push(open(module));
@@ -222,7 +275,9 @@ function FeatureMaps({ org, repo, overview }: { org: string; repo: string; overv
                 </Badge>
               )}
             </span>
-            <span className="text-sm text-fg-muted">{m.summary}</span>
+            <span className="line-clamp-3 text-sm text-fg-muted" title={m.summary}>
+              {m.summary}
+            </span>
             <Link
               href={codePath(org, repo, m.path)}
               className="w-fit font-mono text-xs underline underline-offset-4"
@@ -262,7 +317,9 @@ function HealthTiles({ health }: { health: Health }) {
   );
 }
 
-function IndexSummary({
+/** The last index, as it ran: its commit, when and how long, its languages, then the run itself
+ * (stages, constellation, counters, what it found and its log). */
+function LastIndex({
   org,
   repo,
   data,
@@ -274,46 +331,25 @@ function IndexSummary({
   latest: IndexJob;
 }) {
   return (
-    <Section
-      id="index-summary"
-      title={`Indexed ${data.last_indexed_sha?.slice(0, 12) ?? ""}`}
-      aside={
-        data.last_indexed_at && (
-          <span className="text-xs text-fg-muted">
-            <RelativeTime date={data.last_indexed_at} /> · took {took(latest)}
-          </span>
-        )
-      }
-    >
-      <dl className="grid grid-cols-3 gap-4">
-        <div>
-          <dt className="text-xs text-fg-muted">Files</dt>
-          <dd className="text-xl font-semibold tabular-nums">
-            {(data.file_count ?? 0).toLocaleString("en")}
-          </dd>
-        </div>
-        <div>
-          <dt className="text-xs text-fg-muted">Lines</dt>
-          <dd className="text-xl font-semibold tabular-nums">
-            {(data.loc ?? 0).toLocaleString("en")}
-          </dd>
-        </div>
-        <div>
-          <dt className="text-xs text-fg-muted">Languages</dt>
-          <dd className="text-xl font-semibold tabular-nums">
-            {Object.keys(data.languages).length}
-          </dd>
-        </div>
-      </dl>
+    <section aria-label="Last index" className="flex flex-col gap-4">
+      <div className="flex flex-wrap items-baseline justify-between gap-2 text-sm">
+        <p>
+          Indexed{" "}
+          <span className="font-mono text-fg-muted">{data.last_indexed_sha?.slice(0, 12)}</span>
+          {data.last_indexed_at && (
+            <span className="text-xs text-fg-muted">
+              {" "}
+              · <RelativeTime date={data.last_indexed_at} /> · took {took(latest)}
+            </span>
+          )}
+        </p>
+        <Link href={repoPath(org, repo, "index")} className="text-xs underline underline-offset-4">
+          Indexing details and history
+        </Link>
+      </div>
       <LanguageBar languages={data.languages} legend />
-      <Constellation org={org} repo={repo} job={null} strip />
-      <Link
-        href={repoPath(org, repo, "index")}
-        className="w-fit text-sm underline underline-offset-4"
-      >
-        Indexing details and history
-      </Link>
-    </Section>
+      <IndexView org={org} repo={repo} jobId={latest.id} />
+    </section>
   );
 }
 
@@ -332,7 +368,8 @@ export function RepoReady({
     params: { path: { org, repo } },
   });
   return (
-    <div className="mx-auto flex w-full max-w-5xl flex-col gap-6 p-6">
+    <div className="mx-auto flex w-full max-w-6xl flex-col gap-6 p-6">
+      <LastIndex org={org} repo={repo} data={data} latest={latest} />
       {overview.isPending && (
         <div role="status" aria-label="Loading the overview" className="flex flex-col gap-6">
           <Skeleton className="h-32" />
@@ -359,7 +396,6 @@ export function RepoReady({
           <HealthTiles health={overview.data.health} />
         </>
       )}
-      <IndexSummary org={org} repo={repo} data={data} latest={latest} />
     </div>
   );
 }

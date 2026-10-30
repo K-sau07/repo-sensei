@@ -17,7 +17,7 @@ from fastapi import FastAPI
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from sensei_api.routers.overview import modules_of
+from sensei_api.routers.overview import endpoint_question, modules_of
 from sensei_core.mail import MemoryMailer
 from sensei_core.models import IndexJob, JobKind, JobStatus, Membership, Org, Repo, User
 from sensei_core.models.indexing import SnapshotStatus
@@ -30,14 +30,51 @@ from sensei_testing.indexed import ITEMS, index_repo
 API = "/api/v1"
 
 
-def test_modules_are_read_at_the_shallowest_level_that_separates_them() -> None:
-    one_top = [f"backend/app/{d}/{n}.py" for d in ("api", "core", "models") for n in range(3)]
-    depth, module_of = modules_of([*one_top, "README.md"])
-    assert depth == 3  # "backend" and "backend/app" each hold nearly everything
-    assert module_of["backend/app/api/0.py"] == "backend/app/api"
+def test_modules_split_where_the_code_is() -> None:
+    java = "server/src/main/java/org/shop"
+    files = [
+        *[(f"web/src/pages/p{n}.tsx", "ui") for n in range(8)],
+        *[(f"web/src/components/c{n}.tsx", "ui") for n in range(8)],
+        *[
+            (f"{java}/{part}/{part.title()}{n}.java", role)
+            for n in range(3)
+            for part, role in (("controller", "api"), ("service", "service"), ("repository", "db"))
+        ],
+        *[(f"docs/page{n}.html", "docs") for n in range(40)],
+        ("README.md", "docs"),
+    ]
+    module_of = modules_of(files)
+    assert module_of["web/src/pages/p0.tsx"] == "web/src/pages"
+    # Its few files weigh as much as the UI's many (a layer each), and the folders that only
+    # lead on are passed through.
+    assert module_of[f"{java}/controller/Controller0.java"] == f"{java}/controller"
+    assert module_of[f"{java}/repository/Repository0.java"] == f"{java}/repository"
+    assert module_of["docs/page0.html"] == "docs"  # no code: one module, not split
     assert module_of["README.md"] == rollups.ROOT
-    spread = ["web/a.ts", "web/b.ts", "api/c.py", "api/d.py", "db/e.sql"]
-    assert modules_of(spread) == (1, {p: p.split("/")[0] for p in spread})
+
+
+def test_a_split_into_more_modules_than_the_map_holds_is_not_made() -> None:
+    files = [(f"pkg/m{n}/x.py", "service") for n in range(30)]
+    assert set(modules_of(files).values()) == {"pkg"}
+
+
+def test_without_layers_the_source_is_split() -> None:
+    files = [
+        *[(f"lib/{part}/f{n}.py", "other") for part in ("io", "net") for n in range(5)],
+        *[(f"tests/t{n}.py", "test") for n in range(20)],
+    ]
+    module_of = modules_of(files)
+    assert module_of["lib/io/f0.py"] == "lib/io"
+    assert module_of["tests/t0.py"] == "tests"
+
+
+def test_an_endpoint_question_names_its_route_as_written() -> None:
+    written = {"method": "get", "path_raw": "/items/{item_id}", "path_norm": "/items/{}"}
+    assert endpoint_question(written) == "What happens when GET /items/{item_id} is called?"
+    assert endpoint_question({"method": "post", "path_norm": "/items/"}) == (
+        "What happens when POST /items/ is called?"
+    )
+    assert endpoint_question({"path_raw": "/items/"}) is None
 
 
 class _Storage:
@@ -116,10 +153,9 @@ async def test_an_indexed_repository_has_its_overview(
         "directories": [{"path": "backend", "summary": "The API and its services."}],
     }
     modules = {m["path"]: m for m in body["architecture"]["modules"]}
-    assert "backend/app/api" in modules
-    assert modules["backend/app/api"]["layers"] == {"api": 1}
+    assert modules["backend/app/api/routes"]["layers"] == {"api": 1}
     links = {(link["source"], link["target"]) for link in body["architecture"]["links"]}
-    assert ("backend/app/api", "backend/app/services") in links  # the route calls the service
+    assert ("backend/app/api/routes", "backend/app/services") in links  # it calls the service
     health = body["health"]
     python = next(lang for lang in health["languages"] if lang["language"] == "python")
     assert python["files"] == 3

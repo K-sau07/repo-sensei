@@ -33,8 +33,8 @@ test.describe("indexing", () => {
     await expect(stages.locator("[aria-current=step]")).toBeVisible();
     await expect(page.getByText("Live", { exact: true })).toBeVisible();
 
-    // At the end the overview shows what the run found.
-    const summary = page.getByRole("region", { name: /^Indexed/ });
+    // At the end the overview shows the run as it finished, and what it found.
+    const summary = page.getByRole("region", { name: "Last index" });
     await expect(summary).toBeVisible({ timeout: 15_000 });
     await expect(summary).toContainText("245");
     await expect(summary).toContainText("18,567");
@@ -78,7 +78,7 @@ test.describe("indexing", () => {
     await expect(page.getByRole("button", { name: "Index again" })).toBeVisible();
     // The repository keeps its last index: the overview shows it, not the cancelled run.
     await page.getByRole("link", { name: "Overview" }).click();
-    await expect(page.getByRole("region", { name: /^Indexed/ })).toBeVisible();
+    await expect(page.getByRole("region", { name: "Last index" })).toContainText("Indexed");
   });
 
   test("index history: every run, pick one, read and filter its log", async ({ page }) => {

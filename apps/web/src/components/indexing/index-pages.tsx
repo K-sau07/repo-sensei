@@ -92,7 +92,9 @@ export function RepoOverview() {
       </div>
     );
   }
-  return <RepoReady org={org} repo={repo} data={data} latest={latest} />;
+  // The run that made the index shown (a cancelled one since left it as it was).
+  const made = jobs.data.find((job) => job.status === "succeeded") ?? latest;
+  return <RepoReady org={org} repo={repo} data={data} latest={made} />;
 }
 
 /** `/[org]/[repo]/index`: every run, newest first, and the one picked (`?job=`) in full. */

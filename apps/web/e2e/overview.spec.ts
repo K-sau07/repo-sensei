@@ -7,28 +7,43 @@ test.describe("overview", () => {
     page,
   }) => {
     await page.goto("/acme/api");
+
+    // The last index first, as it ran: its stages and the constellation.
+    const last = page.getByRole("region", { name: "Last index" });
+    await expect(last.getByRole("list", { name: "Indexing stages" })).toContainText("Code graph");
+    await expect(last.getByRole("figure", { name: /Constellation/ })).toBeVisible();
+
+    // What it does, kept to a few lines until asked for more; each folder's, folded away.
     await expect(page.getByRole("heading", { name: "What this repo does" })).toBeVisible();
     await expect(page.getByText(/A full-stack web application template/)).toBeVisible();
-
-    // The modules on a map, and the same in a table that opens them.
-    await expect(page.getByTestId("architecture-map").locator(".react-flow__node")).toHaveCount(
-      await page
-        .getByRole("table", { name: "Modules" })
-        .getByRole("row")
-        .count()
-        .then((n) => n - 1),
-    );
+    await page.getByRole("button", { name: "Show more" }).click();
+    await expect(page.getByRole("button", { name: "Show less" })).toBeVisible();
+    const folders = page.getByRole("button", { name: /What each folder holds/ });
     await expect(
-      page.getByRole("table", { name: "Modules" }).getByRole("link", { name: "backend/" }),
-    ).toHaveAttribute("href", "/acme/api/code/backend");
+      page.getByText("The FastAPI service: routes, models, CRUD and auth."),
+    ).toBeHidden();
+    await folders.click();
+    await expect(
+      page.getByText("The FastAPI service: routes, models, CRUD and auth."),
+    ).toBeVisible();
+
+    // The modules on a map (those with code or a link) and all of them in a table that opens
+    // them.
+    const table = page.getByRole("table", { name: "Modules" });
+    await expect(table.getByRole("row")).toHaveCount(13);
+    await expect(page.getByTestId("architecture-map").locator(".react-flow__node")).toHaveCount(10);
+    await expect(
+      page.getByText("12 modules · 81 files in the rest · 8 links between them"),
+    ).toBeVisible();
+    await expect(table.getByRole("link", { name: "backend/app/api/routes/" })).toHaveAttribute(
+      "href",
+      "/acme/api/code/backend/app/api/routes",
+    );
 
     // Health says what it measured, and what it doesn't track yet.
     const health = page.getByRole("region", { name: "Index health" });
     await expect(health).toContainText("Files with symbols");
     await expect(health).toContainText("Not tracked yet");
-
-    // The last index is still there, its constellation a strip.
-    await expect(page.getByRole("figure", { name: /Constellation/ })).toBeVisible();
 
     const audit = await new AxeBuilder({ page }).include("main").analyze();
     expect(audit.violations).toEqual([]);

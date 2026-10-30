@@ -11,7 +11,7 @@ index) isn't tracked yet: pushes are stored, not acted on, so ``behind`` is alwa
 from __future__ import annotations
 
 import uuid
-from collections import Counter
+from collections import Counter, defaultdict
 from collections.abc import Sequence
 from contextlib import suppress
 from datetime import datetime
@@ -46,9 +46,10 @@ from sensei_engine.llm import rollups
 
 router = APIRouter(prefix="/orgs/{org}", tags=["overview"])
 
-MAX_MODULES = 12
-MAX_DEPTH = 3
-DOMINANT = 0.6  # a level where one module holds this share of the files or more is too coarse
+MAX_MODULES = 12  # with code in them
+SPLIT_SHARE = 0.15  # a module holding more of the code than this is split into its folders
+FOLD_SHARE = 0.03  # a folder with less than this stays in its parent's module
+NOT_SOURCE = frozenset({"test", "config", "docs"})
 MAX_ROLLUPS_BYTES = 32 * 1024 * 1024
 MAX_QUESTIONS = 5
 PRECISE = frozenset(
@@ -78,7 +79,7 @@ DEPENDS = (
     EdgeType.WRITES,
 )
 LAYERS = ("ui", "api", "svc", "db", "other")
-CACHE_PREFIX = "overview:"
+CACHE_PREFIX = "overview:v2:"
 CACHE_SECONDS = 24 * 3600
 
 
@@ -270,30 +271,106 @@ async def _summary(request: Request, repo: Repo, snapshot: Snapshot) -> SummaryO
 # ---------------------------------------------------------------- how it is laid out
 
 
-def modules_of(paths: Sequence[str]) -> tuple[int, dict[str, str]]:
-    """The depth the repository reads best at (the shallowest whose largest directory holds
-    less than :data:`DOMINANT` of the files and that has at least three, up to
-    :data:`MAX_DEPTH`) and each file's module at it."""
-    chosen = MAX_DEPTH
-    for depth in range(1, MAX_DEPTH + 1):
-        sizes = Counter(_module(path, depth) for path in paths)
-        if len(sizes) >= 3 and max(sizes.values()) < DOMINANT * len(paths):
-            chosen = depth
+def modules_of(files: Sequence[tuple[str, str]]) -> dict[str, str]:
+    """Each file's module (its path and role in, ``"."`` for the top level).
+
+    From the whole repository down, the module holding the most code is split into its folders
+    while it holds more than :data:`SPLIT_SHARE` of it, as long as the map keeps to
+    :data:`MAX_MODULES` modules with code. Code is weighed by layer (:func:`_weights`), so a
+    large UI doesn't crowd out the API, services and data beside it. A folder with less than
+    :data:`FOLD_SHARE` of the code stays in its parent's module, one that only leads to
+    another (Java's ``src/main/java/com/…``) is passed through, and a file belongs to the
+    deepest module above it."""
+    weight = _weights(files)
+    total = sum(weight.values())
+    direct: Counter[str] = Counter()
+    under: defaultdict[str, float] = defaultdict(float)  # the code in a folder and below
+    below: dict[str, set[str]] = {}
+    for path, _ in files:
+        folder = _folder(path)
+        direct[folder] += 1
+        under[folder] += weight[path]
+        while folder:
+            parent = _folder(folder)
+            below.setdefault(parent, set()).add(folder)
+            under[parent] += weight[path]
+            folder = parent
+
+    def through(folder: str) -> str:
+        while not direct[folder] and len(below.get(folder, ())) == 1:
+            folder = next(iter(below[folder]))
+        return folder
+
+    def assign(modules: set[str]) -> dict[str, str]:
+        held: dict[str, str] = {}
+        for path, _ in files:
+            folder = _folder(path)
+            while folder not in modules:
+                folder = _folder(folder)
+            held[path] = folder
+        return held
+
+    def code_in(held: dict[str, str]) -> defaultdict[str, float]:
+        code: defaultdict[str, float] = defaultdict(float)
+        for path, module in held.items():
+            code[module] += weight[path]
+        return code
+
+    modules, done = {"", through("")}, set[str]()  # "": anything left above the first fork
+    module_of = assign(modules)
+    while True:
+        code = code_in(module_of)
+        heaviest = max((m for m in modules if m not in done), key=lambda m: code[m], default=None)
+        if heaviest is None or code[heaviest] <= SPLIT_SHARE * total:
             break
-    return chosen, {path: _module(path, chosen) for path in paths}
+        done.add(heaviest)
+        children = {through(child) for child in below.get(heaviest, ())}
+        kept = {c for c in children if not under[c] or under[c] >= FOLD_SHARE * total}
+        if not kept:
+            continue
+        split = modules | kept
+        if not direct[heaviest] and kept == children:
+            split.discard(heaviest)
+        split.add("")
+        held = assign(split)
+        if sum(1 for c in code_in(held).values() if c) > MAX_MODULES:
+            continue
+        modules, module_of = split, held
+    return {path: module or rollups.ROOT for path, module in module_of.items()}
 
 
-def _module(path: str, depth: int) -> str:
-    parts = path.split("/")[:-1]  # its directories
-    return "/".join(parts[:depth]) if parts else rollups.ROOT
+def _folder(path: str) -> str:
+    return path.rpartition("/")[0]
+
+
+def _weights(files: Sequence[tuple[str, str]]) -> dict[str, float]:
+    """What each file counts for as code: the files in a layer (UI, API, service, data), each
+    layer counting the same in all; failing any, the files that aren't tests, config or docs;
+    failing those, every file."""
+    layers = {path: layer_for(role) for path, role in files}
+    per_layer = Counter(layer for layer in layers.values() if layer != "other")
+    if per_layer:
+        return {
+            path: 1 / per_layer[layer] if layer != "other" else 0.0
+            for path, layer in layers.items()
+        }
+    source = [path for path, role in files if role not in NOT_SOURCE] or [p for p, _ in files]
+    held = set(source)
+    return {path: 1 / len(source) if path in held else 0.0 for path, _ in files}
 
 
 async def _architecture(
     db: AsyncSession, snapshot: Snapshot, files: list[tuple[str, str]]
 ) -> ArchitectureOut:
-    _, module_of = modules_of([path for path, _ in files])
+    module_of = modules_of(files)
     sizes = Counter(module_of.values())
-    shown = [path for path, _ in sizes.most_common(MAX_MODULES)]
+    weight = _weights(files)
+    code: defaultdict[str, float] = defaultdict(float)
+    for path, module in module_of.items():
+        code[module] += weight[path]
+    # The ones with the most code first, then the largest.
+    ranked = sorted(sizes, key=lambda module: (-code[module], -sizes[module], module))
+    shown = ranked[:MAX_MODULES]
     layers: dict[str, Counter[str]] = {path: Counter() for path in shown}
     for path, role in files:
         held = layers.get(module_of[path])
@@ -352,13 +429,19 @@ async def _questions(
         .order_by(CodeNode.qualified_name)
         .limit(2)
     )
-    for attrs in endpoints:
-        method, path = attrs.get("method"), attrs.get("path_norm")
-        if method and path:
-            asked.append(f"What happens when {str(method).upper()} {path} is called?")
+    asked += [q for attrs in endpoints if (q := endpoint_question(attrs))]
     if not asked and paths:
         asked.append("Where does this repository start, and what does it do first?")
     return asked[:MAX_QUESTIONS]
+
+
+def endpoint_question(attrs: dict[str, Any]) -> str | None:
+    """What an endpoint's call does, its route as written (``/items/{item_id}``), not as it is
+    matched (``/items/{}``)."""
+    method, path = attrs.get("method"), attrs.get("path_raw") or attrs.get("path_norm")
+    if not method or not path:
+        return None
+    return f"What happens when {str(method).upper()} {path} is called?"
 
 
 # ---------------------------------------------------------------- health

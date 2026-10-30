@@ -120,7 +120,7 @@ export function ArchitectureMap({
   return (
     <div
       ref={box}
-      className="h-80 rounded-md border border-line bg-surface-1"
+      className="h-96 rounded-md border border-line bg-surface-1"
       // Hidden from assistive tech: the table beside it carries the same (and is reachable).
       aria-hidden
       data-testid="architecture-map"
