@@ -1,12 +1,17 @@
 """What an org may still spend on agents today (4.8): its LLM spend since UTC midnight (the
-usage ledger's), against the daily cap. Past the cap no new run starts; at its warning share
-the org is told, once a day (an audit event until there is an inbox)."""
+usage ledger's), against the daily cap, less what the runs under way may still spend (each
+holds its budget while it runs, so runs at once can't each spend what is left). Past the cap
+no new run starts; at its warning share the org is told, once a day (an audit event until
+there is an inbox)."""
 
 from __future__ import annotations
 
+import time
 import uuid
+from collections.abc import Awaitable
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from typing import cast
 
 from redis.asyncio import Redis
 from redis.exceptions import RedisError
@@ -19,6 +24,8 @@ from sensei_core.errors import DomainError
 from sensei_core.models import UsageEvent
 
 WARNED_PREFIX = "agent:cap-warned:"
+HOLDS_PREFIX = "agent:holds:"  # a hash per org: run id -> "<amount> <unix time it lapses>"
+HOLD_SECONDS = 900  # a run's hold lapses after this, should the run never release it
 
 
 class CostCapReachedError(DomainError):
@@ -54,7 +61,7 @@ async def remaining_today(
     if cap <= 0:
         return None
     moment = now or datetime.now(UTC)
-    spent = await spent_today(db, org_id, moment)
+    spent = await spent_today(db, org_id, moment) + await held(redis, org_id)
     resets = day_start(moment) + timedelta(days=1)
     if spent >= cap:
         raise CostCapReachedError(
@@ -66,6 +73,50 @@ async def remaining_today(
         day = day_start(moment)
         await _warn(db, redis, org_id=org_id, user_id=user_id, spent=spent, cap=cap, day=day)
     return cap - spent
+
+
+async def held(redis: Redis, org_id: uuid.UUID) -> Decimal:
+    """What the org's runs under way may still spend (lapsed holds forgotten). Unknown (Redis
+    down): nothing, as the rate limit fails open too."""
+    key = f"{HOLDS_PREFIX}{org_id}"
+    try:
+        holds = await cast("Awaitable[dict[bytes | str, bytes | str]]", redis.hgetall(key))  # pyright: ignore[reportUnknownMemberType]
+        now = time.time()
+        total = Decimal(0)
+        lapsed: list[str] = []
+        for run, value in holds.items():
+            amount, until = _text(value).split()
+            if float(until) <= now:
+                lapsed.append(_text(run))
+            else:
+                total += Decimal(amount)
+        if lapsed:
+            await cast("Awaitable[int]", redis.hdel(key, *lapsed))
+    except (RedisError, ValueError):
+        return Decimal(0)
+    return total
+
+
+def _text(value: bytes | str) -> str:
+    return value.decode() if isinstance(value, bytes) else value
+
+
+async def hold(redis: Redis, org_id: uuid.UUID, run_id: uuid.UUID, amount: Decimal) -> None:
+    """Set ``amount`` aside for a run until it ends (:func:`release`) or the hold lapses."""
+    key = f"{HOLDS_PREFIX}{org_id}"
+    try:
+        until = time.time() + HOLD_SECONDS
+        await cast("Awaitable[int]", redis.hset(key, str(run_id), f"{amount} {until}"))  # pyright: ignore[reportUnknownMemberType]
+        await redis.expire(key, HOLD_SECONDS)
+    except RedisError:
+        return
+
+
+async def release(redis: Redis, org_id: uuid.UUID, run_id: uuid.UUID) -> None:
+    try:
+        await cast("Awaitable[int]", redis.hdel(f"{HOLDS_PREFIX}{org_id}", str(run_id)))
+    except RedisError:
+        return
 
 
 async def _warn(

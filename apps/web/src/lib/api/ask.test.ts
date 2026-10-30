@@ -7,6 +7,7 @@ import {
   citationsOf,
   confidenceLines,
   lastQuestion,
+  safeHref,
   sourcesByFile,
   statusLine,
   titleOr,
@@ -66,6 +67,25 @@ describe("an answer as the page reads it", () => {
     expect(text).toBe(
       "The route calls create_item.[1](#cite-1) It saves the item.[2](#cite-2)[3](#cite-3)",
     );
+  });
+
+  it("counts the spans in code points, as the API does: an emoji is one", () => {
+    const text = "🔐 Logins are checked in `verify_token`. Then saved.";
+    const end = [...text].indexOf("T"); // the second sentence, in code points
+    const marked = withMarkers(text, [cite(1, "a.py", [1, 2], [0, end - 1]).data]);
+    expect(marked).toBe("🔐 Logins are checked in `verify_token`.[1](#cite-1) Then saved.");
+  });
+
+  it("opens only the web's links, mail and the page's own", () => {
+    expect(safeHref("https://example.com/a")).toBe("https://example.com/a");
+    expect(safeHref("mailto:a@example.com")).toBe("mailto:a@example.com");
+    expect(safeHref("#cite-2")).toBe("#cite-2");
+    expect(safeHref("/acme/api/code")).toBe("/acme/api/code");
+    expect(safeHref("javascript:alert(1)")).toBeNull();
+    expect(safeHref("JaVaScRiPt:alert(1)")).toBeNull();
+    expect(safeHref("data:text/html,x")).toBeNull();
+    expect(safeHref("//evil.example")).toBeNull();
+    expect(safeHref(undefined)).toBeNull();
   });
 
   it("labels a chip by the file and its lines", () => {

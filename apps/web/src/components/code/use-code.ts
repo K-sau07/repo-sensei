@@ -178,3 +178,12 @@ export function useFile(path: string, enabled = true) {
   const location = useCodeLocation();
   return useQuery({ ...fileOptions(location, path), enabled: enabled && location.ready });
 }
+
+/** A file at a commit (an answer's citation: the code it cites, whatever the page is on). */
+export function useFileAt(path: string, sha: string, enabled = true) {
+  const location = useCodeLocation();
+  return useQuery({
+    ...fileOptions({ ...location, ref: sha }, path),
+    enabled: enabled && location.ready && sha !== "",
+  });
+}

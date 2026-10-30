@@ -111,6 +111,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             app.state.redis = redis
             app.state.http = http
             app.state.storage = storage
+            # First to go at shutdown: Ask's runs store that they were stopped.
+            resources.push_async_callback(ask.stop_runs, app.state)
             app.state.readiness_checks.update(
                 {"database": database.ping, "redis": lambda: ping_redis(redis)}
             )

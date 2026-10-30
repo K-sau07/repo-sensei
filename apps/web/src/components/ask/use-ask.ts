@@ -101,7 +101,9 @@ export function useAsk(conversationId: string | null, onConversation: (id: strin
       })),
     );
   }, [stored.data, setMessages]);
-  const ask = (text: string) => sendMessage({ text }, { body: { conversationId, mode } });
+  // The conversation the stream named, until the page's own catches up with it.
+  const ask = (text: string) =>
+    sendMessage({ text }, { body: { conversationId: conversationId ?? loaded.current, mode } });
   return {
     ...chat,
     ask,

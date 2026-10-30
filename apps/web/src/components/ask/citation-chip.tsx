@@ -8,7 +8,7 @@
 import { cn } from "cn";
 import { BadgeCheck, FileCode2 } from "lucide-react";
 
-import { useFile } from "@/components/code/use-code";
+import { useFileAt } from "@/components/code/use-code";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { chipLabel, type CitationData } from "@/lib/api/ask";
@@ -57,7 +57,7 @@ function CitationPeek({
   citation: CitationData;
   onOpen?: ((citation: CitationData) => void) | undefined;
 }) {
-  const file = useFile(citation.path);
+  const file = useFileAt(citation.path, citation.sha);
   const [start, end] = citation.lines;
   const content = file.data && "content" in file.data ? file.data.content : null;
   const lines = content?.split("\n").slice(start - 1, Math.min(end, start + PEEK_LINES - 1)) ?? [];
@@ -67,7 +67,7 @@ function CitationPeek({
         <FileCode2 aria-hidden className="size-3.5 text-fg-muted" />
         <span className="truncate font-mono">{citation.path}</span>
         <span className="text-fg-faint">
-          {start}–{end}
+          {start}–{end} · {citation.sha.slice(0, 7)}
         </span>
         {citation.verified ? (
           <span className="ml-auto flex items-center gap-1 text-accent">

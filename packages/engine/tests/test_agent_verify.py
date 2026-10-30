@@ -209,6 +209,8 @@ async def test_a_verified_answer_says_what_was_checked(ctx: ToolContext) -> None
     assert check.whole.complete
     assert check.rounds == 0
     assert model.checks == ["support", "whole"]
+    # The checks' usage is the run's too (its budget counts it): two turns, two checks.
+    assert len(done.answer.usage) == 4
     sure = done.answer.confidence
     assert sure is not None
     assert (sure.level, sure.breakdown.claims_verified, sure.breakdown.inferred) == ("high", 1, 0)

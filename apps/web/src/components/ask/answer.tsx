@@ -18,6 +18,7 @@ import {
   citationsOf,
   confidenceOf,
   fromCache,
+  safeHref,
   searchesOf,
   statusLine,
   withMarkers,
@@ -76,15 +77,17 @@ export function Answer({
     if (citation !== undefined && (marked || href === undefined)) {
       return drawn(citation);
     }
+    const safe = safeHref(href);
+    if (safe === null) return <span>{children}</span>; // a link it may not open: its words
     return (
-      <a href={href} target="_blank" rel="noreferrer">
+      <a href={safe} target="_blank" rel="noreferrer noopener">
         {children}
       </a>
     );
   };
 
   return (
-    <div className="flex flex-col gap-2" data-testid="answer">
+    <div className="flex flex-col gap-2" data-testid="answer" aria-busy={streaming}>
       {(streaming || !text) && status ? (
         <p className="flex items-center gap-2 text-xs text-fg-muted" data-testid="status-line">
           {streaming ? <Loader2 aria-hidden className="size-3.5 animate-spin" /> : null}

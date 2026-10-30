@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 import uuid
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
@@ -18,19 +19,25 @@ import httpx2
 import pytest
 from fakeredis import FakeAsyncRedis
 from fastapi import FastAPI, Request
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from sensei_api.answer_cache import lookup, question_key
+from sensei_api.routers.ask import stop_runs
+from sensei_api.spend import HOLDS_PREFIX, held, hold, release
 from sensei_core.mail import MemoryMailer
 from sensei_core.models import (
+    AgentRun,
+    AgentStep,
     AnswerCacheEntry,
     AuditEvent,
     Conversation,
+    ConversationMessage,
     FeatureMap,
     IndexJob,
     JobKind,
     JobStatus,
+    Membership,
     MessageFeedback,
     Repo,
     RepoSource,
@@ -489,16 +496,16 @@ async def test_the_same_question_again_is_answered_from_the_cache(
     assert first.status_code == 200
     assert "x-answer-cache" not in first.headers
     asked = len(streamed)
-    conversation_id = first.headers["x-conversation-id"]
 
+    # Asked first in another conversation (a follow-up's words mean their conversation's).
     again, events = await _ask(
         app,
         client,
         org,
         headers,
         message="what does the readme say",  # the same words, but case and the question mark
-        conversation_id=conversation_id,
     )
+    conversation_id = again.headers["x-conversation-id"]
     assert again.headers["x-answer-cache"] == "hit"
     assert len(streamed) == asked  # no new run
     parts = [json.loads(data) for _, data in events[:-1]]
@@ -726,3 +733,166 @@ def _assert_redacted(seen: dict[str, Any]) -> None:
     assert cited
     assert all(set(c) == {"n", "span", "redacted"} for c in cited)
     assert "README.md" not in json.dumps(answer["parts"])
+
+
+# ---------------------------------------------------------------- spend and failures (audit 4.11)
+
+
+def _savepoints(app: FastAPI, db: AsyncSession) -> None:
+    """Each of a run's sessions in a savepoint of the test's, rolled back on an error as the
+    real sessions' transactions are."""
+
+    @asynccontextmanager
+    async def savepoint() -> AsyncGenerator[AsyncSession]:
+        async with db.begin_nested():
+            yield db
+
+    app.state.stream_sessions = savepoint
+
+
+async def test_a_failed_run_keeps_what_it_spent_and_its_steps(
+    app: FastAPI, client: httpx.AsyncClient, db_session: AsyncSession, model: _Model
+) -> None:
+    org, headers = await _setup(app, client, db_session)
+    _savepoints(app, db_session)
+    called = message("", stop_reason="tool_use")
+    called["content"] = [{"type": "tool_use", "id": "t1", "name": "list_dir", "input": {}}]
+    replies = [sse(called)]
+
+    def failing(request: httpx2.Request) -> httpx2.Response:
+        body = json.loads(request.content)
+        if body.get("stream"):
+            if replies:
+                return replies.pop(0)
+            refused = {"type": "invalid_request_error", "message": "no"}
+            return httpx2.Response(400, json={"type": "error", "error": refused})
+        return model(request)
+
+    app.state.ask_client = FakeAnthropic(routes={"/v1/messages": failing}).client()
+    response, events = await _ask(app, client, org, headers, message="Where are items saved?")
+    run_id = response.headers["x-agent-run-id"]
+    assert any(json.loads(d)["type"] == "error" for _, d in events if d != "[DONE]")
+
+    spent = await db_session.scalar(
+        select(func.count()).select_from(UsageEvent).where(UsageEvent.ref_id == run_id)
+    )
+    assert spent == 1  # the turn that ran, though the run failed after it
+    record = await db_session.get(AgentRun, uuid.UUID(run_id))
+    assert record is not None
+    assert (record.status, record.error) == ("failed", "LLMError")
+    names = await db_session.scalars(select(AgentStep.name).where(AgentStep.run_id == record.id))
+    assert "list_dir" in list(names)
+    answer = await db_session.scalar(
+        select(ConversationMessage).where(ConversationMessage.run_id == record.id)
+    )
+    assert answer is not None
+    assert answer.status == "failed"
+
+
+async def test_a_run_stopped_at_shutdown_says_so(
+    app: FastAPI, client: httpx.AsyncClient, db_session: AsyncSession
+) -> None:
+    org, headers = await _setup(app, client, db_session)
+    reading = asyncio.Event()
+
+    async def stuck(*_: Any) -> ToolContext:
+        reading.set()
+        await asyncio.Event().wait()  # never: until the run is stopped
+        raise AssertionError
+
+    app.state.ask_context = stuck
+    asked = asyncio.create_task(
+        client.post(f"{org}/repos/items/ask", json={"message": "Where?"}, headers=headers)
+    )
+    await asyncio.wait_for(reading.wait(), timeout=5)
+    await stop_runs(app.state)
+    response = await asyncio.wait_for(asked, timeout=5)
+    assert '"type":"error"' in response.text
+    answer = await db_session.scalar(
+        select(ConversationMessage).where(
+            ConversationMessage.id
+            == uuid.UUID(json.loads(_events(response.text)[0][1])["messageId"])
+        )
+    )
+    assert answer is not None
+    assert answer.status == "failed"
+    record = await db_session.get(AgentRun, answer.run_id)
+    assert record is not None
+    assert (record.status, record.error) == ("failed", "CancelledError")
+
+
+async def test_runs_under_way_hold_their_budget_from_the_day(
+    app: FastAPI, client: httpx.AsyncClient, db_session: AsyncSession, fake_redis: FakeAsyncRedis
+) -> None:
+    org, headers = await _setup(app, client, db_session)
+    repo = await db_session.scalar(select(Repo).where(Repo.slug == "items"))
+    assert repo is not None
+    _agent_settings(app, daily_cost_cap_usd=Decimal("1"))
+    other = uuid.uuid4()
+    await hold(fake_redis, repo.org_id, other, Decimal("1"))  # another run, under way
+    assert await held(fake_redis, repo.org_id) == Decimal("1")
+    refused = await client.post(
+        f"{org}/repos/items/ask", json={"message": "Where?"}, headers=headers
+    )
+    assert refused.json()["error"]["code"] == "cost_cap_reached"
+
+    await release(fake_redis, repo.org_id, other)
+    lapsed = f"{Decimal('1')} {time.time() - 1}"
+    await fake_redis.hset(f"{HOLDS_PREFIX}{repo.org_id}", str(other), lapsed)  # pyright: ignore[reportUnknownMemberType]
+    asked, _ = await _ask(app, client, org, headers, message="Where are items saved?")
+    assert asked.status_code == 200  # a lapsed hold is forgotten
+    assert await held(fake_redis, repo.org_id) == Decimal(0)  # and the run's, released
+
+
+async def test_a_follow_up_is_neither_kept_nor_served_from_the_cache(
+    app: FastAPI, client: httpx.AsyncClient, db_session: AsyncSession
+) -> None:
+    turns: list[dict[str, Any]] = []
+
+    def model(request: httpx2.Request) -> httpx2.Response:
+        body = json.loads(request.content)
+        if body.get("stream"):
+            if not turns:
+                turns.extend(_cited_run())
+            return sse(turns.pop(0))
+        system = body["system"][0]["text"]
+        if system.startswith("Title this question"):
+            return httpx2.Response(200, json=message("The README"))
+        if "against the code it cites" in system:
+            verdicts = {"claims": [{"n": 1, "verdict": "supported"}]}
+            return httpx2.Response(200, json=message(json.dumps(verdicts)))
+        whole: dict[str, Any] = {"complete": True, "missing": [], "gap": ""}
+        return httpx2.Response(200, json=message(json.dumps(whole)))
+
+    app.state.ask_client = FakeAnthropic(routes={"/v1/messages": model}).client()
+    org, headers = await _setup(app, client, db_session)
+    first, _ = await _ask(app, client, org, headers, message="What does the README say?")
+    conversation_id = first.headers["x-conversation-id"]
+    follow_up = "And the second one?"
+    await _ask(app, client, org, headers, message=follow_up, conversation_id=conversation_id)
+    kept = await db_session.scalars(select(AnswerCacheEntry.question))
+    assert list(kept) == ["What does the README say?"]  # the first question's alone
+
+    # The follow-up's words asked first elsewhere: a run of their own, not the other's answer.
+    again, _ = await _ask(app, client, org, headers, message=follow_up)
+    assert "x-answer-cache" not in again.headers
+
+
+async def test_a_share_link_stops_when_its_sharer_leaves_the_org(
+    app: FastAPI, client: httpx.AsyncClient, db_session: AsyncSession
+) -> None:
+    org, headers = await _setup(app, client, db_session)
+    response, _ = await _ask(app, client, org, headers, message="Where are items saved?")
+    conversation_id = response.headers["x-conversation-id"]
+    shared = await client.post(f"{org}/conversations/{conversation_id}/share", headers=headers)
+    token = shared.json()["token"]
+    assert (await client.get(f"{API}/s/{token}")).status_code == 200
+    conversation = await db_session.get(Conversation, uuid.UUID(conversation_id))
+    assert conversation is not None
+    await db_session.execute(
+        delete(Membership).where(
+            Membership.user_id == conversation.user_id, Membership.org_id == conversation.org_id
+        )
+    )
+    gone = await client.get(f"{API}/s/{token}")
+    assert gone.status_code == 404

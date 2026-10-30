@@ -176,15 +176,44 @@ export function chipLabel(path: string, [start, end]: readonly [number, number])
  */
 export function withMarkers(text: string, citations: readonly CitationData[]): string {
   const ordered = [...citations].sort((a, b) => b.span[1] - a.span[1] || b.n - a.n);
+  const at = utf16Offsets(text);
   let out = text;
   for (const citation of ordered) {
-    const at = Math.min(Math.max(citation.span[1], 0), out.length);
-    out = `${out.slice(0, at)}[${citation.n}](#cite-${citation.n})${out.slice(at)}`;
+    const point = Math.min(Math.max(citation.span[1], 0), at.length - 1);
+    const end = at[point] ?? text.length;
+    out = `${out.slice(0, end)}[${citation.n}](#cite-${citation.n})${out.slice(end)}`;
   }
   return out;
 }
 
-const VERBS: Record<string, string> = {
+/**
+ * Where each code point of `text` starts in it as JavaScript counts (UTF-16 units), and its
+ * end last: the API's spans count code points (an emoji is one, here two).
+ */
+function utf16Offsets(text: string): number[] {
+  const offsets: number[] = [];
+  let unit = 0;
+  for (const point of text) {
+    offsets.push(unit);
+    unit += point.length;
+  }
+  offsets.push(unit);
+  return offsets;
+}
+
+/** A link the answer may open: the web's, mail, or within the page (not `javascript:`). */
+export function safeHref(href: string | undefined): string | null {
+  if (!href) return null;
+  if (href.startsWith("#") || (href.startsWith("/") && !href.startsWith("//"))) return href;
+  try {
+    const url = new URL(href);
+    return ["http:", "https:", "mailto:"].includes(url.protocol) ? url.href : null;
+  } catch {
+    return null;
+  }
+}
+
+export const VERBS: Record<string, string> = {
   code_search: "Searching code",
   grep: "Searching text",
   find_symbol: "Finding symbols",

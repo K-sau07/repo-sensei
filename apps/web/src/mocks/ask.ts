@@ -6,8 +6,9 @@
  * it searched. The citations' lines are the mock snapshot's.
  */
 import type { CitationData } from "@/lib/api/ask";
+import { BROWSE_COMMIT } from "@/mocks/browse";
 
-export const MOCK_SHA = "b1125d8" + "0".repeat(33);
+export const MOCK_SHA = BROWSE_COMMIT; // the mock snapshot's: what its citations are read at
 const ROUTE = "backend/app/api/routes/items.py";
 const MODEL = "backend/app/models.py";
 export const MOCK_ANSWER =

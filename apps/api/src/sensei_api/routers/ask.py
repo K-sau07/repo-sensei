@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import time
 import uuid
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import AbstractAsyncContextManager
@@ -39,7 +40,7 @@ from sensei_api.repos import RepoDep
 from sensei_api.routers import browse, search
 from sensei_api.runs import Recorder
 from sensei_api.sharing import new_share_token, share_token_hash
-from sensei_api.spend import remaining_today
+from sensei_api.spend import hold, release, remaining_today
 from sensei_api.streams import HEADERS, HEARTBEAT_SECONDS, READ_BLOCK_MS, last_event_id
 from sensei_api.ui_stream import DONE, HEADER, UIStream, confidence_data, replayed, text_of
 from sensei_core.audit import AuditAction, audit
@@ -85,6 +86,9 @@ TITLE_CHARS = 80
 REF_TYPE = "agent_run"  # an Ask run's usage, by its run
 JSON = "application/json"
 FINISHED = frozenset({"finish"})
+# A stream with nothing new for this long has lost its run (a restart mid-answer): it ends.
+FOLLOW_IDLE_SECONDS = 300
+STOP_SECONDS = 10  # how long a shutdown waits for runs to store that they were stopped
 
 Sessions = Callable[[], AbstractAsyncContextManager[AsyncSession]]
 ContextFactory = Callable[[Request, AsyncSession, Repo, Snapshot], Awaitable[ToolContext]]
@@ -221,6 +225,17 @@ def _context_factory(request: Request) -> ContextFactory:
     return custom or tool_context
 
 
+async def stop_runs(state: Any) -> None:
+    """At shutdown: the runs under way stopped, each storing that it was (its message failed,
+    its spend already in the ledger), for a few seconds at most."""
+    held: set[asyncio.Task[None]] = getattr(state, "ask_runs", None) or set()
+    if not held:
+        return
+    for task in held:
+        task.cancel()
+    await asyncio.wait(held, timeout=STOP_SECONDS)
+
+
 def _runs(request: Request) -> set[asyncio.Task[None]]:
     """The process's runs in flight (held, so none is collected before it ends)."""
     state = request.app.state
@@ -282,16 +297,20 @@ async def ask(
         parts=[{"type": "text", "text": body.message}],
         snapshot_id=snapshot.id,
     )
-    embedding = await _embedded(request, db, repo.org_id, body.message)
-    kept = await answer_cache.lookup(
-        db,
-        snapshot_id=snapshot.id,
-        mode=body.mode.value,
-        question=body.message,
-        embedding=embedding,
-    )
-    if kept is not None:
-        return await _served(db, conversation, question, kept, snapshot)
+    # Only a question asked first is answered from (and kept in) the cache: a follow-up's words
+    # mean what the conversation before them does, which is its asker's alone.
+    embedding = None
+    if not earlier:
+        embedding = await _embedded(request, db, repo.org_id, body.message)
+        kept = await answer_cache.lookup(
+            db,
+            snapshot_id=snapshot.id,
+            mode=body.mode.value,
+            question=body.message,
+            embedding=embedding,
+        )
+        if kept is not None:
+            return await _served(db, conversation, question, kept, snapshot)
     record = AgentRun(
         org_id=repo.org_id,
         repo_id=repo.id,
@@ -303,6 +322,10 @@ async def ask(
     )
     db.add(record)
     await db.flush()
+    cap = Budget().max_cost_usd
+    if remaining is not None:
+        cap = remaining if cap is None else min(cap, remaining)
+        await hold(redis, repo.org_id, record.id, cap)  # released as the run ends
     answer = ConversationMessage(
         org_id=repo.org_id,
         conversation_id=conversation.id,
@@ -333,7 +356,7 @@ async def ask(
         earlier=earlier,
         repo_name=f"{repo.owner}/{repo.name}",
         run_id=record.id,
-        remaining=remaining,
+        cap=cap,
         embedding=embedding,
     )
     key = f"{STREAM_PREFIX}{answer.id}"
@@ -572,8 +595,8 @@ class _Run:
     earlier: list[Exchange]
     repo_name: str
     run_id: uuid.UUID
-    remaining: Decimal | None  # what the org may still spend today (None: no cap)
-    embedding: list[float] | None  # the question's, for the answer cache
+    cap: Decimal | None  # what the run may spend (held from the org's day while it runs)
+    embedding: list[float] | None  # the question's, for the answer cache (a first question's)
 
     def start(self) -> None:
         task = asyncio.create_task(self._run())
@@ -584,49 +607,93 @@ class _Run:
     async def _run(self) -> None:
         key = f"{STREAM_PREFIX}{self.message_id}"
         stream = UIStream(str(self.message_id), self.repo_name)
-        await self._publish(
-            key, [*stream.start(), _conversation(self.conversation_id, self.run_id)]
-        )
-        answer: Answer | None = None
+        failure: BaseException | None = None
         try:
+            await self._publish(
+                key, [*stream.start(), _conversation(self.conversation_id, self.run_id)]
+            )
             async with self.sessions() as db:
                 await set_user_context(db, self.user_id)
                 await set_org_context(db, self.org_id)
-                repo = await db.get(Repo, self.repo_id)
-                snapshot = await db.get(Snapshot, self.snapshot_id)
-                if repo is None or snapshot is None:
-                    raise LookupError("the repository or its snapshot is gone")
-                record = await db.get(AgentRun, self.run_id)
-                if record is None:
-                    raise LookupError("the run's record is gone")
-                ctx = await self.contexts(self.request, db, repo, snapshot)
-                recorder = self._recorder(db, record)
-                agent = self._agent(db, ctx, recorder)
-                async for event in agent.run(
-                    self.question, ctx, conversation=self.earlier, mode=self.mode
-                ):
-                    await recorder.event(event)
-                    await self._publish(key, stream.encode(event))
-                    if isinstance(event, Done):
-                        answer = event.answer
-                await recorder.finish(answer)
-                await self._store(db, stream, answer, ctx.sha)
-                if answer is not None and answer_cache.keepable(answer):
-                    await answer_cache.keep(
-                        db,
-                        org_id=self.org_id,
-                        repo_id=self.repo_id,
-                        snapshot_id=self.snapshot_id,
-                        mode=self.mode.value,
-                        question=self.question,
-                        embedding=self.embedding,
-                        message_id=self.message_id,
-                        cited=[c.cited.path for c in answer.citations],
-                    )
-        except Exception as exc:  # the run's own failure: said in its stream and stored
-            log.exception("ask run failed", message_id=str(self.message_id))
-            await self._publish(key, stream.failed(_said(exc)))
-            await self._failed(stream, type(exc).__name__)
+                failure = await self._answer(db, key, stream)
+        except BaseException as exc:  # stored, then a cancellation goes on
+            failure = exc
+        finally:
+            await release(self.redis, self.org_id, self.run_id)
+        if failure is None:
+            return
+        if not isinstance(failure, asyncio.CancelledError):
+            log.error(
+                "ask run failed",
+                message_id=str(self.message_id),
+                exc_info=(type(failure), failure, failure.__traceback__),
+            )
+        try:
+            await self._publish(key, stream.failed(_said(failure)))
+        except Exception:  # the stream is best effort; the row says it too
+            log.warning("ask run's failure not streamed", message_id=str(self.message_id))
+        await self._failed(stream, type(failure).__name__)
+        if isinstance(failure, asyncio.CancelledError):
+            raise failure
+
+    async def _answer(self, db: AsyncSession, key: str, stream: UIStream) -> BaseException | None:
+        """The run, in ``db``: its steps are kept whatever becomes of it (its failure is
+        returned, not raised, so the session commits them), as is its spend (written as it
+        happens, in sessions of its own)."""
+        repo = await db.get(Repo, self.repo_id)
+        snapshot = await db.get(Snapshot, self.snapshot_id)
+        if repo is None or snapshot is None:
+            return LookupError("the repository or its snapshot is gone")
+        record = await db.get(AgentRun, self.run_id)
+        if record is None:
+            return LookupError("the run's record is gone")
+        recorder = self._recorder(db, record)
+        answer: Answer | None = None
+        try:
+            ctx = await self.contexts(self.request, db, repo, snapshot)
+            agent = self._agent(ctx, recorder)
+            async for event in agent.run(
+                self.question, ctx, conversation=self.earlier, mode=self.mode
+            ):
+                await recorder.event(event)
+                await self._publish(key, stream.encode(event))
+                if isinstance(event, Done):
+                    answer = event.answer
+        except Exception as exc:  # the run's own failure: its steps stay
+            await recorder.finish(None, error=type(exc).__name__)
+            return exc
+        await recorder.finish(answer)
+        stored = await self._store(db, stream, answer, ctx.sha)
+        if stored and answer is not None and not self.earlier and answer_cache.keepable(answer):
+            async with db.begin_nested():  # a cache that can't keep it loses nothing else
+                await answer_cache.keep(
+                    db,
+                    org_id=self.org_id,
+                    repo_id=self.repo_id,
+                    snapshot_id=self.snapshot_id,
+                    mode=self.mode.value,
+                    question=self.question,
+                    embedding=self.embedding,
+                    message_id=self.message_id,
+                    cited=[c.cited.path for c in answer.citations],
+                )
+        return None
+
+    async def _spend(self, used: LLMUsage) -> None:
+        """The run's spend, in the usage ledger at once (its own short transaction): a run that
+        fails, or is stopped, has still spent it, and the day's cap counts it."""
+        async with self.sessions() as db:
+            await set_user_context(db, self.user_id)
+            await set_org_context(db, self.org_id)
+            ledger = usage_ledger(
+                db,
+                search.cost_calculator(self.request),
+                org_id=self.org_id,
+                user_id=self.user_id,
+                ref_type=REF_TYPE,
+                ref_id=str(self.run_id),
+            )
+            await ledger(used)
 
     def _recorder(self, db: AsyncSession, record: AgentRun) -> Recorder:
         state = self.request.app.state
@@ -646,28 +713,16 @@ class _Run:
             inline_bytes=settings.agent.inline_output_bytes,
         )
 
-    def _agent(self, db: AsyncSession, ctx: ToolContext, recorder: Recorder) -> AskAgent:
+    def _agent(self, ctx: ToolContext, recorder: Recorder) -> AskAgent:
         costs = search.cost_calculator(self.request)
-        ledger = usage_ledger(
-            db,
-            costs,
-            org_id=self.org_id,
-            user_id=self.user_id,
-            ref_type=REF_TYPE,
-            ref_id=str(self.run_id),
-        )
 
         async def usage(used: LLMUsage) -> None:
-            await ledger(used)
+            await self._spend(used)
             await recorder.usage(used)
 
-        default = Budget()
-        cap = default.max_cost_usd
-        if self.remaining is not None:
-            cap = self.remaining if cap is None else min(cap, self.remaining)
         return AskAgent(
             self.client,
-            budget=dataclasses.replace(default, max_cost_usd=cap),
+            budget=dataclasses.replace(Budget(), max_cost_usd=self.cap),
             costs=costs,
             on_usage=usage,
             reranker=ctx.search.reranker,
@@ -685,10 +740,11 @@ class _Run:
 
     async def _store(
         self, db: AsyncSession, stream: UIStream, answer: Answer | None, sha: str
-    ) -> None:
+    ) -> bool:
+        """The answer on its message (False: the conversation was deleted meanwhile)."""
         message = await db.get(ConversationMessage, self.message_id)
-        if message is None:  # the conversation was deleted meanwhile
-            return
+        if message is None:
+            return False
         message.parts = stream.parts
         message.status = "done" if answer is not None else "failed"
         if answer is not None:
@@ -715,6 +771,7 @@ class _Run:
                     )
                 )
         await self._retitle(db)
+        return True
 
     async def _failed(self, stream: UIStream, error: str) -> None:
         try:
@@ -750,7 +807,7 @@ class _Run:
             effort="low",
         )
         try:
-            titled = await self.client.complete(request)
+            titled = await self.client.complete(request, on_usage=self._spend)
         except LLMError:
             return
         title = " ".join(titled.text.split()).strip(" \"'.")[:TITLE_CHARS]
@@ -863,11 +920,19 @@ async def _follow(
     to start is started first (its response has begun: the request's rows are committed)."""
     if start is not None:
         start()
+    heard = time.monotonic()
     while True:
         batches = await cast(
             "Awaitable[list[Any] | None]",
             redis.xread({key: cursor}, count=200, block=READ_BLOCK_MS),  # pyright: ignore[reportUnknownMemberType]
         )
+        if batches:
+            heard = time.monotonic()
+        elif time.monotonic() - heard > FOLLOW_IDLE_SECONDS:
+            lost = {"type": "error", "errorText": "The answer stopped being written."}
+            yield ServerSentEvent(data=orjson.dumps(lost).decode())
+            yield ServerSentEvent(data=DONE)
+            return
         for _stream, entries in batches or []:
             for entry_id, fields in entries:
                 cursor = entry_id
@@ -1007,7 +1072,7 @@ def _title(question: str) -> str:
     return words if len(words) <= TITLE_CHARS else words[: TITLE_CHARS - 1].rstrip() + "…"
 
 
-def _said(exc: Exception) -> str:
+def _said(exc: BaseException) -> str:
     if isinstance(exc, LLMError) and exc.transient:
         return "The model isn't answering right now; try again in a moment."
     return "The answer couldn't be written."

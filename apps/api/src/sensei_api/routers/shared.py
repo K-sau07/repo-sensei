@@ -4,7 +4,8 @@ The token's hash finds the one conversation (row-level security lets a transacti
 conversation whose hash it presents, and no other). Its citations are shown to a viewer who can
 read its repository: anyone, for a public repository imported by its URL; else a member of the
 org whom GitHub lets read it. Anyone else sees the answers with their citations redacted
-(:mod:`sensei_api.sharing`). An unknown or reset link, or one whose org is gone, is not found.
+(:mod:`sensei_api.sharing`). An unknown or reset link is not found, nor is one whose org or
+repository is gone, or whose sharer has left the org.
 """
 
 from __future__ import annotations
@@ -24,7 +25,7 @@ from sensei_api.repos import repo_access
 from sensei_api.routers.ask import MessageOut, citations_of, message_out
 from sensei_api.routers.auth import GitHubOAuthDep
 from sensei_api.sharing import share_token_hash, shown
-from sensei_core.db.tenancy import set_org_context, set_share_context, set_user_context
+from sensei_core.db.tenancy import set_org_context, set_share_context
 from sensei_core.errors import NotFoundError
 from sensei_core.github.client import GitHubError
 from sensei_core.github.oauth import GitHubOAuth, OAuthError
@@ -65,7 +66,9 @@ async def shared(
     viewer = await _viewer(request, db)
     await set_org_context(db, found.org_id)
     repo = await db.get(Repo, found.repo_id)
-    if repo is None:
+    if repo is None or repo.deleted_at is not None:
+        raise _gone()
+    if not await _member(db, found.user_id, found.org_id):  # who shared it has left the org
         raise _gone()
     readable = await _can_read(request, db, oauth, viewer, repo)
     messages = [
@@ -119,7 +122,7 @@ async def _can_read(
 
 
 async def _member(db: AsyncSession, user_id: uuid.UUID, org_id: uuid.UUID) -> bool:
-    await set_user_context(db, user_id)
+    """Whether ``user_id`` is in the org (the transaction is the org's already)."""
     found = await db.scalar(
         select(Membership.user_id).where(Membership.user_id == user_id, Membership.org_id == org_id)
     )

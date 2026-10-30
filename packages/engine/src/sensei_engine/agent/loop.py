@@ -357,6 +357,17 @@ class AskAgent:
         self.on_rerank_usage = on_rerank_usage
         self.verify = verify  # 4.5's checks (False: the answer as it came)
 
+    def _counted(self, run: _Run) -> LLMUsageSink:
+        """Where a check's usage goes (the support check, the whole-answer check, the evidence
+        pick): to the run's budget, as its turns' does, and on to ``on_usage``."""
+
+        async def sink(used: LLMUsage) -> None:
+            run.spent.add([used])
+            if self.on_usage is not None:
+                await self.on_usage(used)
+
+        return sink
+
     async def prewarm(self, ctx: ToolContext, *, overview: str | None = None) -> None:
         """Write the run's shared prefix to the cache (an Ask page opening): Sonnet's, at the
         effort most questions run at."""
@@ -486,7 +497,7 @@ class AskAgent:
         )
         names = identifiers(run.text)
         strange = tuple(await unknown(ctx, names, run.shown)) if names else ()
-        verdicts = await support(self.client, found, files, on_usage=self.on_usage)
+        verdicts = await support(self.client, found, files, on_usage=self._counted(run))
         evidence = [b["title"] for b in run.evidence_blocks if b["type"] == "search_result"]
         answered = await whole(
             self.client,
@@ -495,7 +506,7 @@ class AskAgent:
             layers,
             evidence,
             deep=run.plan.escalated,
-            on_usage=self.on_usage,
+            on_usage=self._counted(run),
         )
         checked = tuple(Checked(claim, verdicts.get(claim.n)) for claim in found)
         return Verification(checked, len(gone), flagged, strange, answered, rounds, run.agreement)
@@ -553,7 +564,7 @@ class AskAgent:
             pieces,
             self.reranker,
             on_rerank_usage=self.on_rerank_usage,
-            on_llm_usage=self.on_usage,
+            on_llm_usage=self._counted(run),
         )
         blocks, sources, shown = answer_blocks(ctx, final)
         run.index = CitationIndex()

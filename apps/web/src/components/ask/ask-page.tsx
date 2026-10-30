@@ -13,7 +13,7 @@ import { useParams, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 
 import { CodeViewer } from "@/components/code/code-viewer";
-import { useFile } from "@/components/code/use-code";
+import { useFileAt } from "@/components/code/use-code";
 import { EmptyState } from "@/components/feedback/empty-state";
 import { LockedState } from "@/components/feedback/locked-state";
 import { useRepoFeatures, useRepoSlug } from "@/components/repo/use-repo";
@@ -224,7 +224,7 @@ function Start() {
 }
 
 function CitedCode({ citation, onClose }: { citation: CitationData; onClose: () => void }) {
-  const file = useFile(citation.path);
+  const file = useFileAt(citation.path, citation.sha);
   const content = file.data && "content" in file.data ? file.data.content : null;
   const language = file.data && "language" in file.data ? (file.data.language ?? null) : null;
   return (
