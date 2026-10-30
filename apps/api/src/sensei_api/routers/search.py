@@ -44,7 +44,7 @@ from sensei_api.routers.browse import (
     COMMIT_HEADER,
     SearchUnavailableError,
     _grep,  # pyright: ignore[reportPrivateUsage] - the exact search's own runner
-    _searchable,  # pyright: ignore[reportPrivateUsage]
+    searchable,
 )
 from sensei_core.config import Settings
 from sensei_core.errors import ConflictError, DomainError, InvalidError, RateLimitedError
@@ -222,7 +222,7 @@ def get_search_service(request: Request) -> SearchService:
     return service
 
 
-def _costs(request: Request) -> CostCalculator:
+def cost_calculator(request: Request) -> CostCalculator:
     state = request.app.state
     calc: CostCalculator | None = getattr(state, "cost_calculator", None)
     if calc is None:
@@ -276,7 +276,7 @@ async def embeddings_ready(db: AsyncSession, redis: Redis, snapshot: Snapshot) -
     return True
 
 
-async def _semantic_legs(
+async def semantic_legs(
     request: Request,
     db: AsyncSession,
     redis: Redis,
@@ -295,7 +295,9 @@ async def _semantic_legs(
     )
 
 
-async def _graph(request: Request, db: AsyncSession, snapshot: Snapshot) -> GraphSnapshot | None:
+async def search_graph(
+    request: Request, db: AsyncSession, snapshot: Snapshot
+) -> GraphSnapshot | None:
     """The snapshot's graph, for the graph leg; None until its graph stage has run, or when it
     can't be read (the search goes on without the leg)."""
     store: GraphStore | None = getattr(request.app.state, "graph_store", None)
@@ -311,7 +313,7 @@ async def _graph(request: Request, db: AsyncSession, snapshot: Snapshot) -> Grap
         return None
 
 
-class _SnapshotGrep:
+class SnapshotGrep:
     """The plan's exact-text legs, on the unpacked snapshot (as ``/grep`` searches it), within
     the request's path prefix. A leg that can't run (search busy or unavailable) is left out of
     the answer and kept in ``failed``: an answer that had only such legs isn't "no matches".
@@ -328,7 +330,7 @@ class _SnapshotGrep:
     async def _searchable(self) -> Container[str]:
         async with self._reading:
             if self._files is None:
-                self._files = await _searchable(self._request, self._db, self._snapshot)
+                self._files = await searchable(self._request, self._db, self._snapshot)
             return self._files
 
     async def __call__(self, sub: SubQuery, limit: int, filters: Filters) -> list[tuple[str, int]]:
@@ -427,7 +429,7 @@ async def _answer(
     if answer is not None:
         return answer
     org_id, user_id = access.org.id, access.user.id
-    grep = _SnapshotGrep(request, db, snapshot)
+    grep = SnapshotGrep(request, db, snapshot)
     try:
         answer = await get_search_service(request).search(
             db,
@@ -536,14 +538,14 @@ async def search(
             "Search appears once this commit's indexing has chunked its files.",
             code="not_indexed",
         )
-    costs = _costs(request)
-    dense = await _semantic_legs(request, db, redis, snapshot, costs, org_id=access.org.id)
+    costs = cost_calculator(request)
+    dense = await semantic_legs(request, db, redis, snapshot, costs, org_id=access.org.id)
     if query.mode is SearchMode.SEMANTIC and dense is None:
         raise ConflictError(
             "Semantic search appears once this commit's embeddings are ready.",
             code="semantic_not_ready",
         )
-    graph = await _graph(request, db, snapshot)
+    graph = await search_graph(request, db, snapshot)
     cache_key = (
         f"{CACHE_PREFIX}{snapshot.id}:{snapshot.chunk_generation}:{dense is not None}:"
         f"{graph.version if graph is not None else '-'}:{key}"

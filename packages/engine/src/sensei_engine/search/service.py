@@ -185,6 +185,11 @@ class SearchService:
         self._reranker = reranker
         self._rerank_candidates = rerank_candidates
 
+    @property
+    def reranker(self) -> Reranker | None:
+        """The reranker its answers go through (the agent's final rerank reuses it)."""
+        return self._reranker
+
     async def route(
         self, query: str, *, scope: str, on_llm_usage: LLMUsageSink | None = None
     ) -> Route:

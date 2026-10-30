@@ -143,3 +143,19 @@ def test_a_run_that_fails_says_so_and_ends() -> None:
     parts = stream.failed("The model isn't reachable right now.")
     assert [p["type"] for p in parts] == ["reasoning-end", "error", "finish-step", "finish"]
     assert parts[1] == {"type": "error", "errorText": "The model isn't reachable right now."}
+
+
+def test_an_answer_in_a_research_turns_words_is_sent_as_the_answer() -> None:
+    """Nothing read to cite, the research's own words are the answer: they streamed as
+    reasoning, so they are sent as the answer's text before it finishes."""
+    stream = UIStream("m1", "o/items")
+    for event in (StepStarted(1, "m", "low", tools=True), TextDelta(1, TEXT)):
+        stream.encode(event)
+    parts = stream.encode(Done(_answer()))
+    texts = [p for p in parts if p["type"].startswith("text-")]
+    assert texts == [
+        {"type": "text-start", "id": "text-answer"},
+        {"type": "text-delta", "id": "text-answer", "delta": TEXT},
+        {"type": "text-end", "id": "text-answer"},
+    ]
+    assert text_of(stream.parts) == TEXT

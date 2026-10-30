@@ -22,6 +22,7 @@ from sensei_api.errors import install_error_handlers
 from sensei_api.graphs import GraphStore
 from sensei_api.middleware import RequestIdMiddleware
 from sensei_api.routers import (
+    ask,
     auth,
     browse,
     constellation,
@@ -143,23 +144,27 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             expose_headers=["x-request-id"],
         )
 
-    app.include_router(health.router, prefix=API_PREFIX)
-    app.include_router(auth.router, prefix=API_PREFIX)
-    app.include_router(me.router, prefix=API_PREFIX)
-    app.include_router(orgs.router, prefix=API_PREFIX)
-    app.include_router(invitations.router, prefix=API_PREFIX)
-    app.include_router(github.router, prefix=API_PREFIX)
-    app.include_router(webhooks.router, prefix=API_PREFIX)
-    app.include_router(repos.router, prefix=API_PREFIX)
-    app.include_router(indexing.router, prefix=API_PREFIX)
-    app.include_router(index_jobs.router, prefix=API_PREFIX)
-    app.include_router(browse.router, prefix=API_PREFIX)
-    app.include_router(constellation.router, prefix=API_PREFIX)
-    app.include_router(internal.router, prefix=API_PREFIX)
-    app.include_router(symbols.router, prefix=API_PREFIX)
-    app.include_router(search.router, prefix=API_PREFIX)
-    app.include_router(graph.router, prefix=API_PREFIX)
-    app.include_router(trace.router, prefix=API_PREFIX)
+    for module in (
+        health,
+        auth,
+        me,
+        orgs,
+        invitations,
+        github,
+        webhooks,
+        repos,
+        indexing,
+        index_jobs,
+        browse,
+        constellation,
+        internal,
+        symbols,
+        search,
+        graph,
+        trace,
+        ask,
+    ):  # the order routes are matched in
+        app.include_router(module.router, prefix=API_PREFIX)
     # Wraps the whole middleware stack; RequestIdMiddleware tags the server span it creates.
     FastAPIInstrumentor.instrument_app(app, server_request_hook=scrub_server_span)
     return app

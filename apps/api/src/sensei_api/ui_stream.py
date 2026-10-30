@@ -179,6 +179,14 @@ class UIStream:
 
     def _done(self, answer: Answer) -> list[Part]:
         out = self._close()
+        if answer.text and not any(part["type"] == "text" for part in self.parts):
+            # The answer was a research turn's own words (sent as reasoning): sent as the answer.
+            out += [
+                {"type": "text-start", "id": "text-answer"},
+                {"type": "text-delta", "id": "text-answer", "delta": answer.text},
+                {"type": "text-end", "id": "text-answer"},
+            ]
+            self.parts.append({"type": "text", "text": answer.text})
         if answer.confidence is not None:
             out.append(self._data("confidence", "confidence", confidence_data(answer.confidence)))
         out.append(self._data("searchlog", "searchlog", {"queries": list(answer.searched)}))

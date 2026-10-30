@@ -360,6 +360,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/orgs/{org}/conversations/{conversation_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Conversation
+         * @description A conversation with its messages, each answer with its citations.
+         */
+        get: operations["conversation_api_v1_orgs__org__conversations__conversation_id__get"];
+        put?: never;
+        post?: never;
+        /**
+         * Delete Conversation
+         * @description Delete a conversation, its messages and their citations.
+         */
+        delete: operations["delete_conversation_api_v1_orgs__org__conversations__conversation_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/orgs/{org}/events": {
         parameters: {
             query?: never;
@@ -603,6 +627,46 @@ export interface paths {
         patch: operations["update_repo_api_v1_orgs__org__repos__repo__patch"];
         trace?: never;
     };
+    "/api/v1/orgs/{org}/repos/{repo}/ask": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Ask
+         * @description Ask a question about the repository: its answer, streamed as it is written.
+         */
+        post: operations["ask_api_v1_orgs__org__repos__repo__ask_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/repos/{repo}/ask/messages/{message_id}/stream": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Resume
+         * @description The answer's stream again, after the last event the client saw (``Last-Event-ID``).
+         */
+        get: operations["resume_api_v1_orgs__org__repos__repo__ask_messages__message_id__stream_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/orgs/{org}/repos/{repo}/constellation": {
         parameters: {
             query?: never;
@@ -615,6 +679,26 @@ export interface paths {
          * @description A page of the constellation's points (file, position, layer, directory cluster, size).
          */
         get: operations["constellation_api_v1_orgs__org__repos__repo__constellation_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/repos/{repo}/conversations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Conversations
+         * @description The signed-in user's conversations about the repository, the latest first.
+         */
+        get: operations["conversations_api_v1_orgs__org__repos__repo__conversations_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1020,6 +1104,17 @@ export interface components {
          * @enum {string}
          */
         ActorType: "user" | "system" | "api_key";
+        /** AskRequest */
+        AskRequest: {
+            /** Conversation Id */
+            conversation_id?: string | null;
+            /** Message */
+            message: string;
+            /** @default fast */
+            mode: components["schemas"]["Mode"];
+            /** Ref */
+            ref?: string | null;
+        };
         /**
          * AuditAction
          * @enum {string}
@@ -1105,6 +1200,25 @@ export interface components {
          * @enum {string}
          */
         Case: "sensitive" | "insensitive" | "smart";
+        /** CitationOut */
+        CitationOut: {
+            /** End Line */
+            end_line: number;
+            /** Idx */
+            idx: number;
+            /** Path */
+            path: string;
+            /** Provenance */
+            provenance: string;
+            /** Sha */
+            sha: string;
+            /** Start Line */
+            start_line: number;
+            /** Symbol Key */
+            symbol_key: string | null;
+            /** Verified */
+            verified: boolean;
+        };
         /** ConnectRepo */
         ConnectRepo: {
             /** Github Repo Id */
@@ -1214,6 +1328,65 @@ export interface components {
             y: number;
             /** Z */
             z: number;
+        };
+        /** ConversationDetail */
+        ConversationDetail: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Messages */
+            messages: components["schemas"]["MessageOut"][];
+            /**
+             * Repo Id
+             * Format: uuid
+             */
+            repo_id: string;
+            /** Title */
+            title: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
+        /** ConversationList */
+        ConversationList: {
+            /** Conversations */
+            conversations: components["schemas"]["ConversationOut"][];
+            /** Next Cursor */
+            next_cursor: string | null;
+        };
+        /** ConversationOut */
+        ConversationOut: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Repo Id
+             * Format: uuid
+             */
+            repo_id: string;
+            /** Title */
+            title: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
         };
         /**
          * EdgeType
@@ -1827,6 +2000,46 @@ export interface components {
              */
             user_id: string;
         };
+        /** MessageOut */
+        MessageOut: {
+            /** Abstained */
+            abstained: boolean;
+            /** Citations */
+            citations: components["schemas"]["CitationOut"][];
+            /** Confidence */
+            confidence: {
+                [key: string]: unknown;
+            } | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Parts */
+            parts: {
+                [key: string]: unknown;
+            }[];
+            /**
+             * Role
+             * @enum {string}
+             */
+            role: "user" | "assistant";
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "streaming" | "done" | "failed";
+        };
+        /**
+         * Mode
+         * @enum {string}
+         */
+        Mode: "fast" | "deep";
         /** MyOrg */
         MyOrg: {
             /** Name */
@@ -3185,6 +3398,70 @@ export interface operations {
             };
         };
     };
+    conversation_api_v1_orgs__org__conversations__conversation_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                conversation_id: string;
+                /** @description Organization slug */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConversationDetail"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_conversation_api_v1_orgs__org__conversations__conversation_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                conversation_id: string;
+                /** @description Organization slug */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     org_events_api_v1_orgs__org__events_get: {
         parameters: {
             query?: never;
@@ -3758,6 +4035,75 @@ export interface operations {
             };
         };
     };
+    ask_api_v1_orgs__org__repos__repo__ask_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization slug */
+                org: string;
+                /** @description Repository slug */
+                repo: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AskRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    resume_api_v1_orgs__org__repos__repo__ask_messages__message_id__stream_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                message_id: string;
+                /** @description Organization slug */
+                org: string;
+                /** @description Repository slug */
+                repo: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     constellation_api_v1_orgs__org__repos__repo__constellation_get: {
         parameters: {
             query?: {
@@ -3787,6 +4133,43 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ConstellationOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    conversations_api_v1_orgs__org__repos__repo__conversations_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+                cursor?: string | null;
+            };
+            header?: never;
+            path: {
+                /** @description Organization slug */
+                org: string;
+                /** @description Repository slug */
+                repo: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConversationList"];
                 };
             };
             /** @description Validation Error */

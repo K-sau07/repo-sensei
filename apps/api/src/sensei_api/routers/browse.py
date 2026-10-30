@@ -376,7 +376,7 @@ def _metadata(snapshot: Snapshot, row: RepoFile) -> dict[str, Any]:
     }
 
 
-async def _unpacked(request: Request, snapshot: Snapshot) -> FilePath:
+async def unpacked(request: Request, snapshot: Snapshot) -> FilePath:
     storage = _storage(request)
     cache: SnapshotCache = request.app.state.snapshot_cache
     key = snapshot_key(snapshot.org_id, snapshot.repo_id, snapshot.commit_sha)
@@ -396,13 +396,13 @@ async def _unpacked(request: Request, snapshot: Snapshot) -> FilePath:
 
 async def _open(request: Request, snapshot: Snapshot, path: str) -> BinaryIO:
     """The snapshot's file, opened safely (see ``open_file``), unpacking the snapshot first."""
-    root = await _unpacked(request, snapshot)
+    root = await unpacked(request, snapshot)
     try:
         return await asyncio.to_thread(open_file, root, path)
     except FileNotFoundError:
         pass  # evicted between finding the snapshot and reading it: unpack again, once
     try:
-        return await asyncio.to_thread(open_file, await _unpacked(request, snapshot), path)
+        return await asyncio.to_thread(open_file, await unpacked(request, snapshot), path)
     except FileNotFoundError:
         # Recorded by discovery, yet not in the archive.
         raise NotFoundError("No such file in this snapshot.", code="path_not_found") from None
@@ -540,7 +540,7 @@ async def _grep(
     disk before or while it ran, so a result never comes from part of the files."""
     search: ExactSearch = request.app.state.exact_search
     for _ in range(2):
-        root = await _unpacked(request, snapshot)
+        root = await unpacked(request, snapshot)
         # The marker holds when this unpack was made: the same before and after means the
         # search ran over one whole unpack (not one being evicted, or replaced, meanwhile).
         before = await asyncio.to_thread(_unpack_stamp, root)
@@ -573,7 +573,7 @@ class _Without:
         return isinstance(path, str) and path in self.files and path not in self.left_out
 
 
-async def _searchable(request: Request, db: AsyncSession, snapshot: Snapshot) -> _Without:
+async def searchable(request: Request, db: AsyncSession, snapshot: Snapshot) -> _Without:
     """The files a search may report: what discovery recorded, binaries left out (rg would stop
     at their first NUL, but could still report a "match" before it)."""
     binaries = frozenset(
@@ -618,7 +618,7 @@ async def grep(*, request: Request, repo: RepoDep, db: DbSession, body: GrepRequ
     except InvalidQueryError as exc:
         raise InvalidError(str(exc), code="invalid_pattern") from None
     snapshot = await resolve_snapshot(db, repo, body.ref)
-    files = await _searchable(request, db, snapshot)
+    files = await searchable(request, db, snapshot)
     try:
         result = await _grep(request, snapshot, query, files)
     except InvalidQueryError as exc:

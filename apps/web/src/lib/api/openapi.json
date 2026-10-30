@@ -57,6 +57,49 @@
         "title": "ActorType",
         "type": "string"
       },
+      "AskRequest": {
+        "properties": {
+          "conversation_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Conversation Id"
+          },
+          "message": {
+            "maxLength": 4000,
+            "minLength": 1,
+            "title": "Message",
+            "type": "string"
+          },
+          "mode": {
+            "$ref": "#/components/schemas/Mode",
+            "default": "fast"
+          },
+          "ref": {
+            "anyOf": [
+              {
+                "maxLength": 255,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ref"
+          }
+        },
+        "required": [
+          "message"
+        ],
+        "title": "AskRequest",
+        "type": "object"
+      },
       "AuditAction": {
         "enum": [
           "auth.login",
@@ -326,6 +369,61 @@
         "title": "Case",
         "type": "string"
       },
+      "CitationOut": {
+        "properties": {
+          "end_line": {
+            "title": "End Line",
+            "type": "integer"
+          },
+          "idx": {
+            "title": "Idx",
+            "type": "integer"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "provenance": {
+            "title": "Provenance",
+            "type": "string"
+          },
+          "sha": {
+            "title": "Sha",
+            "type": "string"
+          },
+          "start_line": {
+            "title": "Start Line",
+            "type": "integer"
+          },
+          "symbol_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Symbol Key"
+          },
+          "verified": {
+            "title": "Verified",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "idx",
+          "sha",
+          "path",
+          "start_line",
+          "end_line",
+          "symbol_key",
+          "provenance",
+          "verified"
+        ],
+        "title": "CitationOut",
+        "type": "object"
+      },
       "ConnectRepo": {
         "properties": {
           "github_repo_id": {
@@ -579,6 +677,116 @@
           "loc"
         ],
         "title": "ConstellationPoint",
+        "type": "object"
+      },
+      "ConversationDetail": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "messages": {
+            "items": {
+              "$ref": "#/components/schemas/MessageOut"
+            },
+            "title": "Messages",
+            "type": "array"
+          },
+          "repo_id": {
+            "format": "uuid",
+            "title": "Repo Id",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "repo_id",
+          "title",
+          "created_at",
+          "updated_at",
+          "messages"
+        ],
+        "title": "ConversationDetail",
+        "type": "object"
+      },
+      "ConversationList": {
+        "properties": {
+          "conversations": {
+            "items": {
+              "$ref": "#/components/schemas/ConversationOut"
+            },
+            "title": "Conversations",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "required": [
+          "conversations",
+          "next_cursor"
+        ],
+        "title": "ConversationList",
+        "type": "object"
+      },
+      "ConversationOut": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "repo_id": {
+            "format": "uuid",
+            "title": "Repo Id",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "repo_id",
+          "title",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "ConversationOut",
         "type": "object"
       },
       "EdgeType": {
@@ -1993,6 +2201,88 @@
         ],
         "title": "MemberOut",
         "type": "object"
+      },
+      "MessageOut": {
+        "properties": {
+          "abstained": {
+            "title": "Abstained",
+            "type": "boolean"
+          },
+          "citations": {
+            "items": {
+              "$ref": "#/components/schemas/CitationOut"
+            },
+            "title": "Citations",
+            "type": "array"
+          },
+          "confidence": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confidence"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "parts": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Parts",
+            "type": "array"
+          },
+          "role": {
+            "enum": [
+              "user",
+              "assistant"
+            ],
+            "title": "Role",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "streaming",
+              "done",
+              "failed"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "role",
+          "parts",
+          "status",
+          "confidence",
+          "abstained",
+          "created_at",
+          "citations"
+        ],
+        "title": "MessageOut",
+        "type": "object"
+      },
+      "Mode": {
+        "enum": [
+          "fast",
+          "deep"
+        ],
+        "title": "Mode",
+        "type": "string"
       },
       "MyOrg": {
         "properties": {
@@ -5104,6 +5394,107 @@
         ]
       }
     },
+    "/api/v1/orgs/{org}/conversations/{conversation_id}": {
+      "delete": {
+        "description": "Delete a conversation, its messages and their citations.",
+        "operationId": "delete_conversation_api_v1_orgs__org__conversations__conversation_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Organization slug",
+            "in": "path",
+            "name": "org",
+            "required": true,
+            "schema": {
+              "description": "Organization slug",
+              "title": "Org",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Conversation",
+        "tags": [
+          "ask"
+        ]
+      },
+      "get": {
+        "description": "A conversation with its messages, each answer with its citations.",
+        "operationId": "conversation_api_v1_orgs__org__conversations__conversation_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Organization slug",
+            "in": "path",
+            "name": "org",
+            "required": true,
+            "schema": {
+              "description": "Organization slug",
+              "title": "Org",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConversationDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Conversation",
+        "tags": [
+          "ask"
+        ]
+      }
+    },
     "/api/v1/orgs/{org}/events": {
       "get": {
         "description": "The org's index runs starting and ending, as server-sent events (for status dots and the\ninbox), limited to repositories the signed-in user can read. Closes only when the session\nends or the user leaves the org (checked every minute); the browser's reconnect then gets\nthe error.",
@@ -5995,6 +6386,126 @@
         ]
       }
     },
+    "/api/v1/orgs/{org}/repos/{repo}/ask": {
+      "post": {
+        "description": "Ask a question about the repository: its answer, streamed as it is written.",
+        "operationId": "ask_api_v1_orgs__org__repos__repo__ask_post",
+        "parameters": [
+          {
+            "description": "Organization slug",
+            "in": "path",
+            "name": "org",
+            "required": true,
+            "schema": {
+              "description": "Organization slug",
+              "title": "Org",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Repository slug",
+            "in": "path",
+            "name": "repo",
+            "required": true,
+            "schema": {
+              "description": "Repository slug",
+              "maxLength": 201,
+              "title": "Repo",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AskRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Ask",
+        "tags": [
+          "ask"
+        ]
+      }
+    },
+    "/api/v1/orgs/{org}/repos/{repo}/ask/messages/{message_id}/stream": {
+      "get": {
+        "description": "The answer's stream again, after the last event the client saw (``Last-Event-ID``).",
+        "operationId": "resume_api_v1_orgs__org__repos__repo__ask_messages__message_id__stream_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "message_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Message Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Organization slug",
+            "in": "path",
+            "name": "org",
+            "required": true,
+            "schema": {
+              "description": "Organization slug",
+              "title": "Org",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Repository slug",
+            "in": "path",
+            "name": "repo",
+            "required": true,
+            "schema": {
+              "description": "Repository slug",
+              "maxLength": 201,
+              "title": "Repo",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Resume",
+        "tags": [
+          "ask"
+        ]
+      }
+    },
     "/api/v1/orgs/{org}/repos/{repo}/constellation": {
       "get": {
         "description": "A page of the constellation's points (file, position, layer, directory cluster, size).",
@@ -6112,6 +6623,92 @@
         "summary": "Constellation",
         "tags": [
           "constellation"
+        ]
+      }
+    },
+    "/api/v1/orgs/{org}/repos/{repo}/conversations": {
+      "get": {
+        "description": "The signed-in user's conversations about the repository, the latest first.",
+        "operationId": "conversations_api_v1_orgs__org__repos__repo__conversations_get",
+        "parameters": [
+          {
+            "description": "Organization slug",
+            "in": "path",
+            "name": "org",
+            "required": true,
+            "schema": {
+              "description": "Organization slug",
+              "title": "Org",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Repository slug",
+            "in": "path",
+            "name": "repo",
+            "required": true,
+            "schema": {
+              "description": "Repository slug",
+              "maxLength": 201,
+              "title": "Repo",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 30,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConversationList"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Conversations",
+        "tags": [
+          "ask"
         ]
       }
     },
