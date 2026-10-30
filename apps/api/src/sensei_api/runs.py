@@ -75,6 +75,7 @@ class Recorder:
         self._idx = 0
         self._llm: AgentStep | None = None  # the model turn under way
         self._llm_started = 0.0
+        self._answering = False  # the open turn writes the answer (it may call no tools)
         self._tools: dict[str, AgentStep] = {}
         self._pending = 0  # tokens spent outside a turn, for the next retrieval or check
         self._cost = Decimal(0)
@@ -118,8 +119,10 @@ class Recorder:
                     {"turn": event.turn, "effort": event.effort, "tools": event.tools},
                 )
                 self._llm_started = time.monotonic()
+                self._answering = not event.tools
             case TextDelta():
-                if self.run.first_token_ms is None:
+                # The answer's first token: a turn that may call tools writes reasoning, not it.
+                if self.run.first_token_ms is None and self._answering and event.text:
                     self.run.first_token_ms = self._ms_since(self.started)
             case ToolCalled():
                 self._tools[event.id] = self._step("tool", event.name, event.input)
@@ -140,7 +143,11 @@ class Recorder:
             case GapFound():
                 step = self._step("verify", "gap", {"missing": list(event.missing)})
                 await self._finish(step, event.gap)
-            case CitationFound() | Done():  # the answer's: its message keeps them
+            case Done():  # its message keeps the answer
+                if self.run.first_token_ms is None and event.answer.text:
+                    # A research turn's words, sent as the answer once the run is done.
+                    self.run.first_token_ms = self._ms_since(self.started)
+            case CitationFound():  # the answer's: its message keeps them
                 return
 
     async def finish(self, answer: Answer | None, error: str | None = None) -> None:

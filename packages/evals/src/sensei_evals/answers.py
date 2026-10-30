@@ -38,7 +38,7 @@ from uuid_utils.compat import uuid7
 
 from sensei_core.config import get_settings
 from sensei_core.usage import CostCalculator
-from sensei_engine.agent.loop import Answer, AskAgent, Done, Mode, TextDelta
+from sensei_engine.agent.loop import Answer, AskAgent, Done, Mode, StepStarted, TextDelta
 from sensei_engine.agent.tools.base import Cited, ToolContext
 from sensei_engine.llm.anthropic_client import (
     AnthropicClient,
@@ -47,7 +47,7 @@ from sensei_engine.llm.anthropic_client import (
     LLMUsageSink,
     Tier,
 )
-from sensei_evals.metrics import Level, covered, f_beta
+from sensei_evals.metrics import Level, abstention_accuracy, covered, f_beta
 from sensei_evals.rerank import BudgetExceeded, CostGuard
 from sensei_evals.retrieval import Hit, RepoRef, RetrieverContext
 from sensei_evals.runner import ItemResult, RunRecord, aggregate, percentile
@@ -96,7 +96,8 @@ class AnswerOutcome:
 
     @property
     def abstained(self) -> bool:
-        return self.answer is None or self.answer.abstained is not None
+        """The run gave an answer and abstained in it (a run that failed did neither)."""
+        return self.answer is not None and self.answer.abstained is not None
 
 
 async def ask(agent: Agent, question: str, ctx: ToolContext, *, mode: Mode) -> AnswerOutcome:
@@ -111,14 +112,20 @@ async def ask(agent: Agent, question: str, ctx: ToolContext, *, mode: Mode) -> A
     def since() -> float:
         return round((time.perf_counter() - started) * 1000, 3)
 
+    answering = False  # the open turn writes the answer (it may call no tools)
     try:
         async for event in agent.run(question, ctx, mode=mode):
             if first_event is None:
                 first_event = since()
-            if isinstance(event, TextDelta) and first_token is None and event.text:
+            if isinstance(event, StepStarted):
+                answering = not event.tools
+            # The answer's first token: a turn that may call tools writes reasoning, not it.
+            if isinstance(event, TextDelta) and answering and first_token is None and event.text:
                 first_token = since()
             if isinstance(event, Done):
                 answer = event.answer
+                if first_token is None and answer.text:
+                    first_token = since()  # a research turn's words, given as the answer
     except BudgetExceeded:
         raise
     except (LLMError, RuntimeError, ValueError) as error:
@@ -329,6 +336,16 @@ def answer_aggregate(results: Sequence[ItemResult]) -> dict[str, Any]:
     """The runner's averages (overall and by class), with the answer's own latencies and cost:
     p50 and p95 of the first event and first token (lookups and traces apart), the mean cost."""
     metrics = aggregate(results)
+    # Abstention is judged on the runs that answered: a run that failed neither answered nor
+    # abstained, so it would count as abstaining right on an unanswerable item.
+    answered = [r for r in results if not r.metrics.get("failed")]
+    metrics["overall"]["abstention_accuracy"] = abstention_accuracy(
+        (r.answerable, r.abstained) for r in answered
+    )
+    for name, scores in metrics["by_class"].items():
+        scores["abstention_accuracy"] = abstention_accuracy(
+            (r.answerable, r.abstained) for r in answered if r.query_class == name
+        )
     lookups = [r for r in results if r.query_class not in TRACE_CLASSES]
     traces = [r for r in results if r.query_class in TRACE_CLASSES]
     costs = _latencies(results, "cost_usd")
@@ -420,8 +437,7 @@ async def run_answers(
             stopped = str(error)
             break
         result = item_result(item, outcome, judged)
-        if outcome.error:
-            result.metrics["failed"] = 1.0
+        result.metrics["failed"] = 1.0 if outcome.answer is None else 0.0  # its mean: the rate
         results.append(result)
     metrics = answer_aggregate(results)
     metrics["gate"] = [

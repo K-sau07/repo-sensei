@@ -40,7 +40,7 @@ from sensei_api.repos import RepoDep
 from sensei_api.routers import browse, search
 from sensei_api.runs import Recorder
 from sensei_api.sharing import new_share_token, share_token_hash
-from sensei_api.spend import hold, release, remaining_today
+from sensei_api.spend import draw, hold, release, remaining_today
 from sensei_api.streams import HEADERS, HEARTBEAT_SECONDS, READ_BLOCK_MS, last_event_id
 from sensei_api.ui_stream import DONE, HEADER, UIStream, confidence_data, replayed, text_of
 from sensei_core.audit import AuditAction, audit
@@ -716,18 +716,26 @@ class _Run:
     async def _spend(self, used: LLMUsage) -> None:
         """The run's spend, in the usage ledger at once (its own short transaction): a run that
         fails, or is stopped, has still spent it, and the day's cap counts it."""
+        costs = search.cost_calculator(self.request)
         async with self.sessions() as db:
             await set_user_context(db, self.user_id)
             await set_org_context(db, self.org_id)
             ledger = usage_ledger(
                 db,
-                search.cost_calculator(self.request),
+                costs,
                 org_id=self.org_id,
                 user_id=self.user_id,
                 ref_type=REF_TYPE,
                 ref_id=str(self.run_id),
             )
             await ledger(used)
+        cost = costs.cost(
+            used.provider, used.model, tokens_in=used.input_tokens, tokens_out=used.output_tokens,
+            tokens_cache_read=used.cache_read_tokens, tokens_cache_write=used.cache_write_tokens,
+            batch=used.batch,
+        )  # fmt: skip
+        if cost:
+            await draw(self.redis, self.org_id, self.run_id, cost)
 
     def _recorder(self, db: AsyncSession, record: AgentRun) -> Recorder:
         state = self.request.app.state

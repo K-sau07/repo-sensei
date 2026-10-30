@@ -32,11 +32,16 @@ export function useArtifacts() {
   const promote = (artifact: Artifact) => {
     const key = keyOf(artifact);
     const found = pinned.find((p) => p.key === key);
-    const last = found?.versions.at(-1);
-    const same = last !== undefined && JSON.stringify(last) === JSON.stringify(artifact);
-    const versions = found ? (same ? found.versions : [...found.versions, artifact]) : [artifact];
+    const seen = JSON.stringify(artifact);
+    // A version it already has (A, then B, then A again) is shown, not kept twice.
+    const known = found?.versions.findIndex((v) => JSON.stringify(v) === seen) ?? -1;
+    const versions = found
+      ? known >= 0
+        ? found.versions
+        : [...found.versions, artifact]
+      : [artifact];
     setPinned([...pinned.filter((p) => p.key !== key), { key, versions }]);
-    setShown({ key, version: versions.length - 1 });
+    setShown({ key, version: known >= 0 ? known : versions.length - 1 });
   };
   const current = shown ? pinned.find((p) => p.key === shown.key) : undefined;
   return {

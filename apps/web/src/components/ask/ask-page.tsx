@@ -10,7 +10,7 @@
 import { MessageSquare } from "lucide-react";
 import type { Route } from "next";
 import Link from "next/link";
-import { useParams, useRouter, useSearchParams } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 
 import { CodeViewer } from "@/components/code/code-viewer";
@@ -43,11 +43,42 @@ import { ShareButton } from "./share-dialog";
 import type { CodeHref } from "./tool-cards";
 import { useAsk, useConversations } from "./use-ask";
 
+/** The conversation an address names (`/ask/<id>`; none: a new one). */
+function conversationIn(pathname: string): string | null {
+  return /\/ask\/([^/]+)\/?$/.exec(pathname)?.[1] ?? null;
+}
+
+/**
+ * The thread, started again whenever the address names another conversation than the one it
+ * holds: "New conversation", a conversation picked in the history, or the open one deleted.
+ * Not when the thread names its own new conversation (it writes the address itself, keeping
+ * the page as it is, so the answer being written isn't cut off).
+ */
+function useThreadKey(): { key: number; named: (id: string) => void } {
+  const pathname = usePathname();
+  const held = useRef<string | null>(conversationIn(pathname));
+  const [key, setKey] = useState(0);
+  const shown = conversationIn(pathname);
+  useEffect(() => {
+    if (shown !== held.current) {
+      held.current = shown;
+      setKey((k) => k + 1);
+    }
+  }, [shown]);
+  return {
+    key,
+    named: (id) => {
+      held.current = id;
+    },
+  };
+}
+
 export function AskPage() {
   const { state, ready } = useRepoFeatures();
+  const thread = useThreadKey();
   if (!ready) return null; // what the repository can do is still being read
   if (!state("ask").available) return <NotAskable />;
-  return <Ask />;
+  return <Ask key={thread.key} onNamed={thread.named} />;
 }
 
 /** Not indexed for questions yet: locked while a run brings it, else waiting for an index. */
@@ -84,15 +115,17 @@ function NotAskable() {
   );
 }
 
-function Ask() {
+function Ask({ onNamed }: { onNamed: (id: string) => void }) {
   const { org, repo } = useRepoSlug();
   const router = useRouter();
-  const params = useParams<{ conversationId?: string }>();
-  const [conversationId, setConversationId] = useState<string | null>(
-    params.conversationId ?? null,
+  const pathname = usePathname();
+  // As the address has it (after the first answer it names it here, with the page kept).
+  const [conversationId, setConversationId] = useState<string | null>(() =>
+    conversationIn(pathname),
   );
   const chat = useAsk(conversationId, (id) => {
     setConversationId(id);
+    onNamed(id);
     window.history.replaceState(null, "", repoPath(org, repo, `ask/${id}`));
   });
   const [opened, setOpened] = useState<CitationData | null>(null);

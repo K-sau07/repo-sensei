@@ -8,9 +8,10 @@
  */
 import { FileCode2, MessageSquareText, X } from "lucide-react";
 import type { Route } from "next";
-import { useParams, usePathname, useRouter, useSearchParams } from "next/navigation";
+import { useParams, useRouter, useSearchParams, useSelectedLayoutSegment } from "next/navigation";
 import { useState } from "react";
 
+import { decodeSegment } from "@/components/code/use-code";
 import { useRepoSlug } from "@/components/repo/use-repo";
 import { Button } from "@/components/ui/button";
 import {
@@ -29,11 +30,11 @@ import { repoPath } from "@/lib/routes";
 
 /** The scope a question asked from here has: the open file and its picked lines, if any. */
 function useOpenScope(): ScopeData | null {
-  const pathname = usePathname();
+  const section = useSelectedLayoutSegment();
   const params = useParams<{ path?: string[] }>();
   const search = useSearchParams();
-  if (!pathname.includes("/code/") || !params.path?.length) return null;
-  const path = params.path.map((segment) => decodeURIComponent(segment)).join("/");
+  if (section !== "code" || !params.path?.length) return null;
+  const path = params.path.map(decodeSegment).join("/");
   const lines = parseLines(search.get("L") ?? "");
   return { path, startLine: lines?.start ?? null, endLine: lines?.end ?? null };
 }
@@ -54,12 +55,12 @@ export function askHref(org: string, repo: string, question: string, scope: Scop
 export function AskBar() {
   const { org, repo } = useRepoSlug();
   const router = useRouter();
-  const pathname = usePathname();
   const open = useOpenScope();
   const [shown, setShown] = useState(false);
   const [question, setQuestion] = useState("");
   const [dropped, setDropped] = useState(false);
-  const onAsk = pathname.includes("/ask");
+  // On the Ask tab (its own question box): the repository's section, not a folder named so.
+  const onAsk = useSelectedLayoutSegment() === "ask";
   useShortcut(
     "ask-bar",
     () => {

@@ -57,7 +57,10 @@ export function Question({ message }: { message: AskMessage }) {
           {scopeLabel(scope)}
         </span>
       ) : null}
-      <div className="rounded-lg bg-muted px-3 py-2 text-sm whitespace-pre-wrap">
+      <div
+        className="rounded-lg bg-muted px-3 py-2 text-sm whitespace-pre-wrap"
+        data-testid="question"
+      >
         {answerText(message)}
       </div>
     </div>

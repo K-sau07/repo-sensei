@@ -13,17 +13,19 @@ from __future__ import annotations
 import uuid
 from collections import Counter
 from collections.abc import Sequence
+from contextlib import suppress
 from datetime import datetime
 from typing import Annotated, Any, cast
 
 import orjson
 from fastapi import APIRouter, Query, Request
 from pydantic import BaseModel
+from redis.exceptions import RedisError
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
-from sensei_api.deps import DbSession
+from sensei_api.deps import DbSession, RedisClient
 from sensei_api.repos import RepoDep
 from sensei_core.indexing.snapshots import resolve_snapshot
 from sensei_core.models import (
@@ -76,6 +78,8 @@ DEPENDS = (
     EdgeType.WRITES,
 )
 LAYERS = ("ui", "api", "svc", "db", "other")
+CACHE_PREFIX = "overview:"
+CACHE_SECONDS = 24 * 3600
 
 
 # ---------------------------------------------------------------- shapes
@@ -181,10 +185,30 @@ async def overview(
     request: Request,
     repo: RepoDep,
     db: DbSession,
+    redis: RedisClient,
     ref: Annotated[str | None, Query(max_length=255)] = None,
 ) -> OverviewOut:
-    """The repository at its last index (or at ``ref``), for its overview page."""
+    """The repository at its last index (or at ``ref``), for its overview page. An indexed
+    snapshot doesn't change, so its overview is kept (per snapshot and the index run that
+    finished it) for a day: only the first look reads the whole graph."""
     snapshot = await resolve_snapshot(db, repo, ref)
+    job = await _job(db, snapshot)
+    key = f"{CACHE_PREFIX}{snapshot.id}:{job.id if job is not None else '-'}"
+    try:
+        kept = await redis.get(key)
+    except RedisError:
+        kept = None
+    if kept is not None:
+        return OverviewOut.model_validate_json(kept)
+    found = await _overview(request, repo, db, snapshot, job)
+    with suppress(RedisError):  # unkept, it is served all the same and read again next time
+        await redis.set(key, found.model_dump_json(), ex=CACHE_SECONDS)
+    return found
+
+
+async def _overview(
+    request: Request, repo: Repo, db: AsyncSession, snapshot: Snapshot, job: IndexJob | None
+) -> OverviewOut:
     files = list(
         await db.execute(
             select(RepoFile.id, RepoFile.path, RepoFile.role, RepoFile.language).where(
@@ -200,7 +224,6 @@ async def overview(
             .order_by(FeatureMap.path)
         )
     )
-    job = await _job(db, snapshot)
     return OverviewOut(
         sha=snapshot.commit_sha,
         summary=await _summary(request, repo, snapshot),

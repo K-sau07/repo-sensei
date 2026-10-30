@@ -20,8 +20,15 @@ from typing import Any, cast
 
 TOKEN_BYTES = 32
 HIDDEN = "```\n(code hidden: you can't read this repository)\n```"
-# A fenced block: ``` or ~~~ (three or more) at a line's start, to the same fence or the end.
-_FENCE = re.compile(r"^(?P<f>`{3,}|~{3,})[^\n]*\n.*?(?:^(?P=f)[ \t]*$|\Z)", re.M | re.S)
+# Code in an answer, as markdown has it: a fenced block (``` or ~~~, three or more, at a line's
+# start however indented: in a list item too) to the same fence or the end; or an indented block
+# (lines indented four spaces or a tab, after a blank line). Prose indented as much (a list's
+# second paragraph) is hidden too: better too much than any code.
+_FENCE = re.compile(
+    r"^[ \t]*(?P<f>`{3,}|~{3,})[^\n]*\n.*?(?:^[ \t]*(?P=f)[ \t]*$|\Z)"
+    r"|(?:(?<=\n\n)|\A)(?:(?: {4,}|\t)[^\n]*(?:\n|\Z))+",
+    re.M | re.S,
+)
 # Never shown on a shared page: the run behind the answer.
 _INTERNAL = frozenset({"data-conversation"})
 

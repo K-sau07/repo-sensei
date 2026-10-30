@@ -231,6 +231,13 @@ describe("a logged search", () => {
       query: "create item",
     });
     expect(searchOf(`grep "user's id"`)).toEqual({ tool: "grep", query: "user's id" });
+    // Python's escapes, undone: the regex as it was asked.
+    expect(searchOf(String.raw`grep '\\bfoo\\b'`)).toEqual({
+      tool: "grep",
+      query: String.raw`\bfoo\b`,
+    });
+    expect(searchOf(String.raw`grep 'it\'s'`)).toEqual({ tool: "grep", query: "it's" });
+    expect(searchOf(`code_search '${"a".repeat(80)}'`)).toBeNull(); // maybe cut short
     expect(searchOf("read_code 'backend/app/models.py'")).toBeNull(); // not a search
     expect(searchOf("list_dir")).toBeNull();
   });

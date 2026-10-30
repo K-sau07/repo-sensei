@@ -11,7 +11,7 @@ import Link from "next/link";
 
 import { useRepoSlug } from "@/components/repo/use-repo";
 import { filesOf, formatMs, stepTitle, type Step } from "@/lib/api/runs";
-import { repoPath } from "@/lib/routes";
+import { codePath } from "@/lib/routes";
 
 export function StepCard({ step }: { step: Step }) {
   const { org, repo } = useRepoSlug();
@@ -56,7 +56,7 @@ export function StepCard({ step }: { step: Step }) {
             {files.map((path) => (
               <li key={path}>
                 <Link
-                  href={repoPath(org, repo, `code/${path}`)}
+                  href={codePath(org, repo, path)}
                   className="flex items-center gap-1.5 font-mono text-xs hover:underline"
                 >
                   <FileCode2 aria-hidden className="size-3.5 text-fg-muted" />

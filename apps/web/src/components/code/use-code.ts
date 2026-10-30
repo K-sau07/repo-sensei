@@ -65,7 +65,7 @@ export function snapshotVersion(data: Repo | undefined): string | null {
 }
 
 /** A path segment from the URL; a malformed escape ("%zz") is kept as typed. */
-function decodeSegment(segment: string): string {
+export function decodeSegment(segment: string): string {
   try {
     return decodeURIComponent(segment);
   } catch {

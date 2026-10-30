@@ -348,6 +348,9 @@ async def test_a_run_is_recorded_step_by_step(
     assert detail["tokens_in"] > 0
     assert float(detail["cost_usd"]) > 0
     assert detail["latency_ms"] is not None
+    # The answer turn's first token (not a research turn's reasoning), within the run.
+    assert detail["first_token_ms"] is not None
+    assert detail["first_token_ms"] <= detail["latency_ms"]
     kinds = [(s["kind"], s["name"]) for s in detail["steps"]]
     assert kinds[0] == ("llm", "claude-sonnet-5-5")
     assert ("tool", "list_dir") in kinds

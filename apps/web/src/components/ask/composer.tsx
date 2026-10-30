@@ -303,7 +303,8 @@ export function Composer({
                 return;
               }
               const option = options[picked];
-              if ((event.key === "Enter" || event.key === "Tab") && option && !event.metaKey) {
+              const sending = event.metaKey || event.ctrlKey; // ⌘↵ (Ctrl↵) sends, list or not
+              if ((event.key === "Enter" || event.key === "Tab") && option && !sending) {
                 event.preventDefault();
                 pick(option);
                 return;

@@ -16,7 +16,14 @@ from typer.testing import CliRunner
 
 from sensei_core.usage import DEFAULT_PRICE_TABLE, CostCalculator
 from sensei_engine.agent.confidence import Abstention
-from sensei_engine.agent.loop import Answer, AnswerCitation, Done, Mode, TextDelta
+from sensei_engine.agent.loop import (
+    Answer,
+    AnswerCitation,
+    Done,
+    Mode,
+    StepStarted,
+    TextDelta,
+)
 from sensei_engine.agent.tools.base import Cited, ToolContext
 from sensei_engine.agent.verify import Checked, Claim, Verification
 from sensei_engine.llm.anthropic_client import LLMError, LLMRequest, LLMResult, Tier
@@ -184,14 +191,39 @@ CTX = cast("ToolContext", object())
 
 async def test_a_question_is_timed_to_its_first_event_and_first_token() -> None:
     answer = _answer([_cited("backend/app/crud.py", 45, 60)], supported=1)
-    agent = _Agent(["step", TextDelta(1, ""), TextDelta(1, "It"), Done(answer)])
+    agent = _Agent(
+        [
+            StepStarted(1, "m", "medium", tools=True),
+            TextDelta(1, "Let me look."),  # a research turn's: reasoning, not the answer
+            StepStarted(2, "m", "medium", tools=False),
+            TextDelta(2, ""),
+            TextDelta(2, "It"),
+            Done(answer),
+        ]
+    )
     outcome = await ask(agent, "q", CTX, mode=Mode.FAST)
     assert outcome.answer is answer
     assert outcome.first_event_ms is not None
     assert outcome.first_token_ms is not None
     assert outcome.first_event_ms <= outcome.first_token_ms <= outcome.total_ms
+    reasoned = await ask(
+        _Agent([StepStarted(1, "m", None, tools=True), TextDelta(1, "x")]), "q", CTX,
+        mode=Mode.FAST,
+    )  # fmt: skip
+    assert reasoned.first_token_ms is None  # it never wrote an answer
     failed = await ask(_Agent(["step"], LLMError(500, "down")), "q", CTX, mode=Mode.FAST)
-    assert (failed.answer, failed.abstained, failed.error) == (None, True, "Anthropic 500: down")
+    # A run that failed gave no answer and didn't abstain.
+    assert (failed.answer, failed.abstained, failed.error) == (None, False, "Anthropic 500: down")
+
+
+async def test_a_failed_run_is_a_failure_not_an_abstention() -> None:
+    guard = CostGuard(Decimal("1"), CostCalculator(DEFAULT_PRICE_TABLE))
+    agent = _Agent([], LLMError(500, "down"))
+    record = await run_answers(
+        SUITE, SUITE.items, agent=agent, contexts=_contexts, judge=None, guard=guard, repo=REPO
+    )
+    assert record.metrics["overall"]["failed"] == 1.0  # both failed: the rate, not a flag
+    assert record.metrics["overall"]["abstention_accuracy"] is None  # none answered to judge
 
 
 def test_an_answer_is_scored_on_its_citations_and_checklist() -> None:
@@ -258,6 +290,7 @@ async def test_a_run_asks_every_item_and_records_the_gate() -> None:
     assert record.config["stopped"] is None
     # Answered both: right for login, wrong for billing (it should have abstained).
     assert record.metrics["overall"]["abstention_accuracy"] == 0.5
+    assert record.metrics["overall"]["failed"] == 0.0
     assert {m["metric"] for m in record.metrics["gate"]} >= {"abstention_accuracy"}
     shown = render_run(record)  # the report renders an answer run as it does a retrieval one
     assert "citation_supported" in shown

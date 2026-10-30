@@ -112,6 +112,21 @@ async def hold(redis: Redis, org_id: uuid.UUID, run_id: uuid.UUID, amount: Decim
         return
 
 
+async def draw(redis: Redis, org_id: uuid.UUID, run_id: uuid.UUID, cost: Decimal) -> None:
+    """Take what a run just spent (now in the ledger) off its hold, so the day's cap doesn't
+    count it twice: once spent, once still held."""
+    key = f"{HOLDS_PREFIX}{org_id}"
+    try:
+        value = await cast("Awaitable[bytes | str | None]", redis.hget(key, str(run_id)))  # pyright: ignore[reportUnknownMemberType]
+        if value is None:
+            return
+        amount, until = _text(value).split()
+        left = max(Decimal(0), Decimal(amount) - cost)
+        await cast("Awaitable[int]", redis.hset(key, str(run_id), f"{left} {until}"))  # pyright: ignore[reportUnknownMemberType]
+    except (RedisError, ValueError, ArithmeticError):
+        return
+
+
 async def release(redis: Redis, org_id: uuid.UUID, run_id: uuid.UUID) -> None:
     try:
         await cast("Awaitable[int]", redis.hdel(f"{HOLDS_PREFIX}{org_id}", str(run_id)))

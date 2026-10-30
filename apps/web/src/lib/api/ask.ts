@@ -393,10 +393,32 @@ export function keepDraft(key: string, text: string): void {
   else localStorage.removeItem(key);
 }
 
-/** A logged search (``grep "items/{id}"``, as the run lists them): its tool and its query, for
- * running it again on the search page; null for a call that isn't a search. */
+/** The run logs a query cut to this many characters (sensei_engine.agent.loop._searched). */
+export const LOGGED_QUERY_MAX = 80;
+
+const ESCAPES: Record<string, string> = {
+  "\\": "\\",
+  "'": "'",
+  '"': '"',
+  n: "\n",
+  t: "\t",
+  r: "\r",
+};
+
+/** A logged search (``grep "items/{id}"``, as the run lists them: Python's quoting): its tool
+ * and its query as it was asked, for running it again on the search page. Null for a call that
+ * isn't a search, or a query the log may have cut short (it wouldn't be the same search). */
 export function searchOf(logged: string): { tool: "code_search" | "grep"; query: string } | null {
   const found = /^(code_search|grep) (['"])(.*)\2$/s.exec(logged);
   if (!found?.[1] || found[3] === undefined) return null;
-  return { tool: found[1] as "code_search" | "grep", query: found[3] };
+  const escape = /\\(x[0-9a-f]{2}|u[0-9a-f]{4}|.)/gs;
+  const codes = Array.from(found[3].matchAll(escape), (m) => m[1] ?? "");
+  // An escape it doesn't know: not a query it can be sure of.
+  if (codes.some((code) => code.length === 1 && ESCAPES[code] === undefined)) return null;
+  const query = found[3].replace(escape, (_all, code: string) =>
+    code.length > 1 ? String.fromCharCode(parseInt(code.slice(1), 16)) : (ESCAPES[code] ?? code),
+  );
+  // Python cut it at this many code points: one that long may not be the whole query.
+  if (Array.from(query).length >= LOGGED_QUERY_MAX) return null;
+  return { tool: found[1] as "code_search" | "grep", query };
 }

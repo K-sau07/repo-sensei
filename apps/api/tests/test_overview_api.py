@@ -133,6 +133,11 @@ async def test_an_indexed_repository_has_its_overview(
     assert body["questions"]  # where it starts, at least
     assert [s["name"] for s in body["index"]["stages"]] == ["parse", "graph", "links"]
 
+    # The snapshot doesn't change once indexed: the next look is the one kept, not read again.
+    api_app.state.storage = _Storage({})
+    again = await client.get(f"{API}/orgs/{found_org.slug}/repos/items/overview")
+    assert again.json() == body
+
 
 @pytest.mark.integration
 async def test_an_overview_without_summaries_says_none(

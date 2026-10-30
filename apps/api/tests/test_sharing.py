@@ -5,6 +5,8 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
+
 from sensei_api.sharing import HIDDEN, shown
 
 TEXT = (
@@ -74,3 +76,26 @@ def test_a_reader_sees_it_whole_but_for_the_run_behind_it() -> None:
     parts = _parts()
     out = shown(parts, redact=False)
     assert out == [p for p in parts if p["type"] != "data-conversation"]
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        "Steps:\n1. Load it:\n   ```python\n   SECRET = load()\n   ```\n2. Done.",
+        "It reads:\n\n    SECRET = load()\n    use(SECRET)\n\nThen it returns.",
+        "Tabbed:\n\n\tSECRET = load()\n",
+        "Unclosed:\n  ~~~\n  SECRET = load()",
+    ],
+)
+def test_code_in_a_list_item_or_indented_is_hidden_too(answer: str) -> None:
+    out = shown([{"type": "text", "text": answer}], redact=True)
+    text = out[0]["text"]
+    assert "SECRET" not in text
+    assert HIDDEN in text
+
+
+def test_prose_around_hidden_code_stays() -> None:
+    answer = "First the route.\n\n    SECRET = load()\n\nThen `save` writes it."
+    text = shown([{"type": "text", "text": answer}], redact=True)[0]["text"]
+    assert text.startswith("First the route.\n\n")
+    assert text.endswith("Then `save` writes it.")

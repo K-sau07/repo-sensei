@@ -12,7 +12,7 @@ test.describe("ask", () => {
     await box.press("ControlOrMeta+Enter");
 
     // The question, then what the run is doing while it writes.
-    await expect(page.getByText("How is an item created?")).toBeVisible();
+    await expect(page.getByTestId("question")).toHaveText("How is an item created?");
     await expect(page.getByTestId("status-line")).toContainText(/Searching code|Reading files/);
 
     // The answer, a chip after the words each citation backs.
@@ -240,5 +240,28 @@ test.describe("ask: scope and mentions", () => {
     // The scope stays for the next question, until a chip is removed.
     await page.getByRole("button", { name: "Remove the scope Data" }).click();
     await expect(chips).toHaveText(["app/", "API"]);
+  });
+});
+
+test.describe("ask: a new conversation", () => {
+  test("New conversation starts an empty thread, and its question a conversation of its own", async ({
+    page,
+  }) => {
+    await page.goto("/acme/api/ask");
+    const box = page.getByRole("textbox", { name: "Ask about this repository" });
+    await box.fill("How is an item created?");
+    await box.press("ControlOrMeta+Enter");
+    await expect(page.getByTestId("answer")).toContainText("An item is created by the");
+    await expect(page).toHaveURL(/\/acme\/api\/ask\/[0-9a-f-]{36}$/);
+    const first = page.url();
+
+    await page.getByRole("link", { name: "New conversation" }).first().click();
+    await expect(page).toHaveURL(/\/acme\/api\/ask$/);
+    await expect(page.getByTestId("answer")).toHaveCount(0);
+    await box.fill("Where are passwords hashed?");
+    await box.press("ControlOrMeta+Enter");
+    await expect(page.getByTestId("answer")).toHaveCount(1);
+    await expect(page).toHaveURL(/\/acme\/api\/ask\/[0-9a-f-]{36}$/);
+    expect(page.url()).not.toBe(first);
   });
 });
