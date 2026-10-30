@@ -9,6 +9,8 @@ import type { TreeEntry, TreeListing } from "@/lib/api/types";
 import { BROWSE_COMMIT, longFileContent } from "@/mocks/browse";
 import { apiError, handlers } from "@/mocks/handlers";
 
+import { expectCodeLine } from "../code-lines";
+
 // The viewer's editor and grammar load as their own chunks: on a busy machine running every
 // project at once, that can take longer than a query's default second.
 const VIEWER_MS = 5000;
@@ -69,9 +71,7 @@ export const PythonFile: Story = {
   ],
   play: async ({ canvas, canvasElement }) => {
     await expect(await canvas.findByRole("heading", { name: "main.py" })).toBeVisible();
-    await expect(
-      await canvas.findByText(/def custom_generate_unique_id/, undefined, { timeout: VIEWER_MS }),
-    ).toBeVisible();
+    await expectCodeLine(canvasElement, /def custom_generate_unique_id/, VIEWER_MS);
     const tree = canvas.getByRole("tree", { name: "Repository files" });
     await waitFor(async () => {
       await expect(within(tree).getByRole("treeitem", { name: /^main\.py/ })).toHaveAttribute(
@@ -169,9 +169,7 @@ export const LongFile: Story = {
   },
   play: async ({ canvas, canvasElement }) => {
     await expect(await canvas.findByText("10,000 lines")).toBeVisible();
-    await expect(
-      await canvas.findByText(/def handler_0001/, undefined, { timeout: VIEWER_MS }),
-    ).toBeVisible();
+    await expectCodeLine(canvasElement, /def handler_0001/, VIEWER_MS);
     await expect(canvasElement.querySelectorAll(".cm-line").length).toBeLessThan(200);
   },
 };

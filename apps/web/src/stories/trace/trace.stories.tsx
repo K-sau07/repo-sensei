@@ -11,6 +11,8 @@ import fixture from "@/mocks/fixtures/trace.json";
 import { handlers } from "@/mocks/handlers";
 import { AMBIGUOUS_ENTRY, GAP_ENTRY, LOGIN_ENTRY } from "@/mocks/trace";
 
+import { expectCodeLine } from "../code-lines";
+
 // The viewer's editor loads as its own chunk: on a busy machine that can take a while.
 const VIEWER_MS = 5000;
 
@@ -63,9 +65,7 @@ export const Resolved: Story = {
     // A hop's code opens below, at the line that proves it.
     await userEvent.click(canvas.getByRole("button", { name: /^Step 7 of 9, Data/ }));
     const code = await canvas.findByRole("region", { name: "Code of authenticate" });
-    await expect(
-      await within(code).findByText(/crud\.authenticate/, undefined, { timeout: VIEWER_MS }),
-    ).toBeVisible();
+    await expectCodeLine(code, /crud\.authenticate/, VIEWER_MS);
   },
 };
 
