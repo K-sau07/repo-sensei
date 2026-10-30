@@ -21,7 +21,7 @@ hop by hop, across the client, the API, the handler and the database?
 
 A flow's hops are the gold path in order, each the code (file, symbol, lines) a correct trace
 passes through; the first is the **entry** the trace starts from. A flow may say its ``query``,
-what a user would type to find it (``create order``), for a page with several features. Every
+what a user would type to find it (``add item``), for a page with several features. Every
 hop is checked against the pinned checkout as a golden suite's targets are (:func:`as_suite`).
 
 **A tracer** (:class:`Tracer`) returns up to 3 paths for a flow's entry, best first, each a list
@@ -102,7 +102,7 @@ class Flow(_Strict):
     sha: str
     title: Annotated[str, Field(min_length=3)]
     hops: list[GoldTarget]
-    # What a user would type to find the feature (``create order``): which of the entry's
+    # What a user would type to find the feature (``add item``): which of the entry's
     # features the flow is, where it has several (``--opt feature=query`` traces by it).
     query: str | None = None
     notes: str = ""
