@@ -97,11 +97,20 @@ ContextFactory = Callable[[Request, AsyncSession, Repo, Snapshot], Awaitable[Too
 # ---------------------------------------------------------------- shapes
 
 
+class AskScope(BaseModel):
+    """What the user was looking at when asking (the Ask bar's context): a file, its lines."""
+
+    path: str = Field(min_length=1, max_length=1_024)
+    start_line: int | None = Field(default=None, ge=1)
+    end_line: int | None = Field(default=None, ge=1)
+
+
 class AskRequest(BaseModel):
     conversation_id: uuid.UUID | None = None
     message: str = Field(min_length=1, max_length=4_000)
     mode: Mode = Mode.FAST
     ref: str | None = Field(default=None, max_length=255)
+    scope: AskScope | None = None
 
 
 class CitationOut(BaseModel):
@@ -291,17 +300,22 @@ async def ask(
         if conversation.repo_id != repo.id:
             raise NotFoundError("Conversation not found.", code="conversation_not_found")
     earlier = await _exchanges(db, conversation.id)
+    scope = await _scope(db, snapshot, body.scope)
+    asked: list[dict[str, Any]] = [{"type": "text", "text": body.message}]
+    if scope is not None:
+        asked.append({"type": "data-scope", "id": "scope", "data": scope})
     question = ConversationMessage(
         org_id=repo.org_id,
         conversation_id=conversation.id,
         role="user",
-        parts=[{"type": "text", "text": body.message}],
+        parts=asked,
         snapshot_id=snapshot.id,
     )
     # Only a question asked first is answered from (and kept in) the cache: a follow-up's words
     # mean what the conversation before them does, which is its asker's alone.
+    # A scoped question means its file and lines too: answered afresh, and not kept.
     embedding = None
-    if not earlier:
+    if not earlier and scope is None:
         embedding = await _embedded(request, db, repo.org_id, body.message)
         kept = await answer_cache.lookup(
             db,
@@ -352,13 +366,14 @@ async def ask(
         snapshot_id=snapshot.id,
         conversation_id=conversation.id,
         message_id=answer.id,
-        question=body.message,
+        question=_scoped(body.message, scope),
         mode=body.mode,
         earlier=earlier,
         repo_name=f"{repo.owner}/{repo.name}",
         run_id=record.id,
         cap=cap,
         embedding=embedding,
+        keep=not earlier and scope is None,
     )
     key = f"{STREAM_PREFIX}{answer.id}"
     headers = {
@@ -434,7 +449,7 @@ async def conversations(
     more = len(rows) > limit
     rows = rows[:limit]
     after = rows[-1].updated_at.isoformat() if more and rows else None
-    return ConversationList(conversations=[_out(c) for c in rows], next_cursor=after)
+    return ConversationList(conversations=[conversation_out(c) for c in rows], next_cursor=after)
 
 
 @router.get("/conversations/{conversation_id}", response_model=ConversationDetail)
@@ -461,7 +476,7 @@ async def conversation(
         )
         said = {row.message_id: _feedback_out(row) for row in rows}
     return ConversationDetail(
-        **_out(found).model_dump(),
+        **conversation_out(found).model_dump(),
         messages=[message_out(m, m.parts, cited.get(m.id, []), said.get(m.id)) for m in messages],
     )
 
@@ -478,7 +493,7 @@ async def rename_conversation(
     found.title = title
     await db.flush()
     await db.refresh(found)
-    return _out(found)
+    return conversation_out(found)
 
 
 @router.delete("/conversations/{conversation_id}", status_code=204)
@@ -598,6 +613,7 @@ class _Run:
     run_id: uuid.UUID
     cap: Decimal | None  # what the run may spend (held from the org's day while it runs)
     embedding: list[float] | None  # the question's, for the answer cache (a first question's)
+    keep: bool  # whether the answer may be kept in the cache (a first question, not scoped)
 
     def start(self) -> None:
         task = asyncio.create_task(self._run())
@@ -665,7 +681,7 @@ class _Run:
             return exc
         await recorder.finish(answer)
         stored = await self._store(db, stream, answer, ctx.sha)
-        if stored and answer is not None and not self.earlier and answer_cache.keepable(answer):
+        if stored and answer is not None and self.keep and answer_cache.keepable(answer):
             async with db.begin_nested():  # a cache that can't keep it loses nothing else
                 await answer_cache.keep(
                     db,
@@ -1057,6 +1073,37 @@ async def _exchanges(db: AsyncSession, conversation_id: uuid.UUID) -> list[Excha
     return exchanges[-MAX_EXCHANGES:]
 
 
+async def _scope(
+    db: AsyncSession, snapshot: Snapshot, scope: AskScope | None
+) -> dict[str, Any] | None:
+    """The question's scope, checked against the commit it is asked at (a file it has; lines
+    in order), as the question's ``data-scope`` part keeps it."""
+    if scope is None:
+        return None
+    found = await db.scalar(
+        select(RepoFile.path).where(
+            RepoFile.snapshot_id == snapshot.id, RepoFile.path == scope.path
+        )
+    )
+    if found is None:
+        raise InvalidError("That file isn't in this commit.", code="scope_not_found")
+    start, end = scope.start_line, scope.end_line
+    if start is not None and end is not None and end < start:
+        raise InvalidError("The scope's lines end before they start.", code="scope_lines")
+    return {"path": scope.path, "startLine": start, "endLine": end if start else None}
+
+
+def _scoped(question: str, scope: dict[str, Any] | None) -> str:
+    """The question as the agent reads it: with what the user was looking at, if anything."""
+    if scope is None:
+        return question
+    start, end = scope["startLine"], scope["endLine"]
+    where = scope["path"]
+    if start is not None:
+        where += f" line {start}" if end in (None, start) else f" lines {start}-{end}"
+    return f"{question}\n\n(Asked while looking at {where}.)"
+
+
 def _verified(answer: Answer) -> set[int]:
     """The citations (by number) that back a claim the support check found supported."""
     check = answer.verification
@@ -1082,7 +1129,7 @@ def _said(exc: BaseException) -> str:
     return "The answer couldn't be written."
 
 
-def _out(found: Conversation) -> ConversationOut:
+def conversation_out(found: Conversation) -> ConversationOut:
     return ConversationOut(
         id=found.id,
         repo_id=found.repo_id,

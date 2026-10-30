@@ -102,7 +102,7 @@ UNSETTLED_SECONDS = batches.MATCH_WINDOW.total_seconds()
 MAX_UNAVAILABLE = 8
 UNAVAILABLE_SECONDS = 120.0
 SUMMARIES_ARTIFACT = "summaries.json"
-ROLLUPS_ARTIFACT = "rollups.json"
+ROLLUPS_ARTIFACT = rollups.ARTIFACT
 MAX_ARTIFACT_BYTES = 256 * 1024 * 1024
 
 # What the stage records in its details, step by step ("phase").

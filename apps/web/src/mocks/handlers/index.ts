@@ -6,6 +6,7 @@ import { invitationHandlers } from "./invitations";
 import { meHandlers } from "./me";
 import { memberHandlers } from "./members";
 import { orgHandlers } from "./orgs";
+import { overviewHandlers } from "./overview";
 import { repoHandlers } from "./repos";
 import { runsHandlers } from "./runs";
 import { searchHandlers } from "./search";
@@ -24,6 +25,7 @@ export const handlers = [
   ...traceHandlers,
   ...askHandlers,
   ...runsHandlers,
+  ...overviewHandlers,
   ...searchHandlers,
   ...repoHandlers,
   ...orgHandlers,

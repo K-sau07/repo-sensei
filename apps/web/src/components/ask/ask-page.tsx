@@ -9,7 +9,7 @@
  */
 import { MessageSquare } from "lucide-react";
 import Link from "next/link";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 
 import { CodeViewer } from "@/components/code/code-viewer";
@@ -26,7 +26,9 @@ import {
   type AskMessage,
   type CitationData,
   type FeedbackKind,
+  type ScopeData,
 } from "@/lib/api/ask";
+import { parseLines } from "@/lib/code/lines";
 import { STAGE_LABELS } from "@/lib/indexing";
 import { repoPath } from "@/lib/routes";
 
@@ -107,6 +109,7 @@ function Ask() {
   useEffect(() => {
     end.current?.scrollIntoView({ block: "end" });
   }, [chat.messages.length]);
+  useAskedFromBar(conversationId === null, chat.ask);
 
   return (
     <div className="grid h-full min-h-0 grid-cols-1 md:grid-cols-[minmax(0,1fr)_22rem] lg:grid-cols-[15rem_minmax(0,1fr)_22rem]">
@@ -188,6 +191,36 @@ function Ask() {
       </div>
     </div>
   );
+}
+
+/** A question the Ask bar sent here (`?q=`, its scope `?scope=` and `?L=`): asked once, the
+ * address left clean. */
+function useAskedFromBar(fresh: boolean, ask: (text: string, scope: ScopeData | null) => unknown) {
+  const search = useSearchParams();
+  const asked = useRef(false);
+  const latest = useRef(ask);
+  useEffect(() => {
+    latest.current = ask;
+  });
+  useEffect(() => {
+    const question = search.get("q");
+    if (!fresh || asked.current || !question) return;
+    const path = search.get("scope");
+    const lines = parseLines(search.get("L") ?? "");
+    const scope = path
+      ? { path, startLine: lines?.start ?? null, endLine: lines?.end ?? null }
+      : null;
+    // Once the page has settled: a chat mounted twice (development's strict mode) drops what
+    // was sent from its first mount.
+    const timer = setTimeout(() => {
+      asked.current = true;
+      window.history.replaceState(null, "", window.location.pathname);
+      void latest.current(question, scope);
+    }, 0);
+    return () => {
+      clearTimeout(timer);
+    };
+  }, [fresh, search]);
 }
 
 /** What a screen reader hears when an answer is done: "Answer ready, 6 citations". */

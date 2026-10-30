@@ -52,6 +52,13 @@ export interface AbstainData {
   suggestion: string;
 }
 
+/** What the user was looking at when asking (the Ask bar's context): a file, its lines. */
+export interface ScopeData {
+  path: string;
+  startLine: number | null;
+  endLine: number | null;
+}
+
 // A type, not an interface: the AI SDK's data types want an index signature.
 // eslint-disable-next-line @typescript-eslint/consistent-type-definitions
 export type AskData = {
@@ -62,6 +69,7 @@ export type AskData = {
   abstain: AbstainData;
   cache: { from: string };
   conversation: { id: string; runId: string | null };
+  scope: ScopeData;
 };
 
 export type AskMessage = UIMessage<unknown, AskData>;
@@ -101,13 +109,19 @@ export function askTransport(options: {
       if (token) headers["X-CSRF-Token"] = token;
       return headers;
     },
-    prepareSendMessagesRequest: ({ messages, body }) => ({
-      body: {
-        message: lastQuestion(messages),
-        conversation_id: (body?.conversationId as string | null | undefined) ?? null,
-        mode: (body?.mode as AskMode | undefined) ?? "fast",
-      },
-    }),
+    prepareSendMessagesRequest: ({ messages, body }) => {
+      const scope = body?.scope as ScopeData | null | undefined;
+      return {
+        body: {
+          message: lastQuestion(messages),
+          conversation_id: (body?.conversationId as string | null | undefined) ?? null,
+          mode: (body?.mode as AskMode | undefined) ?? "fast",
+          ...(scope
+            ? { scope: { path: scope.path, start_line: scope.startLine, end_line: scope.endLine } }
+            : {}),
+        },
+      };
+    },
   });
 }
 
@@ -147,6 +161,21 @@ export function abstainedOf(message: AskMessage): AbstainData | null {
     if (found !== null) return found;
   }
   return null;
+}
+
+export function scopeOf(message: AskMessage): ScopeData | null {
+  for (const part of message.parts) {
+    const found = data(part, "scope");
+    if (found !== null) return found;
+  }
+  return null;
+}
+
+/** `models.py:12–20` (a line: `models.py:12`; the file alone: `models.py`). */
+export function scopeLabel(scope: ScopeData): string {
+  const name = scope.path.slice(scope.path.lastIndexOf("/") + 1);
+  if (scope.startLine === null) return name;
+  return chipLabel(name, [scope.startLine, scope.endLine ?? scope.startLine]);
 }
 
 /** The run that wrote a streamed answer (a stored one's comes with the conversation). */

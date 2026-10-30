@@ -57,6 +57,35 @@
         "title": "ActorType",
         "type": "string"
       },
+      "ArchitectureOut": {
+        "properties": {
+          "links": {
+            "items": {
+              "$ref": "#/components/schemas/ModuleLinkOut"
+            },
+            "title": "Links",
+            "type": "array"
+          },
+          "modules": {
+            "items": {
+              "$ref": "#/components/schemas/ModuleOut"
+            },
+            "title": "Modules",
+            "type": "array"
+          },
+          "rest": {
+            "title": "Rest",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "modules",
+          "links",
+          "rest"
+        ],
+        "title": "ArchitectureOut",
+        "type": "object"
+      },
       "AskRequest": {
         "properties": {
           "conversation_id": {
@@ -92,12 +121,62 @@
               }
             ],
             "title": "Ref"
+          },
+          "scope": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AskScope"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [
           "message"
         ],
         "title": "AskRequest",
+        "type": "object"
+      },
+      "AskScope": {
+        "description": "What the user was looking at when asking (the Ask bar's context): a file, its lines.",
+        "properties": {
+          "end_line": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "End Line"
+          },
+          "path": {
+            "maxLength": 1024,
+            "minLength": 1,
+            "title": "Path",
+            "type": "string"
+          },
+          "start_line": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Start Line"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "title": "AskScope",
         "type": "object"
       },
       "AuditAction": {
@@ -817,6 +896,52 @@
         "title": "ConversationUpdate",
         "type": "object"
       },
+      "DirectorySummaryOut": {
+        "properties": {
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "summary": {
+            "title": "Summary",
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "summary"
+        ],
+        "title": "DirectorySummaryOut",
+        "type": "object"
+      },
+      "EdgeHealthOut": {
+        "properties": {
+          "heuristic": {
+            "title": "Heuristic",
+            "type": "integer"
+          },
+          "inferred": {
+            "title": "Inferred",
+            "type": "integer"
+          },
+          "precise": {
+            "title": "Precise",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "total",
+          "precise",
+          "heuristic",
+          "inferred"
+        ],
+        "title": "EdgeHealthOut",
+        "type": "object"
+      },
       "EdgeType": {
         "enum": [
           "contains",
@@ -1155,6 +1280,39 @@
         "title": "Feature",
         "type": "string"
       },
+      "FeatureMapCardOut": {
+        "properties": {
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "stale": {
+            "title": "Stale",
+            "type": "boolean"
+          },
+          "summary": {
+            "title": "Summary",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "path",
+          "title",
+          "summary",
+          "stale"
+        ],
+        "title": "FeatureMapCardOut",
+        "type": "object"
+      },
       "FeatureMapList": {
         "properties": {
           "maps": {
@@ -1379,6 +1537,39 @@
           "content"
         ],
         "title": "FileOut",
+        "type": "object"
+      },
+      "FreshnessOut": {
+        "properties": {
+          "behind": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Behind"
+          },
+          "indexed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Indexed At"
+          }
+        },
+        "required": [
+          "indexed_at",
+          "behind"
+        ],
+        "title": "FreshnessOut",
         "type": "object"
       },
       "GraphEdgeOut": {
@@ -1773,6 +1964,34 @@
         "title": "HTTPValidationError",
         "type": "object"
       },
+      "HealthOut": {
+        "properties": {
+          "edges": {
+            "$ref": "#/components/schemas/EdgeHealthOut"
+          },
+          "freshness": {
+            "$ref": "#/components/schemas/FreshnessOut"
+          },
+          "languages": {
+            "items": {
+              "$ref": "#/components/schemas/LanguageHealthOut"
+            },
+            "title": "Languages",
+            "type": "array"
+          },
+          "links": {
+            "$ref": "#/components/schemas/LinkHealthOut"
+          }
+        },
+        "required": [
+          "languages",
+          "edges",
+          "links",
+          "freshness"
+        ],
+        "title": "HealthOut",
+        "type": "object"
+      },
       "HealthResponse": {
         "properties": {
           "status": {
@@ -1790,6 +2009,38 @@
           "version"
         ],
         "title": "HealthResponse",
+        "type": "object"
+      },
+      "HomeOut": {
+        "properties": {
+          "live": {
+            "items": {
+              "$ref": "#/components/schemas/RunOut"
+            },
+            "title": "Live",
+            "type": "array"
+          },
+          "recent": {
+            "items": {
+              "$ref": "#/components/schemas/ConversationOut"
+            },
+            "title": "Recent",
+            "type": "array"
+          },
+          "repos": {
+            "items": {
+              "$ref": "#/components/schemas/RepoOut"
+            },
+            "title": "Repos",
+            "type": "array"
+          }
+        },
+        "required": [
+          "repos",
+          "live",
+          "recent"
+        ],
+        "title": "HomeOut",
         "type": "object"
       },
       "ImportRepo": {
@@ -1946,6 +2197,59 @@
           "finished_at"
         ],
         "title": "IndexJobOut",
+        "type": "object"
+      },
+      "IndexSummaryOut": {
+        "properties": {
+          "finished_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "job_id": {
+            "format": "uuid",
+            "title": "Job Id",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "stages": {
+            "items": {
+              "$ref": "#/components/schemas/StageOut"
+            },
+            "title": "Stages",
+            "type": "array"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          }
+        },
+        "required": [
+          "job_id",
+          "kind",
+          "started_at",
+          "finished_at",
+          "stages"
+        ],
+        "title": "IndexSummaryOut",
         "type": "object"
       },
       "InstallReturn": {
@@ -2234,6 +2538,73 @@
         "title": "Lane",
         "type": "string"
       },
+      "LanguageHealthOut": {
+        "properties": {
+          "files": {
+            "title": "Files",
+            "type": "integer"
+          },
+          "language": {
+            "title": "Language",
+            "type": "string"
+          },
+          "with_symbols": {
+            "title": "With Symbols",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "language",
+          "files",
+          "with_symbols"
+        ],
+        "title": "LanguageHealthOut",
+        "type": "object"
+      },
+      "LinkHealthOut": {
+        "properties": {
+          "client_calls": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Client Calls"
+          },
+          "linked": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Linked"
+          },
+          "unresolved_edges": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unresolved Edges"
+          }
+        },
+        "required": [
+          "client_calls",
+          "linked",
+          "unresolved_edges"
+        ],
+        "title": "LinkHealthOut",
+        "type": "object"
+      },
       "MeResponse": {
         "properties": {
           "avatar_url": {
@@ -2488,6 +2859,55 @@
         "title": "Mode",
         "type": "string"
       },
+      "ModuleLinkOut": {
+        "properties": {
+          "edges": {
+            "title": "Edges",
+            "type": "integer"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "target": {
+            "title": "Target",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source",
+          "target",
+          "edges"
+        ],
+        "title": "ModuleLinkOut",
+        "type": "object"
+      },
+      "ModuleOut": {
+        "properties": {
+          "files": {
+            "title": "Files",
+            "type": "integer"
+          },
+          "layers": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Layers",
+            "type": "object"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "files",
+          "layers"
+        ],
+        "title": "ModuleOut",
+        "type": "object"
+      },
       "MyOrg": {
         "properties": {
           "name": {
@@ -2607,6 +3027,65 @@
           }
         },
         "title": "OrgUpdate",
+        "type": "object"
+      },
+      "OverviewOut": {
+        "properties": {
+          "architecture": {
+            "$ref": "#/components/schemas/ArchitectureOut"
+          },
+          "feature_maps": {
+            "items": {
+              "$ref": "#/components/schemas/FeatureMapCardOut"
+            },
+            "title": "Feature Maps",
+            "type": "array"
+          },
+          "health": {
+            "$ref": "#/components/schemas/HealthOut"
+          },
+          "index": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/IndexSummaryOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "questions": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Questions",
+            "type": "array"
+          },
+          "sha": {
+            "title": "Sha",
+            "type": "string"
+          },
+          "summary": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SummaryOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "sha",
+          "summary",
+          "architecture",
+          "feature_maps",
+          "questions",
+          "health",
+          "index"
+        ],
+        "title": "OverviewOut",
         "type": "object"
       },
       "PartialOut": {
@@ -4102,6 +4581,24 @@
         "title": "StageInfo",
         "type": "object"
       },
+      "StageOut": {
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "status"
+        ],
+        "title": "StageOut",
+        "type": "object"
+      },
       "StagesOut": {
         "properties": {
           "stages": {
@@ -4181,6 +4678,27 @@
           "output"
         ],
         "title": "StepOut",
+        "type": "object"
+      },
+      "SummaryOut": {
+        "properties": {
+          "directories": {
+            "items": {
+              "$ref": "#/components/schemas/DirectorySummaryOut"
+            },
+            "title": "Directories",
+            "type": "array"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text",
+          "directories"
+        ],
+        "title": "SummaryOut",
         "type": "object"
       },
       "SymbolAt": {
@@ -6611,6 +7129,51 @@
         ]
       }
     },
+    "/api/v1/orgs/{org}/home": {
+      "get": {
+        "description": "What the signed-in user sees first: their repositories, what is running in them, and\nwhat they asked last.",
+        "operationId": "home_api_v1_orgs__org__home_get",
+        "parameters": [
+          {
+            "description": "Organization slug",
+            "in": "path",
+            "name": "org",
+            "required": true,
+            "schema": {
+              "description": "Organization slug",
+              "title": "Org",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HomeOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Home",
+        "tags": [
+          "home"
+        ]
+      }
+    },
     "/api/v1/orgs/{org}/invitations": {
       "get": {
         "operationId": "list_invitations_api_v1_orgs__org__invitations_get",
@@ -8704,6 +9267,80 @@
         "summary": "Index Job Events",
         "tags": [
           "indexing"
+        ]
+      }
+    },
+    "/api/v1/orgs/{org}/repos/{repo}/overview": {
+      "get": {
+        "description": "The repository at its last index (or at ``ref``), for its overview page.",
+        "operationId": "overview_api_v1_orgs__org__repos__repo__overview_get",
+        "parameters": [
+          {
+            "description": "Repository slug",
+            "in": "path",
+            "name": "repo",
+            "required": true,
+            "schema": {
+              "description": "Repository slug",
+              "maxLength": 201,
+              "title": "Repo",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Organization slug",
+            "in": "path",
+            "name": "org",
+            "required": true,
+            "schema": {
+              "description": "Organization slug",
+              "title": "Org",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "ref",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 255,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Ref"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OverviewOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Overview",
+        "tags": [
+          "overview"
         ]
       }
     },

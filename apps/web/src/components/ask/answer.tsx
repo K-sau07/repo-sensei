@@ -7,7 +7,7 @@
  * stand behind it (4.11), how sure it is, what it searched (collapsed) and the user's feedback.
  */
 import { cn } from "cn";
-import { ChevronRight, Loader2 } from "lucide-react";
+import { ChevronRight, FileCode2, Loader2 } from "lucide-react";
 import type { Route } from "next";
 import NextLink from "next/link";
 import { useState, type ReactNode } from "react";
@@ -21,6 +21,8 @@ import {
   confidenceOf,
   fromCache,
   safeHref,
+  scopeLabel,
+  scopeOf,
   searchesOf,
   statusLine,
   withMarkers,
@@ -38,9 +40,23 @@ import { FeedbackButtons } from "./feedback";
 const MARKER = /^#cite-(\d+)$/;
 
 export function Question({ message }: { message: AskMessage }) {
+  const scope = scopeOf(message);
   return (
-    <div className="ml-auto max-w-[80%] rounded-lg bg-muted px-3 py-2 text-sm whitespace-pre-wrap">
-      {answerText(message)}
+    <div className="ml-auto flex max-w-[80%] flex-col items-end gap-1">
+      {scope ? (
+        <span
+          className="flex items-center gap-1 rounded-sm border border-border px-1.5 font-mono text-[11px] text-fg-muted"
+          title={scope.path}
+          data-testid="question-scope"
+        >
+          <FileCode2 aria-hidden className="size-3" />
+          <span className="sr-only">About </span>
+          {scopeLabel(scope)}
+        </span>
+      ) : null}
+      <div className="rounded-lg bg-muted px-3 py-2 text-sm whitespace-pre-wrap">
+        {answerText(message)}
+      </div>
     </div>
   );
 }

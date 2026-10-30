@@ -90,7 +90,7 @@ async def run(
     )
     login = await _login(db, found.user_id)
     return RunDetail(
-        **_out(found, login).model_dump(),
+        **run_out(found, login).model_dump(),
         steps=[StepOut(**step_data(step, found), output=step.output) for step in steps],
     )
 
@@ -116,7 +116,7 @@ async def runs(
     more = len(rows) > limit
     rows = rows[:limit]
     after = rows[-1][0].created_at.isoformat() if more and rows else None
-    return RunList(runs=[_out(found, login) for found, login in rows], next_cursor=after)
+    return RunList(runs=[run_out(found, login) for found, login in rows], next_cursor=after)
 
 
 @router.get("/agent-runs/{run_id}/events", response_class=EventSourceResponse)
@@ -189,7 +189,7 @@ async def _login(db: AsyncSession, user_id: uuid.UUID | None) -> str | None:
     return await db.scalar(select(User.login).where(User.id == user_id))
 
 
-def _out(found: AgentRun, login: str | None) -> RunOut:
+def run_out(found: AgentRun, login: str | None) -> RunOut:
     return RunOut(
         id=found.id,
         repo_id=found.repo_id,

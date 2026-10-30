@@ -7,12 +7,12 @@ import asyncio
 import json
 import time
 import uuid
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Awaitable
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import httpx
 import httpx2
@@ -40,6 +40,7 @@ from sensei_core.models import (
     Membership,
     MessageFeedback,
     Repo,
+    RepoFile,
     RepoSource,
     Snapshot,
     UsageEvent,
@@ -840,7 +841,8 @@ async def test_runs_under_way_hold_their_budget_from_the_day(
 
     await release(fake_redis, repo.org_id, other)
     lapsed = f"{Decimal('1')} {time.time() - 1}"
-    await fake_redis.hset(f"{HOLDS_PREFIX}{repo.org_id}", str(other), lapsed)  # pyright: ignore[reportUnknownMemberType]
+    holds = f"{HOLDS_PREFIX}{repo.org_id}"
+    await cast("Awaitable[int]", fake_redis.hset(holds, str(other), lapsed))  # pyright: ignore[reportUnknownMemberType]
     asked, _ = await _ask(app, client, org, headers, message="Where are items saved?")
     assert asked.status_code == 200  # a lapsed hold is forgotten
     assert await held(fake_redis, repo.org_id) == Decimal(0)  # and the run's, released
@@ -898,3 +900,50 @@ async def test_a_share_link_stops_when_its_sharer_leaves_the_org(
     )
     gone = await client.get(f"{API}/s/{token}")
     assert gone.status_code == 404
+
+
+async def test_a_scoped_question_tells_the_agent_where_the_user_was(
+    app: FastAPI, client: httpx.AsyncClient, db_session: AsyncSession, model: _Model
+) -> None:
+    org, headers = await _setup(app, client, db_session)
+    snapshot = await db_session.scalar(select(Snapshot).where(Snapshot.commit_sha == SHA))
+    assert snapshot is not None
+    db_session.add(
+        RepoFile(
+            org_id=snapshot.org_id,
+            repo_id=snapshot.repo_id,
+            snapshot_id=snapshot.id,
+            path="README.md",
+            blob_sha="a" * 40,
+            content_hash=b"\x00" * 32,
+            size=8,
+            language="markdown",
+            role="source",
+        )
+    )
+    await db_session.flush()
+    scope = {"path": "README.md", "start_line": 1, "end_line": 1}
+    response, _ = await _ask(app, client, org, headers, message="What is this?", scope=scope)
+    assert response.status_code == 200, response.text
+    asked = model.turns[0]["messages"][-1]["content"]
+    assert "What is this?" in str(asked)
+    assert "(Asked while looking at README.md line 1.)" in str(asked)
+    stored = await client.get(f"{org}/conversations/{response.headers['x-conversation-id']}")
+    question = stored.json()["messages"][0]
+    assert question["parts"] == [
+        {"type": "text", "text": "What is this?"},
+        {
+            "type": "data-scope",
+            "id": "scope",
+            "data": {"path": "README.md", "startLine": 1, "endLine": 1},
+        },
+    ]
+    assert await db_session.scalar(select(func.count()).select_from(AnswerCacheEntry)) == 0
+
+    missing = await client.post(
+        f"{org}/repos/items/ask",
+        json={"message": "And this?", "scope": {"path": "gone.py"}},
+        headers=headers,
+    )
+    assert missing.status_code == 422
+    assert missing.json()["error"]["code"] == "scope_not_found"

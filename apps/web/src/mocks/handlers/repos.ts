@@ -90,7 +90,7 @@ export function repoOf(org: string, slug: string): MockRepo | Response {
     : apiError(404, "repo_not_found_or_no_access", "Repository not found.");
 }
 
-function reposOf(org: string): MockRepo[] {
+export function reposOf(org: string): MockRepo[] {
   db.repos[org] ??= [];
   return db.repos[org];
 }

@@ -520,6 +520,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/orgs/{org}/home": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Home
+         * @description What the signed-in user sees first: their repositories, what is running in them, and
+         *     what they asked last.
+         */
+        get: operations["home_api_v1_orgs__org__home_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/orgs/{org}/invitations": {
         parameters: {
             query?: never;
@@ -1009,6 +1030,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/orgs/{org}/repos/{repo}/overview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Overview
+         * @description The repository at its last index (or at ``ref``), for its overview page.
+         */
+        get: operations["overview_api_v1_orgs__org__repos__repo__overview_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/orgs/{org}/repos/{repo}/reindex": {
         parameters: {
             query?: never;
@@ -1262,6 +1303,15 @@ export interface components {
          * @enum {string}
          */
         ActorType: "user" | "system" | "api_key";
+        /** ArchitectureOut */
+        ArchitectureOut: {
+            /** Links */
+            links: components["schemas"]["ModuleLinkOut"][];
+            /** Modules */
+            modules: components["schemas"]["ModuleOut"][];
+            /** Rest */
+            rest: number;
+        };
         /** AskRequest */
         AskRequest: {
             /** Conversation Id */
@@ -1272,6 +1322,19 @@ export interface components {
             mode: components["schemas"]["Mode"];
             /** Ref */
             ref?: string | null;
+            scope?: components["schemas"]["AskScope"] | null;
+        };
+        /**
+         * AskScope
+         * @description What the user was looking at when asking (the Ask bar's context): a file, its lines.
+         */
+        AskScope: {
+            /** End Line */
+            end_line?: number | null;
+            /** Path */
+            path: string;
+            /** Start Line */
+            start_line?: number | null;
         };
         /**
          * AuditAction
@@ -1555,6 +1618,24 @@ export interface components {
             /** Title */
             title: string;
         };
+        /** DirectorySummaryOut */
+        DirectorySummaryOut: {
+            /** Path */
+            path: string;
+            /** Summary */
+            summary: string;
+        };
+        /** EdgeHealthOut */
+        EdgeHealthOut: {
+            /** Heuristic */
+            heuristic: number;
+            /** Inferred */
+            inferred: number;
+            /** Precise */
+            precise: number;
+            /** Total */
+            total: number;
+        };
         /**
          * EdgeType
          * @enum {string}
@@ -1713,6 +1794,19 @@ export interface components {
          * @enum {string}
          */
         Feature: "code_browser" | "goto_definition" | "keyword_search" | "semantic_search" | "ask" | "wiki" | "graph_view" | "callers" | "trace" | "diagrams" | "fixes" | "changes";
+        /** FeatureMapCardOut */
+        FeatureMapCardOut: {
+            /** Key */
+            key: string;
+            /** Path */
+            path: string;
+            /** Stale */
+            stale: boolean;
+            /** Summary */
+            summary: string;
+            /** Title */
+            title: string;
+        };
         /** FeatureMapList */
         FeatureMapList: {
             /** Maps */
@@ -1807,6 +1901,13 @@ export interface components {
             sha: string;
             /** Size */
             size: number;
+        };
+        /** FreshnessOut */
+        FreshnessOut: {
+            /** Behind */
+            behind: number | null;
+            /** Indexed At */
+            indexed_at: string | null;
         };
         /** GraphEdgeOut */
         GraphEdgeOut: {
@@ -1978,6 +2079,14 @@ export interface components {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
         };
+        /** HealthOut */
+        HealthOut: {
+            edges: components["schemas"]["EdgeHealthOut"];
+            freshness: components["schemas"]["FreshnessOut"];
+            /** Languages */
+            languages: components["schemas"]["LanguageHealthOut"][];
+            links: components["schemas"]["LinkHealthOut"];
+        };
         /** HealthResponse */
         HealthResponse: {
             /**
@@ -1987,6 +2096,15 @@ export interface components {
             status: "ok";
             /** Version */
             version: string;
+        };
+        /** HomeOut */
+        HomeOut: {
+            /** Live */
+            live: components["schemas"]["RunOut"][];
+            /** Recent */
+            recent: components["schemas"]["ConversationOut"][];
+            /** Repos */
+            repos: components["schemas"]["RepoOut"][];
         };
         /** ImportRepo */
         ImportRepo: {
@@ -2052,6 +2170,22 @@ export interface components {
             /** Started At */
             started_at: string | null;
             status: components["schemas"]["JobStatus"];
+        };
+        /** IndexSummaryOut */
+        IndexSummaryOut: {
+            /** Finished At */
+            finished_at: string | null;
+            /**
+             * Job Id
+             * Format: uuid
+             */
+            job_id: string;
+            /** Kind */
+            kind: string;
+            /** Stages */
+            stages: components["schemas"]["StageOut"][];
+            /** Started At */
+            started_at: string | null;
         };
         /**
          * InstallReturn
@@ -2187,6 +2321,24 @@ export interface components {
          * @enum {string}
          */
         Lane: "ui" | "api" | "svc" | "db" | "other";
+        /** LanguageHealthOut */
+        LanguageHealthOut: {
+            /** Files */
+            files: number;
+            /** Language */
+            language: string;
+            /** With Symbols */
+            with_symbols: number;
+        };
+        /** LinkHealthOut */
+        LinkHealthOut: {
+            /** Client Calls */
+            client_calls: number | null;
+            /** Linked */
+            linked: number | null;
+            /** Unresolved Edges */
+            unresolved_edges: number | null;
+        };
         /** MeResponse */
         MeResponse: {
             /** Avatar Url */
@@ -2277,6 +2429,26 @@ export interface components {
          * @enum {string}
          */
         Mode: "fast" | "deep";
+        /** ModuleLinkOut */
+        ModuleLinkOut: {
+            /** Edges */
+            edges: number;
+            /** Source */
+            source: string;
+            /** Target */
+            target: string;
+        };
+        /** ModuleOut */
+        ModuleOut: {
+            /** Files */
+            files: number;
+            /** Layers */
+            layers: {
+                [key: string]: number;
+            };
+            /** Path */
+            path: string;
+        };
         /** MyOrg */
         MyOrg: {
             /** Name */
@@ -2315,6 +2487,19 @@ export interface components {
             name?: string | null;
             /** Slug */
             slug?: string | null;
+        };
+        /** OverviewOut */
+        OverviewOut: {
+            architecture: components["schemas"]["ArchitectureOut"];
+            /** Feature Maps */
+            feature_maps: components["schemas"]["FeatureMapCardOut"][];
+            health: components["schemas"]["HealthOut"];
+            index: components["schemas"]["IndexSummaryOut"] | null;
+            /** Questions */
+            questions: string[];
+            /** Sha */
+            sha: string;
+            summary: components["schemas"]["SummaryOut"] | null;
         };
         /**
          * PartialOut
@@ -2833,6 +3018,13 @@ export interface components {
              */
             weight: number;
         };
+        /** StageOut */
+        StageOut: {
+            /** Name */
+            name: string;
+            /** Status */
+            status: string;
+        };
         /** StagesOut */
         StagesOut: {
             /**
@@ -2865,6 +3057,13 @@ export interface components {
             summary: string;
             /** Tokens */
             tokens: number;
+        };
+        /** SummaryOut */
+        SummaryOut: {
+            /** Directories */
+            directories: components["schemas"]["DirectorySummaryOut"][];
+            /** Text */
+            text: string;
         };
         /** SymbolAt */
         SymbolAt: {
@@ -4130,6 +4329,38 @@ export interface operations {
             };
         };
     };
+    home_api_v1_orgs__org__home_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization slug */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HomeOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_invitations_api_v1_orgs__org__invitations_get: {
         parameters: {
             query?: never;
@@ -5260,6 +5491,42 @@ export interface operations {
                 };
                 content: {
                     "text/event-stream": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    overview_api_v1_orgs__org__repos__repo__overview_get: {
+        parameters: {
+            query?: {
+                ref?: string | null;
+            };
+            header?: never;
+            path: {
+                /** @description Repository slug */
+                repo: string;
+                /** @description Organization slug */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OverviewOut"];
                 };
             };
             /** @description Validation Error */

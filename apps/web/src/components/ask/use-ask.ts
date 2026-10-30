@@ -10,7 +10,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { useRepoSlug } from "@/components/repo/use-repo";
-import { askTransport, type AskMessage, type AskMode } from "@/lib/api/ask";
+import { askTransport, type AskMessage, type AskMode, type ScopeData } from "@/lib/api/ask";
 import { api } from "@/lib/api/client";
 import { queryKeys } from "@/lib/query/keys";
 
@@ -102,8 +102,16 @@ export function useAsk(conversationId: string | null, onConversation: (id: strin
     );
   }, [stored.data, setMessages]);
   // The conversation the stream named, until the page's own catches up with it.
-  const ask = (text: string) =>
-    sendMessage({ text }, { body: { conversationId: conversationId ?? loaded.current, mode } });
+  // A scoped question shows what it was asked about, as the stored one does.
+  const ask = (text: string, scope: ScopeData | null = null) => {
+    const body = { conversationId: conversationId ?? loaded.current, mode, scope };
+    if (scope === null) return sendMessage({ text }, { body });
+    const parts: AskMessage["parts"] = [
+      { type: "text", text },
+      { type: "data-scope", id: "scope", data: scope },
+    ];
+    return sendMessage({ parts }, { body });
+  };
   return {
     ...chat,
     ask,

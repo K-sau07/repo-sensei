@@ -30,12 +30,14 @@ from sensei_api.routers import (
     github,
     graph,
     health,
+    home,
     index_jobs,
     indexing,
     internal,
     invitations,
     me,
     orgs,
+    overview,
     repos,
     runs,
     search,
@@ -170,6 +172,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         ask,
         runs,
         feature_maps,
+        overview,
+        home,
         shared,
     ):  # the order routes are matched in
         app.include_router(module.router, prefix=API_PREFIX)

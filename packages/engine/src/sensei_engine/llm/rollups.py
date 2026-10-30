@@ -41,6 +41,7 @@ log = get_logger(__name__)
 
 PROMPT_VERSION = "summarize_directory.v1"
 ROOT = "."
+ARTIFACT = "rollups.json"  # where an index keeps them, under its commit's artifacts
 MAX_CHILDREN = 60  # listed per directory; the rest are counted
 MAX_CHILD_CHARS = 400  # of each child's summary
 MAX_TOKENS = 1_500

@@ -192,6 +192,8 @@ interface ViewProps {
   onFrame?: (ms: number) => void;
   /** A trace path to draw: its stars lit and joined by its code edges (3.15). */
   trace?: ShownTrace | null;
+  /** Drawn low and wide, under a page's other content (the ready overview's). */
+  strip?: boolean | undefined;
   className?: string;
 }
 
@@ -251,6 +253,7 @@ export function ConstellationView({
   renderer: asked,
   onFrame,
   trace = null,
+  strip = false,
   className,
 }: ViewProps) {
   const preferred = useContext(ConstellationRenderer);
@@ -376,7 +379,10 @@ export function ConstellationView({
       </div>
       <div
         ref={box}
-        className="relative h-80 overflow-hidden rounded-lg border border-line bg-bg md:h-96"
+        className={cn(
+          "relative overflow-hidden rounded-lg border border-line bg-bg",
+          strip ? "h-48 md:h-56" : "h-80 md:h-96",
+        )}
       >
         {client && colors ? (
           webgl ? (
@@ -559,12 +565,14 @@ export function Constellation({
   repo,
   job,
   live = false,
+  strip = false,
   className,
 }: {
   org: string;
   repo: string;
   job: string | null;
   live?: boolean;
+  strip?: boolean;
   className?: string;
 }) {
   const query = useConstellation(org, repo, job);
@@ -572,7 +580,13 @@ export function Constellation({
   if (query.isPending) {
     return (
       <div role="status" aria-label="Loading the constellation" className={className}>
-        <Skeleton className="h-[calc(20rem+2.25rem)] md:h-[calc(24rem+2.25rem)]" />
+        <Skeleton
+          className={
+            strip
+              ? "h-[calc(12rem+2.25rem)] md:h-[calc(14rem+2.25rem)]"
+              : "h-[calc(20rem+2.25rem)] md:h-[calc(24rem+2.25rem)]"
+          }
+        />
       </div>
     );
   }
@@ -593,6 +607,7 @@ export function Constellation({
       repo={repo}
       live={live}
       trace={trace}
+      strip={strip}
       {...(className ? { className } : {})}
     />
   );

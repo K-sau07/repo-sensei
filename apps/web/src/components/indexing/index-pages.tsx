@@ -1,14 +1,13 @@
 "use client";
 
 import { cn } from "cn";
-import Link from "next/link";
 import { parseAsString, useQueryState } from "nuqs";
 
 import { EmptyState } from "@/components/feedback/empty-state";
 import { ErrorState } from "@/components/feedback/error-state";
+import { RepoReady } from "@/components/overview/repo-ready";
 import { RelativeTime } from "@/components/primitives/relative-time";
 import { useRepo, useRepoSlug } from "@/components/repo/use-repo";
-import { LanguageBar } from "@/components/repos/language-bar";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
@@ -22,10 +21,8 @@ import {
 import { $api } from "@/lib/api/client";
 import { ApiError } from "@/lib/api/errors";
 import type { IndexJob } from "@/lib/api/types";
-import { STAGE_LABELS } from "@/lib/indexing";
-import { repoPath } from "@/lib/routes";
+import { STAGE_LABELS, took } from "@/lib/indexing";
 
-import { Constellation } from "./constellation";
 import { IndexView } from "./index-view";
 
 const STATUS_BADGE: Record<IndexJob["status"], { label: string; className: string }> = {
@@ -35,12 +32,6 @@ const STATUS_BADGE: Record<IndexJob["status"], { label: string; className: strin
   failed: { label: "Failed", className: "text-danger" },
   cancelled: { label: "Cancelled", className: "text-fg-muted" },
 };
-
-function took(job: IndexJob): string {
-  if (!job.started_at || !job.finished_at) return "–";
-  const seconds = (Date.parse(job.finished_at) - Date.parse(job.started_at)) / 1000;
-  return seconds < 60 ? `${seconds.toFixed(1)}s` : `${Math.round(seconds / 60)}m`;
-}
 
 function useJobs() {
   const { org, repo } = useRepoSlug();
@@ -101,54 +92,7 @@ export function RepoOverview() {
       </div>
     );
   }
-  return (
-    <div className="mx-auto flex w-full max-w-4xl flex-col gap-6 p-6">
-      <section
-        aria-labelledby="index-summary"
-        className="flex flex-col gap-4 rounded-lg border border-line p-5"
-      >
-        <div className="flex flex-wrap items-baseline justify-between gap-2">
-          <h2 id="index-summary" className="text-sm font-medium">
-            Indexed{" "}
-            <span className="font-mono text-fg-muted">{data.last_indexed_sha?.slice(0, 12)}</span>
-          </h2>
-          {data.last_indexed_at && (
-            <span className="text-xs text-fg-muted">
-              <RelativeTime date={data.last_indexed_at} /> · took {took(latest)}
-            </span>
-          )}
-        </div>
-        <dl className="grid grid-cols-2 gap-4 sm:grid-cols-3">
-          <div>
-            <dt className="text-xs text-fg-muted">Files</dt>
-            <dd className="text-xl font-semibold tabular-nums">
-              {(data.file_count ?? 0).toLocaleString("en")}
-            </dd>
-          </div>
-          <div>
-            <dt className="text-xs text-fg-muted">Lines</dt>
-            <dd className="text-xl font-semibold tabular-nums">
-              {(data.loc ?? 0).toLocaleString("en")}
-            </dd>
-          </div>
-          <div>
-            <dt className="text-xs text-fg-muted">Languages</dt>
-            <dd className="text-xl font-semibold tabular-nums">
-              {Object.keys(data.languages).length}
-            </dd>
-          </div>
-        </dl>
-        <LanguageBar languages={data.languages} legend />
-        <Constellation org={org} repo={repo} job={null} />
-        <Link
-          href={repoPath(org, repo, "index")}
-          className="w-fit text-sm underline underline-offset-4"
-        >
-          Indexing details and history
-        </Link>
-      </section>
-    </div>
-  );
+  return <RepoReady org={org} repo={repo} data={data} latest={latest} />;
 }
 
 /** `/[org]/[repo]/index`: every run, newest first, and the one picked (`?job=`) in full. */

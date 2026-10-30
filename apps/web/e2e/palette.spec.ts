@@ -91,7 +91,10 @@ test.describe("command palette", () => {
       palette(page).getByRole("option", { name: /Ask “how does login work”/ }),
     ).toBeVisible();
     await page.keyboard.press("Tab");
-    await expect(page).toHaveURL(/\/acme\/api\/ask\?q=how\+does\+login\+work$/);
+    await expect(page.getByRole("region", { name: "Conversation" })).toContainText(
+      "how does login work",
+    );
+    await expect(page).toHaveURL(/\/acme\/api\/ask\/[0-9a-f-]{36}$/);
   });
 
   test("outside a repository, Ask goes to the repository you were in last", async ({ page }) => {
@@ -102,7 +105,11 @@ test.describe("command palette", () => {
     const ask = palette(page).getByRole("option", { name: /Ask “where are tokens made”/ });
     await expect(ask).toContainText("about api");
     await page.keyboard.press("Tab");
-    await expect(page).toHaveURL(/\/acme\/api\/ask\?q=where\+are\+tokens\+made$/);
+    // The Ask tab asks it.
+    await expect(page.getByRole("region", { name: "Conversation" })).toContainText(
+      "where are tokens made",
+    );
+    await expect(page).toHaveURL(/\/acme\/api\/ask\/[0-9a-f-]{36}$/);
   });
 
   test("gives focus back to what had it, and opens with no animation", async ({ page }) => {

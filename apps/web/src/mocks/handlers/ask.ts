@@ -74,6 +74,14 @@ function listed(c: Stored) {
   };
 }
 
+/** The stored conversations, the latest first, each with its repository's slug (the org home's
+ * recent questions). */
+export function storedConversations(): (ReturnType<typeof listed> & { repo: string })[] {
+  return [...conversations.values()]
+    .sort((a, b) => b.updated_at.localeCompare(a.updated_at))
+    .map((c) => ({ ...listed(c), repo: c.repo }));
+}
+
 function messagesOf(c: Stored, redact = false) {
   return c.messages.map((m) => ({
     id: m.id,
@@ -124,7 +132,11 @@ function assembled(parts: Record<string, unknown>[]): Record<string, unknown>[] 
 
 export const askHandlers = [
   http.post("/api/v1/orgs/:org/repos/:repo/ask", async ({ request, params }) => {
-    const body = (await request.json()) as { message?: string; conversation_id?: string | null };
+    const body = (await request.json()) as {
+      message?: string;
+      conversation_id?: string | null;
+      scope?: { path: string; start_line: number | null; end_line: number | null } | null;
+    };
     const question = body.message ?? "";
     const id = body.conversation_id ?? crypto.randomUUID();
     const messageId = crypto.randomUUID();
@@ -138,7 +150,26 @@ export const askHandlers = [
       token: null,
     };
     held.messages.push(
-      { id: crypto.randomUUID(), role: "user", parts: [{ type: "text", text: question }] },
+      {
+        id: crypto.randomUUID(),
+        role: "user",
+        parts: [
+          { type: "text", text: question },
+          ...(body.scope
+            ? [
+                {
+                  type: "data-scope",
+                  id: "scope",
+                  data: {
+                    path: body.scope.path,
+                    startLine: body.scope.start_line,
+                    endLine: body.scope.end_line,
+                  },
+                },
+              ]
+            : []),
+        ],
+      },
       { id: messageId, role: "assistant", parts: assembled(parts) },
     );
     held.updated_at = new Date().toISOString();

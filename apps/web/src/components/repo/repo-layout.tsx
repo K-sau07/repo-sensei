@@ -3,6 +3,7 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 
+import { AskBar } from "@/components/ask/ask-bar";
 import { ErrorState } from "@/components/feedback/error-state";
 import { useOrgSlug } from "@/components/shell/use-org-slug";
 import { ApiError } from "@/lib/api/errors";
@@ -52,6 +53,7 @@ export function RepoLayout({ children }: { children: ReactNode }) {
       </div>
       {/* A column, so a page can fill the height left (the code browser does). */}
       <div className="flex min-h-0 flex-1 flex-col">{children}</div>
+      <AskBar />
     </div>
   );
 }
