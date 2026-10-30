@@ -5,6 +5,7 @@ gets (bounded)."""
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 from typing import Any
 
@@ -35,6 +36,32 @@ def test_an_answer_is_read_as_claims_with_their_citations() -> None:
         (2, "It returns it!", ()),
         (3, "- the route calls it", ()),
     ]
+
+
+def test_a_dotted_name_a_path_or_a_version_is_no_sentence_end() -> None:
+    text = (
+        "Items are created by `crud.create_item` in backend/app/crud.py. "
+        "ItemsService.createItem runs on submit, e.g. from the form. It needs Python 3.10."
+    )
+    assert [c.text for c in claims(text, [])] == [
+        "Items are created by `crud.create_item` in backend/app/crud.py.",
+        "ItemsService.createItem runs on submit, e.g. from the form.",
+        "It needs Python 3.10.",
+    ]
+    started = time.monotonic()
+    assert len(claims("x" * 100_000, [])) == 1  # one pass: linear in the text
+    assert time.monotonic() - started < 1
+
+
+def test_names_in_code_with_arguments_count_and_products_names_do_not() -> None:
+    text = (
+        "TypeScript and FastAPI on iOS call `crud.create_itme(session=session, item_in=item)`, "
+        "`ItemServise.make(x)` and `List<Invoyce>` with `'not_a_name'`."
+    )
+    assert identifiers(text) == [
+        "crud", "create_itme", "session", "item_in", "item", "ItemServise", "make", "List",
+        "Invoyce",
+    ]  # fmt: skip
 
 
 def test_names_written_as_code_are_its_identifiers() -> None:
@@ -216,3 +243,20 @@ async def test_an_answer_that_is_never_whole_is_searched_for_at_most_twice(
         )
     ]
     assert noted
+    # The gap rounds are within their own budget of turns, past the run's.
+    assert done.answer.turns <= agent.budget.max_turns + agent.budget.max_gap_turns
+
+
+async def test_a_gap_search_cut_short_keeps_the_answer_it_had(ctx: ToolContext) -> None:
+    refused = _streamed([{"type": "text", "text": ""}], "refusal")
+    model = _Model(
+        [_streamed([SUBMIT], "tool_use"), _streamed([ANSWER], "end_turn"), refused],
+        complete=False,
+    )
+    fake = FakeAnthropic(routes={"/v1/messages": model})
+    agent = AskAgent(fake.client(), pre_retrieval=False)
+    events = [e async for e in agent.run("where is an item saved?", ctx, overview="o")]
+    done = events[-1]
+    assert isinstance(done, Done)
+    assert done.answer.text == "create_item adds the item to the session."
+    assert len([e for e in events if isinstance(e, GapFound)]) == 1

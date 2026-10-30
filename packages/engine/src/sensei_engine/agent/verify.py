@@ -35,7 +35,10 @@ from sensei_engine.llm.anthropic_client import (
 MAX_ROUNDS = 2  # the searches an incomplete answer may get, after its first
 MAX_CITED_LINES = 40  # of a claim's citation, as the support check reads it
 Verdict = Literal["supported", "partial", "unsupported"]
-_SENTENCE = re.compile(r"[^.!?\n]*(?:[.!?]+(?=\s|$)|\n|$)")
+# Where a sentence ends: after its stop (and the space after it), or at a line's end. A stop
+# within a word (crud.py, 3.10, Item.save) is no end; nor is an abbreviation's.
+_BOUNDARY = re.compile(r"(?<=[.!?])\s+|\n+")
+_ABBREVIATIONS = ("e.g.", "i.e.", "etc.", "vs.", "cf.")
 _BACKTICKED = re.compile(r"`([^`\n]{1,200})`")
 # Names written as code outside backticks: snake_case, CONSTANT_CASE, camelCase, PascalCase
 # with two humps or more (one hump is an ordinary capitalised word).
@@ -44,7 +47,84 @@ _CODE_WORD = re.compile(
     r"|[a-z]+(?:[A-Z][a-z0-9]*)+|[A-Z][a-z0-9]+(?:[A-Z][a-z0-9]*)+)\b"
 )
 _NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
-_CALL_OR_NAME = re.compile(r"^@?[A-Za-z_][\w.]*(?:\(\))?$")
+# Products and tools prose names in code's case, never a repository's identifiers.
+PROPER_NAMES = frozenset(
+    name.lower()
+    for name in [
+        "TypeScript",
+        "JavaScript",
+        "CoffeeScript",
+        "ActionScript",
+        "FastAPI",
+        "PostgreSQL",
+        "MySQL",
+        "SQLite",
+        "MongoDB",
+        "GraphQL",
+        "WebSocket",
+        "WebSockets",
+        "GitHub",
+        "GitLab",
+        "BitBucket",
+        "JetBrains",
+        "IntelliJ",
+        "PyCharm",
+        "WebStorm",
+        "VSCode",
+        "NodeJS",
+        "NextJS",
+        "NuxtJS",
+        "ReactJS",
+        "VueJS",
+        "AngularJS",
+        "OpenAPI",
+        "OAuth",
+        "DynamoDB",
+        "CockroachDB",
+        "ClickHouse",
+        "ElasticSearch",
+        "OpenSearch",
+        "RabbitMQ",
+        "ActiveMQ",
+        "ZeroMQ",
+        "PyTorch",
+        "TensorFlow",
+        "NumPy",
+        "SciPy",
+        "PyPI",
+        "DevOps",
+        "YouTube",
+        "LinkedIn",
+        "PayPal",
+        "WordPress",
+        "DigitalOcean",
+        "CloudFlare",
+        "CloudFront",
+        "iOS",
+        "iPadOS",
+        "macOS",
+        "watchOS",
+        "tvOS",
+        "iPhone",
+        "iPad",
+        "eBay",
+        "SwiftUI",
+        "UIKit",
+        "AppKit",
+        "JUnit",
+        "TestNG",
+        "PyTest",
+        "WebKit",
+        "WebAssembly",
+        "WebGL",
+        "WebRTC",
+        "OpenAI",
+        "DeepMind",
+        "HuggingFace",
+        "LangChain",
+        "LlamaIndex",
+    ]
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -95,15 +175,21 @@ class Verification:
 
 def claims(text: str, spans: Sequence[tuple[int, int, Cited]]) -> list[Claim]:
     """The answer's sentences (a line of a list is one), each with the citations whose span
-    falls in it."""
+    falls in it. One pass over the text."""
     found: list[Claim] = []
-    for match in _SENTENCE.finditer(text):
-        sentence = match.group().strip()
-        if not sentence:
-            continue
-        start, end = match.start(), match.end()
-        cited = tuple(c for a, b, c in spans if a < end and b > start)
-        found.append(Claim(len(found) + 1, sentence, start, end, cited))
+    start = 0
+    for boundary in [*_BOUNDARY.finditer(text), None]:
+        end = boundary.start() if boundary is not None else len(text)
+        if boundary is not None and text[:end].endswith(_ABBREVIATIONS):
+            continue  # "e.g. on submit": the sentence goes on
+        piece = text[start:end]
+        sentence = piece.strip()
+        if sentence:
+            first = start + len(piece) - len(piece.lstrip())
+            last = first + len(sentence)
+            cited = tuple(c for a, b, c in spans if a < last and b > first)
+            found.append(Claim(len(found) + 1, sentence, first, last, cited))
+        start = boundary.end() if boundary is not None else end
     return found
 
 
@@ -123,16 +209,18 @@ def existing(ctx: ToolContext, cited: Sequence[Cited]) -> tuple[list[bool], dict
 
 
 def identifiers(text: str) -> list[str]:
-    """The names the answer writes as code: backticked names and calls (``Item.save()``: each
-    part), and snake_case, camelCase and PascalCase words. Paths and routes in backticks are
+    """The names the answer writes as code: every name in backticked code (a call's arguments
+    too: ``crud.create_item(session=session)``), and snake_case, camelCase and PascalCase words
+    in its prose (but products' names: TypeScript, FastAPI). Paths and routes in backticks are
     left to the citations."""
     names: list[str] = []
     for found in _BACKTICKED.finditer(text):
         inner = found.group(1).strip()
-        if _CALL_OR_NAME.match(inner):
-            names += _NAME.findall(inner)
+        if "/" in inner:  # a path or a route
+            continue
+        names += _NAME.findall(re.sub(r"(['\"]).*?\1", " ", inner))  # not a string's words
     outside = _BACKTICKED.sub(" ", text)
-    names += _CODE_WORD.findall(outside)
+    names += [name for name in _CODE_WORD.findall(outside) if name.lower() not in PROPER_NAMES]
     return list(dict.fromkeys(name for name in names if len(name) > 2))
 
 

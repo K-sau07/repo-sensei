@@ -4,6 +4,8 @@ questions escalate."""
 
 from __future__ import annotations
 
+import dataclasses
+import hashlib
 import json
 from collections.abc import Sequence
 from pathlib import Path
@@ -394,7 +396,7 @@ async def test_the_final_set_is_capped_and_titled_by_why(tmp_path: Path) -> None
     final = await final_set(ctx, QUESTION, pieces, None)
     assert len(final) == MAX_PIECES
     assert final[0].submitted
-    blocks, sources = answer_blocks(ctx, final[:2])
+    blocks, sources, shown = answer_blocks(ctx, final[:2])
     assert blocks[0] == _text(INTRO)
     assert [b["title"] for b in blocks if b["type"] == "search_result"] == [
         f"{SERVICE}: saves it", "README.md",
@@ -402,5 +404,28 @@ async def test_the_final_set_is_capped_and_titled_by_why(tmp_path: Path) -> None
     assert [(s.path, s.start_line, s.end_line) for s in sources] == [
         (SERVICE, 1, 4), ("README.md", 1, 1),
     ]  # fmt: skip
-    gone, _ = answer_blocks(ctx, [Piece("deleted.py", 1, 3)])
+    gone, _, nothing = answer_blocks(ctx, [Piece("deleted.py", 1, 3)])
     assert gone == [_text(INTRO)]  # a piece whose file can't be read is left out
+    assert nothing == []
+    assert shown == final[:2]
+
+
+async def test_a_submitted_piece_too_long_for_what_is_left_is_cut_not_dropped(
+    tmp_path: Path,
+) -> None:
+    """80 lines of dense values are more than the answer's evidence may hold: the piece is
+    shown, its first lines, rather than left out."""
+    ctx = _ctx(tmp_path)
+    dense = "".join(
+        f"v{n} = '{hashlib.sha256(str(n).encode()).hexdigest() * 6}'\n" for n in range(80)
+    )
+    (tmp_path / "wide.py").write_text(dense)
+    ctx = dataclasses.replace(ctx, tree=sorted([*ctx.tree, "wide.py"]))
+    pieces = [
+        Piece("wide.py", 1, 80, why="the values", layer="other"),
+        Piece(SERVICE, 1, 4, why="saves it", layer="svc"),
+    ]
+    _, sources, shown = answer_blocks(ctx, pieces)
+    assert shown[0].path == "wide.py"
+    assert sources[0].path == "wide.py"
+    assert 1 < sources[0].end_line < 80

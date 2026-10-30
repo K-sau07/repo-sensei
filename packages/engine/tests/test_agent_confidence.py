@@ -80,3 +80,10 @@ def test_a_sure_answer_does_not_abstain() -> None:
     sure = confidence(good, None)
     assert sure.score > ABSTAIN
     assert abstention(sure, good, None, [], flow=True) is None
+
+
+def test_a_support_check_that_judged_nothing_is_no_reason_to_abstain() -> None:
+    """The check failed (no verdict for any claim): the answer stands on its other checks."""
+    unjudged = _verified([None, None, None, None])
+    sure = confidence(unjudged, None)
+    assert abstention(sure, unjudged, None, [], flow=False) is None

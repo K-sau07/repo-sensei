@@ -13,7 +13,8 @@ The score (0 to 1) weighs what the verification found (4.5):
 less for each invented name and each citation that pointed at nothing. ``high`` from
 :data:`HIGH`, ``medium`` from :data:`MEDIUM`, else ``low``.
 
-It **abstains** when nothing it cites is supported, when the score is under :data:`ABSTAIN`,
+It **abstains** when nothing it cites is supported (of the claims the check judged), when
+the score is under :data:`ABSTAIN`,
 or when a flow question's trace stops at a gap in the graph: it says what it searched, where
 the trail ended, and what to ask instead. The thresholds are a first guess, to be calibrated
 on the golden set (4.14).
@@ -125,7 +126,9 @@ def abstention(
     if verification is None:
         return None  # nothing was checked: confidence says so, there's no evidence to judge
     reason = None
-    if claimed.claims_cited and claimed.claims_verified == 0 and claimed.claims_partial == 0:
+    judged = sum(c.verdict is not None for c in verification.claims if c.claim.cited)
+    if judged and claimed.claims_verified == 0 and claimed.claims_partial == 0:
+        # Only verdicts count: a support check that failed judged nothing, either way.
         reason = "nothing it cites shows what it says"
     elif not claimed.claims_cited:
         reason = "it cites no code"

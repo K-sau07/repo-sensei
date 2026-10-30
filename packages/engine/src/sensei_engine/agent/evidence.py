@@ -3,7 +3,8 @@
 question (the reranker's agent mode: cross-encoder, then listwise), as citable blocks for the
 answer turn, within :data:`FINAL_TOKENS`.
 
-What the agent submitted is always kept, in its order: it is what the answer means to cite.
+What the agent submitted comes first, in its order: it is what the answer means to cite (each
+piece cut to fit, its first lines kept, rather than left out).
 The rest is the run's reading (round 0's results, every search result a tool gave), each piece
 once: a piece within another of the same file is that one.
 """
@@ -22,6 +23,7 @@ from sensei_engine.agent.tools.base import (
     ToolError,
     code_result,
     file_lines,
+    lines_within,
 )
 from sensei_engine.llm.anthropic_client import LLMUsageSink
 from sensei_engine.search.rerank import Candidate, Reranker, RerankMode, RerankUsageSink
@@ -29,6 +31,7 @@ from sensei_engine.search.rerank import Candidate, Reranker, RerankMode, RerankU
 FINAL_TOKENS = 12_000
 MAX_PIECES = 16
 MAX_PIECE_LINES = 80  # a longer piece shows its first lines
+TITLE_TOKENS = 100  # a block's source and title, kept back when its lines are cut to fit
 INTRO = (
     "The evidence for your answer: first what you committed to, then the best of the rest of "
     "what you read. Answer the question from it, and cite it."
@@ -102,23 +105,34 @@ async def final_set(
 
 def answer_blocks(
     ctx: ToolContext, pieces: Sequence[Piece]
-) -> tuple[list[dict[str, Any]], list[Source]]:
+) -> tuple[list[dict[str, Any]], list[Source], list[Piece]]:
     """The answer turn's evidence: an introduction, then each piece as a citable block (a
-    submitted one titled with why it was), while they fit."""
+    submitted one titled with why it was), cut to fit what is left of :data:`FINAL_TOKENS`
+    (its first lines kept), until no more fits; and the pieces shown."""
     out = Results(FINAL_TOKENS)
     out.text(INTRO)
+    shown: list[Piece] = []
     for piece in pieces:
         lines = _lines(ctx, piece)
         if not lines:
             continue
+        fitting = lines_within(lines, out.left - TITLE_TOKENS)
+        if fitting == 0:
+            out.left_out += len(pieces) - len(shown)
+            break
         title = f"{piece.path}: {piece.why}" if piece.why else piece.path
-        out.code(
-            *code_result(
-                ctx, piece.path, piece.start_line, lines, title=title, symbol_key=piece.symbol_key
-            )
+        block = code_result(
+            ctx,
+            piece.path,
+            piece.start_line,
+            lines[:fitting],
+            title=title,
+            symbol_key=piece.symbol_key,
         )
+        if out.code(*block):
+            shown.append(piece)
     result = out.done("", hits=len(out.sources), narrow="cite what is here")
-    return result.content, result.sources
+    return result.content, result.sources, shown
 
 
 def _lines(ctx: ToolContext, piece: Piece) -> list[str]:

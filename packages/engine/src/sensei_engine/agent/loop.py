@@ -4,7 +4,8 @@
   ``low`` for a lookup (a name, a string), ``medium`` for the rest; **Opus** at ``high`` for a
   question that cuts across the repository (its architecture, a change's impact), in deep mode,
   or when the caller escalates (a verifier that found the answer short, 4.5).
-* **At most** :attr:`Budget.max_turns` **turns**: research, then the answer. In research the
+* **At most** :attr:`Budget.max_turns` **turns**: research, then the answer (and
+  :attr:`Budget.max_gap_turns` more for what verification finds missing). In research the
   model calls tools as it likes (``tool_choice`` auto; it is told to call independent ones
   together), every result of a turn going back in one message, until it commits to its
   evidence (``submit_evidence``; one reminder if it answers without), or its turns or budget
@@ -104,6 +105,7 @@ class Budget:
     and dollars (None: no cap, or no price for the model)."""
 
     max_turns: int = 5
+    max_gap_turns: int = 4  # more, for what verification finds missing (answers included)
     max_input_tokens: int = 600_000
     max_output_tokens: int = 48_000
     max_cost_usd: Decimal | None = Decimal("0.50")
@@ -223,6 +225,7 @@ class Answer:
     verification: Verification | None = None  # None: not verified
     confidence: Confidence | None = None  # None: not verified
     abstained: Abstention | None = None  # why it is too thin to give, when it is
+    searched: tuple[str, ...] = ()  # what the run searched for, in order
 
 
 @dataclass(frozen=True, slots=True)
@@ -313,10 +316,12 @@ class _Run:
     system: tuple[str, str]
     tools: list[dict[str, Any]]
     messages: list[dict[str, Any]]  # the research's conversation
-    index: CitationIndex  # the search results the model has been shown, in order
+    read: CitationIndex  # every search result the research was shown, in order
     spent: _Spent
     stopped: Stop = "answered"
     result: LLMTurnResult | None = None  # the last turn's
+    answered: LLMTurnResult | None = None  # the turn the answer is (an answer turn's, else)
+    index: CitationIndex | None = None  # what the answer's citations count (its evidence)
     turn: int = 0
     evidence_blocks: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
     shown: str = ""  # the answer turn's evidence, as text (what its names may come from)
@@ -420,6 +425,7 @@ class AskAgent:
                 run.verification,
                 sure,
                 thin,
+                tuple(run.searched),
             )
         )
 
@@ -433,26 +439,33 @@ class AskAgent:
     ) -> AsyncIterator[AgentEvent]:
         """The answer read from its turn, then verified (4.5); one that isn't whole searched
         for what it misses and answered again, at most :data:`~.verify.MAX_ROUNDS` times."""
+        gap_left = self.budget.max_gap_turns
         for rounds in range(MAX_ROUNDS + 1):
-            result = run.result
-            if result is None:
+            answered = run.answered
+            if answered is None:
                 raise RuntimeError(NO_RESULT)
-            run.text, run.citations, run.dropped = _answer(result.content, run.index)
-            if not self.verify or result.stop_reason in CUT_SHORT:
+            index = run.index if run.index is not None else run.read
+            run.text, run.citations, run.dropped = _answer(answered.content, index)
+            if not self.verify or answered.stop_reason in CUT_SHORT:
                 return
             run.verification = await self._verify(run, ctx, question, layers, rounds)
             yield Verified(run.verification)
             whole_answer = run.verification.whole
+            allowed = min(GAP_TURNS, gap_left - 1)  # a search turn at least, and its answer's
             if whole_answer is None or whole_answer.complete or rounds == MAX_ROUNDS:
                 return
-            if run.spent.over:
+            if allowed < 1 or run.spent.over:
                 return
             yield GapFound(whole_answer.missing, whole_answer.gap)
             run.messages.append({"role": "user", "content": GAP_NOTE.format(gap=whole_answer.gap)})
-            async for event in self._research(run, ctx, run.turn + GAP_TURNS):
+            before = run.turn
+            async for event in self._research(run, ctx, run.turn + allowed):
                 yield event
             async for event in self._answer(run, ctx, question, conversation):
                 yield event
+            gap_left -= run.turn - before
+            if run.answered is answered:  # no new answer (its research cut short): keep this one
+                return
 
     async def _verify(
         self, run: _Run, ctx: ToolContext, question: str, layers: tuple[str, ...], rounds: int
@@ -490,6 +503,7 @@ class AskAgent:
         """The turns with tools, up to the ``turns``th of the run, until the agent commits to
         its evidence (or answers without, reminded once), or its turns or budget run out."""
         reminded = False
+        run.stopped = "answered"
         while run.turn < turns:
             if run.spent.over:
                 run.stopped = "budget"
@@ -525,9 +539,12 @@ class AskAgent:
         the answer)."""
         last = run.result
         if last is not None and last.stop_reason in CUT_SHORT:
+            if run.answered is None:  # the run's only answer: its research's, as it is
+                run.answered, run.index = last, run.read
             return
-        pieces = gather(ctx.evidence, run.index.sources)
+        pieces = gather(ctx.evidence, run.read.sources)
         if not pieces and last is not None and last.stop_reason != "tool_use":
+            run.answered, run.index = last, run.read  # nothing read to cite: its own words
             return
         final = await final_set(
             ctx,
@@ -537,12 +554,12 @@ class AskAgent:
             on_rerank_usage=self.on_rerank_usage,
             on_llm_usage=self.on_usage,
         )
-        blocks, sources = answer_blocks(ctx, final)
+        blocks, sources, shown = answer_blocks(ctx, final)
         run.index = CitationIndex()
         run.index.add(sources)
         run.evidence_blocks = blocks
         run.shown = "\n".join(_shown_text(block) for block in blocks)
-        yield EvidenceChosen(len(sources), sum(piece.submitted for piece in final[: len(sources)]))
+        yield EvidenceChosen(len(shown), sum(piece.submitted for piece in shown))
         note = STOPPED_NOTES.get(run.stopped)
         asked = question if note is None else f"{question}\n\n{note}"
         messages = [
@@ -552,6 +569,7 @@ class AskAgent:
         run.turn += 1
         async for event in self._step(run, messages, tools=False):
             yield event
+        run.answered = run.result
 
     async def _step(
         self, run: _Run, messages: Sequence[dict[str, Any]], *, tools: bool
@@ -602,7 +620,7 @@ async def _round0(ctx: ToolContext, question: str, run: _Run) -> PreRetrieved | 
     found = await pre_retrieve(ctx, question)
     if found is None:
         return None
-    run.index.add(found.sources)
+    run.read.add(found.sources)
     content = [*found.content, {"type": "text", "text": question}]
     run.messages[-1] = {"role": "user", "content": content}
     run.agreement, run.trail = found.agreement, found.trail
@@ -654,7 +672,7 @@ async def _call_tools(
         yield ToolCalled(call["id"], call["name"], dict(call["input"]))
         started = time.monotonic()
         done = await run_tool(ctx, call["name"], call["input"])
-        run.index.add(done.sources)
+        run.read.add(done.sources)
         if call["name"] != "submit_evidence":
             run.searched.append(_searched(call["name"], call["input"]))
         run.trail = done.trail or run.trail
