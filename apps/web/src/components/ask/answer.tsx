@@ -3,14 +3,16 @@
 /**
  * A message of the thread (4.10). A question is its text. An answer is its text as markdown
  * (Streamdown: rendered as it streams), each citation a chip after the words it backs; above
- * it, while it is written, what the run is doing; after it, what it searched (collapsed).
+ * it, while it is written, what the run is doing; after it, an abstention if the run couldn't
+ * stand behind it (4.11), how sure it is, what it searched (collapsed) and the user's feedback.
  */
 import { cn } from "cn";
 import { ChevronRight, Loader2 } from "lucide-react";
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { Streamdown, type Components } from "streamdown";
 
 import {
+  abstainedOf,
   activity,
   answerText,
   citationsOf,
@@ -21,9 +23,14 @@ import {
   withMarkers,
   type AskMessage,
   type CitationData,
+  type ConfidenceData,
+  type FeedbackKind,
 } from "@/lib/api/ask";
 
+import { AbstainCard } from "./abstain-card";
 import { CitationChip } from "./citation-chip";
+import { ConfidenceBadge } from "./confidence-badge";
+import { FeedbackButtons } from "./feedback";
 
 const MARKER = /^#cite-(\d+)$/;
 
@@ -39,16 +46,27 @@ export function Answer({
   message,
   streaming,
   onOpen,
+  onAsk,
+  feedback,
+  chip,
 }: {
   message: AskMessage;
   streaming: boolean;
-  onOpen: (citation: CitationData) => void;
+  onOpen?: ((citation: CitationData) => void) | undefined;
+  /** Asks a follow-up (an abstention's suggestion); none on a read-only page. */
+  onAsk?: ((question: string) => void) | undefined;
+  /** What the user said of it (undefined: no feedback here, as on a shared page). */
+  feedback?: FeedbackKind | null | undefined;
+  /** Draws a citation (default: its chip with a peek at the code). */
+  chip?: (citation: CitationData) => ReactNode;
 }) {
   const citations = citationsOf(message);
   const byNumber = new Map(citations.map((c) => [c.n, c]));
   const text = answerText(message);
   const status = statusLine(message, streaming);
   const sure = confidenceOf(message);
+  const abstained = abstainedOf(message);
+  const drawn = chip ?? ((c: CitationData) => <CitationChip citation={c} onOpen={onOpen} />);
 
   // A citation's marker (`[n](#cite-n)`) as its chip; any other link as a link.
   const Link: NonNullable<Components["a"]> = ({ href, children }) => {
@@ -56,7 +74,7 @@ export function Answer({
     const n = marked ? Number(marked[1]) : typeof children === "string" ? Number(children) : NaN;
     const citation = Number.isFinite(n) ? byNumber.get(n) : undefined;
     if (citation !== undefined && (marked || href === undefined)) {
-      return <CitationChip citation={citation} onOpen={onOpen} />;
+      return drawn(citation);
     }
     return (
       <a href={href} target="_blank" rel="noreferrer">
@@ -85,8 +103,14 @@ export function Answer({
           </Streamdown>
         </div>
       ) : null}
+      {abstained && !streaming ? <AbstainCard abstain={abstained} onAsk={onAsk} /> : null}
       {!streaming ? (
-        <Footer message={message} level={sure?.level ?? null} cached={fromCache(message)} />
+        <Footer
+          message={message}
+          confidence={sure}
+          cached={fromCache(message)}
+          feedback={text ? feedback : undefined}
+        />
       ) : null}
     </div>
   );
@@ -94,23 +118,21 @@ export function Answer({
 
 function Footer({
   message,
-  level,
+  confidence,
   cached,
+  feedback,
 }: {
   message: AskMessage;
-  level: "high" | "medium" | "low" | null;
+  confidence: ConfidenceData | null;
   cached: boolean;
+  feedback: FeedbackKind | null | undefined;
 }) {
   const [open, setOpen] = useState(false);
   const searches = searchesOf(message);
   const done = activity(message);
   return (
     <div className="flex flex-wrap items-center gap-3 text-xs text-fg-muted">
-      {level ? (
-        <span data-testid="confidence" className={cn(level === "low" && "text-warning")}>
-          Confidence: {level}
-        </span>
-      ) : null}
+      {confidence ? <ConfidenceBadge confidence={confidence} /> : null}
       {cached ? <span>Answered from an earlier answer</span> : null}
       {searches.length || done.length ? (
         <button
@@ -124,6 +146,11 @@ function Footer({
           <ChevronRight aria-hidden className={cn("size-3 transition", open && "rotate-90")} />
           Show searches ({searches.length})
         </button>
+      ) : null}
+      {feedback !== undefined ? (
+        <div className="ml-auto">
+          <FeedbackButtons messageId={message.id} given={feedback} />
+        </div>
       ) : null}
       {open ? (
         <ul className="w-full list-disc pl-5 font-mono" data-testid="searches">

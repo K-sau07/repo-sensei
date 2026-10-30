@@ -88,3 +88,68 @@ export function mockAnswerParts(conversationId: string): Record<string, unknown>
     { type: "finish" },
   ];
 }
+
+export const MOCK_ABSTAIN_TEXT =
+  "I couldn't find where payments are refunded: nothing in this repository handles a refund.";
+
+/** An answer the run couldn't stand behind: it searched, the trail ended, and it says so. */
+export function mockAbstainParts(conversationId: string): Record<string, unknown>[] {
+  return [
+    { type: "data-conversation", id: "conversation", data: { id: conversationId, runId: null } },
+    { type: "start-step" },
+    { type: "tool-input-start", toolCallId: "t1", toolName: "code_search" },
+    {
+      type: "tool-input-available",
+      toolCallId: "t1",
+      toolName: "code_search",
+      input: { query: "refund payment" },
+    },
+    {
+      type: "tool-output-available",
+      toolCallId: "t1",
+      output: { summary: "no results", hits: 0, isError: false, ms: 30 },
+    },
+    { type: "finish-step" },
+    { type: "start-step" },
+    { type: "text-start", id: "text-2" },
+    { type: "text-delta", id: "text-2", delta: MOCK_ABSTAIN_TEXT },
+    { type: "text-end", id: "text-2" },
+    {
+      type: "data-confidence",
+      id: "confidence",
+      data: {
+        level: "low",
+        score: 0.18,
+        breakdown: {
+          claims_total: 0,
+          claims_cited: 0,
+          claims_verified: 0,
+          claims_partial: 0,
+          inferred: 0,
+          unresolved_hops: 1,
+          agreement: null,
+          unknown_identifiers: 0,
+          dropped_citations: 0,
+          whole: false,
+        },
+      },
+    },
+    {
+      type: "data-searchlog",
+      id: "searchlog",
+      data: { queries: ["code_search 'refund payment'"] },
+    },
+    {
+      type: "data-abstain",
+      id: "abstain",
+      data: {
+        reason: "No code it read handles a refund, so there is nothing to cite.",
+        searched: ["code_search 'refund payment'", "grep 'refund'"],
+        trailEnd: { end: "POST /items/", reason: "no call to a payment service" },
+        suggestion: "Where are items deleted?",
+      },
+    },
+    { type: "finish-step" },
+    { type: "finish" },
+  ];
+}

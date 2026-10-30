@@ -6,7 +6,7 @@
  * An existing conversation's messages are read first and shown as the thread so far.
  */
 import { useChat } from "@ai-sdk/react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { useRepoSlug } from "@/components/repo/use-repo";
@@ -63,6 +63,10 @@ export function useAsk(conversationId: string | null, onConversation: (id: strin
     announce.current = onConversation;
   });
   const transport = useMemo(() => askTransport({ org, repo }), [org, repo]);
+  const queryClient = useQueryClient();
+  // The history lists it (a new one), with its title (written as the answer is).
+  const relist = () =>
+    queryClient.invalidateQueries({ queryKey: queryKeys.conversations(org, repo) });
   const chat = useChat<AskMessage>({
     transport,
     onData: (part) => {
@@ -71,6 +75,16 @@ export function useAsk(conversationId: string | null, onConversation: (id: strin
       if (found !== loaded.current) {
         loaded.current = found; // its messages are this chat's: never read back over them
         announce.current(found);
+        void relist();
+      }
+    },
+    onFinish: () => {
+      void relist();
+      // Its title and sharing, for the header (its messages stay the chat's: see `loaded`).
+      if (loaded.current !== null) {
+        void queryClient.invalidateQueries({
+          queryKey: queryKeys.conversation(org, loaded.current),
+        });
       }
     },
   });
@@ -88,5 +102,12 @@ export function useAsk(conversationId: string | null, onConversation: (id: strin
     );
   }, [stored.data, setMessages]);
   const ask = (text: string) => sendMessage({ text }, { body: { conversationId, mode } });
-  return { ...chat, ask, mode, setMode, loading: stored.isPending && conversationId !== null };
+  return {
+    ...chat,
+    ask,
+    mode,
+    setMode,
+    stored: stored.data,
+    loading: stored.isPending && conversationId !== null,
+  };
 }

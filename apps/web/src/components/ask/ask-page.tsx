@@ -3,12 +3,13 @@
 /**
  * `/[org]/[repo]/ask` and `/ask/[conversationId]` (4.10, frontend spec §6.7): questions about
  * the repository, answered with citations. The thread, then the question box; beside them the
- * evidence rail, or the code a citation was opened at. A new conversation's address becomes
- * its own as its first answer starts (without leaving the page: the answer keeps streaming).
+ * evidence rail, or the code a citation was opened at; before them (wide screens) the history.
+ * A new conversation's address becomes its own as its first answer starts (without leaving the
+ * page: the answer keeps streaming).
  */
 import { MessageSquare } from "lucide-react";
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 
 import { CodeViewer } from "@/components/code/code-viewer";
@@ -17,13 +18,22 @@ import { EmptyState } from "@/components/feedback/empty-state";
 import { LockedState } from "@/components/feedback/locked-state";
 import { useRepoFeatures, useRepoSlug } from "@/components/repo/use-repo";
 import { Button } from "@/components/ui/button";
-import { citationsOf, draftKey, type AskMessage, type CitationData } from "@/lib/api/ask";
+import {
+  citationsOf,
+  draftKey,
+  type AskMessage,
+  type CitationData,
+  titleOr,
+  type FeedbackKind,
+} from "@/lib/api/ask";
 import { STAGE_LABELS } from "@/lib/indexing";
 import { repoPath } from "@/lib/routes";
 
 import { Answer, Question } from "./answer";
 import { Composer } from "./composer";
 import { EvidenceRail } from "./evidence-rail";
+import { ConversationHistory } from "./history";
+import { ShareButton } from "./share-dialog";
 import { useAsk, useConversations } from "./use-ask";
 
 export function AskPage() {
@@ -69,6 +79,7 @@ function NotAskable() {
 
 function Ask() {
   const { org, repo } = useRepoSlug();
+  const router = useRouter();
   const params = useParams<{ conversationId?: string }>();
   const [conversationId, setConversationId] = useState<string | null>(
     params.conversationId ?? null,
@@ -81,14 +92,39 @@ function Ask() {
   const streaming = chat.status === "submitted" || chat.status === "streaming";
   const latest = [...chat.messages].reverse().find((m) => m.role === "assistant");
   const announcement = useAnnouncement(latest, streaming);
+  const said = new Map<string, FeedbackKind>(
+    (chat.stored?.messages ?? []).flatMap((m) => (m.feedback ? [[m.id, m.feedback.kind]] : [])),
+  );
   const end = useRef<HTMLDivElement>(null);
   useEffect(() => {
     end.current?.scrollIntoView({ block: "end" });
   }, [chat.messages.length]);
 
   return (
-    <div className="grid h-full min-h-0 grid-cols-1 md:grid-cols-[minmax(0,1fr)_22rem]">
+    <div className="grid h-full min-h-0 grid-cols-1 md:grid-cols-[minmax(0,1fr)_22rem] lg:grid-cols-[15rem_minmax(0,1fr)_22rem]">
+      <div className="hidden min-h-0 lg:block">
+        <ConversationHistory
+          current={conversationId}
+          onDeleted={(id) => {
+            if (id === conversationId) router.push(repoPath(org, repo, "ask"));
+          }}
+        />
+      </div>
       <section aria-label="Conversation" className="flex min-h-0 flex-col">
+        {conversationId !== null && chat.messages.length > 0 ? (
+          <header className="flex items-center gap-2 border-b border-border px-6 py-2">
+            <h1 className="min-w-0 flex-1 truncate text-sm font-medium">
+              {titleOr(chat.stored?.title, "New conversation")}
+            </h1>
+            {!streaming ? (
+              <ShareButton
+                key={conversationId}
+                conversationId={conversationId}
+                shared={chat.stored?.shared ?? false}
+              />
+            ) : null}
+          </header>
+        ) : null}
         <div className="flex-1 overflow-auto">
           <div className="mx-auto flex max-w-3xl flex-col gap-6 p-6">
             {chat.messages.length === 0 && !chat.loading ? <Start /> : null}
@@ -101,6 +137,8 @@ function Ask() {
                   message={message}
                   streaming={streaming && i === chat.messages.length - 1}
                   onOpen={setOpened}
+                  onAsk={streaming ? undefined : (text) => void chat.ask(text)}
+                  feedback={said.get(message.id) ?? null}
                 />
               ),
             )}
@@ -168,7 +206,7 @@ function Start() {
         description="How a feature works end to end, where something is configured, what calls a function. Every answer cites the code it comes from."
       />
       {recent.data?.length ? (
-        <nav aria-label="Recent conversations" className="flex flex-col gap-1">
+        <nav aria-label="Recent conversations" className="flex flex-col gap-1 lg:hidden">
           <p className="text-xs font-medium text-fg-muted">Recent</p>
           {recent.data.map((c) => (
             <Link
@@ -212,7 +250,7 @@ function CitedCode({ citation, onClose }: { citation: CitationData; onClose: () 
             wrap={false}
           />
         ) : (
-          <p className="text-fg-subtle p-3 text-xs">
+          <p className="p-3 text-xs text-fg-faint">
             {file.isPending ? "Loading…" : "This file can’t be shown here."}
           </p>
         )}

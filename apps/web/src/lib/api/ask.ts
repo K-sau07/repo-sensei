@@ -23,6 +23,9 @@ export interface CitationData {
   span: [number, number];
   provenance: string;
   verified: boolean;
+  /** On a shared page, for a viewer who can't read the repository: only `n` and `span` are
+   * kept (the rest is absent). */
+  redacted?: boolean;
 }
 
 export interface ConfidenceData {
@@ -150,6 +153,11 @@ export function fromCache(message: AskMessage): boolean {
   return message.parts.some((part) => part.type === "data-cache");
 }
 
+/** A conversation's title, or `fallback` while it has none (not yet titled, or not loaded). */
+export function titleOr(title: string | undefined, fallback: string): string {
+  return title === undefined || title === "" ? fallback : title;
+}
+
 /** The answer's text: its text parts, in order. */
 export function answerText(message: AskMessage): string {
   return message.parts.map((part) => (part.type === "text" ? part.text : "")).join("");
@@ -227,6 +235,45 @@ export function sourcesByFile(message: AskMessage): { path: string; citations: C
   }
   return [...files].map(([path, citations]) => ({ path, citations }));
 }
+
+// ------------------------------------------------------------------ confidence, feedback
+
+const s = (n: number) => (n === 1 ? "" : "s");
+
+/** How sure the answer is, line by line: "2/2 claims verified against the code". */
+export function confidenceLines(breakdown: ConfidenceData["breakdown"]): string[] {
+  const b = breakdown;
+  const lines: string[] = [];
+  if (b.claims_total) {
+    lines.push(`${b.claims_verified}/${b.claims_total} claims verified against the code`);
+    if (b.claims_partial) lines.push(`${b.claims_partial} partly supported`);
+    const uncited = b.claims_total - b.claims_cited;
+    if (uncited > 0) lines.push(`${uncited} without a citation`);
+  } else {
+    lines.push("No claims to check");
+  }
+  if (b.inferred) lines.push(`${b.inferred} inferred from naming, not followed in the code`);
+  if (b.unresolved_hops) lines.push(`${b.unresolved_hops} step${s(b.unresolved_hops)} not traced`);
+  if (b.unknown_identifiers) {
+    lines.push(`${b.unknown_identifiers} name${s(b.unknown_identifiers)} not found in the code`);
+  }
+  if (b.dropped_citations) {
+    lines.push(`${b.dropped_citations} citation${s(b.dropped_citations)} dropped as unsupported`);
+  }
+  if (b.agreement !== null) lines.push(`Two searches agreed on ${Math.round(b.agreement * 100)}%`);
+  if (b.whole === false) lines.push("Parts of the question may be unanswered");
+  return lines;
+}
+
+export const FEEDBACK_KINDS = [
+  { kind: "wrong_file", label: "Wrong file" },
+  { kind: "outdated", label: "Outdated" },
+  { kind: "missing_context", label: "Missing context" },
+  { kind: "invented_symbol", label: "Invented symbol" },
+  { kind: "other", label: "Other" },
+] as const;
+
+export type FeedbackKind = "helpful" | (typeof FEEDBACK_KINDS)[number]["kind"];
 
 // ------------------------------------------------------------------ drafts
 

@@ -20,7 +20,7 @@ export function CitationChip({
   onOpen,
 }: {
   citation: CitationData;
-  onOpen: (citation: CitationData) => void;
+  onOpen?: ((citation: CitationData) => void) | undefined;
 }) {
   return (
     <Popover>
@@ -32,14 +32,18 @@ export function CitationChip({
           citation.verified && "border-accent/40",
         )}
       >
-        <span className="text-fg-subtle">{citation.n}</span>
+        <span className="text-fg-faint">{citation.n}</span>
         <span className="sr-only"> </span>
         {chipLabel(citation.path, citation.lines)}
         <span className="sr-only">
           , {citation.path}, lines {citation.lines[0]} to {citation.lines[1]}
         </span>
       </PopoverTrigger>
-      <PopoverContent className="w-[34rem] max-w-[90vw] p-0" data-testid="citation-peek">
+      <PopoverContent
+        aria-label={`Lines ${citation.lines[0]} to ${citation.lines[1]} of ${citation.path}`}
+        className="w-[34rem] max-w-[90vw] p-0"
+        data-testid="citation-peek"
+      >
         <CitationPeek citation={citation} onOpen={onOpen} />
       </PopoverContent>
     </Popover>
@@ -51,7 +55,7 @@ function CitationPeek({
   onOpen,
 }: {
   citation: CitationData;
-  onOpen: (citation: CitationData) => void;
+  onOpen?: ((citation: CitationData) => void) | undefined;
 }) {
   const file = useFile(citation.path);
   const [start, end] = citation.lines;
@@ -62,7 +66,7 @@ function CitationPeek({
       <div className="flex items-center gap-2 border-b border-border px-3 py-2 text-xs">
         <FileCode2 aria-hidden className="size-3.5 text-fg-muted" />
         <span className="truncate font-mono">{citation.path}</span>
-        <span className="text-fg-subtle">
+        <span className="text-fg-faint">
           {start}–{end}
         </span>
         {citation.verified ? (
@@ -70,36 +74,36 @@ function CitationPeek({
             <BadgeCheck aria-hidden className="size-3.5" /> verified
           </span>
         ) : (
-          <span className="text-fg-subtle ml-auto">not verified</span>
+          <span className="ml-auto text-fg-faint">not verified</span>
         )}
       </div>
       <pre className="max-h-72 overflow-auto px-3 py-2 font-mono text-[12px] leading-5">
         {file.isPending ? (
-          <span className="text-fg-subtle">Loading…</span>
+          <span className="text-fg-faint">Loading…</span>
         ) : lines.length ? (
           lines.map((line, i) => (
             <div key={start + i} className="flex gap-3">
-              <span className="text-fg-subtle w-8 shrink-0 text-right select-none">
-                {start + i}
-              </span>
+              <span className="w-8 shrink-0 text-right text-fg-faint select-none">{start + i}</span>
               <span className="whitespace-pre">{line}</span>
             </div>
           ))
         ) : (
-          <span className="text-fg-subtle">These lines can&apos;t be shown here.</span>
+          <span className="text-fg-faint">These lines can&apos;t be shown here.</span>
         )}
       </pre>
-      <div className="flex justify-end border-t border-border px-3 py-2">
-        <Button
-          size="sm"
-          variant="ghost"
-          onClick={() => {
-            onOpen(citation);
-          }}
-        >
-          Open beside the answer
-        </Button>
-      </div>
+      {onOpen ? (
+        <div className="flex justify-end border-t border-border px-3 py-2">
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => {
+              onOpen(citation);
+            }}
+          >
+            Open beside the answer
+          </Button>
+        </div>
+      ) : null}
     </div>
   );
 }

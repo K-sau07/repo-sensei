@@ -71,10 +71,11 @@ export const Empty: Story = {
     await expect(within(actions).getByRole("option", { name: /Reindex api/ })).toBeVisible();
     const ask = await group("Ask");
     await expect(within(ask).getByRole("option", { name: /Ask a question/ })).toBeVisible();
-    // The first result is selected, and the input points at it.
+    // The first result (the Ask tab: it opens once code chunks are made) is selected, and the
+    // input points at it.
     await waitFor(async () => {
       const first = await selectedOption();
-      await expect(first).toHaveTextContent("Search");
+      await expect(first).toHaveTextContent(/^Ask/);
       await expect(await input()).toHaveAttribute("aria-activedescendant", first.id);
     });
   },

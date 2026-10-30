@@ -62,7 +62,7 @@ export function EvidenceRail({
               ))}
             </ul>
           ) : (
-            <p className="text-fg-subtle text-xs">The answer&apos;s sources show here.</p>
+            <p className="text-xs text-fg-faint">The answer&apos;s sources show here.</p>
           )}
         </TabsContent>
         <TabsContent value="searches" className="flex-1 overflow-auto px-3 py-2">
@@ -73,7 +73,7 @@ export function EvidenceRail({
               ))}
             </ol>
           ) : (
-            <p className="text-fg-subtle text-xs">What the answer searched shows here.</p>
+            <p className="text-xs text-fg-faint">What the answer searched shows here.</p>
           )}
         </TabsContent>
       </Tabs>

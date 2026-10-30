@@ -5,9 +5,11 @@ import {
   askTransport,
   chipLabel,
   citationsOf,
+  confidenceLines,
   lastQuestion,
   sourcesByFile,
   statusLine,
+  titleOr,
   withMarkers,
   type AskMessage,
   type CitationData,
@@ -85,6 +87,59 @@ describe("an answer as the page reads it", () => {
       ["backend/app/api/routes/items.py", [1]],
       ["backend/app/services/items.py", [2, 3]],
     ]);
+  });
+});
+
+describe("how sure an answer is", () => {
+  const breakdown = {
+    claims_total: 5,
+    claims_cited: 4,
+    claims_verified: 4,
+    claims_partial: 0,
+    inferred: 1,
+    unresolved_hops: 0,
+    agreement: null,
+    unknown_identifiers: 2,
+    dropped_citations: 1,
+    whole: true,
+  };
+
+  it("says what was checked, and only what went wrong besides", () => {
+    expect(confidenceLines(breakdown)).toEqual([
+      "4/5 claims verified against the code",
+      "1 without a citation",
+      "1 inferred from naming, not followed in the code",
+      "2 names not found in the code",
+      "1 citation dropped as unsupported",
+    ]);
+  });
+
+  it("says when there was nothing to check, and a part left unanswered", () => {
+    expect(
+      confidenceLines({
+        ...breakdown,
+        claims_total: 0,
+        claims_cited: 0,
+        claims_verified: 0,
+        inferred: 0,
+        unknown_identifiers: 0,
+        dropped_citations: 0,
+        unresolved_hops: 1,
+        agreement: 0.5,
+        whole: false,
+      }),
+    ).toEqual([
+      "No claims to check",
+      "1 step not traced",
+      "Two searches agreed on 50%",
+      "Parts of the question may be unanswered",
+    ]);
+  });
+
+  it("titles an untitled conversation", () => {
+    expect(titleOr("", "Untitled")).toBe("Untitled");
+    expect(titleOr(undefined, "New conversation")).toBe("New conversation");
+    expect(titleOr("Saving items", "Untitled")).toBe("Saving items");
   });
 });
 
