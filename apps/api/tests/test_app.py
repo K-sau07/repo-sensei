@@ -200,4 +200,5 @@ async def test_indexing_stages_are_published(client: httpx.AsyncClient) -> None:
     assert stages[-1] == "finalize"
     assert sum(entry["weight"] for entry in body["stages"]) == 100
     unlocks = {entry["stage"]: entry["unlocks"] for entry in body["stages"]}
-    assert unlocks["embeddings"] == ["semantic_search", "ask"]
+    assert unlocks["embeddings"] == ["semantic_search"]
+    assert unlocks["chunks"] == ["keyword_search", "ask"]

@@ -70,14 +70,16 @@ def test_a_full_run_from_queued_to_succeeded(clock: Clock) -> None:
     assert machine.job.finished_at == clock.now
     assert progress == sorted(progress)  # never goes backwards
     assert all(machine.job.stages[s.value]["status"] == "done" for s in STAGES)
-    assert machine.features() == list(Feature)
+    # Every feature, in the order its stage unlocks it.
+    assert machine.features() == unlocked(list(Stage))
+    assert sorted(machine.features()) == sorted(Feature)
 
     kinds = [event.type for event in machine.events]
     assert kinds[0] == "job.started"
     assert kinds[-1] == "job.succeeded"
     assert kinds.count("stage.started") == kinds.count("stage.finished") == len(STAGES)
     finished = {e.stage: e.data["unlocks"] for e in machine.events if e.type == "stage.finished"}
-    assert finished[Stage.EMBEDDINGS] == ["semantic_search", "ask"]
+    assert finished[Stage.EMBEDDINGS] == ["semantic_search"]
 
 
 def test_progress_follows_stage_weights(clock: Clock) -> None:
@@ -259,8 +261,8 @@ def test_every_feature_is_unlocked_by_exactly_one_stage() -> None:
 def test_the_unlock_map_matches_the_plan() -> None:
     assert unlocked([Stage.DISCOVER]) == [Feature.CODE_BROWSER]
     assert unlocked([Stage.SYMBOLS]) == [Feature.GOTO_DEFINITION]
-    assert unlocked([Stage.CHUNKS]) == [Feature.KEYWORD_SEARCH]
-    assert unlocked([Stage.EMBEDDINGS]) == [Feature.SEMANTIC_SEARCH, Feature.ASK]
+    assert unlocked([Stage.CHUNKS]) == [Feature.KEYWORD_SEARCH, Feature.ASK]
+    assert unlocked([Stage.EMBEDDINGS]) == [Feature.SEMANTIC_SEARCH]
     assert unlocked([Stage.SUMMARIES]) == [Feature.WIKI]
     assert unlocked([Stage.GRAPH]) == [Feature.GRAPH_VIEW, Feature.CALLERS]
     assert unlocked([Stage.LINKS]) == [

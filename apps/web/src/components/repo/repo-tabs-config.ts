@@ -51,7 +51,6 @@ export const PRIMARY_TABS: RepoTab[] = [
     section: "ask",
     icon: MessageSquareText,
     feature: "ask",
-    phase: 4,
     shortcut: "repo-ask",
   },
   {

@@ -1,14 +1,14 @@
 import type { Metadata } from "next";
 import { Suspense } from "react";
 
-import { TabPlaceholder } from "@/components/repo/tab-placeholder";
+import { AskPage } from "@/components/ask/ask-page";
 
 export const metadata: Metadata = { title: "Ask" };
 
-export default function AskPage() {
+export default function RepoAskPage() {
   return (
     <Suspense>
-      <TabPlaceholder tab="ask" />
+      <AskPage />
     </Suspense>
   );
 }

@@ -30,8 +30,10 @@ class Feature(enum.StrEnum):
 UNLOCKS: dict[Stage, tuple[Feature, ...]] = {
     Stage.DISCOVER: (Feature.CODE_BROWSER,),
     Stage.SYMBOLS: (Feature.GOTO_DEFINITION,),
-    Stage.CHUNKS: (Feature.KEYWORD_SEARCH,),
-    Stage.EMBEDDINGS: (Feature.SEMANTIC_SEARCH, Feature.ASK),
+    # Ask needs the symbols and chunks its tools read (keyword search, symbol lookup); the
+    # embeddings, graph and links make its answers better as they come, not possible.
+    Stage.CHUNKS: (Feature.KEYWORD_SEARCH, Feature.ASK),
+    Stage.EMBEDDINGS: (Feature.SEMANTIC_SEARCH,),
     Stage.SUMMARIES: (Feature.WIKI,),
     Stage.GRAPH: (Feature.GRAPH_VIEW, Feature.CALLERS),
     Stage.LINKS: (Feature.TRACE, Feature.DIAGRAMS, Feature.FIXES, Feature.CHANGES),

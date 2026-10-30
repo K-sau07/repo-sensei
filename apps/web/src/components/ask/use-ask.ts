@@ -1,0 +1,92 @@
+"use client";
+
+/**
+ * The Ask page's chat: `useChat` over the Ask endpoint (lib/api/ask.ts), in the conversation
+ * the page is on (none: a new one, which the stream names as it starts), in the mode picked.
+ * An existing conversation's messages are read first and shown as the thread so far.
+ */
+import { useChat } from "@ai-sdk/react";
+import { useQuery } from "@tanstack/react-query";
+import { useEffect, useMemo, useRef, useState } from "react";
+
+import { useRepoSlug } from "@/components/repo/use-repo";
+import { askTransport, type AskMessage, type AskMode } from "@/lib/api/ask";
+import { api } from "@/lib/api/client";
+import { queryKeys } from "@/lib/query/keys";
+
+export interface StoredMessage {
+  id: string;
+  role: "user" | "assistant";
+  parts: AskMessage["parts"];
+  status: "streaming" | "done" | "failed";
+}
+
+export function useConversation(conversationId: string | null) {
+  const { org } = useRepoSlug();
+  return useQuery({
+    queryKey: queryKeys.conversation(org, conversationId ?? ""),
+    queryFn: async ({ signal }) => {
+      const { data } = await api.GET("/api/v1/orgs/{org}/conversations/{conversation_id}", {
+        params: { path: { org, conversation_id: conversationId ?? "" } },
+        signal,
+      });
+      if (!data) throw new Error("no conversation");
+      return data;
+    },
+    enabled: conversationId !== null,
+    staleTime: Infinity, // the thread is the chat's from here on
+  });
+}
+
+export function useConversations() {
+  const { org, repo } = useRepoSlug();
+  return useQuery({
+    queryKey: queryKeys.conversations(org, repo),
+    queryFn: async ({ signal }) => {
+      const { data } = await api.GET("/api/v1/orgs/{org}/repos/{repo}/conversations", {
+        params: { path: { org, repo }, query: { limit: 10 } },
+        signal,
+      });
+      if (!data) throw new Error("no conversations");
+      return data.conversations;
+    },
+  });
+}
+
+export function useAsk(conversationId: string | null, onConversation: (id: string) => void) {
+  const { org, repo } = useRepoSlug();
+  const [mode, setMode] = useState<AskMode>("fast");
+  const announce = useRef(onConversation);
+  // The conversation whose stored messages the thread shows (a new one's are the chat's own).
+  const loaded = useRef<string | null>(null);
+  useEffect(() => {
+    announce.current = onConversation;
+  });
+  const transport = useMemo(() => askTransport({ org, repo }), [org, repo]);
+  const chat = useChat<AskMessage>({
+    transport,
+    onData: (part) => {
+      if (part.type !== "data-conversation") return;
+      const found = part.data.id;
+      if (found !== loaded.current) {
+        loaded.current = found; // its messages are this chat's: never read back over them
+        announce.current(found);
+      }
+    },
+  });
+  const stored = useConversation(conversationId);
+  const { setMessages, sendMessage } = chat;
+  useEffect(() => {
+    if (!stored.data || loaded.current === stored.data.id) return;
+    loaded.current = stored.data.id;
+    setMessages(
+      stored.data.messages.map((m) => ({
+        id: m.id,
+        role: m.role,
+        parts: m.parts as AskMessage["parts"],
+      })),
+    );
+  }, [stored.data, setMessages]);
+  const ask = (text: string) => sendMessage({ text }, { body: { conversationId, mode } });
+  return { ...chat, ask, mode, setMode, loading: stored.isPending && conversationId !== null };
+}

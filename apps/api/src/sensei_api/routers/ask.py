@@ -476,7 +476,9 @@ class _Run:
     async def _run(self) -> None:
         key = f"{STREAM_PREFIX}{self.message_id}"
         stream = UIStream(str(self.message_id), self.repo_name)
-        await self._publish(key, stream.start())
+        await self._publish(
+            key, [*stream.start(), _conversation(self.conversation_id, self.run_id)]
+        )
         answer: Answer | None = None
         try:
             async with self.sessions() as db:
@@ -728,6 +730,7 @@ async def _served(
         "x-answer-cache": "hit",
     }
     parts = replayed(str(answer.id), answer.parts)
+    parts.insert(1, _conversation(conversation.id, None))
     return EventSourceResponse(_static(parts), ping=HEARTBEAT_SECONDS, headers=headers)
 
 
@@ -768,6 +771,12 @@ async def _follow(
                     return
         if await request.is_disconnected():
             return
+
+
+def _conversation(conversation_id: uuid.UUID, run_id: uuid.UUID | None) -> dict[str, Any]:
+    """Which conversation the answer is in, and its run: what the client follows up in."""
+    data = {"id": str(conversation_id), "runId": str(run_id) if run_id else None}
+    return {"type": "data-conversation", "id": "conversation", "data": data}
 
 
 async def _owned(db: AsyncSession, conversation_id: uuid.UUID, user_id: uuid.UUID) -> Conversation:

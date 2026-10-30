@@ -1323,7 +1323,7 @@ def test_chunks_are_embedded_and_semantic_search_unlocked(
 
     events = runtime.run(_events(runtime, job_stream(job_id)))
     unlocks = {(e["stage"], tuple(e["unlocks"])) for e in events if e["type"] == "unlock"}
-    assert ("embeddings", ("semantic_search", "ask")) in unlocks
+    assert ("embeddings", ("semantic_search",)) in unlocks
     logs = [e["message"] for e in events if e["type"] == "log"]
     assert f"Embedded {chunks:,} chunks (0 texts from the cache). Semantic search is ready." in logs
 

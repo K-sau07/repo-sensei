@@ -77,6 +77,10 @@ export const queryKeys = {
     symbol: string,
     query: object,
   ) => ["code", "neighbors", slug, repo, ref ?? version, symbol, query] as const,
+  /** A repository's Ask conversations (the signed-in user's). */
+  conversations: (slug: string, repo: string) => ["conversations", slug, repo] as const,
+  /** One conversation, with its messages. */
+  conversation: (slug: string, id: string) => ["conversation", slug, id] as const,
   /** A trace from an entry (a node's key, a route, a file or a name), at the snapshot as above. */
   trace: (slug: string, repo: string, ref: string | null, version: string | null, entry: string) =>
     ["trace", slug, repo, ref ?? version, entry] as const,

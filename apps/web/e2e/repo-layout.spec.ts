@@ -12,15 +12,13 @@ test.describe("repository layout", () => {
       "aria-current",
       "page",
     );
-    // Code is unlocked by the last index; Ask waits for a later phase.
+    // Code and Ask are unlocked by the last index (Ask once its chunks are there).
     await expect(tabs.getByRole("link", { name: "Code" })).not.toContainText("locked");
     const ask = tabs.getByRole("link", { name: /Ask/ });
-    await expect(ask).toContainText("locked: Arrives in phase 4");
-    await ask.hover();
-    await expect(page.locator("[data-slot=tooltip-content]")).toContainText("Arrives in phase 4");
+    await expect(ask).not.toContainText("locked");
     await ask.click();
     await expect(page).toHaveURL(/\/acme\/api\/ask$/);
-    await expect(page.getByText("Ask is on its way")).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Ask about this repository" })).toBeVisible();
 
     const { violations } = await new AxeBuilder({ page }).analyze();
     expect(violations.map((v) => v.id)).toEqual([]);

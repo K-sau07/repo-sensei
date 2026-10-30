@@ -198,6 +198,14 @@ async def test_a_question_streams_its_answer_and_is_stored(
     parts = [json.loads(data) for _, data in events[:-1]]
     assert events[-1] == (None, "[DONE]")
     assert parts[0]["type"] == "start"
+    assert parts[1] == {
+        "type": "data-conversation",
+        "id": "conversation",
+        "data": {
+            "id": response.headers["x-conversation-id"],
+            "runId": response.headers["x-agent-run-id"],
+        },
+    }
     types = [p["type"] for p in parts]
     assert types[-1] == "finish"
     assert "data-confidence" in types

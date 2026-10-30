@@ -41,11 +41,11 @@ interface Recorded {
  * The recording also predates the search pipeline (its parse to links stages were skipped). The
  * mock API serves symbols and keyword search over the recorded commit, so those two stages are
  * played as done, in no time, right after the Merkle stage (where the pipeline runs them), with
- * what they unlock. Embeddings stay skipped: they would unlock Ask, which isn't built.
+ * what they unlock (keyword search and Ask). Embeddings stay skipped: semantic search isn't served.
  */
 const SEARCH_STAGES: { stage: Stage; unlocks: IndexJob["features"] }[] = [
   { stage: "symbols", unlocks: ["goto_definition"] },
-  { stage: "chunks", unlocks: ["keyword_search"] },
+  { stage: "chunks", unlocks: ["keyword_search", "ask"] },
 ];
 
 /**
