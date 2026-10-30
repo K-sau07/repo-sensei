@@ -723,6 +723,9 @@ def test_a_requests_plural_resource_is_its_word() -> None:
     assert _shares(words, _request("GET", "/api/projects/{}", 3)) == 2
     assert _shares(words, _endpoint("GET", "/api/categories/{id}")) == 0
     assert _shares({"category"}, _endpoint("GET", "/api/categories/{id}")) == 2
+    for word, resource in [("course", "courses"), ("cache", "caches"), ("box", "boxes")]:
+        assert _shares({word}, _endpoint("GET", f"/api/{resource}/{{id}}")) == 2, word
+    assert _shares({"address"}, _endpoint("GET", "/api/addresses/{id}")) == 2
     assert _shares(words, _node("ts t.ts/useGetProjects().", NodeKind.HOOK)) == 1
 
 

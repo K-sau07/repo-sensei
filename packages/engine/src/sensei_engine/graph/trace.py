@@ -565,15 +565,17 @@ def _alike(word: str, other: str) -> bool:
     return min(len(word), len(other)) >= 4 and (word.startswith(other) or other.startswith(word))
 
 
-def _singular(word: str) -> str:
-    """``word`` without its plural ending (items, item; categories, category; boxes, box)."""
-    if len(word) > 4 and word.endswith("ies"):
-        return word[:-3] + "y"
-    if len(word) > 4 and word.endswith(("ses", "xes", "zes", "ches", "shes")):
-        return word[:-2]
-    if len(word) > 3 and word.endswith("s") and not word.endswith("ss"):
-        return word[:-1]
-    return word
+def _forms(word: str) -> set[str]:
+    """``word`` and what it may be the plural of: courses → course, boxes → box, categories →
+    category (each ending's stem; the wrong ones match nothing a name holds)."""
+    forms = {word}
+    if word.endswith("s") and not word.endswith("ss"):
+        forms.add(word[:-1])
+        if word.endswith("es"):
+            forms.add(word[:-2])
+        if word.endswith("ies"):
+            forms.add(word[:-3] + "y")
+    return {form for form in forms if len(form) >= 3}
 
 
 def _shares(words: Set[str], node: Node) -> int:
@@ -584,7 +586,9 @@ def _shares(words: Set[str], node: Node) -> int:
     named = _words(node.name)
     if named & words:
         return 2
-    if node.kind in REQUEST_KINDS and {_singular(w) for w in named} & {_singular(w) for w in words}:
+    if node.kind in REQUEST_KINDS and {f for w in named for f in _forms(w)} & {
+        f for w in words for f in _forms(w)
+    }:
         return 2
     return int(any(_alike(word, other) for word in named for other in words))
 
