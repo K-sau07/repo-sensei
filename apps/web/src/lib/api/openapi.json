@@ -1128,6 +1128,101 @@
         "title": "Feature",
         "type": "string"
       },
+      "FeatureMapList": {
+        "properties": {
+          "maps": {
+            "items": {
+              "$ref": "#/components/schemas/FeatureMapOut"
+            },
+            "title": "Maps",
+            "type": "array"
+          },
+          "sha": {
+            "title": "Sha",
+            "type": "string"
+          }
+        },
+        "required": [
+          "sha",
+          "maps"
+        ],
+        "title": "FeatureMapList",
+        "type": "object"
+      },
+      "FeatureMapOut": {
+        "properties": {
+          "citations": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Citations",
+            "type": "array"
+          },
+          "data_flow": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Data Flow",
+            "type": "array"
+          },
+          "entry_points": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Entry Points",
+            "type": "array"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "key_symbols": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Key Symbols",
+            "type": "array"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "stale": {
+            "title": "Stale",
+            "type": "boolean"
+          },
+          "summary": {
+            "title": "Summary",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "key",
+          "path",
+          "title",
+          "summary",
+          "entry_points",
+          "key_symbols",
+          "data_flow",
+          "citations",
+          "stale"
+        ],
+        "title": "FeatureMapOut",
+        "type": "object"
+      },
       "FileOut": {
         "description": "A file. Like a listing, it depends only on the content; the commit is in\n``X-Commit-Sha``.",
         "properties": {
@@ -7221,6 +7316,82 @@
         "summary": "Conversations",
         "tags": [
           "ask"
+        ]
+      }
+    },
+    "/api/v1/orgs/{org}/repos/{repo}/feature-maps": {
+      "get": {
+        "description": "The modules' maps at the commit (the last index by default), by path.",
+        "operationId": "feature_maps_api_v1_orgs__org__repos__repo__feature_maps_get",
+        "parameters": [
+          {
+            "description": "Repository slug",
+            "in": "path",
+            "name": "repo",
+            "required": true,
+            "schema": {
+              "description": "Repository slug",
+              "maxLength": 201,
+              "title": "Repo",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Organization slug",
+            "in": "path",
+            "name": "org",
+            "required": true,
+            "schema": {
+              "description": "Organization slug",
+              "title": "Org",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Branch or commit (or its first 7+ characters).",
+            "in": "query",
+            "name": "ref",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 255,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Branch or commit (or its first 7+ characters).",
+              "title": "Ref"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FeatureMapList"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Feature Maps",
+        "tags": [
+          "feature-maps"
         ]
       }
     },

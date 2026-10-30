@@ -60,7 +60,7 @@ from sensei_core.models import (
     Stage,
 )
 from sensei_core.storage import Bucket, artifact_key
-from sensei_engine.llm import batches, rollups
+from sensei_engine.llm import batches, feature_maps, rollups
 from sensei_engine.llm.anthropic_client import LLMError, LLMUsage, Role, tier_for
 from sensei_engine.llm.glossary import build_glossary, save_glossary
 from sensei_engine.llm.ledger import usage_ledger
@@ -112,6 +112,9 @@ RETRIED = "retried"
 # details["rollups"]: the directory calls began; their artifact was written.
 ROLLUPS_STARTED = "started"
 ROLLUPS_WRITTEN = "written"
+# details["feature_maps"]: the modules' calls began; their maps were written (4.9).
+MAPS_STARTED = "started"
+MAPS_WRITTEN = "written"
 
 
 @dataclass(frozen=True, slots=True)
@@ -563,8 +566,10 @@ async def _rollups(task: IngestTask, target: Target, summaries: Mapping[str, Fil
         written = written or 0
     else:
         written = await _summarize_directories(task, target, summaries)
+    maps = await _feature_maps(task, target, summaries)
     async with _stage(task, target) as scope:
         machine = scope.machine
+        machine.note(STAGE, maps=maps)
         details = (scope.require(STAGE).stages or {}).get(STAGE.value, {}).get("details", {})
         machine.note(STAGE, directories=written)
         skipped = int(details.get("skipped", 0))
@@ -647,6 +652,93 @@ async def _summarize_directories(
     async with _stage(task, target) as scope:
         scope.machine.note(STAGE, rollups=ROLLUPS_WRITTEN, directories=len(found))
     return len(found)
+
+
+# ---------------------------------------------------------------- feature maps (4.9)
+
+
+async def _feature_maps(
+    task: IngestTask, target: Target, summaries: Mapping[str, FileSummary]
+) -> int:
+    """A map of each module (within the cap, once), stored for the snapshot: how many."""
+    async with _stage(task, target) as scope:
+        details = (scope.require(STAGE).stages or {}).get(STAGE.value, {}).get("details", {})
+        state = details.get("feature_maps")
+    if state == MAPS_WRITTEN:
+        return int(details.get("maps", 0))
+    if state == MAPS_STARTED:  # this job stopped part way: what it stored stays, unpaid again
+        written = await _maps_stored(task, target)
+        async with _stage(task, target) as scope:
+            scope.machine.note(STAGE, feature_maps=MAPS_WRITTEN, maps=written)
+        return written
+    modules = feature_maps.modules(list(summaries))
+    if not modules or not await _maps_within_cap(task, target, modules, summaries):
+        return 0
+    runtime = get_runtime()
+
+    async def bill(usage: LLMUsage) -> None:
+        async with task.org_session(target.org_id) as db:
+            sink = usage_ledger(
+                db, runtime.costs, org_id=target.org_id, ref_type=REF_TYPE,
+                ref_id=str(target.job_id),
+            )  # fmt: skip
+            await sink(usage)
+
+    async with _stage(task, target) as scope:
+        scope.machine.note(STAGE, feature_maps=MAPS_STARTED)
+    found = await feature_maps.generate(
+        runtime.anthropic, summaries, await _directory_summaries(target), on_usage=bill
+    )
+    async with task.org_session(target.org_id) as db:
+        written = await feature_maps.store(
+            db, org_id=target.org_id, repo_id=target.repo_id, snapshot_id=target.snapshot_id,
+            drafts=found,
+        )  # fmt: skip
+    async with _stage(task, target) as scope:
+        scope.machine.note(STAGE, feature_maps=MAPS_WRITTEN, maps=written)
+    return written
+
+
+async def _maps_within_cap(
+    task: IngestTask,
+    target: Target,
+    modules: list[tuple[str, list[str]]],
+    summaries: Mapping[str, FileSummary],
+) -> bool:
+    runtime = get_runtime()
+    model = runtime.anthropic.model_for(tier_for(Role.SUMMARY))
+    cost = feature_maps.estimate_cost(modules, summaries, runtime.costs, model)
+    estimate = CostEstimate(len(modules), 0, 0, cost, 0)
+    try:
+        async with task.org_session(target.org_id) as db:
+            await check_budget(
+                db, target.org_id, estimate, runtime.settings.pricing.org_monthly_cap_usd
+            )
+    except CostCapExceeded:
+        async with _stage(task, target) as scope:
+            scope.machine.note(STAGE, feature_maps="cost_cap")
+            scope.machine.log(
+                f"Feature maps skipped: they would cost {_about(cost)}, over the organization's"
+                " monthly budget.",
+                level="warn",
+            )
+        return False
+    return True
+
+
+async def _maps_stored(task: IngestTask, target: Target) -> int:
+    async with task.org_session(target.org_id) as db:
+        return await feature_maps.count(db, target.snapshot_id)
+
+
+async def _directory_summaries(target: Target) -> dict[str, str]:
+    """The rollups artifact's summaries, by directory (none when it wasn't written)."""
+    storage = await get_runtime().storage()
+    key = artifact_key(target.org_id, target.repo_id, target.commit_sha, ROLLUPS_ARTIFACT)
+    data = await storage.get_bytes(Bucket.ARTIFACTS, key, max_bytes=MAX_ARTIFACT_BYTES)
+    if data is None:
+        return {}
+    return {d["path"]: d["summary"] for d in json.loads(data).get("directories", [])}
 
 
 # ---------------------------------------------------------------- the task

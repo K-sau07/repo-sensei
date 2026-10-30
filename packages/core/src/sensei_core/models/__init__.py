@@ -10,6 +10,7 @@ from sensei_core.models.conversations import (
     AnswerCacheEntry,
     Conversation,
     ConversationMessage,
+    FeatureMap,
     MessageCitation,
 )
 from sensei_core.models.embeddings import EmbeddingCache
@@ -61,6 +62,7 @@ __all__ = [
     "EdgeType",
     "EmbeddingCache",
     "EvalRun",
+    "FeatureMap",
     "GitHubInstallation",
     "GlossaryTerm",
     "IndexJob",

@@ -25,6 +25,7 @@ from sensei_core.mail import MemoryMailer
 from sensei_core.models import (
     AnswerCacheEntry,
     AuditEvent,
+    FeatureMap,
     IndexJob,
     JobKind,
     JobStatus,
@@ -529,3 +530,33 @@ async def test_a_kept_answer_whose_file_changed_is_not_served(
     await db_session.flush()
     assert await found() is None
     assert question_key("What does the README say?") == question_key("  what does the readme say ")
+
+
+async def test_a_repositorys_feature_maps_are_listed_by_path(
+    app: FastAPI, client: httpx.AsyncClient, db_session: AsyncSession
+) -> None:
+    org, _ = await _setup(app, client, db_session)
+    snapshot = await db_session.scalar(select(Snapshot).where(Snapshot.commit_sha == SHA))
+    assert snapshot is not None
+    for path in ("web", "api"):
+        db_session.add(
+            FeatureMap(
+                org_id=snapshot.org_id,
+                repo_id=snapshot.repo_id,
+                snapshot_id=snapshot.id,
+                key=f"dir:{path}",
+                path=path,
+                title=f"The {path}",
+                summary="What it does.",
+                entry_points=[],
+                key_symbols=[],
+                data_flow=["In.", "Out."],
+                citations=[],
+            )
+        )
+    await db_session.flush()
+    listed = (await client.get(f"{org}/repos/items/feature-maps")).json()
+    assert listed["sha"] == SHA
+    assert [(m["path"], m["title"], m["stale"]) for m in listed["maps"]] == [
+        ("api", "The api", False), ("web", "The web", False),
+    ]  # fmt: skip

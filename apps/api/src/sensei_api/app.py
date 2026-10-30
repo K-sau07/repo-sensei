@@ -26,6 +26,7 @@ from sensei_api.routers import (
     auth,
     browse,
     constellation,
+    feature_maps,
     github,
     graph,
     health,
@@ -165,6 +166,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         trace,
         ask,
         runs,
+        feature_maps,
     ):  # the order routes are matched in
         app.include_router(module.router, prefix=API_PREFIX)
     # Wraps the whole middleware stack; RequestIdMiddleware tags the server span it creates.

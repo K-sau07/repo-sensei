@@ -749,6 +749,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/orgs/{org}/repos/{repo}/feature-maps": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Feature Maps
+         * @description The modules' maps at the commit (the last index by default), by path.
+         */
+        get: operations["feature_maps_api_v1_orgs__org__repos__repo__feature_maps_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/orgs/{org}/repos/{repo}/file": {
         parameters: {
             query?: never;
@@ -1608,6 +1628,45 @@ export interface components {
          * @enum {string}
          */
         Feature: "code_browser" | "goto_definition" | "keyword_search" | "semantic_search" | "ask" | "wiki" | "graph_view" | "callers" | "trace" | "diagrams" | "fixes" | "changes";
+        /** FeatureMapList */
+        FeatureMapList: {
+            /** Maps */
+            maps: components["schemas"]["FeatureMapOut"][];
+            /** Sha */
+            sha: string;
+        };
+        /** FeatureMapOut */
+        FeatureMapOut: {
+            /** Citations */
+            citations: {
+                [key: string]: unknown;
+            }[];
+            /** Data Flow */
+            data_flow: string[];
+            /** Entry Points */
+            entry_points: {
+                [key: string]: unknown;
+            }[];
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Key */
+            key: string;
+            /** Key Symbols */
+            key_symbols: {
+                [key: string]: unknown;
+            }[];
+            /** Path */
+            path: string;
+            /** Stale */
+            stale: boolean;
+            /** Summary */
+            summary: string;
+            /** Title */
+            title: string;
+        };
         /**
          * FileOut
          * @description A file. Like a listing, it depends only on the content; the commit is in
@@ -4434,6 +4493,43 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ConversationList"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    feature_maps_api_v1_orgs__org__repos__repo__feature_maps_get: {
+        parameters: {
+            query?: {
+                /** @description Branch or commit (or its first 7+ characters). */
+                ref?: string | null;
+            };
+            header?: never;
+            path: {
+                /** @description Repository slug */
+                repo: string;
+                /** @description Organization slug */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FeatureMapList"];
                 };
             };
             /** @description Validation Error */

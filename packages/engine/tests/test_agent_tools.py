@@ -318,7 +318,7 @@ async def test_errors_say_how_to_call(ctx: ToolContext) -> None:
     assert "For example: find_symbol(" in _text(bad_kind)
     feature_map = await run_tool(ctx, "get_feature_map", {"feature_or_path": "items"})
     assert not feature_map.is_error
-    assert "aren't available" in _text(feature_map)
+    assert "No feature map covers" in _text(feature_map)
     foreign = await run_tool(ctx, "grep", {"pattern": "x", "cursor": next_cursor("other", 5)})
     assert foreign.is_error
 

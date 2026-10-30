@@ -139,3 +139,38 @@ class AnswerCacheEntry(IdMixin, OrgScopedMixin, Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
+
+
+class FeatureMap(IdMixin, OrgScopedMixin, Base):
+    """A module's map at a commit (4.9): what it is for, its entry points and key symbols (each
+    with its lines), how data flows through it, and the content hashes of its files (a map
+    whose files changed since is stale)."""
+
+    __tablename__ = "feature_maps"
+    __table_args__ = (
+        UniqueConstraint("snapshot_id", "key"),
+        Index("ix_feature_maps_repo_id", "repo_id"),
+        ForeignKeyConstraint(
+            ["repo_id", "org_id"], ["repos.id", "repos.org_id"], ondelete="CASCADE"
+        ),
+        ForeignKeyConstraint(
+            ["snapshot_id", "org_id"], ["snapshots.id", "snapshots.org_id"], ondelete="CASCADE"
+        ),
+    )
+
+    repo_id: Mapped[uuid.UUID] = mapped_column()
+    snapshot_id: Mapped[uuid.UUID] = mapped_column()
+    key: Mapped[str] = mapped_column(Text)  # "dir:backend/app/api"
+    path: Mapped[str] = mapped_column(Text)  # the module's directory
+    title: Mapped[str] = mapped_column(Text)
+    summary: Mapped[str] = mapped_column(Text)
+    # [{symbol_key, why, path, start_line, end_line}]
+    entry_points: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, default=list)
+    key_symbols: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, default=list)
+    data_flow: Mapped[list[str]] = mapped_column(JSONB, default=list)
+    citations: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, default=list)
+    file_hashes: Mapped[dict[str, str]] = mapped_column(JSONB, default=dict, server_default="{}")
+    stale: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
