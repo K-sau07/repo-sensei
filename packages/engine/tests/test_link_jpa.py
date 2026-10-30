@@ -895,6 +895,26 @@ def test_migrations_keep_their_tables_past_quotes_comments_and_escapes() -> None
     ]
 
 
+def test_a_backslash_escapes_only_where_the_script_says_it_does() -> None:
+    """Postgres's ``ESCAPE '\\'`` and ``replace(p, '\\', '/')`` close their strings, as the
+    standard has it; an ``E'…'`` string's backslash escapes, and so does every one of a script
+    that reads as MySQL's, even where the quotes would still pair up without."""
+    postgres = (
+        "CREATE TABLE a (id int);\n"
+        "CREATE INDEX a_like ON a (name) WHERE name LIKE 'x\\_%' ESCAPE '\\';\n"
+        "UPDATE a SET p = replace(p, '\\', '/');\n"
+        "CREATE TABLE b (id int);\n"
+        "INSERT INTO a VALUES (E'it\\'s; one');\n"
+        "CREATE TABLE c (id int);\n"
+    )
+    assert [c.table for c in ddl(postgres)] == ["a", "b", "c"]
+    # One string in MySQL's (backslash-escaped quote), never a table x.
+    mysql = (
+        "INSERT INTO `a` VALUES ('a\\'; CREATE TABLE x (id int); --');\nCREATE TABLE b (id int);\n"
+    )
+    assert [(c.table, c.line) for c in ddl(mysql)] == [("b", 2)]
+
+
 def test_sql_nested_past_the_parsers_depth_is_unread_not_a_crash() -> None:
     deep = "SELECT * FROM t WHERE " + "(" * 80 + "a = 1" + ")" * 80
     found = tables(deep)

@@ -128,6 +128,8 @@ class TableChange:
 
 
 _DOLLAR_RE = re.compile(r"\$\w*\$")
+# What only MySQL writes: a quoted name (`name`), a table's engine, an AUTO_INCREMENT column.
+_MYSQL_RE = re.compile(r"`|\bENGINE\s*=|\bAUTO_INCREMENT\b", re.IGNORECASE)
 
 
 def _unquoted(name: str) -> str:
@@ -137,12 +139,23 @@ def _unquoted(name: str) -> str:
 def _statements(script: str) -> list[tuple[str, int]]:
     """A script's statements and the line each starts on (comments blanked, lines kept; split
     at semicolons outside quotes and dollar-quoted bodies). One pass, so linear: a comment marker
-    inside a string is the string's, a backslash escapes the quote after it (MySQL's
-    ``'it\\'s'``), and an unclosed comment or string runs to the end."""
-    text = _uncommented(script[: MAX_SQL_CHARS * 10])
+    inside a string is the string's, and an unclosed comment or string runs to the end.
+
+    A backslash is a character like any other, as the standard has it (Postgres's
+    ``ESCAPE '\\'``), except in an ``E'…'`` string. It escapes the character after it
+    (``'it\\'s'``) in every string of a script that reads as MySQL's (:data:`_MYSQL_RE`), or
+    that the standard can't read: a string left unclosed, or closed by a backslash's quote right
+    before a word (``'it\\'`` then ``s``)."""
+    script = script[: MAX_SQL_CHARS * 10]
+    escapes = _MYSQL_RE.search(script) is not None
+    text, read = _uncommented(script, escapes=escapes)
+    if not read and not escapes:
+        again, read = _uncommented(script, escapes=True)
+        if read:
+            text, escapes = again, True
     found: list[tuple[str, int]] = []
     start = 0
-    for end in _semicolons(text):
+    for end in _semicolons(text, escapes=escapes):
         found.append((text[start:end], start))
         start = end + 1
     found.append((text[start:], start))
@@ -154,19 +167,37 @@ def _statements(script: str) -> list[tuple[str, int]]:
     return lines
 
 
-def _uncommented(text: str) -> str:
-    """``text`` with its comments (outside strings) blanked, line breaks kept."""
+def _opened(text: str, i: int, *, escapes: bool) -> tuple[str, bool] | None:
+    """The string (or quoted name) opening at ``i``: its closing quote, and whether a backslash
+    escapes in it; None when none opens there."""
+    char = text[i]
+    if char == "`":
+        return char, False
+    if char in "'\"":
+        prefix = char == "'" and i > 0 and text[i - 1] in "Ee"
+        estring = prefix and (i < 2 or not (text[i - 2].isalnum() or text[i - 2] == "_"))
+        return char, escapes or estring
+    if char == "$" and (dollar := _DOLLAR_RE.match(text, i)) is not None:
+        return dollar[0], False
+    return None
+
+
+def _uncommented(text: str, *, escapes: bool) -> tuple[str, bool]:
+    """``text`` with its comments (outside strings) blanked, line breaks kept; and whether its
+    strings read as they should (see :func:`_statements`)."""
     out: list[str] = []
-    quote, i, n = "", 0, len(text)
+    quote, escaped, read, i, n = "", False, True, 0, len(text)
     while i < n:
-        skip = _quoted_end(text, i, quote) if quote else None
-        if skip is not None:
+        if quote:
+            skip = _quoted_end(text, i, quote, escaped=escaped)
+            if skip is None:  # unclosed: the rest is the string's
+                out.append(text[i:])
+                return "".join(out), False
+            if not escaped and quote in "'\"" and text[skip - 2] == "\\" and skip < n:
+                read = read and not (text[skip].isalnum() or text[skip] == "_")
             out.append(text[i:skip])
             i, quote = skip, ""
             continue
-        if quote:  # unclosed: the rest is the string's
-            out.append(text[i:])
-            break
         if text.startswith("--", i) or text.startswith("/*", i):
             close = "\n" if text[i + 1] == "-" else "*/"
             end = text.find(close, i + 2)
@@ -174,25 +205,22 @@ def _uncommented(text: str) -> str:
             out.append(re.sub(r"[^\n]", " ", text[i:end]))
             i = end
             continue
-        char = text[i]
-        if char in "'\"`":
-            quote = char
-        elif char == "$" and (dollar := _DOLLAR_RE.match(text, i)) is not None:
-            quote = dollar[0]
+        if (opened := _opened(text, i, escapes=escapes)) is not None:
+            quote, escaped = opened
             out.append(quote)
             i += len(quote)
             continue
-        out.append(char)
+        out.append(text[i])
         i += 1
-    return "".join(out)
+    return "".join(out), read
 
 
-def _quoted_end(text: str, i: int, quote: str) -> int | None:
+def _quoted_end(text: str, i: int, quote: str, *, escaped: bool) -> int | None:
     """Where the string ``quote`` opened before ``i`` ends (past its closing quote), or None
-    when it doesn't; a backslash escapes the character after it in ``'`` and ``"`` strings."""
+    when it doesn't; with ``escaped``, a backslash escapes the character after it."""
     n = len(text)
     while i < n:
-        if text[i] == "\\" and quote in "'\"":
+        if escaped and text[i] == "\\":
             i += 2
             continue
         if text.startswith(quote, i):
@@ -201,25 +229,22 @@ def _quoted_end(text: str, i: int, quote: str) -> int | None:
     return None
 
 
-def _semicolons(text: str) -> list[int]:
+def _semicolons(text: str, *, escapes: bool) -> list[int]:
     """Where ``text`` (comments blanked) has a semicolon outside its strings."""
     found: list[int] = []
-    quote, i, n = "", 0, len(text)
+    quote, escaped, i, n = "", False, 0, len(text)
     while i < n:
         if quote:
-            end = _quoted_end(text, i, quote)
+            end = _quoted_end(text, i, quote, escaped=escaped)
             if end is None:
                 break
             i, quote = end, ""
             continue
-        char = text[i]
-        if char in "'\"`":
-            quote = char
-        elif char == "$" and (dollar := _DOLLAR_RE.match(text, i)) is not None:
-            quote = dollar[0]
+        if (opened := _opened(text, i, escapes=escapes)) is not None:
+            quote, escaped = opened
             i += len(quote)
             continue
-        elif char == ";":
+        if text[i] == ";":
             found.append(i)
         i += 1
     return found
