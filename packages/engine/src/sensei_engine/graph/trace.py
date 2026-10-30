@@ -565,11 +565,26 @@ def _alike(word: str, other: str) -> bool:
     return min(len(word), len(other)) >= 4 and (word.startswith(other) or other.startswith(word))
 
 
+def _singular(word: str) -> str:
+    """``word`` without its plural ending (items, item; categories, category; boxes, box)."""
+    if len(word) > 4 and word.endswith("ies"):
+        return word[:-3] + "y"
+    if len(word) > 4 and word.endswith(("ses", "xes", "zes", "ches", "shes")):
+        return word[:-2]
+    if len(word) > 3 and word.endswith("s") and not word.endswith("ss"):
+        return word[:-1]
+    return word
+
+
 def _shares(words: Set[str], node: Node) -> int:
     """How much ``node`` is named for ``words``: 2 with one of them, 1 with only a longer or
-    shorter form of one (sign, signup; ``trace`` for ``traces``), 0 with none."""
+    shorter form of one (sign, signup; ``trace`` for ``traces``), 0 with none. A request's path
+    names its resource in the plural, one or many (``GET /projects/{id}`` is a project's): its
+    singular is the word itself."""
     named = _words(node.name)
     if named & words:
+        return 2
+    if node.kind in REQUEST_KINDS and {_singular(w) for w in named} & {_singular(w) for w in words}:
         return 2
     return int(any(_alike(word, other) for word in named for other in words))
 

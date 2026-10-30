@@ -716,6 +716,16 @@ def test_a_name_with_one_of_the_words_counts_more_than_a_longer_form() -> None:
     assert _shares(words, _node("ts t.ts/useGetFlows().", NodeKind.HOOK)) == 0
 
 
+def test_a_requests_plural_resource_is_its_word() -> None:
+    """``GET /projects/{}`` is a project's: a request's path names one or many in the plural,
+    where a hook's name tells the list (``useGetProjects``) from the one."""
+    words = {"project"}
+    assert _shares(words, _request("GET", "/api/projects/{}", 3)) == 2
+    assert _shares(words, _endpoint("GET", "/api/categories/{id}")) == 0
+    assert _shares({"category"}, _endpoint("GET", "/api/categories/{id}")) == 2
+    assert _shares(words, _node("ts t.ts/useGetProjects().", NodeKind.HOOK)) == 1
+
+
 def test_the_verb_asked_for_picks_the_request_of_its_method() -> None:
     """An upsert hook that POSTs a new invoice or PATCHes one: ``add invoice`` is the POST's way,
     ``update invoice`` the PATCH's; a page's name says no verb (``InvoiceView`` is a view)."""
