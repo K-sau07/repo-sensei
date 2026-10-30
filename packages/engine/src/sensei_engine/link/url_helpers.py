@@ -284,6 +284,19 @@ def urlish(expr: Expr | None) -> bool:
             return False
 
 
+def passes_through(expr: Expr | None) -> bool:
+    """Whether a function returning ``expr`` hands a URL it is given on: one of its parameters
+    (``qs ? `${url}?${qs}` : url``, a query string appended at most), or another function
+    called with one. Such a function is only ever read where a URL is being built."""
+    match expr:
+        case Param():
+            return True
+        case Call(_, args):
+            return any(isinstance(a, Param) or urlish(a) for a in args)
+        case _:
+            return False
+
+
 _PLACEHOLDER_RE = re.compile(r"\{helper:(\d+)\}")
 
 

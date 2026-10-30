@@ -188,6 +188,7 @@ class FileCalls:
     pending: list[PendingWrapper] = field(default_factory=list[PendingWrapper])
     helpers: dict[str, Helper] = field(default_factory=dict[str, Helper])  # URL helpers
     helper_calls: list[HelperCall] = field(default_factory=list[HelperCall])  # {helper:N}'s
+    default: str | None = None  # the name ``export default`` exports, when it names one
     server: bool = False
 
     @property
@@ -302,6 +303,12 @@ class _Scanner:
             inner = node.child_by_field_name("declaration")
             if inner is not None:
                 self.top_level(inner)
+            if any(c.type == "default" for c in node.children):
+                # `export default name;`, `export default function name() {}`
+                value = node.child_by_field_name("value")
+                named = inner.child_by_field_name("name") if inner is not None else value
+                if named is not None and named.type == "identifier":
+                    self.out.default = _text(named)
             return
         if node.type == "function_declaration":
             name = node.child_by_field_name("name")
@@ -400,15 +407,15 @@ class _Scanner:
         return "".join(parts)
 
     def ternary(self, node: Node, params: Sequence[str], depth: int) -> str | None:
-        """``a ? b : c`` in a URL: a query string or none (`${qs ? `?${qs}` : ""}`) is no path;
-        the same either way is that; else not known."""
+        """``a ? b : c`` in a URL: the path both branches share once their query strings are
+        cut (`${qs ? `?${qs}` : ""}` is none, ``qs ? `${base}?${qs}` : base`` is ``base``);
+        else not known."""
         then = self.url(node.child_by_field_name("consequence"), params, depth + 1)
         otherwise = self.url(node.child_by_field_name("alternative"), params, depth + 1)
         if then is None or otherwise is None:
             return None
-        if all(branch == "" or branch[:1] in "?#" for branch in (then, otherwise)):
-            return ""
-        return then if then == otherwise else None
+        cut = [re.split(r"[?#]", branch, maxsplit=1)[0] for branch in (then, otherwise)]
+        return cut[0] if cut[0] == cut[1] else None
 
     def binary(self, node: Node, params: Sequence[str], depth: int) -> str | None:
         left, right = node.child_by_field_name("left"), node.child_by_field_name("right")
@@ -494,7 +501,7 @@ class _Scanner:
         if extended is None:
             return
         found = self.expr(value, params, context=_ExprContext(extended=extended))
-        if found is not None and url_helpers.urlish(found):
+        if found is not None and (url_helpers.urlish(found) or url_helpers.passes_through(found)):
             self.out.helpers[name] = Helper(name, found, defaults)
 
     def helper_params(self, node: Node) -> tuple[list[str], tuple[Expr | None, ...]]:
@@ -576,9 +583,12 @@ class _Scanner:
             condition = _unwrap_opt(node.child_by_field_name("condition"))
             then = again(node.child_by_field_name("consequence"))
             otherwise = again(node.child_by_field_name("alternative"))
-            if _query_only(then) and _query_only(otherwise):
-                # `${qs ? `?${qs}` : ""}`: a query string or none, never a path segment.
-                return Text("")
+            if then is not None and otherwise is not None:
+                # The path both share once their query strings are cut (`${qs ? `?${qs}` : ""}`,
+                # ``qs ? `${base}?${qs}` : base``): a query string is never a path segment.
+                path, other = _no_query(then), _no_query(otherwise)
+                if path == other:
+                    return path
             name = _text(condition) if condition is not None else ""
             if condition is not None and condition.type == "identifier" and name in params:
                 if context.caller:
@@ -896,14 +906,23 @@ def _callee(call: Node) -> Node | None:
     return function
 
 
-def _query_only(expr: Expr | None) -> bool:
-    """Whether ``expr`` is no path: empty, or a query string or fragment (``?…``, ``#…``)."""
+def _no_query(expr: Expr) -> Expr:
+    """``expr`` up to its query string or fragment (``${base}?${qs}`` → ``base``), its empty
+    texts left out, one part as itself."""
     if isinstance(expr, Text):
-        return expr.value == "" or expr.value[:1] in "?#"
-    if isinstance(expr, Concat):
-        first = next((p for p in expr.parts if p != Text("")), None)
-        return first is None or (isinstance(first, Text) and first.value[:1] in "?#")
-    return False
+        return Text(re.split(r"[?#]", expr.value, maxsplit=1)[0])
+    if not isinstance(expr, Concat):
+        return expr
+    parts: list[Expr | None] = []
+    for part in expr.parts:
+        if isinstance(part, Text) and re.search(r"[?#]", part.value):
+            parts.append(Text(re.split(r"[?#]", part.value, maxsplit=1)[0]))
+            break
+        parts.append(part)
+    kept = tuple(p for p in parts if p != Text(""))
+    if not kept:
+        return Text("")
+    return kept[0] if len(kept) == 1 and kept[0] is not None else Concat(kept)
 
 
 def _unwrap_opt(node: Node | None) -> Node | None:
@@ -1034,7 +1053,11 @@ class _Joiner:
             return None
         target = self.module(path, source[0])
         other = self.files.get(target) if target else None
-        return (other, source[1]) if other is not None else None
+        if other is None:
+            return None
+        if source[1] == "default" and other.default is not None:
+            return other, other.default  # the name its file exports as the default
+        return other, source[1]
 
     def resolve(self, path: str, url: str | None, depth: int = 0) -> str | None:
         """``url`` with its ``{helper:N}`` parts evaluated (:mod:`~sensei_engine.link.

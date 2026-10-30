@@ -366,3 +366,37 @@ def test_a_query_string_chosen_in_the_url_is_no_path() -> None:
         ("GET", "/items/{}"),
         ("GET", "/same/x"),
     }
+
+
+def test_a_helper_that_hands_its_url_on_is_followed_through_a_default_export() -> None:
+    """``qs ? `${url}?${qs}` : url`` hands the URL it is given on, a query string appended at
+    most; it is found through ``export default`` and through a function that calls it."""
+    graph = _graph(
+        {
+            "web/src/query.ts": textwrap.dedent(
+                """
+                const withQuery = (url: string, params: object): string => {
+                  const qs = new URLSearchParams(params as any).toString()
+                  return qs ? `${url}?${qs}` : url
+                }
+                export default withQuery
+                """
+            ),
+            "web/src/invoices.ts": textwrap.dedent(
+                """
+                import axios from "axios"
+                import withQuery from "./query"
+                const api = axios.create({ baseURL: "/api" })
+                const paged = (url: string, params: object): string => withQuery(url, params)
+                export async function invoices(id: string, params: object) {
+                  await api.get(paged(`/invoices/${id}`, params))
+                  await api.get(withQuery("/accounts", params))
+                }
+                """
+            ),
+        }
+    )
+    assert {(c.method, c.url) for c in graph.calls} == {
+        ("GET", "/invoices/{}"),
+        ("GET", "/accounts"),
+    }
