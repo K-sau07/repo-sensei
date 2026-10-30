@@ -8,7 +8,8 @@
  * never runs on the server). Without WebGL2 the same layout is drawn as a static SVG scatter;
  * with reduced motion, or on a low-power device (fewer than 4 cores, Save-Data, or WebGL drawn
  * by a software rasterizer instead of a GPU), the 3D view is drawn still: no fading in, glow or
- * drift. Nothing is drawn while the view is off screen or the page hidden.
+ * drift. Nothing is drawn while the view is off screen or the page hidden, and the 3D view not
+ * before the browser is first idle: three.js loads after the page around it has painted.
  *
  * Hovering a cluster names its directory, file count and top language; clicking a star opens a
  * preview of the file, with a link into the code browser. Color is never the only signal: the
@@ -138,6 +139,33 @@ export function webGLSupport(): WebGLSupport {
 
 const noSubscribe = () => () => undefined;
 
+const IDLE_TIMEOUT_MS = 1500;
+
+/** False until the browser is first idle after mounting (or IDLE_TIMEOUT_MS has passed). */
+function useIdle(): boolean {
+  const [idle, setIdle] = useState(false);
+  useEffect(() => {
+    if (typeof requestIdleCallback === "function") {
+      const id = requestIdleCallback(
+        () => {
+          setIdle(true);
+        },
+        { timeout: IDLE_TIMEOUT_MS },
+      );
+      return () => {
+        cancelIdleCallback(id);
+      };
+    }
+    const id = setTimeout(() => {
+      setIdle(true);
+    }, 0);
+    return () => {
+      clearTimeout(id);
+    };
+  }, []);
+  return idle;
+}
+
 /** Whether the element is on screen and the page visible (no frames are drawn otherwise). */
 function useActive(element: React.RefObject<HTMLElement | null>): boolean {
   const [onScreen, setOnScreen] = useState(true);
@@ -265,6 +293,7 @@ export function ConstellationView({
     () => true,
     () => false,
   );
+  const idle = useIdle();
   // A forced renderer (stories) keeps its motion; on its own, a software rasterizer draws still.
   const probed = client && renderer === "auto" ? webGLSupport() : null;
   const lowPower = client && (isLowPower(navigator) || probed?.software === true);
@@ -384,7 +413,7 @@ export function ConstellationView({
           strip ? "h-48 md:h-56" : "h-80 md:h-96",
         )}
       >
-        {client && colors ? (
+        {client && colors && (idle || !webgl) ? (
           webgl ? (
             <ConstellationCanvas {...scene} colors={colors} />
           ) : (

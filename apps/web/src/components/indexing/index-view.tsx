@@ -377,10 +377,24 @@ function counters(job: IndexJob) {
  * counters, what it unlocked, what discovery found, the log, and the failure (with Retry) or
  * Cancel.
  */
-export function IndexView({ org, repo, jobId }: { org: string; repo: string; jobId: string }) {
-  const job = $api.useQuery("get", "/api/v1/orgs/{org}/repos/{repo}/index-jobs/{job}", {
-    params: { path: { org, repo, job: jobId } },
-  });
+export function IndexView({
+  org,
+  repo,
+  jobId,
+  known,
+}: {
+  org: string;
+  repo: string;
+  jobId: string;
+  /** The run as a list of runs already has it: shown at once while it is read again. */
+  known?: IndexJob | undefined;
+}) {
+  const job = $api.useQuery(
+    "get",
+    "/api/v1/orgs/{org}/repos/{repo}/index-jobs/{job}",
+    { params: { path: { org, repo, job: jobId } } },
+    { placeholderData: () => (known?.id === jobId ? known : undefined) },
+  );
   const stages = $api.useQuery("get", "/api/v1/indexing/stages", {}, { staleTime: Infinity });
   const { logs, live } = useJobEvents(org, repo, job.data ? jobId : null);
   const [logsOpen, setLogsOpen] = useState(false);

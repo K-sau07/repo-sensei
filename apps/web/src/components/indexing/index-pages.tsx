@@ -46,6 +46,8 @@ export function RepoOverview() {
   const { org, repo } = useRepoSlug();
   const detail = useRepo();
   const jobs = useJobs();
+  // Asked now, beside the runs, rather than once the run view mounts.
+  $api.useQuery("get", "/api/v1/indexing/stages", {}, { staleTime: Infinity });
   if (jobs.isError) {
     return (
       <div className="mx-auto w-full max-w-3xl p-6">
@@ -77,7 +79,7 @@ export function RepoOverview() {
   if (showRun) {
     return (
       <div className="mx-auto w-full max-w-6xl p-6">
-        <IndexView org={org} repo={repo} jobId={latest.id} />
+        <IndexView org={org} repo={repo} jobId={latest.id} known={latest} />
       </div>
     );
   }
@@ -183,7 +185,9 @@ export function IndexHistory() {
           </TableBody>
         </Table>
       </section>
-      {selected && <IndexView key={selected.id} org={org} repo={repo} jobId={selected.id} />}
+      {selected && (
+        <IndexView key={selected.id} org={org} repo={repo} jobId={selected.id} known={selected} />
+      )}
     </div>
   );
 }

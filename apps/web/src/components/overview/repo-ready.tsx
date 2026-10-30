@@ -348,7 +348,7 @@ function LastIndex({
         </Link>
       </div>
       <LanguageBar languages={data.languages} legend />
-      <IndexView org={org} repo={repo} jobId={latest.id} />
+      <IndexView org={org} repo={repo} jobId={latest.id} known={latest} />
     </section>
   );
 }

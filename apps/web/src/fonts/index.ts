@@ -2,6 +2,8 @@ import localFont from "next/font/local";
 
 // Fonts are self-hosted from this folder (each with its OFL license) so the app, Storybook and
 // tests all load them the same way. Fallback stacks live in globals.css (--font-sans, --font-mono).
+// Only the UI font is preloaded: the code fonts (six files) load when code is first shown, so
+// they don't hold up a page's first paint where there is little or none.
 
 /** UI and headings: Geist Sans (variable, 100-900). */
 export const geistSans = localFont({
@@ -17,6 +19,7 @@ export const geistMono = localFont({
   weight: "100 900",
   variable: "--font-geist-mono",
   display: "swap",
+  preload: false,
 });
 
 /** Code: Commit Mono. */
@@ -30,6 +33,7 @@ export const commitMono = localFont({
   ],
   variable: "--font-commit-mono",
   display: "swap",
+  preload: false,
 });
 
 /** Class names that define --font-geist-sans, --font-geist-mono and --font-commit-mono. */
