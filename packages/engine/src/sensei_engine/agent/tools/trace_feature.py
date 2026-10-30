@@ -16,6 +16,7 @@ from sensei_engine.agent.tools.base import (
     readable_id,
     require_graph,
     symbol_key_of,
+    trail_of,
 )
 from sensei_engine.graph.trace import TraceError, TracePath, trace_feature
 
@@ -93,7 +94,9 @@ async def run(ctx: ToolContext, args: Mapping[str, Any]) -> ToolResult:
     if not traced.paths:
         out.text("No path leads on from the entry: it calls nothing the graph links.")
     narrow = "trace from a later hop, or with a feature"
-    return out.done(f"{len(traced.paths)} paths", hits=len(traced.paths), narrow=narrow)
+    result = out.done(f"{len(traced.paths)} paths", hits=len(traced.paths), narrow=narrow)
+    result.trail = trail_of(traced.paths[0]) if traced.paths else None
+    return result
 
 
 def describe_path(n: int, path: TracePath) -> str:

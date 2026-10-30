@@ -39,6 +39,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from sensei_engine.graph.snapshot import GraphSnapshot
+    from sensei_engine.graph.trace import TracePath
     from sensei_engine.search.hybrid import DenseLegs, GrepLegs
 
 MAX_RESULT_TOKENS = 6_000  # a tool result's text, at most (cl100k tokens, near Claude's count)
@@ -159,6 +160,33 @@ class CitationIndex:
         return Cited(source.path, source.sha, blocks[0][0], blocks[-1][1], source.symbol_key)
 
 
+@dataclass(frozen=True, slots=True)
+class Trail:
+    """The best path a trace found, in brief: for the answer's confidence (4.6), and for where
+    the trail ended when it abstains."""
+
+    reaches_data: bool
+    confidence: float
+    hops: int
+    gaps: int  # where the graph has no link it should
+    end: str | None  # the hop it stops at (a readable id), when it stops short
+    reason: str | None
+
+
+def trail_of(path: TracePath) -> Trail:
+    last = path.breaks[-1] if path.breaks else None
+    hop = path.hops[last.after_hop].node if last is not None else None
+    end = readable_id(hop.symbol_key, hop.kind, hop.path, hop.qualified_name) if hop else None
+    return Trail(
+        path.reaches_goal,
+        path.confidence,
+        len(path.hops),
+        sum(gap.kind == "gap" for gap in path.breaks),
+        end,
+        last.reason if last is not None else None,
+    )
+
+
 @dataclass(slots=True)
 class ToolResult:
     """A tool's answer: its content blocks (text, ``search_result``), the source of each
@@ -169,6 +197,7 @@ class ToolResult:
     summary: str
     hits: int = 0
     is_error: bool = False
+    trail: Trail | None = None  # a trace's best path
 
     def param(self, tool_use_id: str) -> dict[str, Any]:
         """The ``tool_result`` block that answers the call ``tool_use_id``."""

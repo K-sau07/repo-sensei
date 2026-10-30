@@ -18,7 +18,7 @@ from itertools import zip_longest
 from typing import Any
 
 from sensei_engine.agent.tools import ToolContext, ToolError
-from sensei_engine.agent.tools.base import LANES, Results, Source
+from sensei_engine.agent.tools.base import LANES, Results, Source, Trail, trail_of
 from sensei_engine.agent.tools.code_search import add_results, search
 from sensei_engine.agent.tools.trace_feature import describe_path
 from sensei_engine.agent.verify import agreement
@@ -55,6 +55,8 @@ class Round0:
     traced: int  # trace paths
     ms: int
     agreement: float | None = None  # of the two passes, when it took two (4.5)
+    trail: Trail | None = None  # the flow's, traced
+    searched: tuple[str, ...] = ()  # what it searched for
 
 
 async def pre_retrieve(ctx: ToolContext, question: str) -> Round0 | None:
@@ -78,7 +80,9 @@ async def pre_retrieve(ctx: ToolContext, question: str) -> Round0 | None:
         agreed = agreement(first, second)
     out = Results(ROUND0_TOKENS)
     out.text(INTRO)
-    paths = await _traced(ctx, question, best) if route.query_class is QueryClass.FLOW else ()
+    paths, trail = (
+        await _traced(ctx, question, best) if route.query_class is QueryClass.FLOW else ((), None)
+    )
     for n, path in enumerate(paths, start=1):
         out.text(path if n > 1 else f"The flow, traced from its best match:\n{path}")
     shown = 0
@@ -92,7 +96,15 @@ async def pre_retrieve(ctx: ToolContext, question: str) -> Round0 | None:
     ms = round((time.monotonic() - started) * 1000)
     files = len({source.path for source in result.sources})
     return Round0(
-        tuple(result.content), tuple(result.sources), shown, files, len(paths), ms, agreed
+        tuple(result.content),
+        tuple(result.sources),
+        shown,
+        files,
+        len(paths),
+        ms,
+        agreed,
+        trail,
+        tuple(passes),
     )
 
 
@@ -144,11 +156,13 @@ def _definition(graph: GraphSnapshot, result: Result) -> str | None:
     return min(inside, key=lambda n: n.start_line).symbol_key if inside else None
 
 
-async def _traced(ctx: ToolContext, question: str, best: Sequence[Result]) -> tuple[str, ...]:
+async def _traced(
+    ctx: ToolContext, question: str, best: Sequence[Result]
+) -> tuple[tuple[str, ...], Trail | None]:
     """The flow from the best page (else endpoint) definition that matched, as the trace tool
-    shows it: its paths of more than one hop."""
+    shows it: its paths of more than one hop, and the best one's trail."""
     if ctx.graph is None:
-        return ()
+        return (), None
     graph = ctx.graph
     seeds = (
         _definition(graph, r)
@@ -158,12 +172,13 @@ async def _traced(ctx: ToolContext, question: str, best: Sequence[Result]) -> tu
     )
     seed = next((key for key in seeds if key is not None), None)
     if seed is None:
-        return ()
+        return (), None
     try:
         traced = await asyncio.to_thread(
             trace_feature, graph, seed, direction="down", feature=question
         )
     except TraceError:
-        return ()
+        return (), None
     paths = [path for path in traced.paths if len(path.hops) > 1]  # one hop is no flow
-    return tuple(describe_path(n, path) for n, path in enumerate(paths, start=1))
+    texts = tuple(describe_path(n, path) for n, path in enumerate(paths, start=1))
+    return texts, trail_of(paths[0]) if paths else None

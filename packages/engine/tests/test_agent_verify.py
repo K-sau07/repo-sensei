@@ -182,6 +182,10 @@ async def test_a_verified_answer_says_what_was_checked(ctx: ToolContext) -> None
     assert check.whole.complete
     assert check.rounds == 0
     assert model.checks == ["support", "whole"]
+    sure = done.answer.confidence
+    assert sure is not None
+    assert (sure.level, sure.breakdown.claims_verified, sure.breakdown.inferred) == ("high", 1, 0)
+    assert done.answer.abstained is None
 
 
 async def test_an_answer_that_is_never_whole_is_searched_for_at_most_twice(

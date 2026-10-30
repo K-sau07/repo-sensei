@@ -37,11 +37,12 @@ from importlib import resources
 from typing import Any, Literal
 
 from sensei_core.usage import CostCalculator
+from sensei_engine.agent.confidence import Abstention, Confidence, abstention, confidence
 from sensei_engine.agent.evidence import answer_blocks, final_set, gather
 from sensei_engine.agent.overview import repo_overview
 from sensei_engine.agent.round0 import pre_retrieve
 from sensei_engine.agent.tools import CitationIndex, ToolContext, definitions, run_tool
-from sensei_engine.agent.tools.base import Cited, Evidence
+from sensei_engine.agent.tools.base import Cited, Evidence, Trail
 from sensei_engine.agent.verify import (
     MAX_ROUNDS,
     Checked,
@@ -220,6 +221,8 @@ class Answer:
     escalated: bool
     dropped_citations: int = 0  # citations that point at nothing the run gave, or no lines
     verification: Verification | None = None  # None: not verified
+    confidence: Confidence | None = None  # None: not verified
+    abstained: Abstention | None = None  # why it is too thin to give, when it is
 
 
 @dataclass(frozen=True, slots=True)
@@ -322,6 +325,8 @@ class _Run:
     dropped: int = 0
     verification: Verification | None = None
     agreement: float | None = None  # of round 0's two passes
+    trail: Trail | None = None  # the last trace's best path (round 0's, a tool's)
+    searched: list[str] = field(default_factory=list[str])
 
 
 class AskAgent:
@@ -374,8 +379,7 @@ class AskAgent:
             CitationIndex(),
             _Spent(self.budget, self.costs),
         )
-        if self.pre_retrieval and (found := await _round0(ctx, question, run.messages, run.index)):
-            run.agreement = found.agreement
+        if self.pre_retrieval and (found := await _round0(ctx, question, run)):
             yield found
         async for event in self._research(run, ctx, self.budget.max_turns - 1):
             yield event
@@ -389,6 +393,18 @@ class AskAgent:
             raise RuntimeError(NO_RESULT)
         for n, citation in enumerate(run.citations, start=1):
             yield CitationFound(n, citation)
+        sure = confidence(run.verification, run.trail) if self.verify else None
+        thin = (
+            abstention(
+                sure,
+                run.verification,
+                run.trail,
+                run.searched,
+                flow=route.query_class is QueryClass.FLOW,
+            )
+            if sure is not None
+            else None
+        )
         yield Done(
             Answer(
                 run.text,
@@ -402,6 +418,8 @@ class AskAgent:
                 plan.escalated,
                 run.dropped,
                 run.verification,
+                sure,
+                thin,
             )
         )
 
@@ -485,7 +503,7 @@ class AskAgent:
             run.messages.append({"role": "assistant", "content": list(result.content)})
             if result.stop_reason == "tool_use":
                 answered: list[dict[str, Any]] = []
-                async for event in _call_tools(ctx, result, run.index, answered):
+                async for event in _call_tools(ctx, result, run, answered):
                     yield event
                 run.messages.append({"role": "user", "content": answered})
                 if ctx.evidence and _submitted(result):
@@ -578,17 +596,24 @@ class AskAgent:
         yield await running
 
 
-async def _round0(
-    ctx: ToolContext, question: str, messages: list[dict[str, Any]], index: CitationIndex
-) -> PreRetrieved | None:
+async def _round0(ctx: ToolContext, question: str, run: _Run) -> PreRetrieved | None:
     """Round 0's evidence into the question's message, before the question; its search results
     the request's first, so the index counts from them."""
     found = await pre_retrieve(ctx, question)
     if found is None:
         return None
-    index.add(found.sources)
-    messages[-1] = {"role": "user", "content": [*found.content, {"type": "text", "text": question}]}
+    run.index.add(found.sources)
+    content = [*found.content, {"type": "text", "text": question}]
+    run.messages[-1] = {"role": "user", "content": content}
+    run.agreement, run.trail = found.agreement, found.trail
+    run.searched += [f"round 0 {text[:80]!r}" for text in found.searched]
     return PreRetrieved(found.results, found.files, found.traced, found.ms, found.agreement)
+
+
+def _searched(name: str, args: dict[str, Any]) -> str:
+    """A call as the run's searches list it: ``grep "items/{id}"``."""
+    said = next((str(v) for v in args.values() if isinstance(v, str) and v), "")
+    return f"{name} {said[:80]!r}" if said else name
 
 
 def _shown_text(block: dict[str, Any]) -> str:
@@ -619,16 +644,20 @@ def _history(conversation: Sequence[Exchange], question: str) -> list[dict[str, 
 async def _call_tools(
     ctx: ToolContext,
     result: LLMTurnResult,
-    index: CitationIndex,
+    run: _Run,
     answered: list[dict[str, Any]],
 ) -> AsyncIterator[ToolCalled | ToolAnswered]:
     """The turn's tool calls, run in order: each one's result into ``answered`` (one message
-    for all of them) and its search results into the run's citation index."""
+    for all of them), its search results into the run's citation index, the call into what the
+    run searched, a trace's best path into its trail."""
     for call in (block for block in result.content if block["type"] == "tool_use"):
         yield ToolCalled(call["id"], call["name"], dict(call["input"]))
         started = time.monotonic()
         done = await run_tool(ctx, call["name"], call["input"])
-        index.add(done.sources)
+        run.index.add(done.sources)
+        if call["name"] != "submit_evidence":
+            run.searched.append(_searched(call["name"], call["input"]))
+        run.trail = done.trail or run.trail
         ms = round((time.monotonic() - started) * 1000)
         yield ToolAnswered(call["id"], call["name"], done.summary, done.hits, done.is_error, ms)
         answered.append(done.param(call["id"]))
