@@ -180,6 +180,7 @@ class ToolAnswered:
     hits: int
     is_error: bool
     ms: int
+    content: tuple[dict[str, Any], ...] = ()  # what the model was given (for the run's record)
 
 
 @dataclass(frozen=True, slots=True)
@@ -677,7 +678,15 @@ async def _call_tools(
             run.searched.append(_searched(call["name"], call["input"]))
         run.trail = done.trail or run.trail
         ms = round((time.monotonic() - started) * 1000)
-        yield ToolAnswered(call["id"], call["name"], done.summary, done.hits, done.is_error, ms)
+        yield ToolAnswered(
+            call["id"],
+            call["name"],
+            done.summary,
+            done.hits,
+            done.is_error,
+            ms,
+            tuple(done.content),
+        )
         answered.append(done.param(call["id"]))
 
 

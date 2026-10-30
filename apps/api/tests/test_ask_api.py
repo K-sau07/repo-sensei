@@ -8,6 +8,7 @@ import json
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -16,10 +17,21 @@ import httpx2
 import pytest
 from fakeredis import FakeAsyncRedis
 from fastapi import FastAPI, Request
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from sensei_core.mail import MemoryMailer
-from sensei_core.models import IndexJob, JobKind, JobStatus, Repo, RepoSource, Snapshot
+from sensei_core.models import (
+    AuditEvent,
+    IndexJob,
+    JobKind,
+    JobStatus,
+    Repo,
+    RepoSource,
+    Snapshot,
+    UsageEvent,
+    UsageKind,
+)
 from sensei_core.models.indexing import SnapshotStatus
 from sensei_core.orgs.service import OrgService
 from sensei_engine.agent.tools import ToolContext
@@ -258,3 +270,130 @@ async def test_a_repository_not_indexed_for_questions_says_so(
     )
     assert response.status_code == 409
     assert response.json()["error"]["code"] == "not_indexed"
+
+
+# ---------------------------------------------------------------- runs (4.8)
+
+
+def _agent_settings(app: FastAPI, **changes: Any) -> None:
+    """The app's agent settings changed for one test (a copy: the settings are the session's)."""
+    settings = app.state.settings
+    agent = settings.agent.model_copy(update=changes)
+    app.state.settings = settings.model_copy(update={"agent": agent})
+
+
+class _Storage:
+    def __init__(self) -> None:
+        self.objects: dict[str, bytes] = {}
+
+    async def put_bytes(
+        self, bucket: str, key: str, data: bytes, *, content_type: str | None = None
+    ) -> None:
+        self.objects[f"{bucket}/{key}"] = data
+
+
+async def test_a_run_is_recorded_step_by_step(
+    app: FastAPI, client: httpx.AsyncClient, db_session: AsyncSession, model: _Model
+) -> None:
+    org, headers = await _setup(app, client, db_session)
+    listing: dict[str, Any] = {"type": "tool_use", "id": "t1", "name": "list_dir", "input": {}}
+    called = message("", stop_reason="tool_use")
+    called["content"] = [listing]
+    replies = [sse(called)]
+    original = model.__call__
+
+    def answer(request: httpx2.Request) -> httpx2.Response:
+        body = json.loads(request.content)
+        if body.get("stream") and replies:
+            model.turns.append(body)
+            return replies.pop(0)
+        return original(request)
+
+    app.state.ask_client = FakeAnthropic(routes={"/v1/messages": answer}).client()
+    storage = _Storage()
+    app.state.storage = storage
+    _agent_settings(app, inline_output_bytes=10)  # a listing is more: to the store
+    response, _ = await _ask(app, client, org, headers, message="Where are items saved?")
+    run_id = response.headers["x-agent-run-id"]
+
+    detail = (await client.get(f"{org}/agent-runs/{run_id}")).json()
+    assert (detail["status"], detail["kind"], detail["question"]) == (
+        "succeeded", "ask", "Where are items saved?",
+    )  # fmt: skip
+    assert detail["tokens_in"] > 0
+    assert float(detail["cost_usd"]) > 0
+    assert detail["latency_ms"] is not None
+    kinds = [(s["kind"], s["name"]) for s in detail["steps"]]
+    assert kinds[0] == ("llm", "claude-sonnet-5-5")
+    assert ("tool", "list_dir") in kinds
+    assert ("verify", "verify") in kinds
+    assert [s["idx"] for s in detail["steps"]] == sorted(s["idx"] for s in detail["steps"])
+    assert all(s["offset_ms"] >= 0 for s in detail["steps"])
+    tool = next(s for s in detail["steps"] if s["kind"] == "tool")
+    assert tool["has_output"]
+    assert tool["output"] is None  # too big for its row: in the store
+    (stored,) = storage.objects
+    assert stored.endswith(f"/runs/{run_id}/{tool['idx']}.json")
+
+    listed = (await client.get(f"{org}/repos/items/runs")).json()
+    assert [r["id"] for r in listed["runs"]] == [run_id]
+    assert listed["runs"][0]["user"] is not None
+
+    replayed = await client.get(f"{org}/agent-runs/{run_id}/events")
+    assert replayed.status_code == 200
+    data = [json.loads(d) for _, d in _events(replayed.text)]
+    assert [d["idx"] for d in data if d["type"] == "step"] == [s["idx"] for s in detail["steps"]]
+    assert data[-1] == {"type": "finished", "status": "succeeded"}
+
+
+async def test_asking_too_often_or_past_the_days_budget_is_refused(
+    app: FastAPI, client: httpx.AsyncClient, db_session: AsyncSession
+) -> None:
+    org, headers = await _setup(app, client, db_session)
+    _agent_settings(app, ask_per_minute=1)
+    first, _ = await _ask(app, client, org, headers, message="Where are items saved?")
+    assert first.status_code == 200
+    second = await client.post(
+        f"{org}/repos/items/ask", json={"message": "And deleted?"}, headers=headers
+    )
+    assert second.status_code == 429
+    assert second.json()["error"]["code"] == "rate_limited"
+    assert int(second.headers["retry-after"]) >= 1
+
+
+async def test_an_org_past_its_daily_cap_starts_no_run(
+    app: FastAPI, client: httpx.AsyncClient, db_session: AsyncSession
+) -> None:
+    org, headers = await _setup(app, client, db_session)
+    repo = await db_session.scalar(select(Repo).where(Repo.slug == "items"))
+    assert repo is not None
+    _agent_settings(app, daily_cost_cap_usd=Decimal("1"))
+
+    async def spend(amount: str) -> None:
+        db_session.add(
+            UsageEvent(
+                org_id=repo.org_id,
+                kind=UsageKind.LLM,
+                provider="anthropic",
+                model="claude-sonnet-5-5",
+                cost_usd=Decimal(amount),
+                price_version="test",
+            )
+        )
+        await db_session.flush()
+
+    await spend("0.85")  # past the warning's share, under the cap: asked, and told
+    warned, _ = await _ask(app, client, org, headers, message="Where are items saved?")
+    assert warned.status_code == 200
+    told = await db_session.scalar(
+        select(func.count()).where(AuditEvent.action == "agent.cost_cap_warning")
+    )
+    assert told == 1
+    await spend("1")
+    refused = await client.post(
+        f"{org}/repos/items/ask", json={"message": "And deleted?"}, headers=headers
+    )
+    assert refused.status_code == 429
+    error = refused.json()["error"]
+    assert error["code"] == "cost_cap_reached"
+    assert datetime.fromisoformat(error["details"]["resets_at"]) > datetime.now(UTC)

@@ -362,6 +362,22 @@ class SearchSettings(BaseSettings):
     cache_seconds: int = Field(default=300, ge=0)
 
 
+class AgentSettings(BaseSettings):
+    """The Ask agent (P4): what an org may spend on it a day, how often a user may ask, and
+    what a run's record keeps inline."""
+
+    model_config = _config("SENSEI_AGENT_")
+
+    # An org's LLM spend in a UTC day past which no new run starts (0: no cap).
+    daily_cost_cap_usd: Decimal = Field(default=Decimal("20"), ge=0)
+    # The share of the cap at which the org is told (once a day).
+    cap_warning_share: float = Field(default=0.8, gt=0, le=1)
+    # Questions one user may ask a minute (a token bucket).
+    ask_per_minute: int = Field(default=6, gt=0)
+    # A step's output up to this size is kept in its row; a larger one in object storage.
+    inline_output_bytes: int = Field(default=16_384, gt=0)
+
+
 class SandboxSettings(BaseSettings):
     """Running a repository's own code (3.7): a fresh container per run, without network, with
     the snapshot read-only. Its dependencies are installed from ``index_url`` into an image."""
@@ -416,6 +432,7 @@ class Settings(BaseSettings):
     ingest: IngestSettings = Field(default_factory=IngestSettings)
     search: SearchSettings = Field(default_factory=SearchSettings)
     sandbox: SandboxSettings = Field(default_factory=SandboxSettings)
+    agent: AgentSettings = Field(default_factory=AgentSettings)
 
     @model_validator(mode="after")
     def _refuse_dev_secrets_outside_dev(self) -> Settings:

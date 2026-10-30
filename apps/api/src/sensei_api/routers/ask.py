@@ -12,11 +12,13 @@ once the response does, after the request's transaction has committed the rows i
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import uuid
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from decimal import Decimal
 from itertools import pairwise
 from typing import Annotated, Any, Literal, cast
 
@@ -31,14 +33,19 @@ from sse_starlette import EventSourceResponse, ServerSentEvent
 
 from sensei_api.deps import DbSession, RedisClient
 from sensei_api.orgs import OrgAccessDep
+from sensei_api.ratelimit import TokenBucket
 from sensei_api.repos import RepoDep
 from sensei_api.routers import browse, search
+from sensei_api.runs import Recorder
+from sensei_api.spend import remaining_today
 from sensei_api.streams import HEADERS, HEARTBEAT_SECONDS, READ_BLOCK_MS, last_event_id
 from sensei_api.ui_stream import DONE, HEADER, UIStream, confidence_data, text_of
+from sensei_core.config import Settings
 from sensei_core.db.tenancy import set_org_context, set_user_context
-from sensei_core.errors import ConflictError, InvalidError, NotFoundError
+from sensei_core.errors import ConflictError, InvalidError, NotFoundError, RateLimitedError
 from sensei_core.indexing.snapshots import resolve_snapshot
 from sensei_core.models import (
+    AgentRun,
     Conversation,
     ConversationMessage,
     MessageCitation,
@@ -46,9 +53,16 @@ from sensei_core.models import (
     RepoFile,
     Snapshot,
 )
-from sensei_engine.agent.loop import Answer, AskAgent, Done, Exchange, Mode
+from sensei_core.storage import Bucket, ObjectStorage
+from sensei_engine.agent.loop import Answer, AskAgent, Budget, Done, Exchange, Mode
 from sensei_engine.agent.tools import ToolContext
-from sensei_engine.llm.anthropic_client import AnthropicClient, LLMError, LLMRequest, Tier
+from sensei_engine.llm.anthropic_client import (
+    AnthropicClient,
+    LLMError,
+    LLMRequest,
+    LLMUsage,
+    Tier,
+)
 from sensei_engine.llm.ledger import usage_ledger
 
 log = structlog.get_logger(__name__)
@@ -60,7 +74,8 @@ STREAM_SECONDS = 3_600  # how long a run's stream may be picked up again
 STREAM_MAXLEN = 20_000
 MAX_EXCHANGES = 6  # the earlier questions a run reads, newest last
 TITLE_CHARS = 80
-REF_TYPE = "ask"
+REF_TYPE = "agent_run"  # an Ask run's usage, by its run
+JSON = "application/json"
 FINISHED = frozenset({"finish"})
 
 Sessions = Callable[[], AbstractAsyncContextManager[AsyncSession]]
@@ -195,6 +210,17 @@ async def ask(
     body: AskRequest,
 ) -> EventSourceResponse:
     """Ask a question about the repository: its answer, streamed as it is written."""
+    settings: Settings = request.app.state.settings
+    bucket = TokenBucket(redis, name="ask", per_minute=settings.agent.ask_per_minute)
+    wait = await bucket.take(str(access.user.id))
+    if wait is not None:
+        raise RateLimitedError(
+            "Too many questions at once; try again in a moment.",
+            headers={"Retry-After": str(wait)},
+        )
+    remaining = await remaining_today(
+        db, redis, settings.agent, org_id=repo.org_id, user_id=access.user.id
+    )
     snapshot = await resolve_snapshot(db, repo, body.ref)
     if snapshot.symbol_count is None or snapshot.chunk_count is None:
         raise ConflictError("This repository isn't indexed for questions yet.", code="not_indexed")
@@ -221,12 +247,24 @@ async def ask(
         parts=[{"type": "text", "text": body.message}],
         snapshot_id=snapshot.id,
     )
+    record = AgentRun(
+        org_id=repo.org_id,
+        repo_id=repo.id,
+        user_id=user.id,
+        kind="ask",
+        question=body.message,
+        mode=body.mode.value,
+        created_at=datetime.now(UTC),
+    )
+    db.add(record)
+    await db.flush()
     answer = ConversationMessage(
         org_id=repo.org_id,
         conversation_id=conversation.id,
         role="assistant",
         status="streaming",
         snapshot_id=snapshot.id,
+        run_id=record.id,
     )
     db.add_all([question, answer])
     await db.execute(
@@ -249,9 +287,16 @@ async def ask(
         mode=body.mode,
         earlier=earlier,
         repo_name=f"{repo.owner}/{repo.name}",
+        run_id=record.id,
+        remaining=remaining,
     )
     key = f"{STREAM_PREFIX}{answer.id}"
-    headers = {**HEADERS, HEADER[0]: HEADER[1], "x-conversation-id": str(conversation.id)}
+    headers = {
+        **HEADERS,
+        HEADER[0]: HEADER[1],
+        "x-conversation-id": str(conversation.id),
+        "x-agent-run-id": str(record.id),
+    }
     return EventSourceResponse(
         _follow(request, redis, key, "0", start=run.start),
         ping=HEARTBEAT_SECONDS,
@@ -402,6 +447,8 @@ class _Run:
     mode: Mode
     earlier: list[Exchange]
     repo_name: str
+    run_id: uuid.UUID
+    remaining: Decimal | None  # what the org may still spend today (None: no cap)
 
     def start(self) -> None:
         task = asyncio.create_task(self._run())
@@ -422,21 +469,45 @@ class _Run:
                 snapshot = await db.get(Snapshot, self.snapshot_id)
                 if repo is None or snapshot is None:
                     raise LookupError("the repository or its snapshot is gone")
+                record = await db.get(AgentRun, self.run_id)
+                if record is None:
+                    raise LookupError("the run's record is gone")
                 ctx = await self.contexts(self.request, db, repo, snapshot)
-                agent = self._agent(db, ctx)
+                recorder = self._recorder(db, record)
+                agent = self._agent(db, ctx, recorder)
                 async for event in agent.run(
                     self.question, ctx, conversation=self.earlier, mode=self.mode
                 ):
+                    await recorder.event(event)
                     await self._publish(key, stream.encode(event))
                     if isinstance(event, Done):
                         answer = event.answer
+                await recorder.finish(answer)
                 await self._store(db, stream, answer, ctx.sha)
         except Exception as exc:  # the run's own failure: said in its stream and stored
             log.exception("ask run failed", message_id=str(self.message_id))
             await self._publish(key, stream.failed(_said(exc)))
-            await self._failed(stream)
+            await self._failed(stream, type(exc).__name__)
 
-    def _agent(self, db: AsyncSession, ctx: ToolContext) -> AskAgent:
+    def _recorder(self, db: AsyncSession, record: AgentRun) -> Recorder:
+        state = self.request.app.state
+        storage: ObjectStorage | None = getattr(state, "storage", None)
+
+        async def put(key: str, data: bytes) -> None:
+            if storage is not None:
+                await storage.put_bytes(Bucket.ARTIFACTS, key, data, content_type=JSON)
+
+        settings: Settings = state.settings
+        return Recorder(
+            db,
+            record,
+            redis=self.redis,
+            costs=search.cost_calculator(self.request),
+            put=put if storage is not None else None,
+            inline_bytes=settings.agent.inline_output_bytes,
+        )
+
+    def _agent(self, db: AsyncSession, ctx: ToolContext, recorder: Recorder) -> AskAgent:
         costs = search.cost_calculator(self.request)
         ledger = usage_ledger(
             db,
@@ -444,9 +515,24 @@ class _Run:
             org_id=self.org_id,
             user_id=self.user_id,
             ref_type=REF_TYPE,
-            ref_id=str(self.message_id),
+            ref_id=str(self.run_id),
         )
-        return AskAgent(self.client, costs=costs, on_usage=ledger, reranker=ctx.search.reranker)
+
+        async def usage(used: LLMUsage) -> None:
+            await ledger(used)
+            await recorder.usage(used)
+
+        default = Budget()
+        cap = default.max_cost_usd
+        if self.remaining is not None:
+            cap = self.remaining if cap is None else min(cap, self.remaining)
+        return AskAgent(
+            self.client,
+            budget=dataclasses.replace(default, max_cost_usd=cap),
+            costs=costs,
+            on_usage=usage,
+            reranker=ctx.search.reranker,
+        )
 
     async def _publish(self, key: str, parts: list[dict[str, Any]]) -> None:
         for part in parts:
@@ -491,7 +577,7 @@ class _Run:
                 )
         await self._retitle(db)
 
-    async def _failed(self, stream: UIStream) -> None:
+    async def _failed(self, stream: UIStream, error: str) -> None:
         try:
             async with self.sessions() as db:
                 await set_user_context(db, self.user_id)
@@ -500,6 +586,11 @@ class _Run:
                     update(ConversationMessage)
                     .where(ConversationMessage.id == self.message_id)
                     .values(status="failed", parts=stream.parts)
+                )
+                await db.execute(
+                    update(AgentRun)
+                    .where(AgentRun.id == self.run_id)
+                    .values(status="failed", error=error, finished_at=func.now())
                 )
         except Exception:
             log.exception("ask run's failure not stored", message_id=str(self.message_id))

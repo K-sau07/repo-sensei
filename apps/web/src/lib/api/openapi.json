@@ -123,7 +123,8 @@
           "repo.settings_update",
           "repo.disconnected",
           "repo.index_started",
-          "repo.index_cancelled"
+          "repo.index_cancelled",
+          "agent.cost_cap_warning"
         ],
         "title": "AuditAction",
         "type": "string"
@@ -2748,6 +2749,350 @@
         "title": "RoleUpdate",
         "type": "object"
       },
+      "RunDetail": {
+        "properties": {
+          "cache_read": {
+            "title": "Cache Read",
+            "type": "integer"
+          },
+          "cache_write": {
+            "title": "Cache Write",
+            "type": "integer"
+          },
+          "cost_usd": {
+            "title": "Cost Usd",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "first_token_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "First Token Ms"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "latency_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latency Ms"
+          },
+          "mode": {
+            "title": "Mode",
+            "type": "string"
+          },
+          "model": {
+            "title": "Model",
+            "type": "string"
+          },
+          "question": {
+            "title": "Question",
+            "type": "string"
+          },
+          "repo_id": {
+            "format": "uuid",
+            "title": "Repo Id",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "steps": {
+            "items": {
+              "$ref": "#/components/schemas/StepOut"
+            },
+            "title": "Steps",
+            "type": "array"
+          },
+          "stopped": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stopped"
+          },
+          "tokens_in": {
+            "title": "Tokens In",
+            "type": "integer"
+          },
+          "tokens_out": {
+            "title": "Tokens Out",
+            "type": "integer"
+          },
+          "turns": {
+            "title": "Turns",
+            "type": "integer"
+          },
+          "user": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "User"
+          }
+        },
+        "required": [
+          "id",
+          "repo_id",
+          "kind",
+          "question",
+          "model",
+          "mode",
+          "status",
+          "stopped",
+          "user",
+          "turns",
+          "tokens_in",
+          "tokens_out",
+          "cache_read",
+          "cache_write",
+          "cost_usd",
+          "latency_ms",
+          "first_token_ms",
+          "error",
+          "created_at",
+          "finished_at",
+          "steps"
+        ],
+        "title": "RunDetail",
+        "type": "object"
+      },
+      "RunList": {
+        "properties": {
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          },
+          "runs": {
+            "items": {
+              "$ref": "#/components/schemas/RunOut"
+            },
+            "title": "Runs",
+            "type": "array"
+          }
+        },
+        "required": [
+          "runs",
+          "next_cursor"
+        ],
+        "title": "RunList",
+        "type": "object"
+      },
+      "RunOut": {
+        "properties": {
+          "cache_read": {
+            "title": "Cache Read",
+            "type": "integer"
+          },
+          "cache_write": {
+            "title": "Cache Write",
+            "type": "integer"
+          },
+          "cost_usd": {
+            "title": "Cost Usd",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "first_token_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "First Token Ms"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "latency_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latency Ms"
+          },
+          "mode": {
+            "title": "Mode",
+            "type": "string"
+          },
+          "model": {
+            "title": "Model",
+            "type": "string"
+          },
+          "question": {
+            "title": "Question",
+            "type": "string"
+          },
+          "repo_id": {
+            "format": "uuid",
+            "title": "Repo Id",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "stopped": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stopped"
+          },
+          "tokens_in": {
+            "title": "Tokens In",
+            "type": "integer"
+          },
+          "tokens_out": {
+            "title": "Tokens Out",
+            "type": "integer"
+          },
+          "turns": {
+            "title": "Turns",
+            "type": "integer"
+          },
+          "user": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "User"
+          }
+        },
+        "required": [
+          "id",
+          "repo_id",
+          "kind",
+          "question",
+          "model",
+          "mode",
+          "status",
+          "stopped",
+          "user",
+          "turns",
+          "tokens_in",
+          "tokens_out",
+          "cache_read",
+          "cache_write",
+          "cost_usd",
+          "latency_ms",
+          "first_token_ms",
+          "error",
+          "created_at",
+          "finished_at"
+        ],
+        "title": "RunOut",
+        "type": "object"
+      },
       "SearchExactQuery": {
         "properties": {
           "kind": {
@@ -3501,6 +3846,70 @@
           "stages"
         ],
         "title": "StagesOut",
+        "type": "object"
+      },
+      "StepOut": {
+        "properties": {
+          "has_output": {
+            "title": "Has Output",
+            "type": "boolean"
+          },
+          "idx": {
+            "title": "Idx",
+            "type": "integer"
+          },
+          "input": {
+            "additionalProperties": true,
+            "title": "Input",
+            "type": "object"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "ms": {
+            "title": "Ms",
+            "type": "integer"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "offset_ms": {
+            "title": "Offset Ms",
+            "type": "integer"
+          },
+          "output": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Output"
+          },
+          "summary": {
+            "title": "Summary",
+            "type": "string"
+          },
+          "tokens": {
+            "title": "Tokens",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "idx",
+          "kind",
+          "name",
+          "input",
+          "summary",
+          "tokens",
+          "ms",
+          "offset_ms",
+          "has_output",
+          "output"
+        ],
+        "title": "StepOut",
         "type": "object"
       },
       "SymbolAt": {
@@ -5301,6 +5710,109 @@
         "summary": "Update Org",
         "tags": [
           "orgs"
+        ]
+      }
+    },
+    "/api/v1/orgs/{org}/agent-runs/{run_id}": {
+      "get": {
+        "description": "A run with its steps in order: what each was, took and cost, where it starts in the run\n(the waterfall's bars).",
+        "operationId": "run_api_v1_orgs__org__agent_runs__run_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Organization slug",
+            "in": "path",
+            "name": "org",
+            "required": true,
+            "schema": {
+              "description": "Organization slug",
+              "title": "Org",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Run",
+        "tags": [
+          "runs"
+        ]
+      }
+    },
+    "/api/v1/orgs/{org}/agent-runs/{run_id}/events": {
+      "get": {
+        "description": "A run's steps as they are recorded (from ``Last-Event-ID``), until it finishes; a run\nthat has finished, its steps, and its end.",
+        "operationId": "events_api_v1_orgs__org__agent_runs__run_id__events_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Organization slug",
+            "in": "path",
+            "name": "org",
+            "required": true,
+            "schema": {
+              "description": "Organization slug",
+              "title": "Org",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Events",
+        "tags": [
+          "runs"
         ]
       }
     },
@@ -7610,6 +8122,92 @@
         "summary": "Reindex",
         "tags": [
           "indexing"
+        ]
+      }
+    },
+    "/api/v1/orgs/{org}/repos/{repo}/runs": {
+      "get": {
+        "description": "The repository's runs, the latest first (who asked what, its status, cost and latency).",
+        "operationId": "runs_api_v1_orgs__org__repos__repo__runs_get",
+        "parameters": [
+          {
+            "description": "Repository slug",
+            "in": "path",
+            "name": "repo",
+            "required": true,
+            "schema": {
+              "description": "Repository slug",
+              "maxLength": 201,
+              "title": "Repo",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Organization slug",
+            "in": "path",
+            "name": "org",
+            "required": true,
+            "schema": {
+              "description": "Organization slug",
+              "title": "Org",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 30,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunList"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Runs",
+        "tags": [
+          "runs"
         ]
       }
     },

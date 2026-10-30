@@ -340,6 +340,48 @@ export interface paths {
         patch: operations["update_org_api_v1_orgs__org__patch"];
         trace?: never;
     };
+    "/api/v1/orgs/{org}/agent-runs/{run_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Run
+         * @description A run with its steps in order: what each was, took and cost, where it starts in the run
+         *     (the waterfall's bars).
+         */
+        get: operations["run_api_v1_orgs__org__agent_runs__run_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/agent-runs/{run_id}/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Events
+         * @description A run's steps as they are recorded (from ``Last-Event-ID``), until it finishes; a run
+         *     that has finished, its steps, and its end.
+         */
+        get: operations["events_api_v1_orgs__org__agent_runs__run_id__events_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/orgs/{org}/audit": {
         parameters: {
             query?: never;
@@ -912,6 +954,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/orgs/{org}/repos/{repo}/runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Runs
+         * @description The repository's runs, the latest first (who asked what, its status, cost and latency).
+         */
+        get: operations["runs_api_v1_orgs__org__repos__repo__runs_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/orgs/{org}/repos/{repo}/search": {
         parameters: {
             query?: never;
@@ -1119,7 +1181,7 @@ export interface components {
          * AuditAction
          * @enum {string}
          */
-        AuditAction: "auth.login" | "auth.logout" | "auth.logout_all" | "org.create" | "org.update" | "org.delete" | "invitation.create" | "invitation.revoke" | "invitation.accept" | "member.role_change" | "member.remove" | "member.leave" | "github.install.linked" | "github.install.deleted" | "github.install.suspended" | "github.install.unsuspended" | "github.install.permissions_accepted" | "repo.connected" | "repo.settings_update" | "repo.disconnected" | "repo.index_started" | "repo.index_cancelled";
+        AuditAction: "auth.login" | "auth.logout" | "auth.logout_all" | "org.create" | "org.update" | "org.delete" | "invitation.create" | "invitation.revoke" | "invitation.accept" | "member.role_change" | "member.remove" | "member.leave" | "github.install.linked" | "github.install.deleted" | "github.install.suspended" | "github.install.unsuspended" | "github.install.permissions_accepted" | "repo.connected" | "repo.settings_update" | "repo.disconnected" | "repo.index_started" | "repo.index_cancelled" | "agent.cost_cap_warning";
         /** AuditEventOut */
         AuditEventOut: {
             /** Action */
@@ -2222,6 +2284,119 @@ export interface components {
         RoleUpdate: {
             role: components["schemas"]["Role"];
         };
+        /** RunDetail */
+        RunDetail: {
+            /** Cache Read */
+            cache_read: number;
+            /** Cache Write */
+            cache_write: number;
+            /** Cost Usd */
+            cost_usd: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Error */
+            error: string | null;
+            /** Finished At */
+            finished_at: string | null;
+            /** First Token Ms */
+            first_token_ms: number | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Kind */
+            kind: string;
+            /** Latency Ms */
+            latency_ms: number | null;
+            /** Mode */
+            mode: string;
+            /** Model */
+            model: string;
+            /** Question */
+            question: string;
+            /**
+             * Repo Id
+             * Format: uuid
+             */
+            repo_id: string;
+            /** Status */
+            status: string;
+            /** Steps */
+            steps: components["schemas"]["StepOut"][];
+            /** Stopped */
+            stopped: string | null;
+            /** Tokens In */
+            tokens_in: number;
+            /** Tokens Out */
+            tokens_out: number;
+            /** Turns */
+            turns: number;
+            /** User */
+            user: string | null;
+        };
+        /** RunList */
+        RunList: {
+            /** Next Cursor */
+            next_cursor: string | null;
+            /** Runs */
+            runs: components["schemas"]["RunOut"][];
+        };
+        /** RunOut */
+        RunOut: {
+            /** Cache Read */
+            cache_read: number;
+            /** Cache Write */
+            cache_write: number;
+            /** Cost Usd */
+            cost_usd: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Error */
+            error: string | null;
+            /** Finished At */
+            finished_at: string | null;
+            /** First Token Ms */
+            first_token_ms: number | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Kind */
+            kind: string;
+            /** Latency Ms */
+            latency_ms: number | null;
+            /** Mode */
+            mode: string;
+            /** Model */
+            model: string;
+            /** Question */
+            question: string;
+            /**
+             * Repo Id
+             * Format: uuid
+             */
+            repo_id: string;
+            /** Status */
+            status: string;
+            /** Stopped */
+            stopped: string | null;
+            /** Tokens In */
+            tokens_in: number;
+            /** Tokens Out */
+            tokens_out: number;
+            /** Turns */
+            turns: number;
+            /** User */
+            user: string | null;
+        };
         /** SearchExactQuery */
         SearchExactQuery: {
             /**
@@ -2462,6 +2637,31 @@ export interface components {
              * @description In the order they run.
              */
             stages: components["schemas"]["StageInfo"][];
+        };
+        /** StepOut */
+        StepOut: {
+            /** Has Output */
+            has_output: boolean;
+            /** Idx */
+            idx: number;
+            /** Input */
+            input: {
+                [key: string]: unknown;
+            };
+            /** Kind */
+            kind: string;
+            /** Ms */
+            ms: number;
+            /** Name */
+            name: string;
+            /** Offset Ms */
+            offset_ms: number;
+            /** Output */
+            output: unknown | null;
+            /** Summary */
+            summary: string;
+            /** Tokens */
+            tokens: number;
         };
         /** SymbolAt */
         SymbolAt: {
@@ -3350,6 +3550,70 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["OrgOut"];
                 };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    run_api_v1_orgs__org__agent_runs__run_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+                /** @description Organization slug */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunDetail"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    events_api_v1_orgs__org__agent_runs__run_id__events_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+                /** @description Organization slug */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Validation Error */
             422: {
@@ -4620,6 +4884,43 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["IndexJobOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    runs_api_v1_orgs__org__repos__repo__runs_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+                cursor?: string | null;
+            };
+            header?: never;
+            path: {
+                /** @description Repository slug */
+                repo: string;
+                /** @description Organization slug */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunList"];
                 };
             };
             /** @description Validation Error */
