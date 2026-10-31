@@ -55,7 +55,9 @@ from sensei_engine.embed.provider import EmbeddingUsage, InputType, UsageSink
 from sensei_engine.embed.voyage import VoyageError
 from sensei_engine.graph import stage as graph_stage
 from sensei_engine.graph.snapshot import ARTIFACT_NAME, GraphSnapshot
+from sensei_engine.graph.trace import trace_feature
 from sensei_engine.ingest.store import file_ids
+from sensei_engine.link.fastapi import Route, RuntimeRoutes
 from sensei_engine.llm import rollups, summaries
 from sensei_engine.search.bm25 import chunk_partition, keyword_search
 from sensei_testing.anthropic import FakeAnthropic, batch, jsonl, message
@@ -1966,3 +1968,70 @@ def test_an_incremental_run_summarizes_only_the_files_that_changed(
     sent = claude.bodies(BATCHES)[2]["requests"]
     assert len(sent) == 1
     assert "web/main.ts" in json.dumps(sent)
+
+
+# ---------------------------------------------------------------- resolution again (5.3)
+
+
+def test_an_incremental_rename_moves_its_callers_edges_to_the_new_name(
+    runtime: Runtime,
+    ids: tuple[uuid.UUID, uuid.UUID, uuid.UUID],
+    github: respx.MockRouter,
+    bare_repo: Any,
+) -> None:
+    org_id, repo_id, job_id = ids
+    database = runtime.system_database
+    runtime.run(_pin(database, job_id, None, bare_repo.sixth))
+    _run(org_id, repo_id, job_id)
+    _, before = runtime.run(_state(database, repo_id, job_id))
+    assert before.snapshot_id is not None
+    calls = {e for e in runtime.run(_graph(database, before.snapshot_id)) if e[2] == "calls"}
+    assert ("ts web/main.ts/main().", "ts client/greet.ts/greet().", "calls") in calls
+
+    renamed = _incremental(runtime, org_id, repo_id, bare_repo.seventh)
+    assert renamed.snapshot_id is not None
+    graph = runtime.run(_graph(database, renamed.snapshot_id))
+    assert ("ts web/main.ts/main().", "ts client/greet.ts/hello().", "calls") in graph
+    old = "ts client/greet.ts/greet()."
+    assert not any(old in (a, b) for a, b, _ in graph)  # the old name's edges went, not left stale
+
+
+def test_an_incremental_run_that_removes_an_endpoint_leaves_a_gap_in_its_trace(
+    runtime: Runtime,
+    ids: tuple[uuid.UUID, uuid.UUID, uuid.UUID],
+    github: respx.MockRouter,
+    bare_repo: Any,
+) -> None:
+    org_id, repo_id, job_id = ids
+    database = runtime.system_database
+    runtime.run(_pin(database, job_id, None, bare_repo.fourth))
+    _run(org_id, repo_id, job_id)
+
+    removed = _incremental(runtime, org_id, repo_id, bare_repo.eighth)
+    assert removed.snapshot_id is not None
+    call = "http_client_call GET /items stack/page.ts:2"
+    links = {
+        edge
+        for edge in runtime.run(_graph(database, removed.snapshot_id))
+        if edge[2] in ("issues_request", "targets", "handled_by")
+    }
+    assert links == {("ts stack/page.ts/loadItems().", call, "issues_request")}  # nothing to target
+    graph = runtime.run(_artifact(runtime, org_id, repo_id, bare_repo.eighth))
+    assert graph.node("api_endpoint GET /items") is None
+    traced = trace_feature(graph, "ts stack/page.ts/loadItems().", direction="down")
+    best = traced.paths[0]
+    assert not best.reaches_goal
+    assert any(gap.kind == "gap" for gap in best.breaks)  # the call reaches no endpoint
+
+
+def test_the_apps_routes_are_read_again_only_when_python_changed() -> None:
+    assert not links_task.introspect_again({"web/main.ts", "README.md"})
+    assert links_task.introspect_again({"web/main.ts", "stack/api.py"})
+    assert links_task.introspect_again({"app/types.pyi"})
+    routes = RuntimeRoutes(
+        [Route("GET", "/items", "py a.py/read().", "runtime", tags=("items",), entry="a:app")],
+        limitation=None,
+        notes=["one app"],
+        detail="ok",
+    )
+    assert links_task.routes_from(links_task.routes_json(routes)) == routes

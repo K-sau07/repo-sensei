@@ -192,3 +192,15 @@ async def carry_moved_vectors(
         },
     )
     return int(getattr(result, "rowcount", 0) or 0)
+
+
+async def changed_paths(db: AsyncSession, snapshot: Snapshot, carry: Carry) -> set[str]:
+    """The paths an incremental run reads that the last index read otherwise: added, modified
+    and moved (the new paths), and deleted (and moved: the old paths)."""
+    rows = await db.execute(
+        select(RepoFile.id, RepoFile.path).where(RepoFile.snapshot_id == snapshot.id)
+    )
+    new: dict[uuid.UUID, str] = dict(rows.tuples().all())
+    old = set(await db.scalars(select(RepoFile.path).where(RepoFile.snapshot_id == carry.previous)))
+    kept = {new[file_id] for file_id in carry.kept if file_id in new}
+    return {path for path in new.values() if path not in kept} | (old - set(new.values()))

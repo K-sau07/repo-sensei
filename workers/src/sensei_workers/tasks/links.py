@@ -25,8 +25,11 @@ from __future__ import annotations
 import time
 import uuid
 from collections.abc import Mapping
+from dataclasses import asdict
 from pathlib import Path
+from typing import Any, cast
 
+import orjson
 from sqlalchemy import select
 
 from sensei_core.jobs import TaskName
@@ -38,9 +41,10 @@ from sensei_engine.graph.project import Project
 from sensei_engine.graph.snapshot import ARTIFACT_NAME, GraphSnapshot
 from sensei_engine.graph.stage import load_project
 from sensei_engine.graph.writer import GraphCounts
+from sensei_engine.incremental import Carry, changed_paths
 from sensei_engine.ingest.classify import Flag
 from sensei_engine.link import http_calls
-from sensei_engine.link.fastapi import RuntimeRoutes
+from sensei_engine.link.fastapi import Route, RuntimeRoutes
 from sensei_engine.link.stage import (
     FileLinks,
     LinkExtractReport,
@@ -57,6 +61,7 @@ from sensei_engine.sandbox.runner import Sandbox
 from sensei_engine.snapshots import ArchiveTooLargeError
 from sensei_workers.app import celery_app
 from sensei_workers.base import NotYetError, SenseiTask
+from sensei_workers.incremental import carry_for
 from sensei_workers.ingest.cache import repo_lock
 from sensei_workers.jobstate import JobScope, job_scope
 from sensei_workers.runtime import get_runtime
@@ -69,6 +74,10 @@ log = get_logger(__name__)
 
 STAGE = Stage.LINKS
 PROGRESS_EVERY_SECONDS = 1.0
+# The running apps' routes, as the sandbox read them, kept with the snapshot: an incremental run
+# that changed no Python file reads them from the last index rather than running the apps again.
+ROUTES_ARTIFACT = "runtime-routes.json"
+MAX_ROUTES_BYTES = 64 * 1024 * 1024
 STAGE_ORDER = list(Stage)
 UNREAD_FLAGS = frozenset({Flag.BINARY, Flag.TOO_LARGE, Flag.LFS_POINTER})
 
@@ -176,6 +185,54 @@ async def _runtime(
         return RuntimeRoutes([], limitation=f"the sandbox failed ({type(exc).__name__})")
 
 
+def routes_json(routes: RuntimeRoutes) -> bytes:
+    return orjson.dumps(asdict(routes))
+
+
+def routes_from(data: bytes) -> RuntimeRoutes:
+    """What :func:`routes_json` wrote."""
+    raw = cast("dict[str, Any]", orjson.loads(data))
+    routes: list[Route] = []
+    for found in cast("list[dict[str, Any]]", raw.get("routes", [])):
+        fields = dict(found)
+        fields["tags"] = tuple(fields.get("tags", ()))
+        fields["unresolved"] = tuple(fields.get("unresolved", ()))
+        routes.append(Route(**fields))
+    return RuntimeRoutes(
+        routes,
+        limitation=raw.get("limitation"),
+        notes=list(raw.get("notes", [])),
+        detail=str(raw.get("detail", "")),
+    )
+
+
+def introspect_again(changed: set[str]) -> bool:
+    """Whether an incremental run reads the apps' routes again: a Python file (a router, an
+    app, or what they import) was added, changed, moved or deleted."""
+    return any(path.endswith((".py", ".pyi")) for path in changed)
+
+
+async def _kept_routes(task: SenseiTask, target: Target, carry: Carry) -> RuntimeRoutes | None:
+    """The last index's runtime routes, when this incremental run changed no Python file
+    (None: it did, or there are none kept: the apps are read again, when they may be)."""
+    async with task.org_session(target.org_id) as db:
+        snapshot = await db.get(Snapshot, target.snapshot_id)
+        if snapshot is None or introspect_again(await changed_paths(db, snapshot, carry)):
+            return None
+    storage = await get_runtime().storage()
+    key = artifact_key(target.org_id, target.repo_id, carry.previous_sha, ROUTES_ARTIFACT)
+    data = await storage.get_bytes(Bucket.ARTIFACTS, key, max_bytes=MAX_ROUTES_BYTES)
+    return routes_from(data) if data is not None else None
+
+
+async def _keep_routes(target: Target, routes: RuntimeRoutes) -> None:
+    storage = await get_runtime().storage()
+    key = artifact_key(target.org_id, target.repo_id, target.commit_sha, ROUTES_ARTIFACT)
+    await storage.put_bytes(
+        Bucket.ARTIFACTS, key, routes_json(routes), content_type="application/json"
+    )
+
+
 async def _build(
     task: SenseiTask,
     target: Target,
@@ -186,6 +243,7 @@ async def _build(
     runtime: RuntimeRoutes | None,
     report: LinkExtractReport,
     seconds: float,
+    routes_kept: bool = False,
 ) -> GraphCounts | None:
     """Resolve and write the links, the graph artifact again, and complete the stage (None: a
     linker failed, and the stage is skipped; see the module)."""
@@ -223,6 +281,7 @@ async def _build(
             unresolved_edges=counts.unresolved,
             linkers=build.details,
             introspected=runtime is not None,
+            **({"routes_kept": True} if routes_kept else {}),
             wall_seconds=round(seconds, 3),
             version=version,
         )
@@ -267,7 +326,15 @@ def build_links(self: IngestTask, *, job_id: str, org_id: str, repo_id: str) -> 
                 if now - last >= PROGRESS_EVERY_SECONDS:
                     last = now
                     runtime.run(_progress(self, target, job, report.files, len(files)))
-            routes = runtime.run(_runtime(self, target, root, found))
+            # An incremental run that changed no Python file keeps the last index's runtime
+            # routes (5.3): running the apps again would read the same ones.
+            carry = runtime.run(carry_for(self, target.org_id, job, target.snapshot_id))
+            routes = runtime.run(_kept_routes(self, target, carry)) if carry else None
+            kept = routes is not None
+            if not kept:
+                routes = runtime.run(_runtime(self, target, root, found))
+            if routes is not None:
+                runtime.run(_keep_routes(target, routes))
             counts = runtime.run(
                 _build(
                     self,
@@ -278,6 +345,7 @@ def build_links(self: IngestTask, *, job_id: str, org_id: str, repo_id: str) -> 
                     runtime=routes,
                     report=report,
                     seconds=time.monotonic() - started,
+                    routes_kept=kept,
                 )
             )
     except SnapshotUnavailableError:

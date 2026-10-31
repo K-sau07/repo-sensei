@@ -76,6 +76,8 @@ class BareRepo:
     fourth: str  # the second and stack/ (on the "stack" branch)
     fifth: str = ""  # the third, web/greet.ts moved to client/greet.ts (the "moves" branch)
     sixth: str = ""  # the fifth, web/main.ts changed and README.md deleted
+    seventh: str = ""  # the sixth, greet renamed hello (and its caller changed to match)
+    eighth: str = ""  # the fourth, its route taken out (the page still fetches /items)
 
 
 def _git(*args: str, cwd: Path) -> str:
@@ -94,9 +96,10 @@ def _git(*args: str, cwd: Path) -> str:
     return result.stdout.strip()
 
 
-def _moves(work: Path) -> tuple[str, str]:
+def _moves(work: Path) -> tuple[str, str, str]:
     """The "moves" branch, from the checked-out commit (the third): a file moved and nothing
-    else, then one changed and one deleted (incremental runs, 5.2). Its two commits."""
+    else, then one changed and one deleted, then a function renamed with its caller
+    (incremental runs, 5.2 and 5.3). Its three commits."""
     _git("checkout", "--quiet", "-b", "moves", cwd=work)
     (work / "client").mkdir()
     _git("mv", "web/greet.ts", "client/greet.ts", cwd=work)
@@ -109,7 +112,32 @@ def _moves(work: Path) -> tuple[str, str]:
     (work / "README.md").unlink()
     _git("add", "-A", cwd=work)
     _git("commit", "--quiet", "-m", "sixth", cwd=work)
-    return fifth, _git("rev-parse", "HEAD", cwd=work)
+    sixth = _git("rev-parse", "HEAD", cwd=work)
+    (work / "client" / "greet.ts").write_text(
+        "export function hello(name: string): string {\n  return `hello, ${name}`\n}\n"
+    )
+    (work / "web" / "main.ts").write_text(
+        'import { hello } from "../client/greet"\n\nexport function main(): void {\n'
+        '  hello("once more")\n}\n\nexport function quiet(): void {}\n'
+    )
+    _git("add", "-A", cwd=work)
+    _git("commit", "--quiet", "-m", "seventh", cwd=work)
+    return fifth, sixth, _git("rev-parse", "HEAD", cwd=work)
+
+
+def _unrouted(work: Path) -> str:
+    """On the checked-out "stack" branch: its route taken out, its page left fetching it (a
+    removed endpoint, 5.3). The commit."""
+    api = work / "stack" / "api.py"
+    api.write_text(api.read_text().replace('@app.get("/items")\n', ""))
+    _git("add", "-A", cwd=work)
+    _git("commit", "--quiet", "-m", "eighth", cwd=work)
+    eighth = _git("rev-parse", "HEAD", cwd=work)
+    _git("checkout", "--quiet", "HEAD~1", cwd=work)  # the stack branch's head stays the fourth
+    _git("branch", "--quiet", "-f", "stack", "HEAD", cwd=work)
+    _git("branch", "--quiet", "unrouted", eighth, cwd=work)
+    _git("checkout", "--quiet", "stack", cwd=work)
+    return eighth
 
 
 @pytest.fixture(scope="session")
@@ -146,7 +174,7 @@ def bare_repo(tmp_path_factory: pytest.TempPathFactory) -> BareRepo:
     _git("add", "-A", cwd=work)
     _git("commit", "--quiet", "-m", "third", cwd=work)
     third = _git("rev-parse", "HEAD", cwd=work)
-    fifth, sixth = _moves(work)
+    fifth, sixth, seventh = _moves(work)
     _git("checkout", "--quiet", "main", cwd=work)
     _git("checkout", "--quiet", "-b", "stack", cwd=work)
     (work / "stack").mkdir()
@@ -155,6 +183,7 @@ def bare_repo(tmp_path_factory: pytest.TempPathFactory) -> BareRepo:
     _git("add", "-A", cwd=work)
     _git("commit", "--quiet", "-m", "fourth", cwd=work)
     fourth = _git("rev-parse", "HEAD", cwd=work)
+    eighth = _unrouted(work)
     _git("checkout", "--quiet", "main", cwd=work)
 
     web_root = root / "github"
@@ -173,4 +202,6 @@ def bare_repo(tmp_path_factory: pytest.TempPathFactory) -> BareRepo:
         fourth=fourth,
         fifth=fifth,
         sixth=sixth,
+        seventh=seventh,
+        eighth=eighth,
     )
