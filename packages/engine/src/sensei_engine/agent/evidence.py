@@ -34,7 +34,10 @@ MAX_PIECE_LINES = 80  # a longer piece shows its first lines
 TITLE_TOKENS = 100  # a block's source and title, kept back when its lines are cut to fit
 INTRO = (
     "The evidence for your answer: first what you committed to, then the best of the rest of "
-    "what you read. Answer the question from it, and cite it."
+    "what you read. Answer the question from it, and cite it. Each sentence's citations must "
+    "show all of what the sentence says: one that says more than its lines show is split, or "
+    'says only what they show. That something is absent ("only", "no", "never") is '
+    "not shown by lines: say what you read and searched instead of citing it as a fact."
 )
 
 
