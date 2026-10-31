@@ -17,7 +17,9 @@ snapshot's org set (row-level security checks every row).
 from __future__ import annotations
 
 import uuid
+from collections.abc import Iterable
 from dataclasses import dataclass, field
+from typing import Any
 
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -25,6 +27,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sensei_core.models import SYMBOL_KINDS, Repo, RepoFile, Snapshot
 from sensei_core.models.indexing import SnapshotStatus
 from sensei_engine.chunk.store import COLUMNS
+from sensei_engine.graph.stage import GRAPH_ATTRS
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,36 +58,41 @@ async def previous_of(db: AsyncSession, repo: Repo, snapshot: Snapshot) -> Snaps
 
 async def carried(db: AsyncSession, previous: Snapshot, snapshot: Snapshot) -> Carry:
     """Which of ``snapshot``'s files keep ``previous``'s facts, and which only moved."""
-    old = {
-        (path, content_hash): file_id
-        for path, content_hash, file_id in await db.execute(
-            select(RepoFile.path, RepoFile.content_hash, RepoFile.id).where(
-                RepoFile.snapshot_id == previous.id
-            )
-        )
-    }
-    new = list(
+    columns = (RepoFile.path, RepoFile.content_hash, RepoFile.language, RepoFile.flags, RepoFile.id)
+
+    def read(rows: Iterable[Any]) -> list[tuple[str, bytes, Read, uuid.UUID]]:
+        # How a file is read: its language and flags (vendored, generated, binary...), which
+        # .gitattributes can change without its content changing.
+        return [
+            (path, content_hash, (language, tuple(sorted(flags or ()))), file_id)
+            for path, content_hash, language, flags, file_id in rows
+        ]
+
+    old_files = read(await db.execute(select(*columns).where(RepoFile.snapshot_id == previous.id)))
+    new_files = read(
         await db.execute(
-            select(RepoFile.path, RepoFile.content_hash, RepoFile.id)
-            .where(RepoFile.snapshot_id == snapshot.id)
-            .order_by(RepoFile.path)
+            select(*columns).where(RepoFile.snapshot_id == snapshot.id).order_by(RepoFile.path)
         )
     )
+    old = {(path, content_hash, how): file_id for path, content_hash, how, file_id in old_files}
     kept: dict[uuid.UUID, uuid.UUID] = {}
-    for path, content_hash, file_id in new:
-        if (found := old.get((path, content_hash))) is not None:
+    for path, content_hash, how, file_id in new_files:
+        if (found := old.get((path, content_hash, how))) is not None:
             kept[file_id] = found
     # A file that moved: its content was at a path the new snapshot no longer has.
-    present = {path for path, _, _ in new}
-    gone: dict[bytes, list[uuid.UUID]] = {}
-    for (path, content_hash), file_id in sorted(old.items()):
+    present = {path for path, _, _, _ in new_files}
+    gone: dict[tuple[bytes, Read], list[uuid.UUID]] = {}
+    for path, content_hash, how, file_id in sorted(old_files):
         if path not in present:
-            gone.setdefault(content_hash, []).append(file_id)
+            gone.setdefault((content_hash, how), []).append(file_id)
     moved: dict[uuid.UUID, uuid.UUID] = {}
-    for _, content_hash, file_id in new:
-        if file_id not in kept and gone.get(content_hash):
-            moved[file_id] = gone[content_hash].pop(0)
+    for _, content_hash, how, file_id in new_files:
+        if file_id not in kept and gone.get((content_hash, how)):
+            moved[file_id] = gone[(content_hash, how)].pop(0)
     return Carry(previous.id, previous.commit_sha, previous.chunk_generation, kept, moved)
+
+
+Read = tuple[str | None, tuple[str, ...]]  # a file's language and flags
 
 
 def _pairs(mapping: dict[uuid.UUID, uuid.UUID]) -> dict[str, list[uuid.UUID]]:
@@ -92,9 +100,9 @@ def _pairs(mapping: dict[uuid.UUID, uuid.UUID]) -> dict[str, list[uuid.UUID]]:
 
 
 async def carry_symbols(db: AsyncSession, snapshot: Snapshot, carry: Carry) -> int:
-    """The kept files' definitions, written into ``snapshot`` as they were in the previous one
-    (their attributes too: an unchanged file's are what the graph would write again). Returns
-    the rows written."""
+    """The kept files' definitions, written into ``snapshot`` as they were in the previous one,
+    but for what the graph stage kept on them (:data:`~sensei_engine.graph.stage.GRAPH_ATTRS`:
+    it writes those again, from this snapshot's graph). Returns the rows written."""
     if not carry.kept:
         return 0
     result = await db.execute(
@@ -104,7 +112,8 @@ async def carry_symbols(db: AsyncSession, snapshot: Snapshot, carry: Carry) -> i
             "docstring, attrs, content_hash, owner_file_id) "
             "SELECT n.org_id, n.repo_id, :snapshot, n.kind, n.symbol_key, n.name, "
             "n.qualified_name, m.new_id, n.start_line, n.end_line, n.start_col, n.end_col, n.lang, "
-            "n.signature, n.docstring, n.attrs, n.content_hash, m.new_id "
+            "n.signature, n.docstring, n.attrs - CAST(:graph_attrs AS text[]), n.content_hash, "
+            "m.new_id "
             "FROM public.nodes n "
             "JOIN unnest(CAST(:old AS uuid[]), CAST(:new AS uuid[])) AS m(old_id, new_id) "
             "ON n.owner_file_id = m.old_id "
@@ -115,6 +124,7 @@ async def carry_symbols(db: AsyncSession, snapshot: Snapshot, carry: Carry) -> i
             "snapshot": snapshot.id,
             "previous": carry.previous,
             "kinds": sorted(str(kind) for kind in SYMBOL_KINDS),
+            "graph_attrs": list(GRAPH_ATTRS),
             **_pairs(carry.kept),
         },
     )

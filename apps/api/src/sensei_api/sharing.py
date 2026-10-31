@@ -14,6 +14,7 @@ in backticks, say) stay: they are the answer's words.
 from __future__ import annotations
 
 import hashlib
+import re
 import secrets
 from bisect import bisect_right
 from typing import Any, cast
@@ -26,6 +27,8 @@ HIDDEN = "```\n(code hidden: you can't read this repository)\n```"
 # a fenced block, an indented one (after a heading, a fence, a rule or a blank line of spaces
 # too), and raw HTML (a <pre>). The page's renderer is what decides, so its parser decides here.
 _MD = MarkdownIt("commonmark")
+_BREAK = re.compile(r"\r\n|\r|\n")
+_ENDS_LINE = re.compile(r"(?:\r\n|\r|\n)\Z")
 _CODE = frozenset({"fence", "code_block", "html_block"})
 # Never shown on a shared page: the run behind the answer.
 _INTERNAL = frozenset({"data-conversation"})
@@ -76,18 +79,16 @@ def shown(parts: list[dict[str, Any]], *, redact: bool) -> list[dict[str, Any]]:
 def _code(text: str) -> list[tuple[int, int]]:
     """Where ``text``'s code blocks are (start, end offsets, whole lines), as CommonMark reads
     them, merged where they touch."""
-    starts = [0]
-    for at, char in enumerate(text):
-        if char == "\n":
-            starts.append(at + 1)
+    # Lines as CommonMark counts them: a line ends at \r\n, \r or \n (a bare \r too).
+    starts = [0, *(m.end() for m in _BREAK.finditer(text))]
     found: list[tuple[int, int]] = []
     for token in _MD.parse(text):
         if token.type not in _CODE or token.map is None:
             continue
         first, last = token.map
         start, end = starts[first], starts[last] if last < len(starts) else len(text)
-        if end > start and text[end - 1] == "\n":
-            end -= 1  # its last line's break stays: the text after it starts a line still
+        if (ending := _ENDS_LINE.search(text, start, end)) is not None:
+            end = ending.start()  # its last line's break stays: the text after starts a line
         if found and start <= found[-1][1]:
             found[-1] = (found[-1][0], max(end, found[-1][1]))
         else:

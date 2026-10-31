@@ -476,6 +476,8 @@ def spliced[T](
 
     kept: list[tuple[int, int, T]] = []
     for a, b, carried in spans:
+        if any(not e.rewritten and e.cut_start <= a and b <= e.cut_end for e in edits):
+            continue  # all of it in a claim taken out (a list marker kept doesn't hold it)
         first, last = moved(a, end=False), moved(b, end=True)
         if first < last:
             kept.append((first, last, carried))
@@ -494,11 +496,17 @@ def prose(text: str, claim: Claim) -> bool:
     line_start = text.rfind("\n", 0, claim.start) + 1
     if text[line_start : claim.start].startswith(("    ", "\t")):
         return False
-    inside = False
+    fence: str | None = None  # the open fence, as CommonMark closes it: the same, as long
     for line in text[:line_start].split("\n"):
-        if _FENCE_LINE.match(line):
-            inside = not inside
-    return not inside and not _FENCE_LINE.match(claim.text)
+        found = _FENCE_LINE.match(line)
+        if found is None:
+            continue
+        mark = found.group(0).strip()
+        if fence is None:
+            fence = mark
+        elif mark[0] == fence[0] and len(mark) >= len(fence) and not line.strip()[len(mark) :]:
+            fence = None
+    return fence is None and not _FENCE_LINE.match(claim.text)
 
 
 async def whole(

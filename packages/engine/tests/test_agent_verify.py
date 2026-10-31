@@ -458,3 +458,20 @@ async def test_a_later_answer_cut_short_is_not_rewritten_by_the_checks_of_the_on
     assert done.answer.text == "create_item adds it."
     assert done.answer.verification is None  # its checks were of another text
     assert "rewrite" not in model.checks
+
+
+def test_a_citation_of_a_list_claim_taken_out_goes_with_it() -> None:
+    text = "- Alpha does X. Beta does Y."
+    found = claims(text, [])
+    alpha = next(c for c in found if "Alpha" in c.text)
+    spans = [(0, 15, "a"), (16, len(text), "b")]
+    out, moved, _ = spliced(text, spans, found, {alpha.n: ""})
+    assert out == "- Beta does Y."
+    assert [(out[a:b], what) for a, b, what in moved] == [("Beta does Y.", "b")]
+
+
+def test_a_fence_closes_only_on_its_like() -> None:
+    text = "Code:\n````\n```\ninner()\n````\nAfter it."
+    found = {c.text: c for c in claims(text, [])}
+    assert not prose(text, found["inner()"])  # the ``` inside doesn't close the ````
+    assert prose(text, found["After it."])

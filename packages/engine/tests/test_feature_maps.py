@@ -155,3 +155,28 @@ async def test_maps_are_stored_with_their_lines_and_found(
     assert text.startswith("Item creation (backend/app/)")
     assert "Its files changed since" in text
     assert [s.path for s in shown.sources] == [ROUTE]  # the entry point's lines, citable
+
+
+async def test_an_incremental_run_keeps_a_map_whose_files_are_as_they_were(
+    db_session: AsyncSession, tmp_path: Path
+) -> None:
+    """A module's map is kept (5.2) when the module has the same files, with the same content;
+    any file changed, added or gone, and it is written again."""
+    ctx = await _ctx(db_session, tmp_path)
+    ids: dict[str, Any] = {
+        "org_id": ctx.org_id,
+        "repo_id": ctx.repo_id,
+        "snapshot_id": ctx.snapshot_id,
+    }
+    await feature_maps.store(db_session, drafts=[DRAFT], **ids)
+    module = [("backend/app", [ROUTE, SERVICE])]
+    (same,) = await feature_maps.kept(db_session, ctx.snapshot_id, ctx.snapshot_id, module)
+    assert same.path == "backend/app"
+    more = [("backend/app", [ROUTE, SERVICE, "backend/app/core/long.py"])]
+    assert await feature_maps.kept(db_session, ctx.snapshot_id, ctx.snapshot_id, more) == []
+    await db_session.execute(
+        update(RepoFile)
+        .where(RepoFile.snapshot_id == ctx.snapshot_id, RepoFile.path == SERVICE)
+        .values(content_hash=b"\x00" * 32)
+    )
+    assert await feature_maps.kept(db_session, ctx.snapshot_id, ctx.snapshot_id, module) == []

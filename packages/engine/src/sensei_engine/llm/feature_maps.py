@@ -13,7 +13,7 @@ from __future__ import annotations
 import asyncio
 import re
 import uuid
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
 from decimal import Decimal
 from importlib import resources
@@ -176,8 +176,10 @@ async def generate(
     *,
     on_usage: LLMUsageSink | None = None,
     concurrency: int = CONCURRENCY,
+    skip: Collection[str] = (),
 ) -> list[FeatureMapDraft]:
-    """A map for each module (:func:`modules`); one the model can't write is left out."""
+    """A map for each module (:func:`modules`) but those in ``skip`` (an incremental run's,
+    kept from the last index: :func:`kept`); one the model can't write is left out."""
     gate = asyncio.Semaphore(concurrency)
 
     async def one(directory: str, paths: list[str]) -> FeatureMapDraft | None:
@@ -211,7 +213,11 @@ async def generate(
         )
 
     found = await asyncio.gather(
-        *(one(directory, paths) for directory, paths in modules(list(summaries)))
+        *(
+            one(directory, paths)
+            for directory, paths in modules(list(summaries))
+            if directory not in skip
+        )
     )
     return [draft for draft in found if draft is not None]
 
@@ -355,3 +361,42 @@ async def _hashes(db: AsyncSession, snapshot_id: uuid.UUID, paths: Sequence[str]
         )
     )
     return {path: digest.hex() for path, digest in rows.tuples()}
+
+
+async def kept(
+    db: AsyncSession,
+    previous_id: uuid.UUID,
+    snapshot_id: uuid.UUID,
+    found: Sequence[tuple[str, list[str]]],
+) -> list[FeatureMap]:
+    """The last index's maps of the modules (``found``: :func:`modules`) that are what they were
+    there: the same files, each with the same content (an incremental run keeps them rather
+    than paying for them again, 5.2)."""
+    previous = {
+        m.path: m
+        for m in await db.scalars(select(FeatureMap).where(FeatureMap.snapshot_id == previous_id))
+    }
+    same: list[FeatureMap] = []
+    for directory, paths in found:
+        was = previous.get(directory)
+        if was is None or set(was.file_hashes) != set(paths):
+            continue
+        if await _hashes(db, snapshot_id, paths) == was.file_hashes:
+            same.append(was)
+    return same
+
+
+async def carry(db: AsyncSession, snapshot_id: uuid.UUID, maps: Sequence[FeatureMap]) -> int:
+    """``maps`` (another snapshot's, :func:`kept`) written as ``snapshot_id``'s, as they were:
+    their files didn't change, so neither did their lines. Call after :func:`store`."""
+    for was in maps:
+        db.add(
+            FeatureMap(
+                org_id=was.org_id, repo_id=was.repo_id, snapshot_id=snapshot_id, key=was.key,
+                path=was.path, title=was.title, summary=was.summary,
+                entry_points=was.entry_points, key_symbols=was.key_symbols,
+                data_flow=was.data_flow, citations=was.citations, file_hashes=was.file_hashes,
+            )
+        )  # fmt: skip
+    await db.flush()
+    return len(maps)

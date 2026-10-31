@@ -91,6 +91,10 @@ def test_a_reader_sees_it_whole_but_for_the_run_behind_it() -> None:
         "Above.\n\n---\n    SECRET = load()",
         "x:\n   \n    SECRET = load()",
         "Raw:\n\n<pre>\nSECRET = load()\n</pre>",
+        # Lines broken by a bare \r, as CommonMark counts them too.
+        "a\rb\rc\n```\nSECRET = load()\n```\nd",
+        "a\rb\r\r```\rSECRET = load()\r```",
+        "Windows:\r\n\r\n    SECRET = load()\r\n",
     ],
 )
 def test_code_in_a_list_item_or_indented_is_hidden_too(answer: str) -> None:

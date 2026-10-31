@@ -21,7 +21,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sensei_core.audit import AuditAction, audit
 from sensei_core.config import AgentSettings
 from sensei_core.errors import DomainError
+from sensei_core.logging import get_logger
 from sensei_core.models import UsageEvent
+
+log = get_logger(__name__)
 
 WARNED_PREFIX = "agent:cap-warned:"
 HOLDS_PREFIX = "agent:holds:"  # a hash per org: run id -> "<amount> <unix time it lapses>"
@@ -138,6 +141,8 @@ async def draw(redis: Redis, org_id: uuid.UUID, run_id: uuid.UUID, cost: Decimal
                     return
                 except WatchError:
                     continue
+        # Raced every time: the hold stays as it was, over-counting until it lapses.
+        log.warning("spend not taken off its hold", run_id=str(run_id))
     except (RedisError, ValueError, ArithmeticError):
         return
 

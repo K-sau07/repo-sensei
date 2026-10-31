@@ -287,6 +287,12 @@ def _plain(value: object) -> Any:
     return str(value)
 
 
+# What write_graph keeps on definitions' nodes (attrs): each module's import table, and what a
+# resolver keeps there (Java's). Worked out by the graph stage, never by the symbols stage: an
+# incremental run's carried definitions drop them, and the graph writes them again (5.2).
+GRAPH_ATTRS = ("imports", "java")
+
+
 async def write_graph(
     db: AsyncSession, snapshot: Snapshot | SnapshotKey, build: GraphBuild
 ) -> GraphCounts:
