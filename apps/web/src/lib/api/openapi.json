@@ -20,9 +20,25 @@
             "title": "Id",
             "type": "string"
           },
+          "kind": {
+            "$ref": "#/components/schemas/JobKind",
+            "description": "full, or incremental: a push read again what changed."
+          },
           "progress": {
             "title": "Progress",
             "type": "number"
+          },
+          "ref": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The branch or pull request it indexes (None: default).",
+            "title": "Ref"
           },
           "stage": {
             "anyOf": [
@@ -40,6 +56,8 @@
         },
         "required": [
           "id",
+          "kind",
+          "ref",
           "status",
           "stage",
           "progress",

@@ -22,6 +22,7 @@ import { repoPath } from "@/lib/routes";
 import { shortcut, type ShortcutId } from "@/lib/shortcut-registry";
 
 import { OVERFLOW_TABS, PRIMARY_TABS, tabForPath, type RepoTab } from "./repo-tabs-config";
+import { useViewRef, withRef } from "./use-ref";
 import { useRepoFeatures, useRepoSlug, type FeatureState } from "./use-repo";
 
 /** Why a tab is locked, for its tooltip: "Available when Embeddings finishes · ~6m" while a run
@@ -46,7 +47,8 @@ function TabShortcut({ id, href }: { id: ShortcutId; href: Route }) {
 function TabLink({ tab, current }: { tab: RepoTab; current: boolean }) {
   const { org, repo } = useRepoSlug();
   const { state } = useRepoFeatures();
-  const href = repoPath(org, repo, tab.section);
+  const [ref] = useViewRef();
+  const href = withRef(repoPath(org, repo, tab.section), ref);
   const feature = tab.feature ? state(tab.feature) : null;
   const locked = feature !== null && !feature.available;
   const Icon = tab.icon;
@@ -98,6 +100,7 @@ export function RepoTabs() {
   const router = useRouter();
   const { role } = useOrgRole();
   const { state } = useRepoFeatures();
+  const [ref] = useViewRef();
   const base = repoPath(org, repo);
   const rest = pathname.startsWith(`${base}/`) ? pathname.slice(base.length + 1) : "";
   const current = tabForPath(rest);
@@ -130,7 +133,7 @@ export function RepoTabs() {
                   <DropdownMenuItem
                     key={tab.id}
                     onClick={() => {
-                      router.push(repoPath(org, repo, tab.section));
+                      router.push(withRef(repoPath(org, repo, tab.section), ref));
                     }}
                   >
                     <Icon aria-hidden className="size-4" />

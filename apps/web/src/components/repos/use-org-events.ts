@@ -3,23 +3,42 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
 
-import type { Repo, Stage } from "@/lib/api/types";
+import type { ActiveJob, Repo, Stage } from "@/lib/api/types";
 import { followStream } from "@/lib/event-stream";
 import { queryKeys } from "@/lib/query/keys";
 
-interface OrgEvent {
+import { useRepoUpdates } from "./repo-updates";
+
+interface RunEvent {
   type: "queued" | "stage_started" | "done" | "failed" | "cancelled";
   job_id: string;
   repo_id: string;
+  kind?: ActiveJob["kind"];
+  ref?: string | null;
   stage: Stage | null;
   progress?: number;
 }
 
+/** A ref's index moved on to a new commit (5.5): what was read again since the last one. */
+interface UpdatedEvent {
+  type: "repo_updated";
+  job_id: string;
+  repo_id: string;
+  ref: string;
+  sha: string;
+  changed_files: string[] | null;
+  changed_count: number | null;
+}
+
+type OrgEvent = RunEvent | UpdatedEvent;
+
 /**
  * Follow the org's event stream (index runs starting stages and ending) and keep what shows
  * index runs current: progress moves the status dots in place, and each event refreshes the
- * repository's job list (tab locks, the overview) and, when a run ends, its page. The stream
- * reconnects and resumes from the last event id (see `followStream`); one stream per tab.
+ * repository's job list (tab locks, the overview) and, when a run ends, its page. A new index
+ * (`repo_updated`) is noted for the repository's "New commits indexed" banner, and every
+ * staleness check and ref list is read again. The stream reconnects and resumes from the last
+ * event id (see `followStream`); one stream per tab.
  */
 export function useOrgEvents(org: string | null) {
   const queryClient = useQueryClient();
@@ -29,6 +48,7 @@ export function useOrgEvents(org: string | null) {
     // Every repository's own page and job list (by prefix: the repository is in the rest).
     const details = queryKeys.repo(org, "").slice(0, 2);
     const allJobLists = queryKeys.indexJobs(org, "").slice(0, 2);
+    const allRefLists = queryKeys.refs(org, "").slice(0, 2);
     let lastId: string | null = null;
 
     const refreshJobs = (repoId: string) => {
@@ -46,6 +66,18 @@ export function useOrgEvents(org: string | null) {
         return;
       }
       if (message.lastEventId) lastId = message.lastEventId;
+      if (event.type === "repo_updated") {
+        useRepoUpdates.getState().note(event.repo_id, {
+          ref: event.ref,
+          sha: event.sha,
+          changedFiles: event.changed_files,
+          changedCount: event.changed_count,
+          at: Date.now(),
+        });
+        void queryClient.invalidateQueries({ queryKey: queryKeys.staleness(org) });
+        void queryClient.invalidateQueries({ queryKey: allRefLists });
+        return;
+      }
       refreshJobs(event.repo_id);
       if (event.type === "stage_started" || event.type === "queued") {
         const known = queryClient
@@ -59,6 +91,8 @@ export function useOrgEvents(org: string | null) {
               status: event.type === "queued" ? repo.status : "indexing",
               active_job: {
                 id: event.job_id,
+                kind: event.kind ?? repo.active_job?.kind ?? "full",
+                ref: event.ref ?? null,
                 status: event.type === "queued" ? "queued" : "running",
                 stage: event.stage ?? null,
                 progress: event.progress ?? repo.active_job?.progress ?? 0,
@@ -71,13 +105,14 @@ export function useOrgEvents(org: string | null) {
         void queryClient.invalidateQueries({ queryKey: details });
         return;
       }
-      // A run ended: the list and the repository's own page should show the outcome.
+      // A run ended: the list, the repository's own page and its refs should show the outcome.
       void queryClient.invalidateQueries({ queryKey: key });
       void queryClient.invalidateQueries({ queryKey: details });
+      void queryClient.invalidateQueries({ queryKey: allRefLists });
     };
 
     return followStream(`/api/v1/orgs/${encodeURIComponent(org)}/events`, {
-      types: ["queued", "stage_started", "done", "failed", "cancelled"],
+      types: ["queued", "stage_started", "done", "failed", "cancelled", "repo_updated"],
       onEvent, // the mock API sends unnamed events, which come as "message"
       onLive: () => undefined,
       lastId: () => lastId,

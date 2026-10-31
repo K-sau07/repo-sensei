@@ -31,7 +31,15 @@ const sample: Repo[] = [
     loc: null,
     file_count: null,
     last_indexed_at: null,
-    active_job: { id: "job-1", status: "running", stage: "discover", progress: 0.42, eta_s: 90 },
+    active_job: {
+      id: "job-1",
+      kind: "full",
+      ref: null,
+      status: "running",
+      stage: "discover",
+      progress: 0.42,
+      eta_s: 90,
+    },
   },
   {
     ...seed(),

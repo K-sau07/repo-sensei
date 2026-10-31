@@ -6,14 +6,17 @@
  * it, while it is written, what the run is doing; after it, what its tools found as cards
  * (4.11.3), an abstention if the run couldn't stand behind it (4.11), how sure it is, what it
  * searched (collapsed), the user's feedback, and questions to ask next about what it found.
+ * Once a cited file has changed since (5.6), its chip and the answer say so, with a way to ask
+ * it again on the latest index.
  */
 import { cn } from "cn";
-import { ChevronRight, CornerDownRight, FileCode2, Loader2 } from "lucide-react";
+import { ChevronRight, CornerDownRight, FileCode2, Loader2, RotateCw } from "lucide-react";
 import type { Route } from "next";
 import NextLink from "next/link";
 import { useState, type ReactNode } from "react";
 import { Streamdown, type Components } from "streamdown";
 
+import { StaleBadge } from "@/components/feedback/banners";
 import {
   abstainedOf,
   activity,
@@ -33,6 +36,7 @@ import {
   type FeedbackKind,
 } from "@/lib/api/ask";
 import { cardsOf, followUps } from "@/lib/api/cards";
+import { citedKey, staleFiles, staleLabel, type StaleReason } from "@/lib/api/refs";
 
 import { AbstainCard } from "./abstain-card";
 import { CitationChip } from "./citation-chip";
@@ -79,6 +83,8 @@ export function Answer({
   traceHref,
   onPromote,
   asked = [],
+  staleness,
+  onRerun,
 }: {
   message: AskMessage;
   streaming: boolean;
@@ -99,6 +105,10 @@ export function Answer({
   onPromote?: ((artifact: Artifact) => void) | undefined;
   /** The thread's questions so far, so a follow-up isn't one of them. */
   asked?: readonly string[] | undefined;
+  /** Whether its citations are still as they were (none: not checked, as on a shared page). */
+  staleness?: { checked: ReadonlyMap<string, StaleReason>; head: string | null } | undefined;
+  /** Asks its question again, on the index the page is read at (none: no "Re-run"). */
+  onRerun?: (() => void) | undefined;
 }) {
   const citations = citationsOf(message);
   const byNumber = new Map(citations.map((c) => [c.n, c]));
@@ -106,7 +116,16 @@ export function Answer({
   const status = statusLine(message, streaming);
   const sure = confidenceOf(message);
   const abstained = abstainedOf(message);
-  const drawn = chip ?? ((c: CitationData) => <CitationChip citation={c} onOpen={onOpen} />);
+  const drawn =
+    chip ??
+    ((c: CitationData) => (
+      <CitationChip
+        citation={c}
+        onOpen={onOpen}
+        stale={staleness?.checked.get(citedKey(c.sha, c.path))}
+      />
+    ));
+  const stale = staleness && !streaming ? staleFiles(citations, staleness.checked) : [];
   const slots = cardsOf(message);
   const next = onAsk && !streaming && !abstained && text ? followUps(slots, asked) : [];
 
@@ -156,6 +175,9 @@ export function Answer({
           cached={fromCache(message)}
           feedback={text ? feedback : undefined}
           runHref={runHref ?? null}
+          stale={stale}
+          head={staleness?.head ?? null}
+          onRerun={onRerun}
         />
       ) : null}
       {next.length > 0 ? (
@@ -183,12 +205,20 @@ function Footer({
   cached,
   feedback,
   runHref,
+  stale,
+  head,
+  onRerun,
 }: {
   message: AskMessage;
   confidence: ConfidenceData | null;
   cached: boolean;
   feedback: FeedbackKind | null | undefined;
   runHref: Route | null;
+  /** The cited files that changed since. */
+  stale: readonly string[];
+  /** The commit they were compared with. */
+  head: string | null;
+  onRerun: (() => void) | undefined;
 }) {
   const [open, setOpen] = useState(false);
   const searches = searchesOf(message);
@@ -197,6 +227,26 @@ function Footer({
     <div className="flex flex-wrap items-center gap-3 text-xs text-fg-muted">
       {confidence ? <ConfidenceBadge confidence={confidence} /> : null}
       {cached ? <span>Answered from an earlier answer</span> : null}
+      {stale.length > 0 ? (
+        <span className="flex items-center gap-2" data-testid="answer-stale">
+          <StaleBadge>
+            <span title={stale.join("\n")}>
+              {staleLabel(stale)}
+              {head ? <span className="sr-only"> (compared with {head.slice(0, 7)})</span> : null}
+            </span>
+          </StaleBadge>
+          {onRerun ? (
+            <button
+              type="button"
+              className="flex items-center gap-1 hover:text-fg"
+              onClick={onRerun}
+            >
+              <RotateCw aria-hidden className="size-3" />
+              Re-run on latest
+            </button>
+          ) : null}
+        </span>
+      ) : null}
       {searches.length || done.length ? (
         <button
           type="button"

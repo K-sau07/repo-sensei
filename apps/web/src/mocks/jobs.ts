@@ -12,6 +12,9 @@ export interface MockJob {
   queued_ms: number;
   failure?: RunFailure;
   cancelled_after_ms?: number;
+  /** A push's run reads again only what changed (5.1); its branch (none: the default). */
+  kind?: "full" | "incremental";
+  ref?: string;
 }
 
 export function jobsOf(repoId: string): MockJob[] {
@@ -130,6 +133,8 @@ export function syncRepo(repo: MockRepo): MockRepo {
   if (isActive(job)) {
     repo.active_job = {
       id: job.id,
+      kind: latest.kind ?? "full",
+      ref: latest.ref ?? null,
       status: job.status,
       stage: job.stage,
       progress: job.progress,

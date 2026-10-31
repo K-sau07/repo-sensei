@@ -1335,8 +1335,15 @@ export interface components {
              * Format: uuid
              */
             id: string;
+            /** @description full, or incremental: a push read again what changed. */
+            kind: components["schemas"]["JobKind"];
             /** Progress */
             progress: number;
+            /**
+             * Ref
+             * @description The branch or pull request it indexes (None: default).
+             */
+            ref: string | null;
             stage: components["schemas"]["Stage"] | null;
             status: components["schemas"]["JobStatus"];
         };

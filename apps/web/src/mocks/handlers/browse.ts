@@ -34,8 +34,8 @@ export function validationFailed(field: string, message: string) {
 }
 
 /** The commit `ref` means: the last index (or the first run's, from its discovery on), a prefix
- * of its commit, or the branch it indexed. (Mock repositories index one commit, so nothing else
- * resolves.) */
+ * of its commit, or a branch it tracks. (Mock repositories index one commit, which their tracked
+ * branches share, so nothing else resolves.) */
 export function resolveCommit(repo: MockRepo, ref: string | null): string | Response {
   const indexed = repo.last_indexed_sha;
   if (ref === null) {
@@ -51,7 +51,9 @@ export function resolveCommit(repo: MockRepo, ref: string | null): string | Resp
   if (!ref.trim()) return apiError(422, "invalid_ref", "That isn't a branch or commit.");
   if (
     indexed &&
-    (ref === repo.default_branch || (/^[0-9a-f]{7,64}$/.test(ref) && indexed.startsWith(ref)))
+    (ref === repo.default_branch ||
+      (repo.settings.tracked_branches ?? []).includes(ref) ||
+      (/^[0-9a-f]{7,64}$/.test(ref) && indexed.startsWith(ref)))
   ) {
     return indexed;
   }

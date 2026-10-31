@@ -98,9 +98,9 @@ export function lastQuestion(messages: readonly AskMessage[]): string {
 
 /**
  * The transport `useChat` sends a question through: the API takes the question alone (it keeps
- * the conversation), with the conversation it belongs to and the mode (given with each message:
- * `sendMessage({ text }, { body: { conversationId, mode } })`); the CSRF header the API wants on
- * a POST; the session's cookies.
+ * the conversation), with the conversation it belongs to, the mode and the ref the page is read
+ * at (given with each message: `sendMessage({ text }, { body: { conversationId, mode, ref } })`);
+ * the CSRF header the API wants on a POST; the session's cookies.
  */
 export function askTransport(options: {
   org: string;
@@ -121,11 +121,13 @@ export function askTransport(options: {
     },
     prepareSendMessagesRequest: ({ messages, body }) => {
       const scope = body?.scope as ScopeData | null | undefined;
+      const ref = body?.ref as string | null | undefined;
       return {
         body: {
           message: lastQuestion(messages),
           conversation_id: (body?.conversationId as string | null | undefined) ?? null,
           mode: (body?.mode as AskMode | undefined) ?? "fast",
+          ...(ref ? { ref } : {}),
           ...(scope
             ? {
                 scope: {

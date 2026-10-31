@@ -214,6 +214,21 @@ describe("the transport", () => {
       mode: "deep",
     });
     expect(sent[0]?.headers.get("X-CSRF-Token")).toBe("tok");
+    // At a branch picked: the ref goes with it (none: the default branch, so it's left out).
+    await transport.sendMessages({
+      chatId: "c",
+      messages,
+      abortSignal: undefined,
+      trigger: "submit-message",
+      messageId: undefined,
+      body: { conversationId: "conv-1", mode: "fast", ref: "release" },
+    });
+    expect(sent[1]?.body).toEqual({
+      message: "And deleted?",
+      conversation_id: "conv-1",
+      mode: "fast",
+      ref: "release",
+    });
   });
 });
 

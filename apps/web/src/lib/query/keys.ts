@@ -35,6 +35,15 @@ export const queryKeys = {
    * picture, so it isn't an `$api` query. */
   constellation: (slug: string, repo: string, job: string | null) =>
     ["constellation", slug, repo, job] as const,
+  /** The branches and pull requests the repository is read at (the ref switcher's). */
+  refs: (slug: string, repo: string) =>
+    $api.queryOptions("get", "/api/v1/orgs/{org}/repos/{repo}/refs", {
+      params: { path: { org: slug, repo } },
+    }).queryKey,
+  /** Whether `cited` (`<sha>:<path>`, sorted) is still as it was at `ref`; without them, every
+   * check of the org's (a prefix: a new index invalidates them all). */
+  staleness: (slug: string, repo?: string, ref?: string | null, cited?: readonly string[]) =>
+    ["staleness", slug, ...(repo === undefined ? [] : [repo, ref ?? null, cited ?? []])] as const,
   /** The code browser's directory listings and files at `ref` (null: what that means now,
    * `version`: the last index, or the first run's stage, so they are read again when it
    * changes). Their commit comes in a response header, so they aren't `$api` queries either. */

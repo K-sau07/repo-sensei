@@ -3,26 +3,37 @@
 /**
  * A citation in an answer (4.10): an inline chip (`file.tsx:12–48`) that opens a peek at the
  * lines it cites (with whether the check found them backing the claim), from which the code
- * opens beside the answer. Inline-block and of a fixed height: chips never shift the text.
+ * opens beside the answer. Inline-block and of a fixed height: chips never shift the text. A
+ * citation whose file changed (or went) since it was cited says so (5.6).
  */
 import { cn } from "cn";
-import { BadgeCheck, FileCode2 } from "lucide-react";
+import { BadgeCheck, FileCode2, History } from "lucide-react";
 
 import { useFileAt } from "@/components/code/use-code";
 import { useHighlighted } from "@/components/code/use-highlighted";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { chipLabel, type CitationData } from "@/lib/api/ask";
+import { isStale, type StaleReason } from "@/lib/api/refs";
+
+const STALE_WORDS: Partial<Record<StaleReason, string>> = {
+  changed: "changed since",
+  deleted: "deleted since",
+};
 
 const PEEK_LINES = 40;
 
 export function CitationChip({
   citation,
   onOpen,
+  stale,
 }: {
   citation: CitationData;
   onOpen?: ((citation: CitationData) => void) | undefined;
+  /** What the staleness check found (none: not checked). */
+  stale?: StaleReason | undefined;
 }) {
+  const changed = isStale(stale);
   return (
     <Popover>
       <PopoverTrigger
@@ -31,13 +42,17 @@ export function CitationChip({
           "mx-0.5 inline-flex h-5 items-center gap-1 rounded-sm border border-border bg-muted px-1.5",
           "align-baseline font-mono text-[11px] leading-none text-fg-muted hover:text-fg",
           citation.verified && "border-accent/40",
+          changed && "border-warn/50 text-warn",
         )}
+        data-stale={changed ? stale : undefined}
       >
         <span className="text-fg-faint">{citation.n}</span>
         <span className="sr-only"> </span>
         {chipLabel(citation.path, citation.lines)}
+        {changed ? <History aria-hidden className="size-3" /> : null}
         <span className="sr-only">
           , {citation.path}, lines {citation.lines[0]} to {citation.lines[1]}
+          {changed ? `, ${STALE_WORDS[stale] ?? ""}` : ""}
         </span>
       </PopoverTrigger>
       <PopoverContent
@@ -45,7 +60,7 @@ export function CitationChip({
         className="w-[34rem] max-w-[90vw] p-0"
         data-testid="citation-peek"
       >
-        <CitationPeek citation={citation} onOpen={onOpen} />
+        <CitationPeek citation={citation} onOpen={onOpen} stale={stale} />
       </PopoverContent>
     </Popover>
   );
@@ -54,9 +69,11 @@ export function CitationChip({
 function CitationPeek({
   citation,
   onOpen,
+  stale,
 }: {
   citation: CitationData;
   onOpen?: ((citation: CitationData) => void) | undefined;
+  stale?: StaleReason | undefined;
 }) {
   const file = useFileAt(citation.path, citation.sha);
   const [start, end] = citation.lines;
@@ -81,6 +98,13 @@ function CitationPeek({
           <span className="ml-auto text-fg-faint">not verified</span>
         )}
       </div>
+      {isStale(stale) ? (
+        <p className="flex items-center gap-1.5 border-b border-border px-3 py-1.5 text-xs text-warn">
+          <History aria-hidden className="size-3.5" />
+          This file {STALE_WORDS[stale]}: these are the lines as they were at{" "}
+          {citation.sha.slice(0, 7)}.
+        </p>
+      ) : null}
       <pre className="max-h-72 overflow-auto px-3 py-2 font-mono text-[12px] leading-5">
         {file.isPending ? (
           <span className="text-fg-faint">Loading…</span>

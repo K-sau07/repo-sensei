@@ -94,6 +94,8 @@ def _payload(job: IndexJob, kind: EventType, event: JobEvent | None) -> dict[str
         "type": kind.value,
         "job_id": str(job.id),
         "repo_id": str(job.repo_id),
+        "kind": job.kind.value,
+        "ref": job.ref,
         "stage": stage.value if (stage := (event.stage if event else None) or job.stage) else None,
         "ts": _now(),
     }

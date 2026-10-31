@@ -1,11 +1,13 @@
 import type { Meta, StoryObj } from "@storybook/nextjs-vite";
-import { expect, userEvent, within } from "storybook/test";
+import { expect, fn, userEvent, within } from "storybook/test";
 
 import { AbstainCard } from "@/components/ask/abstain-card";
 import { Answer } from "@/components/ask/answer";
 import { ConfidenceBadge } from "@/components/ask/confidence-badge";
 import type { AbstainData, AskMessage, ConfidenceData } from "@/lib/api/ask";
-import { mockAbstainParts, mockAnswerParts } from "@/mocks/ask";
+import { citedKey } from "@/lib/api/refs";
+import { MOCK_SHA, mockAbstainParts, mockAnswerParts } from "@/mocks/ask";
+import { PUSHED_SHA } from "@/mocks/push";
 
 const navigation = {
   appDirectory: true,
@@ -124,6 +126,29 @@ export const WithFeedback: Story = {
       "aria-pressed",
       "true",
     );
+  },
+};
+
+/** A file it cites changed since (5.6): its chip says so, and so does the answer, with a way to
+ * ask it again on the latest index. */
+export const Stale: Story = {
+  args: {
+    staleness: {
+      checked: new Map([
+        [citedKey(MOCK_SHA, "backend/app/models.py"), "changed"],
+        [citedKey(MOCK_SHA, "backend/app/api/routes/items.py"), "unchanged"],
+      ]),
+      head: PUSHED_SHA,
+    },
+    onRerun: fn(),
+  },
+  play: async ({ args, canvas }) => {
+    const stale = canvas.getByTestId("answer-stale");
+    await expect(stale).toHaveTextContent("1 cited file changed since");
+    const chips = canvas.getAllByTestId("citation-chip");
+    await expect(chips.filter((chip) => chip.dataset.stale === "changed")).toHaveLength(1);
+    await userEvent.click(within(stale).getByRole("button", { name: "Re-run on latest" }));
+    await expect(args.onRerun).toHaveBeenCalledOnce();
   },
 };
 

@@ -14,6 +14,7 @@ import {
   upcomingEvents,
   type RunFailure,
 } from "@/mocks/jobs";
+import { mockPushed, PUSH_DELAY_MS, PUSHED_FILES, PUSHED_SHA } from "@/mocks/push";
 
 import { apiError } from "./errors";
 import { orgAccess } from "./orgs";
@@ -260,10 +261,31 @@ const orgEvents =
             tick();
             // Like the real stream, it stays open until the browser closes it.
             const timer = setInterval(tick, 300);
+            // A push played (mocks/push.ts): its index lands on each indexed repository.
+            const pushed = mockPushed()
+              ? setTimeout(() => {
+                  for (const repo of reposOf(params.org)) {
+                    if (!repo.last_indexed_sha) continue;
+                    client.send({
+                      data: JSON.stringify({
+                        type: "repo_updated",
+                        job_id: crypto.randomUUID(),
+                        repo_id: repo.id,
+                        ref: repo.default_branch,
+                        sha: PUSHED_SHA,
+                        changed_files: [...PUSHED_FILES],
+                        changed_count: PUSHED_FILES.length,
+                        ts: new Date().toISOString(),
+                      }),
+                    });
+                  }
+                }, PUSH_DELAY_MS)
+              : undefined;
             request.signal.addEventListener(
               "abort",
               () => {
                 clearInterval(timer);
+                clearTimeout(pushed);
               },
               { once: true },
             );

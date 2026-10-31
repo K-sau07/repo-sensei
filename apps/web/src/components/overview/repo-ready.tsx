@@ -18,6 +18,7 @@ import { askHref } from "@/components/ask/ask-bar";
 import { ErrorState } from "@/components/feedback/error-state";
 import { IndexView } from "@/components/indexing/index-view";
 import { RelativeTime } from "@/components/primitives/relative-time";
+import { useViewRef } from "@/components/repo/use-ref";
 import { LanguageBar } from "@/components/repos/language-bar";
 import { plural } from "@/components/search/meta";
 import { Badge } from "@/components/ui/badge";
@@ -364,8 +365,9 @@ export function RepoReady({
   data: Repo;
   latest: IndexJob;
 }) {
+  const [ref] = useViewRef(); // the branch picked (none: the default branch's last index)
   const overview = $api.useQuery("get", "/api/v1/orgs/{org}/repos/{repo}/overview", {
-    params: { path: { org, repo } },
+    params: { path: { org, repo }, query: ref ? { ref } : {} },
   });
   return (
     <div className="mx-auto flex w-full max-w-6xl flex-col gap-6 p-6">

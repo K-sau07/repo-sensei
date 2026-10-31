@@ -8,13 +8,14 @@ import { roleAtLeast, useOrgRole } from "@/hooks/use-org-role";
 import { $api } from "@/lib/api/client";
 import { orgPath, repoPath } from "@/lib/routes";
 
-import { RepoStatus } from "./repo-status";
+import { RepoStatus, updatePercent } from "./repo-status";
 
 const SHOWN = 8;
 const ROW =
   "flex h-control-md items-center gap-2.5 rounded-sm px-2 text-sm hover:bg-surface-3 hover:text-fg focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none sidebar-collapsed:justify-center sidebar-collapsed:px-0";
 
-/** The sidebar's repositories, each with its live status dot. */
+/** The sidebar's repositories, each with its live status dot (and, while a push's incremental
+ * run goes, its small %). */
 export function SidebarRepos({ org, onNavigate }: { org: string; onNavigate?: () => void }) {
   const pathname = usePathname();
   const { role } = useOrgRole();
@@ -28,6 +29,7 @@ export function SidebarRepos({ org, onNavigate }: { org: string; onNavigate?: ()
       {list.slice(0, SHOWN).map((repo) => {
         const href = repoPath(org, repo.slug);
         const active = pathname === href || pathname.startsWith(`${href}/`);
+        const updating = updatePercent(repo);
         return (
           <li key={repo.id}>
             <Link
@@ -38,6 +40,14 @@ export function SidebarRepos({ org, onNavigate }: { org: string; onNavigate?: ()
             >
               <RepoStatus repo={repo} className="w-4 shrink-0 justify-center" />
               <span className="min-w-0 flex-1 truncate sidebar-collapsed:sr-only">{repo.name}</span>
+              {updating !== null ? (
+                <span
+                  aria-hidden
+                  className="text-[10px] text-fg-faint tabular-nums sidebar-collapsed:hidden"
+                >
+                  {updating}%
+                </span>
+              ) : null}
             </Link>
           </li>
         );

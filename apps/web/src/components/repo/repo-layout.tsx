@@ -9,6 +9,7 @@ import { useOrgSlug } from "@/components/shell/use-org-slug";
 import { ApiError } from "@/lib/api/errors";
 import { orgPath } from "@/lib/routes";
 
+import { NewCommitsBanner } from "./new-commits-banner";
 import { RepoHeader, RepoHeaderSkeleton } from "./repo-header";
 import { RepoTabs } from "./repo-tabs";
 import { useRepo } from "./use-repo";
@@ -48,6 +49,7 @@ export function RepoLayout({ children }: { children: ReactNode }) {
   return (
     <div className="flex min-h-full flex-col">
       {repo.data ? <RepoHeader repo={repo.data} /> : <RepoHeaderSkeleton />}
+      {repo.data ? <NewCommitsBanner repo={repo.data} /> : null}
       <div className="mt-3">
         <RepoTabs />
       </div>

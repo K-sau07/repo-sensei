@@ -5,7 +5,8 @@
  * `?from=`, the entry picker; with it, the trace's paths (at most three, best first) as tabs, the
  * path picked as swimlanes with the Trace Beam (or as an ordered list), and the code of the hop
  * picked below. A trace the links stage hasn't reached yet (`linked: false`) says it stays in the
- * code; a path that stops short shows where and why.
+ * code; a path that stops short shows where and why. A trace pinned to a commit the default
+ * branch has moved on from says it is stale (5.6).
  */
 import { cn } from "cn";
 import {
@@ -25,6 +26,7 @@ import { PartialBanner } from "@/components/feedback/banners";
 import { EmptyState } from "@/components/feedback/empty-state";
 import { ErrorState } from "@/components/feedback/error-state";
 import { LockedState } from "@/components/feedback/locked-state";
+import { PinnedStale } from "@/components/repo/pinned-stale";
 import { useRepoFeatures, useRepoSlug } from "@/components/repo/use-repo";
 import { RateLimited } from "@/components/search/rate-limited";
 import { Button } from "@/components/ui/button";
@@ -314,6 +316,7 @@ function TraceView({ entry }: { entry: string }) {
           </Link>
         </div>
       </header>
+      <PinnedStale what="This trace is" />
 
       {!data.linked && (
         <PartialBanner

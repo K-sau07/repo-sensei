@@ -11,12 +11,13 @@ import { MessageSquare } from "lucide-react";
 import type { Route } from "next";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ComponentProps } from "react";
 
 import { CodeViewer } from "@/components/code/code-viewer";
 import { useFileAt } from "@/components/code/use-code";
 import { EmptyState } from "@/components/feedback/empty-state";
 import { LockedState } from "@/components/feedback/locked-state";
+import { useViewRef, withRef } from "@/components/repo/use-ref";
 import { useRepoFeatures, useRepoSlug } from "@/components/repo/use-repo";
 import { Button } from "@/components/ui/button";
 import {
@@ -24,6 +25,7 @@ import {
   citationsOf,
   draftKey,
   runOf,
+  scopeOf,
   titleOr,
   type AskMessage,
   type CitationData,
@@ -42,6 +44,7 @@ import { ConversationHistory } from "./history";
 import { ShareButton } from "./share-dialog";
 import type { CodeHref } from "./tool-cards";
 import { useAsk, useConversations } from "./use-ask";
+import { useStaleness } from "./use-staleness";
 
 /** The conversation an address names (`/ask/<id>`; none: a new one). */
 function conversationIn(pathname: string): string | null {
@@ -131,10 +134,11 @@ function Ask({ onNamed }: { onNamed: (id: string) => void }) {
   const [opened, setOpened] = useState<CitationData | null>(null);
   const [scope, setScope] = useState<ScopeData>(NO_SCOPE);
   const artifacts = useArtifacts();
+  const [ref] = useViewRef();
   const codeHref: CodeHref = (path, [start, end]) =>
-    codePath(org, repo, path, { lines: start === end ? `${start}` : `${start}-${end}` });
+    codePath(org, repo, path, { lines: start === end ? `${start}` : `${start}-${end}`, ref });
   const traceHref = (entry: string) =>
-    `${repoPath(org, repo, "trace")}?from=${encodeURIComponent(entry)}` as Route;
+    withRef(`${repoPath(org, repo, "trace")}?from=${encodeURIComponent(entry)}` as Route, ref);
   const streaming = chat.status === "submitted" || chat.status === "streaming";
   const latest = [...chat.messages].reverse().find((m) => m.role === "assistant");
   const announcement = useAnnouncement(latest, streaming);
@@ -187,10 +191,11 @@ function Ask({ onNamed }: { onNamed: (id: string) => void }) {
               message.role === "user" ? (
                 <Question key={message.id} message={message} />
               ) : (
-                <Answer
+                <CheckedAnswer
                   key={message.id}
                   message={message}
                   streaming={streaming && i === chat.messages.length - 1}
+                  onRerun={streaming ? undefined : rerun(chat.messages[i - 1], chat.ask)}
                   onOpen={setOpened}
                   onAsk={streaming ? undefined : (text) => void chat.ask(text)}
                   feedback={said.get(message.id) ?? null}
@@ -253,6 +258,26 @@ function Ask({ onNamed }: { onNamed: (id: string) => void }) {
       </div>
     </div>
   );
+}
+
+/** An answer with its citations checked against the index the page is read at (once it is
+ * written): a cited file changed since shows as stale. */
+function CheckedAnswer(props: ComponentProps<typeof Answer>) {
+  const staleness = useStaleness(citationsOf(props.message), !props.streaming);
+  return <Answer {...props} staleness={staleness} />;
+}
+
+/** Asks the question an answer answered again (with its scope), now: a cited file changed, so
+ * the kept answer isn't served and the run reads the latest index. */
+function rerun(
+  question: AskMessage | undefined,
+  ask: (text: string, scope: ScopeData | null) => unknown,
+): (() => void) | undefined {
+  if (question?.role !== "user") return undefined;
+  const text = answerText(question);
+  if (!text) return undefined;
+  const scope = scopeOf(question);
+  return () => void ask(text, scope);
 }
 
 /** A question the Ask bar sent here (`?q=`, its scope `?scope=` and `?L=`): asked once, the

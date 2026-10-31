@@ -53,7 +53,7 @@ export interface MockDb {
   jobs: Record<string, MockJob[]>;
 }
 
-const STORAGE_KEY = "sensei.mock.db.v4";
+const STORAGE_KEY = "sensei.mock.db.v5";
 export const NOW = "2026-10-18T12:00:00Z";
 export const OCTO = "0199f000-0000-7000-8000-000000000001";
 export const HUBOT = "0199f000-0000-7000-8000-000000000002";
@@ -170,10 +170,10 @@ function seedRepo(): MockRepo {
     size_kb: 2048,
     languages: { Python: 90_980, TypeScript: 30_208, Shell: 1609, Dockerfile: 2144 },
     settings: {
-      tracked_branches: [],
+      tracked_branches: ["release"],
       ignore_globs: [],
       auto_index: true,
-      index_pull_requests: false,
+      index_pull_requests: true,
     },
     last_indexed_sha: "b1125d8839482cb7bbae603ddc6d0081bf87532e",
     index_job_id: null,

@@ -19,7 +19,7 @@ from sensei_api.routers.index_jobs import dispatch_index
 from sensei_core.indexing.events import JobOutbox
 from sensei_core.indexing.jobs import IndexJobService, RepoSummary, repo_summaries
 from sensei_core.jobs import RepoJobs
-from sensei_core.models import JobStatus, Repo, RepoSource, RepoStatus, Stage
+from sensei_core.models import JobKind, JobStatus, Repo, RepoSource, RepoStatus, Stage
 from sensei_core.orgs.service import OrgAccess
 from sensei_core.repos.service import RepoSettings
 
@@ -30,6 +30,8 @@ class ActiveJobOut(BaseModel):
     """The repository's queued or running index run, for status dots and progress."""
 
     id: uuid.UUID
+    kind: JobKind = Field(description="full, or incremental: a push read again what changed.")
+    ref: str | None = Field(description="The branch or pull request it indexes (None: default).")
     status: JobStatus
     stage: Stage | None
     progress: float
@@ -95,6 +97,8 @@ class RepoOut(BaseModel):
             active_job=(
                 ActiveJobOut(
                     id=job.id,
+                    kind=job.kind,
+                    ref=job.ref,
                     status=job.status,
                     stage=job.stage,
                     progress=job.progress,

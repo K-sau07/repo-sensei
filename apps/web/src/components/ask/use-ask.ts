@@ -9,6 +9,7 @@ import { useChat } from "@ai-sdk/react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import { useViewRef } from "@/components/repo/use-ref";
 import { useRepoSlug } from "@/components/repo/use-repo";
 import { askTransport, type AskMessage, type AskMode, type ScopeData } from "@/lib/api/ask";
 import { api } from "@/lib/api/client";
@@ -56,6 +57,7 @@ export function useConversations() {
 export function useAsk(conversationId: string | null, onConversation: (id: string) => void) {
   const { org, repo } = useRepoSlug();
   const [mode, setMode] = useState<AskMode>("fast");
+  const [ref] = useViewRef(); // asked at the branch the page is read at
   const announce = useRef(onConversation);
   // The conversation whose stored messages the thread shows (a new one's are the chat's own).
   const loaded = useRef<string | null>(null);
@@ -104,7 +106,7 @@ export function useAsk(conversationId: string | null, onConversation: (id: strin
   // The conversation the stream named, until the page's own catches up with it.
   // A scoped question shows what it was asked about, as the stored one does.
   const ask = (text: string, scope: ScopeData | null = null) => {
-    const body = { conversationId: conversationId ?? loaded.current, mode, scope };
+    const body = { conversationId: conversationId ?? loaded.current, mode, scope, ref };
     if (scope === null) return sendMessage({ text }, { body });
     const parts: AskMessage["parts"] = [
       { type: "text", text },
