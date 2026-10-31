@@ -23,7 +23,7 @@ from sensei_engine.agent.tools.code_search import add_results, search
 from sensei_engine.agent.tools.trace_feature import describe_path
 from sensei_engine.agent.verify import agreement
 from sensei_engine.graph.snapshot import GraphSnapshot
-from sensei_engine.graph.trace import TraceError, trace_feature
+from sensei_engine.graph.trace import TraceError, TracePath, trace_feature
 from sensei_engine.search.route import QueryClass, Route
 from sensei_engine.search.service import Answer, Result, SearchQuery
 from sensei_engine.symbols.extract import SymbolKind
@@ -33,6 +33,7 @@ AGREEMENT_TOP = 8  # the spans two passes are compared by
 TWO_PASSES = frozenset({QueryClass.FLOW, QueryClass.ARCHITECTURE})
 MAX_RESULTS = 16
 SEED_LANES = ("ui", "api")  # where a flow is traced from: its page, else its endpoint
+MAX_SEEDS = 4  # the matches tried, best first, for a trace that reaches the data
 FLOW_KINDS = frozenset(
     kind.value
     for kind in (SymbolKind.FUNCTION, SymbolKind.METHOD, SymbolKind.COMPONENT, SymbolKind.HOOK)
@@ -160,7 +161,9 @@ async def _traced(
     ctx: ToolContext, question: str, best: Sequence[Result]
 ) -> tuple[tuple[str, ...], Trail | None]:
     """The flow from the best page (else endpoint) definition that matched, as the trace tool
-    shows it: its paths of more than one hop, and the best one's trail."""
+    shows it: its paths of more than one hop, and the best one's trail. The best match may be
+    shared code (a table component that only styles its cells): the next ones are tried, and
+    the first whose best path reaches the data kept, else the first that traced at all."""
     if ctx.graph is None:
         return (), None
     graph = ctx.graph
@@ -170,15 +173,25 @@ async def _traced(
         for r in best
         if r.lane.value == lane and r.symbol_key
     )
-    seed = next((key for key in seeds if key is not None), None)
-    if seed is None:
-        return (), None
-    try:
-        traced = await asyncio.to_thread(
-            trace_feature, graph, seed, direction="down", feature=question
-        )
-    except TraceError:
-        return (), None
-    paths = [path for path in traced.paths if len(path.hops) > 1]  # one hop is no flow
+    tried = list(dict.fromkeys(key for key in seeds if key is not None))[:MAX_SEEDS]
+    traces: list[list[TracePath]] = []
+    for seed in tried:
+        try:
+            traced = await asyncio.to_thread(
+                trace_feature, graph, seed, direction="down", feature=question
+            )
+        except TraceError:
+            continue
+        traces.append([path for path in traced.paths if len(path.hops) > 1])  # one hop: no flow
+        if traces[-1] and traces[-1][0].reaches_goal:
+            break
+    paths = leading(traces)
     texts = tuple(describe_path(n, path) for n, path in enumerate(paths, start=1))
     return texts, trail_of(paths[0]) if paths else None
+
+
+def leading(traces: Sequence[Sequence[TracePath]]) -> Sequence[TracePath]:
+    """Of the seeds' traces (best seed first), the first whose best path reaches the data,
+    else the first with any path."""
+    found = [paths for paths in traces if paths]
+    return next((paths for paths in found if paths[0].reaches_goal), found[0] if found else ())

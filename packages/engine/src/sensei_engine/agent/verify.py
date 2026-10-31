@@ -149,6 +149,9 @@ class Whole:
     complete: bool
     missing: tuple[str, ...]  # the layers, or the parts of the question, not answered
     gap: str  # what to search for
+    # The answer's finding is that the repository doesn't have or do what was asked (its
+    # premise isn't in the code): the run abstains, showing what it searched (4.6.2).
+    absent: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -276,8 +279,9 @@ WHOLE_SCHEMA: dict[str, Any] = {
         "complete": {"type": "boolean"},
         "missing": {"type": "array", "items": {"type": "string"}},
         "gap": {"type": "string"},
+        "absent": {"type": "boolean"},
     },
-    "required": ["complete", "missing", "gap"],
+    "required": ["complete", "missing", "gap", "absent"],
     "additionalProperties": False,
 }
 
@@ -355,7 +359,12 @@ async def whole(
     except LLMError:
         return None
     data = result.data
-    return Whole(bool(data["complete"]), tuple(data["missing"]), str(data["gap"]))
+    return Whole(
+        bool(data["complete"]),
+        tuple(data["missing"]),
+        str(data["gap"]),
+        bool(data.get("absent", False)),
+    )
 
 
 def agreement(first: Sequence[tuple[str, int]], second: Sequence[tuple[str, int]]) -> float:

@@ -127,7 +127,10 @@ def abstention(
         return None  # nothing was checked: confidence says so, there's no evidence to judge
     reason = None
     judged = sum(c.verdict is not None for c in verification.claims if c.claim.cited)
-    if judged and claimed.claims_verified == 0 and claimed.claims_partial == 0:
+    if verification.whole is not None and verification.whole.absent:
+        # What was asked about isn't in the code: that is the finding, with what was searched.
+        reason = "the code doesn't have what was asked about"
+    elif judged and claimed.claims_verified == 0 and claimed.claims_partial == 0:
         # Only verdicts count: a support check that failed judged nothing, either way.
         reason = "nothing it cites shows what it says"
     elif not claimed.claims_cited:

@@ -99,6 +99,9 @@ class AnswerOutcome:
     total_ms: float
     error: str | None = None
     tools: tuple[dict[str, Any], ...] = ()  # each call: the tool, its input, what it answered
+    steps: tuple[
+        dict[str, Any], ...
+    ] = ()  # each turn: when it started (ms), and whether it researched
 
     @property
     def citations(self) -> tuple[Cited, ...]:
@@ -124,6 +127,7 @@ async def ask(agent: Agent, question: str, ctx: ToolContext, *, mode: Mode) -> A
 
     answering = False  # the open turn writes the answer (it may call no tools)
     calls: dict[str, dict[str, Any]] = {}
+    steps: list[dict[str, Any]] = []
     try:
         async for event in agent.run(question, ctx, mode=mode):
             if isinstance(event, ToolCalled):
@@ -134,6 +138,7 @@ async def ask(agent: Agent, question: str, ctx: ToolContext, *, mode: Mode) -> A
                 first_event = since()
             if isinstance(event, StepStarted):
                 answering = not event.tools
+                steps.append({"at_ms": since(), "tools": event.tools})
             # The answer's first token: a turn that may call tools writes reasoning, not it.
             if isinstance(event, TextDelta) and answering and first_token is None and event.text:
                 first_token = since()
@@ -145,8 +150,12 @@ async def ask(agent: Agent, question: str, ctx: ToolContext, *, mode: Mode) -> A
         raise
     except (LLMError, RuntimeError, ValueError) as error:
         made = tuple(calls.values())
-        return AnswerOutcome(None, first_event, first_token, since(), str(error), made)
-    return AnswerOutcome(answer, first_event, first_token, since(), tools=tuple(calls.values()))
+        return AnswerOutcome(
+            None, first_event, first_token, since(), str(error), made, tuple(steps)
+        )
+    return AnswerOutcome(
+        answer, first_event, first_token, since(), tools=tuple(calls.values()), steps=tuple(steps)
+    )
 
 
 # ---------------------------------------------------------------- the judge
@@ -341,7 +350,23 @@ def item_result(item: GoldenItem, outcome: AnswerOutcome, judged: Judged | None)
         ),
         error=outcome.error,
         tools=list(outcome.tools) or None,
+        claims=_claims(outcome.answer),
+        steps=list(outcome.steps) or None,
     )
+
+
+def _claims(answer: Answer | None) -> list[dict[str, Any]] | None:
+    """The answer's claims as the support check judged them (None: not verified)."""
+    if answer is None or answer.verification is None:
+        return None
+    return [
+        {
+            "text": checked.claim.text,
+            "verdict": checked.verdict,
+            "cites": [f"{c.path}:{c.start_line}-{c.end_line}" for c in checked.claim.cited],
+        }
+        for checked in answer.verification.claims
+    ]
 
 
 # ---------------------------------------------------------------- the gate
@@ -458,6 +483,7 @@ async def run_answers(
                     outcome = AnswerOutcome(
                         outcome.answer, outcome.first_event_ms, outcome.first_token_ms,
                         outcome.total_ms, error=f"judge: {error}", tools=outcome.tools,
+                        steps=outcome.steps,
                     )  # fmt: skip
         except BudgetExceeded as error:
             stopped = str(error)

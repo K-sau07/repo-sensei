@@ -75,6 +75,18 @@ def test_an_answer_too_thin_abstains_saying_what_to_ask() -> None:
     assert abstention(confidence(traced, gap), traced, gap, [], flow=False) is None
 
 
+def test_an_answer_finding_the_code_has_no_such_thing_abstains() -> None:
+    claims = [Checked(Claim(1, "x", 0, 1, (CITE,)), "supported")]
+    absent = Verification(tuple(claims), 0, (), (), Whole(True, (), "", absent=True), 0, 1.0)
+    searched = ["grep 'invoice'"]
+    found = abstention(confidence(absent, None), absent, None, searched, flow=False)
+    assert found is not None
+    assert (found.reason, found.searched) == (
+        "the code doesn't have what was asked about",
+        ("grep 'invoice'",),
+    )
+
+
 def test_a_sure_answer_does_not_abstain() -> None:
     good = _verified(["supported", "supported", "partial"], agreement=0.8)
     sure = confidence(good, None)

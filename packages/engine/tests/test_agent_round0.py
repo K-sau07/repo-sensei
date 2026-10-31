@@ -7,16 +7,18 @@ from __future__ import annotations
 import dataclasses
 import json
 from pathlib import Path
-from typing import Any
+from types import SimpleNamespace
+from typing import Any, cast
 
 import httpx2
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from sensei_engine.agent.loop import AskAgent, Done, PreRetrieved
-from sensei_engine.agent.round0 import INTRO, ROUND0_TOKENS, pre_retrieve
+from sensei_engine.agent.round0 import INTRO, ROUND0_TOKENS, leading, pre_retrieve
 from sensei_engine.agent.tools import ToolContext
 from sensei_engine.chunk.tokens import count_tokens
+from sensei_engine.graph.trace import TracePath
 from sensei_engine.llm.anthropic_client import LLMUsageSink
 from sensei_engine.search.route import Route, classify
 from sensei_engine.search.service import SearchService
@@ -145,3 +147,13 @@ async def test_a_flow_is_searched_both_ways_and_their_agreement_kept(ctx: ToolCo
     once = await pre_retrieve(ctx, FLOW)  # the rules give no decomposition: one pass
     assert once is not None
     assert once.agreement is None
+
+
+def test_a_flow_is_traced_from_the_first_match_that_reaches_the_data() -> None:
+    def path(reaches: bool) -> TracePath:
+        return cast("TracePath", SimpleNamespace(reaches_goal=reaches, hops=[1, 2]))
+
+    styled, saved = [path(False)], [path(True), path(False)]
+    assert leading([styled, [], saved]) == saved  # the shared component's trace stops short
+    assert leading([styled, [path(False)]]) == styled  # none reaches it: the best match's
+    assert leading([[], []]) == ()

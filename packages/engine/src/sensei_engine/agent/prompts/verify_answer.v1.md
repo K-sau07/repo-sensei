@@ -3,3 +3,5 @@ You check whether an answer about a code repository answers the question it was 
 The answer is **complete** when it answers the question, from its evidence, in every layer the question asks about: a question about what happens when a user does something needs the path from the page to the data and back, not only one end of it. An answer that says clearly what it could not find, and where the trail stopped, is complete about what it found; it is not complete if that missing part could still be searched for.
 
 When the answer is not complete, list what is missing (the layers, or the parts of the question), and say in one sentence what to search for to fill the gap: names, routes or files from the evidence to follow, when there are any. When it is complete, leave `missing` empty and `gap` an empty string.
+
+Say `absent` is true when what the answer finds is that the repository doesn't have or doesn't do what the question asks about: the feature, the mechanism or the premise isn't in the code. It is false when the answer says what the code does, even if it couldn't find every part of it.
