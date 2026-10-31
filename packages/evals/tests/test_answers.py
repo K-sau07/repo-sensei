@@ -262,8 +262,9 @@ def test_an_answer_is_scored_on_its_citations_and_checklist() -> None:
 
 
 def test_the_gate_names_what_it_misses_and_counts_the_unmeasured_as_missed() -> None:
-    metrics = {
-        "overall": {"citation_supported": 0.97, "abstention_accuracy": 0.9},
+    overall = {"citation_supported": 0.97, "abstention_accuracy": 0.9, "failed": 0.0}
+    metrics: dict[str, Any] = {
+        "overall": overall,
         "answer": {
             "first_event_ms": {"p50": 300.0},
             "first_token_ms": {"lookup": {"p50": 4000.0}, "trace": {"p50": None}},
@@ -274,6 +275,9 @@ def test_the_gate_names_what_it_misses_and_counts_the_unmeasured_as_missed() -> 
         ("cost_usd.mean", "< 0.15"),
         ("first_token_ms.trace.p50", "< 15000"),
     ]
+    # Runs that failed don't count in the rates: so many of them is a miss of its own.
+    overall["failed"] = 0.3
+    assert ("failed", "< 0.05") in [(m.metric, m.bound) for m in gate(metrics)]
 
 
 # ---------------------------------------------------------------- the run

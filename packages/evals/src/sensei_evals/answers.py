@@ -74,6 +74,9 @@ TARGETS: dict[str, tuple[Literal[">=", "<"], float]] = {
     "abstention_accuracy": (">=", 0.8),
     "first_event_ms.p50": ("<", 1_000),
     "cost_usd.mean": ("<", 0.15),
+    # Runs that failed (no answer) are left out of the rates above: a run with many must not
+    # pass on the few that answered.
+    "failed": ("<", 0.05),
 }
 # First token, p50, by kind of question: a lookup (symbol, regex, conceptual) or a trace (flow).
 FIRST_TOKEN_MS: dict[str, float] = {"lookup": 6_000, "trace": 15_000}
@@ -446,6 +449,7 @@ def gate(metrics: dict[str, Any]) -> list[Miss]:
         "abstention_accuracy": overall.get("abstention_accuracy"),
         "first_event_ms.p50": answer.get("first_event_ms", {}).get("p50"),
         "cost_usd.mean": answer.get("cost_usd", {}).get("mean"),
+        "failed": overall.get("failed"),
     }
     for kind in FIRST_TOKEN_MS:
         values[f"first_token_ms.{kind}.p50"] = (
@@ -498,7 +502,7 @@ async def run_answers(
                     outcome = AnswerOutcome(
                         outcome.answer, outcome.first_event_ms, outcome.first_token_ms,
                         outcome.total_ms, error=f"judge: {error}", tools=outcome.tools,
-                        steps=outcome.steps,
+                        steps=outcome.steps, streamed=outcome.streamed,
                     )  # fmt: skip
         except BudgetExceeded as error:
             stopped = str(error)
