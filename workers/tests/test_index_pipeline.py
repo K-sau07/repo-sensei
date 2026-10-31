@@ -26,9 +26,11 @@ from uuid_utils.compat import uuid7
 
 from sensei_core.config import Settings
 from sensei_core.db import Database
+from sensei_core.errors import NotFoundError
 from sensei_core.indexing import pushes
 from sensei_core.indexing.events import JobOutbox, job_stream, org_stream
 from sensei_core.indexing.jobs import settle_repo
+from sensei_core.indexing.snapshots import resolve_snapshot
 from sensei_core.indexing.state import IndexJobStateMachine
 from sensei_core.jobs import TaskName
 from sensei_core.models import (
@@ -2035,3 +2037,77 @@ def test_the_apps_routes_are_read_again_only_when_python_changed() -> None:
         detail="ok",
     )
     assert links_task.routes_from(links_task.routes_json(routes)) == routes
+
+
+# ---------------------------------------------------------------- overlays (5.4)
+
+
+async def _read(
+    database: Database, repo_id: uuid.UUID, ref: str | None
+) -> tuple[Snapshot, set[str], int]:
+    """What ``ref`` reads (as the API resolves it): its snapshot, its definitions' keys, and its
+    live chunks."""
+    async with database.session() as db:
+        repo = await db.get(Repo, repo_id)
+        assert repo is not None
+        snapshot = await resolve_snapshot(db, repo, ref)
+        names = set(
+            await db.scalars(select(CodeNode.symbol_key).where(CodeNode.snapshot_id == snapshot.id))
+        )
+        chunks = await db.scalar(
+            select(func.count())
+            .select_from(CodeChunk)
+            .where(
+                CodeChunk.snapshot_id == snapshot.id,
+                CodeChunk.generation == snapshot.chunk_generation,
+            )
+        )
+        return snapshot, names, int(chunks or 0)
+
+
+def test_a_branch_overlay_sees_its_new_function_and_stays_searchable_when_main_moves_on(
+    runtime: Runtime,
+    ids: tuple[uuid.UUID, uuid.UUID, uuid.UUID],
+    github: respx.MockRouter,
+    bare_repo: Any,
+) -> None:
+    org_id, repo_id, job_id = ids
+    database = runtime.system_database
+    _run(org_id, repo_id, job_id)  # main, at the second
+    branch = runtime.run(_queued(database, org_id, repo_id))
+    runtime.run(_pin(database, branch, "web", bare_repo.third))
+    _run(org_id, repo_id, branch)
+    main = runtime.run(_queued(database, org_id, repo_id))  # main indexed again: it prunes
+    runtime.run(_pin(database, main, None, bare_repo.second))
+    _run(org_id, repo_id, main)
+
+    web, web_names, web_chunks = runtime.run(_read(database, repo_id, "web"))
+    head, main_names, _ = runtime.run(_read(database, repo_id, None))
+    assert web.commit_sha == bare_repo.third
+    added = "ts web/greet.ts/greet()."
+    assert added in web_names  # the branch's new function
+    assert added not in main_names  # main doesn't have it
+    assert web_chunks > 0  # still searchable after main's run pruned
+    assert web.overlay_of == head.id  # built on main's index
+
+
+def test_a_closed_pull_requests_overlay_is_dropped(
+    runtime: Runtime,
+    ids: tuple[uuid.UUID, uuid.UUID, uuid.UUID],
+    github: respx.MockRouter,
+    bare_repo: Any,
+) -> None:
+    org_id, repo_id, job_id = ids
+    database = runtime.system_database
+    _run(org_id, repo_id, job_id)
+    pull = runtime.run(_queued(database, org_id, repo_id))
+    runtime.run(_pin(database, pull, "pull/3", bare_repo.third))
+    _run(org_id, repo_id, pull)
+    assert runtime.run(_read(database, repo_id, "pull/3"))[0].commit_sha == bare_repo.third
+    dropped = maintenance.drop_ref.apply(
+        kwargs={"org_id": str(org_id), "repo_id": str(repo_id), "ref": "pull/3"}
+    ).get()
+    assert dropped == 1
+    with pytest.raises(NotFoundError):
+        runtime.run(_read(database, repo_id, "pull/3"))
+    assert runtime.run(_read(database, repo_id, None))[0].commit_sha == bare_repo.second

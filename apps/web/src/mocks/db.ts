@@ -169,7 +169,12 @@ function seedRepo(): MockRepo {
     status: "ready",
     size_kb: 2048,
     languages: { Python: 90_980, TypeScript: 30_208, Shell: 1609, Dockerfile: 2144 },
-    settings: { tracked_branches: [], ignore_globs: [], auto_index: true },
+    settings: {
+      tracked_branches: [],
+      ignore_globs: [],
+      auto_index: true,
+      index_pull_requests: false,
+    },
     last_indexed_sha: "b1125d8839482cb7bbae603ddc6d0081bf87532e",
     index_job_id: null,
     file_count: 245,

@@ -3179,6 +3179,97 @@
         "title": "ReadinessResponse",
         "type": "object"
       },
+      "RefList": {
+        "properties": {
+          "refs": {
+            "items": {
+              "$ref": "#/components/schemas/RefOut"
+            },
+            "title": "Refs",
+            "type": "array"
+          }
+        },
+        "required": [
+          "refs"
+        ],
+        "title": "RefList",
+        "type": "object"
+      },
+      "RefOut": {
+        "properties": {
+          "default": {
+            "title": "Default",
+            "type": "boolean"
+          },
+          "indexed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Indexed At"
+          },
+          "kind": {
+            "enum": [
+              "branch",
+              "pull_request"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "overlay_of": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Overlay Of"
+          },
+          "sha": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sha"
+          },
+          "status": {
+            "enum": [
+              "indexed",
+              "indexing",
+              "failed",
+              "not_indexed"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "kind",
+          "default",
+          "status",
+          "sha",
+          "indexed_at",
+          "overlay_of"
+        ],
+        "title": "RefOut",
+        "type": "object"
+      },
       "RepoOut": {
         "properties": {
           "active_job": {
@@ -3349,6 +3440,11 @@
             "title": "Ignore Globs",
             "type": "array"
           },
+          "index_pull_requests": {
+            "default": false,
+            "title": "Index Pull Requests",
+            "type": "boolean"
+          },
           "tracked_branches": {
             "items": {
               "type": "string"
@@ -3407,6 +3503,17 @@
               }
             ],
             "title": "Ignore Globs"
+          },
+          "index_pull_requests": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Index Pull Requests"
           },
           "tracked_branches": {
             "anyOf": [
@@ -9290,7 +9397,7 @@
     },
     "/api/v1/orgs/{org}/repos/{repo}/overview": {
       "get": {
-        "description": "The repository at its last index (or at ``ref``), for its overview page.",
+        "description": "The repository at its last index (or at ``ref``), for its overview page. An indexed\nsnapshot doesn't change, so its overview is kept (per snapshot and the index run that\nfinished it) for a day: only the first look reads the whole graph.",
         "operationId": "overview_api_v1_orgs__org__repos__repo__overview_get",
         "parameters": [
           {
@@ -9359,6 +9466,63 @@
         "summary": "Overview",
         "tags": [
           "overview"
+        ]
+      }
+    },
+    "/api/v1/orgs/{org}/repos/{repo}/refs": {
+      "get": {
+        "description": "The default branch first, then the tracked branches and the pull requests, by name.",
+        "operationId": "refs_api_v1_orgs__org__repos__repo__refs_get",
+        "parameters": [
+          {
+            "description": "Repository slug",
+            "in": "path",
+            "name": "repo",
+            "required": true,
+            "schema": {
+              "description": "Repository slug",
+              "maxLength": 201,
+              "title": "Repo",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Organization slug",
+            "in": "path",
+            "name": "org",
+            "required": true,
+            "schema": {
+              "description": "Organization slug",
+              "title": "Org",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefList"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Refs",
+        "tags": [
+          "refs"
         ]
       }
     },

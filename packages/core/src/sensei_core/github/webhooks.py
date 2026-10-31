@@ -314,26 +314,15 @@ async def _pushed(ctx: HandlerContext) -> DeliveryStatus:
     payload = ctx.payload
     branch = pushes.branch_of(payload.get("ref"))
     after = payload.get("after")
-    repository = as_object(payload.get("repository")) or {}
-    github_repo_id = repository.get("id")
     if (
         branch is None
+        or branch.startswith(pushes.PULLS)  # not a branch of ours to track: a pull request's
         or payload.get("deleted")
         or not isinstance(after, str)
         or not after.strip("0")
-        or not isinstance(github_repo_id, int)
-        or ctx.delivery.installation_id is None
     ):
         return DeliveryStatus.IGNORED
-    repos = await ctx.db.scalars(
-        select(Repo)
-        .join(GitHubInstallation, GitHubInstallation.id == Repo.installation_id)
-        .where(
-            Repo.github_repo_id == github_repo_id,
-            Repo.deleted_at.is_(None),
-            GitHubInstallation.installation_id == ctx.delivery.installation_id,
-        )
-    )
+    repos = await _pushed_repos(ctx)
     before = payload.get("before")
     noted = 0
     for repo in repos:
@@ -356,9 +345,59 @@ async def _pushed(ctx: HandlerContext) -> DeliveryStatus:
     return DeliveryStatus.PROCESSED if noted else DeliveryStatus.IGNORED
 
 
-async def _store_only(_: HandlerContext) -> DeliveryStatus:
-    """Kept for later phases (pull requests drive reviews)."""
-    return DeliveryStatus.STORED
+PULL_UPDATED = frozenset({"opened", "reopened", "synchronize", "ready_for_review"})
+
+
+async def _pull_request(ctx: HandlerContext) -> DeliveryStatus:
+    """A pull request (5.4): its head is noted and timed as a push to ``pull/N`` is, for the
+    repositories that index pull requests (an opt-in setting); one closed drops its overlay."""
+    payload = ctx.payload
+    pull = as_object(payload.get("pull_request")) or {}
+    head = as_object(pull.get("head")) or {}
+    number, sha = payload.get("number", pull.get("number")), head.get("sha")
+    action = ctx.delivery.action
+    if not isinstance(number, int) or action not in PULL_UPDATED | {"closed"}:
+        return DeliveryStatus.IGNORED
+    ref = pushes.pull_ref(number)
+    handled = 0
+    for repo in await _pushed_repos(ctx):
+        if not pushes.indexable(repo) or not pushes.tracks(repo, ref):
+            continue
+        handled += 1
+        if action == "closed":
+            await pushes.forget(ctx.redis, repo.id, ref)
+            if ctx.timers is not None:
+                await ctx.timers.drop(repo.org_id, repo.id, ref)
+            continue
+        if not isinstance(sha, str) or not sha.strip("0"):
+            continue
+        pending = await pushes.note(
+            ctx.redis, repo.id, ref, after=sha, before=None, forced=False,
+            token=ctx.delivery.delivery_id,
+        )  # fmt: skip
+        if ctx.timers is not None:
+            await ctx.timers.schedule(
+                repo.org_id, repo.id, ref, pending.token, countdown=pushes.DEBOUNCE_SECONDS
+            )
+    return DeliveryStatus.PROCESSED if handled else DeliveryStatus.IGNORED
+
+
+async def _pushed_repos(ctx: HandlerContext) -> list[Repo]:
+    """The live repositories the delivery's installation reads that are its repository."""
+    repository = as_object(ctx.payload.get("repository")) or {}
+    github_repo_id = repository.get("id")
+    if not isinstance(github_repo_id, int) or ctx.delivery.installation_id is None:
+        return []
+    found = await ctx.db.scalars(
+        select(Repo)
+        .join(GitHubInstallation, GitHubInstallation.id == Repo.installation_id)
+        .where(
+            Repo.github_repo_id == github_repo_id,
+            Repo.deleted_at.is_(None),
+            GitHubInstallation.installation_id == ctx.delivery.installation_id,
+        )
+    )
+    return list(found)
 
 
 # (event, action): handler; an action of None matches every action of that event.
@@ -371,7 +410,7 @@ HANDLERS: dict[tuple[str, str | None], Handler] = {
     ("installation_repositories", "added"): _installation_changed,
     ("installation_repositories", "removed"): _installation_changed,
     ("push", None): _pushed,
-    ("pull_request", None): _store_only,
+    ("pull_request", None): _pull_request,
 }
 
 _FINAL = frozenset({DeliveryStatus.PROCESSED, DeliveryStatus.STORED, DeliveryStatus.IGNORED})

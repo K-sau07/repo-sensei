@@ -29,12 +29,22 @@ from sqlalchemy import select
 
 from sensei_core.indexing.events import JobOutbox
 from sensei_core.indexing.jobs import JOB_USAGE_REF, settle_repo
+from sensei_core.indexing.snapshots import ref_heads
 from sensei_core.indexing.state import IndexJobStateMachine
 from sensei_core.jobs import TaskName, chain_key
 from sensei_core.logging import get_logger
-from sensei_core.models import ACTIVE_JOB_STATUSES, IndexJob, JobStatus, Repo, Snapshot, Stage
+from sensei_core.models import (
+    ACTIVE_JOB_STATUSES,
+    IndexJob,
+    JobKind,
+    JobStatus,
+    Repo,
+    Snapshot,
+    Stage,
+)
 from sensei_core.usage import costs_of
 from sensei_engine.chunk.store import prune_chunks
+from sensei_engine.incremental import previous_of
 from sensei_workers.app import celery_app
 from sensei_workers.base import NotYetError, SenseiTask
 from sensei_workers.jobstate import job_scope
@@ -117,9 +127,17 @@ def finalize_index(self: IngestTask, *, job_id: str, org_id: str, repo_id: str) 
             # The repository's index is its default branch's: a tracked branch's run (5.1) is kept
             # beside it, and neither moves it nor prunes its chunks.
             default = job.ref is None or job.ref == repo.default_branch
+            pruned = 0
             if default:
                 repo.last_indexed_sha = snapshot.commit_sha
-            pruned = await prune_chunks(scope.db, repo.id, keep=snapshot.id) if default else 0
+                # Branches' and pull requests' latest stay searchable by their ref (5.4).
+                heads = [s.id for s in (await ref_heads(scope.db, repo)).values()]
+                pruned = await prune_chunks(scope.db, repo.id, keep=snapshot.id, also=heads)
+            elif job.kind is JobKind.INCREMENTAL:
+                # An overlay (5.4): built on the default branch's index, its unchanged files'
+                # facts carried from it.
+                base = await previous_of(scope.db, repo, snapshot)
+                snapshot.overlay_of = base.id if base is not None else None
             settle_repo(repo, JobStatus.SUCCEEDED)
             # What the run was charged (embeddings, summaries), on the job and by kind.
             costs = await costs_of(scope.db, job.org_id, JOB_USAGE_REF, str(job.id))

@@ -117,7 +117,12 @@ function connect(org: string, fields: Partial<Repo> & Pick<Repo, "full_name">): 
     status: "pending",
     size_kb: fields.size_kb ?? 1024,
     languages: fields.languages ?? {},
-    settings: { tracked_branches: [], ignore_globs: [], auto_index: true },
+    settings: {
+      tracked_branches: [],
+      ignore_globs: [],
+      auto_index: true,
+      index_pull_requests: false,
+    },
     last_indexed_sha: null,
     index_job_id: null,
     file_count: null,

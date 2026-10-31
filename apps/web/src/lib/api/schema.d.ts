@@ -1039,9 +1039,31 @@ export interface paths {
         };
         /**
          * Overview
-         * @description The repository at its last index (or at ``ref``), for its overview page.
+         * @description The repository at its last index (or at ``ref``), for its overview page. An indexed
+         *     snapshot doesn't change, so its overview is kept (per snapshot and the index run that
+         *     finished it) for a day: only the first look reads the whole graph.
          */
         get: operations["overview_api_v1_orgs__org__repos__repo__overview_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/repos/{repo}/refs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Refs
+         * @description The default branch first, then the tracked branches and the pull requests, by name.
+         */
+        get: operations["refs_api_v1_orgs__org__repos__repo__refs_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2538,6 +2560,34 @@ export interface components {
              */
             status: "ok" | "unavailable";
         };
+        /** RefList */
+        RefList: {
+            /** Refs */
+            refs: components["schemas"]["RefOut"][];
+        };
+        /** RefOut */
+        RefOut: {
+            /** Default */
+            default: boolean;
+            /** Indexed At */
+            indexed_at: string | null;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "branch" | "pull_request";
+            /** Name */
+            name: string;
+            /** Overlay Of */
+            overlay_of: string | null;
+            /** Sha */
+            sha: string | null;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "indexed" | "indexing" | "failed" | "not_indexed";
+        };
         /** RepoOut */
         RepoOut: {
             active_job?: components["schemas"]["ActiveJobOut"] | null;
@@ -2615,6 +2665,11 @@ export interface components {
             auto_index: boolean;
             /** Ignore Globs */
             ignore_globs?: string[];
+            /**
+             * Index Pull Requests
+             * @default false
+             */
+            index_pull_requests: boolean;
             /** Tracked Branches */
             tracked_branches?: string[];
         };
@@ -2634,6 +2689,8 @@ export interface components {
             auto_index?: boolean | null;
             /** Ignore Globs */
             ignore_globs?: string[] | null;
+            /** Index Pull Requests */
+            index_pull_requests?: boolean | null;
             /** Tracked Branches */
             tracked_branches?: string[] | null;
         };
@@ -5530,6 +5587,40 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["OverviewOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    refs_api_v1_orgs__org__repos__repo__refs_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Repository slug */
+                repo: string;
+                /** @description Organization slug */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RefList"];
                 };
             };
             /** @description Validation Error */

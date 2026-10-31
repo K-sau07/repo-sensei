@@ -447,7 +447,12 @@ async def test_connect_a_repository(
         "main",
     )
     assert body["languages"] == {"Python": 9000, "TypeScript": 1000}
-    assert body["settings"] == {"tracked_branches": [], "ignore_globs": [], "auto_index": True}
+    assert body["settings"] == {
+        "tracked_branches": [],
+        "ignore_globs": [],
+        "auto_index": True,
+        "index_pull_requests": False,
+    }
 
     row = await db_session.scalar(select(Repo).where(Repo.github_repo_id == 101))
     assert row is not None
@@ -750,6 +755,7 @@ async def test_admins_change_settings(
         "tracked_branches": ["main", "release/2.x"],
         "ignore_globs": [],
         "auto_index": False,
+        "index_pull_requests": False,
     }
     partial = await client.patch(
         f"{API}/orgs/acme/repos/api", json={"ignore_globs": ["dist/**"]}, headers=headers

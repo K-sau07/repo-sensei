@@ -221,6 +221,7 @@ def test_settings_defaults_and_cleanup() -> None:
         "tracked_branches": [],
         "ignore_globs": [],
         "auto_index": True,
+        "index_pull_requests": False,  # pull requests are indexed only when asked (5.4)
     }
     cleaned = RepoSettings(
         tracked_branches=[" main ", "release/1.x", "main"], ignore_globs=["dist/**", " ", "dist/**"]

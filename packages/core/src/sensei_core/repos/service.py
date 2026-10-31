@@ -90,6 +90,8 @@ class RepoSettings(BaseModel):
     tracked_branches: list[str] = Field(default_factory=list, max_length=20)
     ignore_globs: list[str] = Field(default_factory=list, max_length=200)
     auto_index: bool = True
+    # Pull requests' heads indexed as overlays on the default branch's (5.4): off unless asked.
+    index_pull_requests: bool = False
 
     @field_validator("tracked_branches")
     @classmethod

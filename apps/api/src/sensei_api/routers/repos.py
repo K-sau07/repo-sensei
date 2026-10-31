@@ -170,6 +170,7 @@ class RepoUpdate(BaseModel):
     tracked_branches: list[str] | None = None
     ignore_globs: list[str] | None = None
     auto_index: bool | None = None
+    index_pull_requests: bool | None = None
 
 
 def _jobs(request: Request) -> RepoJobs:

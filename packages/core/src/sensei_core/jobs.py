@@ -53,6 +53,7 @@ class TaskName(enum.StrEnum):
     VACUUM_CHUNKS = "sensei.maintenance.vacuum_chunks"
     SWEEP_STALLED_JOBS = "sensei.maintenance.sweep_stalled_jobs"
     SWEEP_SNAPSHOTS = "sensei.maintenance.sweep_snapshots"
+    DROP_REF = "sensei.maintenance.drop_ref"
 
 
 # Tasks go to the queue named by the second part of their name ("sensei.<queue>.<task>").
@@ -185,6 +186,14 @@ class CeleryPushTimers:
             },
             queue=Queue.INGEST.value,
             countdown=countdown,
+        )
+
+    async def drop(self, org_id: uuid.UUID, repo_id: uuid.UUID, ref: str) -> None:
+        await asyncio.to_thread(
+            self._app.send_task,
+            TaskName.DROP_REF.value,
+            kwargs={"org_id": str(org_id), "repo_id": str(repo_id), "ref": ref},
+            queue=Queue.MAINTENANCE.value,
         )
 
 

@@ -24,7 +24,7 @@ generations swept (:func:`prune_chunks`).
 from __future__ import annotations
 
 import uuid
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
 from typing import Any, cast
@@ -127,25 +127,37 @@ async def discard_generation(
     return _rowcount(result)
 
 
-async def prune_chunks(db: AsyncSession, repo_id: uuid.UUID, *, keep: uuid.UUID) -> int:
-    """Delete the chunks of the repository's snapshots other than ``keep`` (superseded by it),
-    which are no longer searchable, and ``keep``'s rows outside its live generation (a run that
+async def prune_chunks(
+    db: AsyncSession,
+    repo_id: uuid.UUID,
+    *,
+    keep: uuid.UUID,
+    also: Collection[uuid.UUID] = (),
+) -> int:
+    """Delete the chunks of the repository's snapshots other than ``keep`` (superseded by it)
+    and ``also`` (branches' and pull requests' latest, searched by their ref: 5.4), which are no
+    longer searchable, and the kept snapshots' rows outside their live generation (a run that
     stopped, or one still writing for a cancelled job); returns how many rows went. Left in
     place, they would also weigh in the partition's BM25 statistics."""
+    kept = [keep, *(snapshot for snapshot in also if snapshot != keep)]
     await db.execute(
         update(Snapshot)
         .where(
             Snapshot.repo_id == repo_id,
-            Snapshot.id != keep,
+            Snapshot.id.not_in(kept),
             or_(Snapshot.chunk_count.is_not(None), Snapshot.chunk_generation.is_not(None)),
         )
         .values(chunk_count=None, chunk_generation=None)
     )
-    live = select(Snapshot.chunk_generation).where(Snapshot.id == keep).scalar_subquery()
+    live = (
+        select(Snapshot.chunk_generation)
+        .where(Snapshot.id == CodeChunk.snapshot_id)
+        .scalar_subquery()
+    )
     result = await db.execute(
         delete(CodeChunk).where(
             CodeChunk.repo_id == repo_id,
-            or_(CodeChunk.snapshot_id != keep, CodeChunk.generation.is_distinct_from(live)),
+            or_(CodeChunk.snapshot_id.not_in(kept), CodeChunk.generation.is_distinct_from(live)),
         )
     )
     return _rowcount(result)

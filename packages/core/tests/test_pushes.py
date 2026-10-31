@@ -36,15 +36,19 @@ SHA = ["a" * 40, "b" * 40, "c" * 40, "d" * 40]
 
 
 class Timers:
-    """The timers set, in order."""
+    """The timers set, in order, and the refs dropped."""
 
     def __init__(self) -> None:
         self.set: list[tuple[uuid.UUID, str, str, int]] = []
+        self.dropped: list[tuple[uuid.UUID, str]] = []
 
     async def schedule(
         self, org_id: uuid.UUID, repo_id: uuid.UUID, branch: str, token: str, *, countdown: int
     ) -> None:
         self.set.append((repo_id, branch, token, countdown))
+
+    async def drop(self, org_id: uuid.UUID, repo_id: uuid.UUID, ref: str) -> None:
+        self.dropped.append((repo_id, ref))
 
 
 async def _repo(db: AsyncSession, *, tracked: list[str] | None = None) -> Repo:
@@ -96,10 +100,14 @@ def _push(ref: str, before: str, after: str, **extra: Any) -> dict[str, Any]:
 
 
 async def _deliver(
-    db: AsyncSession, redis: FakeAsyncRedis, timers: Timers, payload: dict[str, Any]
+    db: AsyncSession,
+    redis: FakeAsyncRedis,
+    timers: Timers,
+    payload: dict[str, Any],
+    event: str = "push",
 ) -> tuple[str, DeliveryStatus | None]:
     delivery_id = uuid.uuid4().hex
-    row = await record_delivery(db, delivery_id=delivery_id, event="push", payload=payload)
+    row = await record_delivery(db, delivery_id=delivery_id, event=event, payload=payload)
     assert row is not None
     result = await process_delivery(db, redis, row, timers=timers)
     return delivery_id, result.status
@@ -238,3 +246,45 @@ async def test_a_tracked_branch_is_noted_and_its_run_kept_apart(
     assert (job.ref, job.status) == ("release", JobStatus.QUEUED)
     found = await system_session.scalar(select(IndexJob).where(IndexJob.id == job.id))
     assert found is not None
+
+
+def _pull(action: str, number: int = 7, sha: str = SHA[1]) -> dict[str, Any]:
+    return {
+        "action": action,
+        "number": number,
+        "pull_request": {"number": number, "head": {"sha": sha, "ref": "feature"}},
+        "repository": {"id": GITHUB_REPO, "full_name": "acme-gh/demo"},
+        "installation": {"id": INSTALLATION},
+    }
+
+
+@pytest.mark.integration
+async def test_a_pull_request_is_indexed_as_an_overlay_only_when_the_repository_asks(
+    system_session: AsyncSession, fake_redis: FakeAsyncRedis
+) -> None:
+    repo = await _repo(system_session)
+    timers = Timers()
+    _, status = await _deliver(system_session, fake_redis, timers, _pull("opened"), "pull_request")
+    assert status is DeliveryStatus.IGNORED  # not asked for
+    assert timers.set == []
+    repo.settings = {**repo.settings, "index_pull_requests": True}
+    await system_session.flush()
+    _, status = await _deliver(
+        system_session, fake_redis, timers, _pull("synchronize"), "pull_request"
+    )
+    assert status is DeliveryStatus.PROCESSED
+    [(repo_id, ref, token, countdown)] = timers.set
+    assert (repo_id, ref, countdown) == (repo.id, "pull/7", pushes.DEBOUNCE_SECONDS)
+    pending = await pushes.due(fake_redis, repo.id, "pull/7", token)
+    assert pending is not None
+    assert pending.after == SHA[1]
+    # Closed: nothing pending any more, and its overlay is dropped.
+    _, status = await _deliver(system_session, fake_redis, timers, _pull("closed"), "pull_request")
+    assert status is DeliveryStatus.PROCESSED
+    assert await pushes.due(fake_redis, repo.id, "pull/7", token) is None
+    assert timers.dropped == [(repo.id, "pull/7")]
+    # A push to a branch named like a pull request's ref isn't taken for one.
+    _, status = await _deliver(
+        system_session, fake_redis, timers, _push("refs/heads/pull/7", SHA[0], SHA[2])
+    )
+    assert status is DeliveryStatus.IGNORED

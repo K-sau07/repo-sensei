@@ -40,6 +40,7 @@ WAIT_SECONDS = 30  # a timer held back by a run going tries again this often
 PENDING_TTL_SECONDS = 24 * 3600
 PENDING_PREFIX = "push:pending:"
 HEADS = "refs/heads/"
+PULLS = "pull/"  # a pull request's ref: its head, indexed as an overlay when the repository asks
 TRIES = 5  # a note raced by another push's is tried again, this often
 
 
@@ -53,11 +54,19 @@ class Pending(BaseModel):
 
 
 class PushTimers(Protocol):
-    """Starts a branch's run later: the timer task, ``countdown`` seconds from now."""
+    """Starts a branch's run later (the timer task, ``countdown`` seconds from now), and drops a
+    closed pull request's overlay."""
 
     async def schedule(
         self, org_id: uuid.UUID, repo_id: uuid.UUID, branch: str, token: str, *, countdown: int
     ) -> None: ...
+
+    async def drop(self, org_id: uuid.UUID, repo_id: uuid.UUID, ref: str) -> None: ...
+
+
+def pull_ref(number: int) -> str:
+    """A pull request's ref, as its overlay's snapshots and runs carry it: ``pull/12``."""
+    return f"{PULLS}{number}"
 
 
 def pending_key(repo_id: uuid.UUID, branch: str) -> str:
@@ -72,11 +81,18 @@ def branch_of(ref: object) -> str | None:
 
 
 def tracks(repo: Repo, branch: str) -> bool:
-    """Whether a push to ``branch`` indexes the repository again."""
+    """Whether a push to ``branch`` (or a pull request's head, ``pull/N``) indexes it again."""
     if branch == repo.default_branch:
         return True
     settings = RepoSettings.model_validate(repo.settings or {})
+    if branch.startswith(PULLS) and branch.removeprefix(PULLS).isdigit():
+        return settings.index_pull_requests
     return branch in settings.tracked_branches
+
+
+async def forget(redis: Redis, repo_id: uuid.UUID, ref: str) -> None:
+    """A ref's pending push, if any, dropped (a pull request closed: nothing to index)."""
+    await redis.delete(pending_key(repo_id, ref))
 
 
 async def note(

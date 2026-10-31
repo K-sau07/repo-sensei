@@ -94,3 +94,20 @@ async def _first_run_snapshot(db: AsyncSession, repo: Repo) -> Snapshot | None:
         )
         .limit(1)
     )
+
+
+async def ref_heads(db: AsyncSession, repo: Repo) -> dict[str, Snapshot]:
+    """Each ref's latest ready snapshot but the default branch's (a tracked branch's, a pull
+    request's: 5.4), by ref. What a ``ref`` reads: kept searchable when the default branch's
+    index moves on."""
+    found = await db.scalars(
+        select(Snapshot)
+        .where(
+            Snapshot.repo_id == repo.id,
+            Snapshot.ref != repo.default_branch,
+            Snapshot.status == SnapshotStatus.READY,
+        )
+        .order_by(Snapshot.ref, Snapshot.ready_at.desc().nulls_last(), Snapshot.created_at.desc())
+        .distinct(Snapshot.ref)
+    )
+    return {snapshot.ref: snapshot for snapshot in found}

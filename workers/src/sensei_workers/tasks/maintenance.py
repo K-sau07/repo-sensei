@@ -14,11 +14,13 @@ import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
+from sqlalchemy import select
 from sqlalchemy.exc import DBAPIError
 
 from sensei_core.indexing import retention
 from sensei_core.jobs import TaskName
 from sensei_core.logging import get_logger
+from sensei_core.models import ACTIVE_JOB_STATUSES, IndexJob, Snapshot
 from sensei_core.storage import Bucket, repo_prefix, snapshot_key
 from sensei_workers.app import celery_app
 from sensei_workers.base import RetryableError, SenseiTask
@@ -127,4 +129,57 @@ def sweep_snapshots(self: SenseiTask) -> int:
             )
     if gone:
         log.info("snapshots expired", snapshots=len(gone))
+    return len(gone)
+
+
+DROP_WAIT_SECONDS = 60  # a ref whose run is going is dropped once it ends
+
+
+async def _drop_ref(
+    task: SenseiTask, org_id: uuid.UUID, repo_id: uuid.UUID, ref: str
+) -> list[_Gone] | None:
+    """Delete a ref's snapshots (a closed pull request's overlay, 5.4); None while a run of it
+    is queued or going (dropped once it ends)."""
+    async with task.org_session(org_id) as db:
+        building = await db.scalar(
+            select(IndexJob.id).where(
+                IndexJob.repo_id == repo_id,
+                IndexJob.ref == ref,
+                IndexJob.status.in_(ACTIVE_JOB_STATUSES),
+            )
+        )
+        if building is not None:
+            return None
+        found = list(
+            await db.scalars(
+                select(Snapshot).where(Snapshot.repo_id == repo_id, Snapshot.ref == ref)
+            )
+        )
+        gone = [_Gone(s.org_id, s.repo_id, s.commit_sha) for s in found]
+        for snapshot in found:
+            await db.delete(snapshot)
+        return gone
+
+
+@celery_app.task(
+    bind=True,
+    base=SenseiTask,
+    name=TaskName.DROP_REF.value,
+    requires=("org_id", "repo_id", "ref"),
+)
+def drop_ref(self: SenseiTask, *, org_id: str, repo_id: str, ref: str) -> int:
+    """Drop a closed pull request's overlay: its snapshots, archives and artifacts."""
+    runtime = get_runtime()
+    gone = runtime.run(_drop_ref(self, uuid.UUID(org_id), uuid.UUID(repo_id), ref))
+    if gone is None:
+        drop_ref.apply_async(
+            kwargs={"org_id": org_id, "repo_id": repo_id, "ref": ref}, countdown=DROP_WAIT_SECONDS
+        )
+        return 0
+    for one in gone:
+        try:
+            runtime.run(_drop_objects(one))
+        except Exception:
+            log.warning("couldn't delete a snapshot's objects", ref=ref, exc_info=True)
+    log.info("ref dropped", ref=ref, snapshots=len(gone))
     return len(gone)

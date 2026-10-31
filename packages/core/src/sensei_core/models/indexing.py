@@ -82,10 +82,16 @@ class Snapshot(IdMixin, OrgScopedMixin, Base):
         ForeignKeyConstraint(
             ["repo_id", "org_id"], ["repos.id", "repos.org_id"], ondelete="CASCADE"
         ),
+        Index("ix_snapshots_repo_id_ref", "repo_id", "ref"),
     )
 
     repo_id: Mapped[uuid.UUID] = mapped_column()
     ref: Mapped[str] = mapped_column(String(255))  # the branch or tag it was taken from
+    # A branch's or pull request's (5.4): the snapshot it was built on, its unchanged files'
+    # facts carried from it (None: the default branch's, or one built in full).
+    overlay_of: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("snapshots.id", ondelete="SET NULL", name="fk_snapshots_overlay_of")
+    )
     commit_sha: Mapped[str] = mapped_column(String(64))
     status: Mapped[SnapshotStatus] = mapped_column(
         Enum(SnapshotStatus, name="snapshot_status", values_callable=_values),
