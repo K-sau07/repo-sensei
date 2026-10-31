@@ -14,7 +14,7 @@ from decimal import Decimal
 from typing import cast
 
 from redis.asyncio import Redis
-from redis.exceptions import RedisError
+from redis.exceptions import RedisError, WatchError
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -112,17 +112,32 @@ async def hold(redis: Redis, org_id: uuid.UUID, run_id: uuid.UUID, amount: Decim
         return
 
 
+DRAW_TRIES = 5  # a draw raced by another change to the org's holds is tried again, this often
+
+
 async def draw(redis: Redis, org_id: uuid.UUID, run_id: uuid.UUID, cost: Decimal) -> None:
     """Take what a run just spent (now in the ledger) off its hold, so the day's cap doesn't
-    count it twice: once spent, once still held."""
+    count it twice: once spent, once still held. In a transaction that watches the org's
+    holds: two draws at once both count, and one after the hold's release doesn't bring it
+    back."""
     key = f"{HOLDS_PREFIX}{org_id}"
     try:
-        value = await cast("Awaitable[bytes | str | None]", redis.hget(key, str(run_id)))  # pyright: ignore[reportUnknownMemberType]
-        if value is None:
-            return
-        amount, until = _text(value).split()
-        left = max(Decimal(0), Decimal(amount) - cost)
-        await cast("Awaitable[int]", redis.hset(key, str(run_id), f"{left} {until}"))  # pyright: ignore[reportUnknownMemberType]
+        async with redis.pipeline(transaction=True) as pipe:
+            for _ in range(DRAW_TRIES):
+                try:
+                    await pipe.watch(key)
+                    value = await cast("Awaitable[bytes | str | None]", pipe.hget(key, str(run_id)))  # pyright: ignore[reportUnknownMemberType]
+                    if value is None:
+                        await pipe.unwatch()
+                        return
+                    amount, until = _text(value).split()
+                    left = max(Decimal(0), Decimal(amount) - cost)
+                    pipe.multi()
+                    pipe.hset(key, str(run_id), f"{left} {until}")  # pyright: ignore[reportUnknownMemberType]
+                    await pipe.execute()
+                    return
+                except WatchError:
+                    continue
     except (RedisError, ValueError, ArithmeticError):
         return
 
