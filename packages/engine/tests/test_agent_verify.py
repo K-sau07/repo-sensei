@@ -18,6 +18,7 @@ from sensei_engine.agent.tools import ToolContext
 from sensei_engine.agent.tools.base import Cited
 from sensei_engine.agent.verify import (
     MAX_ROUNDS,
+    _marked,  # pyright: ignore[reportPrivateUsage]
     agreement,
     claims,
     existing,
@@ -342,3 +343,12 @@ def test_a_list_line_taken_out_leaves_no_empty_line() -> None:
     none: list[tuple[int, int, str]] = []
     out, _ = spliced(text, none, found, {gone.n: ""})
     assert out == "- Saves it.\n- Commits."
+
+
+def test_a_rewritten_list_line_keeps_its_marker() -> None:
+    assert _marked("- **Dummy hash:** it says more.", "**Dummy hash:** it says this.") == (
+        "- **Dummy hash:** it says this."
+    )
+    assert _marked("2. Then it saves.", "2. Then it adds.") == "2. Then it adds."
+    assert _marked("It saves.", "It adds.") == "It adds."
+    assert _marked("- Gone.", "") == ""

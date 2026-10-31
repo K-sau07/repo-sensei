@@ -386,12 +386,24 @@ async def rewrite(
         result = await client.complete(request, on_usage=on_usage)
     except LLMError:
         return {}
-    known = {one.claim.n for one in wrong}
+    known = {one.claim.n: one.claim.text for one in wrong}
     return {
-        int(item["n"]): str(item["text"]).strip()
+        int(item["n"]): _marked(known[int(item["n"])], str(item["text"]).strip())
         for item in result.data.get("claims", [])
         if int(item["n"]) in known
     }
+
+
+_LIST_MARKER = re.compile(r"^(?:[-*+]|\d+[.)])\s+")
+
+
+def _marked(was: str, words: str) -> str:
+    """``words`` with the list marker ``was`` had (``- ``, ``1. ``), when the rewrite left it off:
+    a list line stays one."""
+    marker = _LIST_MARKER.match(was)
+    if not words or marker is None or _LIST_MARKER.match(words):
+        return words
+    return marker.group(0) + words
 
 
 def spliced[T](

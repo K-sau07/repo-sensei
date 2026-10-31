@@ -55,6 +55,7 @@ class ItemResult(BaseModel):
     tools: list[dict[str, Any]] | None = None  # the agent's calls: tool, input, summary, error
     claims: list[dict[str, Any]] | None = None  # each claim: text, its support verdict, its lines
     steps: list[dict[str, Any]] | None = None  # each turn's start (ms) and whether it researched
+    streamed: str | None = None  # the answer as written, when verification rewrote it
 
 
 class RunRecord(BaseModel):

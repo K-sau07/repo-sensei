@@ -99,9 +99,8 @@ class AnswerOutcome:
     total_ms: float
     error: str | None = None
     tools: tuple[dict[str, Any], ...] = ()  # each call: the tool, its input, what it answered
-    steps: tuple[
-        dict[str, Any], ...
-    ] = ()  # each turn: when it started (ms), and whether it researched
+    steps: tuple[dict[str, Any], ...] = ()  # each turn: its start (ms), whether it researched
+    streamed: str | None = None  # the last answer turn's text as written, before verification
 
     @property
     def citations(self) -> tuple[Cited, ...]:
@@ -128,6 +127,7 @@ async def ask(agent: Agent, question: str, ctx: ToolContext, *, mode: Mode) -> A
     answering = False  # the open turn writes the answer (it may call no tools)
     calls: dict[str, dict[str, Any]] = {}
     steps: list[dict[str, Any]] = []
+    written: list[str] = []
     try:
         async for event in agent.run(question, ctx, mode=mode):
             if isinstance(event, ToolCalled):
@@ -142,6 +142,10 @@ async def ask(agent: Agent, question: str, ctx: ToolContext, *, mode: Mode) -> A
             # The answer's first token: a turn that may call tools writes reasoning, not it.
             if isinstance(event, TextDelta) and answering and first_token is None and event.text:
                 first_token = since()
+            if isinstance(event, StepStarted) and not event.tools:
+                written = []  # a new answer turn: the one before it was replaced
+            if isinstance(event, TextDelta) and answering:
+                written.append(event.text)
             if isinstance(event, Done):
                 answer = event.answer
                 if first_token is None and answer.text:
@@ -154,7 +158,13 @@ async def ask(agent: Agent, question: str, ctx: ToolContext, *, mode: Mode) -> A
             None, first_event, first_token, since(), str(error), made, tuple(steps)
         )
     return AnswerOutcome(
-        answer, first_event, first_token, since(), tools=tuple(calls.values()), steps=tuple(steps)
+        answer,
+        first_event,
+        first_token,
+        since(),
+        tools=tuple(calls.values()),
+        steps=tuple(steps),
+        streamed="".join(written) or None,
     )
 
 
@@ -352,6 +362,11 @@ def item_result(item: GoldenItem, outcome: AnswerOutcome, judged: Judged | None)
         tools=list(outcome.tools) or None,
         claims=_claims(outcome.answer),
         steps=list(outcome.steps) or None,
+        streamed=(
+            outcome.streamed
+            if outcome.answer is not None and outcome.streamed != outcome.answer.text
+            else None
+        ),
     )
 
 
