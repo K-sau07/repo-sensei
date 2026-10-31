@@ -229,8 +229,12 @@ export function titleOr(title: string | undefined, fallback: string): string {
 }
 
 /** The answer's text: its text parts, in order. */
+/** The answer's text: its last text part. An answer searched again for what it missed (or
+ * rewritten to what its citations show) is sent again whole, after the one it replaces, and its
+ * citations are where they fall in it. */
 export function answerText(message: AskMessage): string {
-  return message.parts.map((part) => (part.type === "text" ? part.text : "")).join("");
+  const texts = message.parts.filter((part) => part.type === "text");
+  return texts.at(-1)?.text ?? "";
 }
 
 /** `file.tsx:12–48` (one line: `file.tsx:12`). */

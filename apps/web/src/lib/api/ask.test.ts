@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   activity,
+  answerText,
   askTransport,
   chipLabel,
   citationsOf,
@@ -59,6 +60,20 @@ const ANSWER: AskMessage = {
 };
 
 describe("an answer as the page reads it", () => {
+  it("is its last text: one searched again replaces the first, not runs on after it", () => {
+    const message = {
+      id: "a1",
+      role: "assistant",
+      parts: [
+        { type: "text", text: "An early answer." },
+        { type: "reasoning", text: "Searching what it missed." },
+        { type: "text", text: "The answer, searched again." },
+      ],
+    } as AskMessage;
+    expect(answerText(message)).toBe("The answer, searched again.");
+    expect(answerText({ ...message, parts: [] })).toBe("");
+  });
+
   it("puts each citation's marker after the words it backs", () => {
     const text = withMarkers(
       "The route calls create_item. It saves the item.",

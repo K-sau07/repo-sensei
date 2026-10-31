@@ -161,6 +161,34 @@ def test_an_answer_in_a_research_turns_words_is_sent_as_the_answer() -> None:
     assert text_of(stream.parts) == TEXT
 
 
+def test_an_answer_searched_again_is_its_last_text_not_both() -> None:
+    """Verification found the first answer short: the run searched again and answered again.
+    The answer is the second text, whole (its citations are where they fall in it), and a
+    follow-up's history reads that one, not the two run together."""
+    stream = UIStream("m1", "o/items")
+    for event in (
+        StepStarted(1, "m", "low", tools=False),
+        TextDelta(1, "An early answer."),
+        StepStarted(2, "m", "low", tools=True),
+        TextDelta(2, "Searching what it missed."),
+        StepStarted(3, "m", "low", tools=False),
+        TextDelta(3, TEXT),
+    ):
+        stream.encode(event)
+    parts = stream.encode(Done(_answer()))
+    assert not [p for p in parts if p["type"] == "text-delta"]  # the last text is the answer
+    assert text_of(stream.parts) == TEXT
+
+
+def test_an_answer_verification_rewrote_is_sent_again_whole() -> None:
+    stream = UIStream("m1", "o/items")
+    for event in (StepStarted(1, "m", "low", tools=False), TextDelta(1, "Said more than shown.")):
+        stream.encode(event)
+    parts = stream.encode(Done(_answer()))
+    assert [p["delta"] for p in parts if p["type"] == "text-delta"] == [TEXT]
+    assert text_of(stream.parts) == TEXT
+
+
 def test_a_tool_s_card_goes_with_its_output_and_stays_with_the_message() -> None:
     card = {"kind": "symbols", "symbols": [{"name": "create_item", "path": "a.py"}], "more": 0}
     stream = UIStream("m1", "o/items")

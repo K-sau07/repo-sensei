@@ -181,8 +181,9 @@ class UIStream:
 
     def _done(self, answer: Answer) -> list[Part]:
         out = self._close()
-        if answer.text and not any(part["type"] == "text" for part in self.parts):
-            # The answer was a research turn's own words (sent as reasoning): sent as the answer.
+        if answer.text and text_of(self.parts) != answer.text:
+            # The answer isn't the text last sent: a research turn's own words (sent as
+            # reasoning), or the answer as verification left it. Sent again, whole, as the answer.
             out += [
                 {"type": "text-start", "id": "text-answer"},
                 {"type": "text-delta", "id": "text-answer", "delta": answer.text},
@@ -238,8 +239,10 @@ def _verified(verification: Verification) -> dict[str, Any]:
 
 
 def text_of(parts: Sequence[Part]) -> str:
-    """A message's answer text: its text parts, in order."""
-    return "".join(part["text"] for part in parts if part["type"] == "text")
+    """A message's answer text: its last text part (an answer searched again, or rewritten to
+    what its citations show, comes again whole after the one it replaces)."""
+    texts = [part["text"] for part in parts if part["type"] == "text"]
+    return texts[-1] if texts else ""
 
 
 def replayed(message_id: str, parts: Sequence[Part]) -> list[Part]:
