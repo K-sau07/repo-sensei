@@ -47,11 +47,12 @@ from sensei_engine.agent.tools.base import Cited, Evidence, Trail
 from sensei_engine.agent.verify import (
     MAX_ROUNDS,
     Checked,
-    Verdict,
+    Claim,
     Verification,
     claims,
     existing,
     identifiers,
+    prose,
     rewrite,
     spliced,
     support,
@@ -334,6 +335,7 @@ class _Run:
     citations: tuple[AnswerCitation, ...] = ()
     dropped: int = 0
     verification: Verification | None = None
+    verified_text: str | None = None  # the text the verification is of
     agreement: float | None = None  # of round 0's two passes
     trail: Trail | None = None  # the last trace's best path (round 0's, a tool's)
     searched: list[str] = field(default_factory=list[str])
@@ -465,8 +467,11 @@ class AskAgent:
             index = run.index if run.index is not None else run.read
             run.text, run.citations, run.dropped = _answer(answered.content, index)
             if not self.verify or answered.stop_reason in CUT_SHORT:
+                if rounds:  # a later answer, cut short: the checks were of the one before it
+                    run.verification = run.verified_text = None
                 return
             run.verification = await self._verify(run, ctx, question, layers, rounds)
+            run.verified_text = run.text
             yield Verified(run.verification)
             whole_answer = run.verification.whole
             allowed = min(GAP_TURNS, gap_left - 1)  # a search turn at least, and its answer's
@@ -486,33 +491,54 @@ class AskAgent:
                 return
 
     async def _rewritten(self, run: _Run, ctx: ToolContext) -> AsyncIterator[AgentEvent]:
-        """The verified answer's claims its lines show only part or none of, rewritten to say
-        what they show (engine §15.4), spliced in, and checked again; its citations moved to
-        match. The answer as it was when there is nothing to rewrite, or the rewrite fails."""
+        """The verified answer's prose claims its lines show only part or none of, rewritten to
+        say what they show (engine §15.4), spliced in, and checked again (support, and the names
+        they write); its citations moved to match. The answer as it was verified when there is
+        nothing to rewrite, the rewrite fails, or its check does: an unchecked rewrite isn't
+        given in place of a checked answer."""
         check = run.verification
-        if check is None or run.spent.over:
-            return
+        if check is None or run.spent.over or run.verified_text != run.text:
+            return  # not verified as it is (a later answer was cut short): nothing to go on
+        editable = [c for c in check.claims if prose(run.text, c.claim)]
         _, files = existing(ctx, [c.cited for c in run.citations])
-        new = await rewrite(self.client, check.claims, files, on_usage=self._counted(run))
+        new = await rewrite(self.client, editable, files, on_usage=self._counted(run))
         if not new:
             return
-        text, spans = spliced(
+        text, spans, regions = spliced(
             run.text,
             [(c.start, c.end, c) for c in run.citations],
             [c.claim for c in check.claims],
             new,
         )
-        run.text = text
-        run.citations = tuple(replace(c, start=a, end=b) for a, b, c in spans)
-        found = claims(run.text, [(c.start, c.end, c.cited) for c in run.citations])
-        before: dict[str, Verdict | None] = {c.claim.text: c.verdict for c in check.claims}
-        changed = [claim for claim in found if claim.text not in before]
-        verdicts = await support(self.client, changed, files, on_usage=self._counted(run))
+        citations = tuple(replace(c, start=a, end=b) for a, b, c in spans)
+        found = claims(text, [(c.start, c.end, c.cited) for c in citations])
+
+        def rewritten(claim: Claim) -> bool:
+            return any(claim.start < end and claim.end > start for start, end in regions)
+
+        kept = [c for c in check.claims if c.claim.n not in new]  # as they were, in order
+        fresh = [claim for claim in found if rewritten(claim)]
+        if len(found) - len(fresh) != len(kept):  # the text split differently: check it all
+            fresh, kept = list(found), []
+        verdicts = await support(self.client, fresh, files, on_usage=self._counted(run))
+        if any(claim.cited for claim in fresh) and not verdicts:
+            return  # the check failed: the answer stays as it was verified
+        names = identifiers(" ".join(claim.text for claim in fresh))
+        strange = tuple(await unknown(ctx, names, run.shown)) if names else ()
+        old = iter(kept)
         checked = tuple(
-            Checked(claim, before[claim.text] if claim.text in before else verdicts.get(claim.n))
+            Checked(claim, verdicts.get(claim.n))
+            if rewritten(claim) or not kept
+            else Checked(claim, next(old).verdict)
             for claim in found
         )
-        run.verification = replace(check, claims=checked)
+        run.text, run.citations = text, citations
+        run.verified_text = text
+        run.verification = replace(
+            check,
+            claims=checked,
+            unknown_identifiers=tuple(dict.fromkeys((*check.unknown_identifiers, *strange))),
+        )
         yield Verified(run.verification)
 
     async def _verify(

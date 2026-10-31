@@ -406,59 +406,99 @@ def _marked(was: str, words: str) -> str:
     return marker.group(0) + words
 
 
+@dataclass(frozen=True, slots=True)
+class _Edit:
+    cut_start: int  # what is cut from the text: the claim, and when it goes, spaces around it
+    cut_end: int
+    words: str  # what goes in its place
+    rewritten: bool  # the words are the claim's, rewritten (not only a list marker kept)
+    new_start: int = 0  # where the words start in the new text
+
+
+def _cut(text: str, claim: Claim, words: str, after: int) -> _Edit:
+    """What rewriting (or, with no words, taking out) ``claim`` cuts from ``text``, starting no
+    earlier than ``after`` (the edit before it's end)."""
+    if words:
+        return _Edit(claim.start, claim.end, words, rewritten=True)
+    cut_start, cut_end = claim.start, claim.end
+    while cut_end < len(text) and text[cut_end] in " \t":
+        cut_end += 1
+    line_end = text.find("\n", claim.end)
+    goes_on = bool(text[claim.end : line_end if line_end >= 0 else len(text)].strip())
+    marker = _LIST_MARKER.match(claim.text)
+    if marker is not None and goes_on:  # the line's next sentence keeps its list marker
+        return _Edit(cut_start, cut_end, marker.group(0), rewritten=False)
+    starts_line = cut_start == 0 or text[cut_start - 1] == "\n"
+    if starts_line and cut_end < len(text) and text[cut_end] == "\n":
+        cut_end += 1  # the line it was is left empty: it goes too
+    elif not goes_on:  # the last on its line: the space before it goes with it
+        while cut_start > after and text[cut_start - 1] in " \t":
+            cut_start -= 1
+    return _Edit(cut_start, cut_end, "", rewritten=False)
+
+
 def spliced[T](
     text: str,
     spans: Sequence[tuple[int, int, T]],
     found: Sequence[Claim],
     new: Mapping[int, str],
-) -> tuple[str, list[tuple[int, int, T]]]:
-    """``text`` with each claim ``new`` names replaced by its new words (taken out, with the
-    spaces after it, when they are empty; a line left empty goes too), and ``spans`` (offsets
-    in ``text``, each with what it carries) moved to match: one within a replaced claim covers
-    its new words (and goes with it, when it is taken out); any other moves with the text."""
-    edits: list[tuple[int, int, str]] = []
+) -> tuple[str, list[tuple[int, int, T]], list[tuple[int, int]]]:
+    """``text`` with each claim ``new`` names replaced by its new words, or taken out when they
+    are empty (with the spaces it leaves, and the line, when it was the line's only one; a list
+    line that goes on keeps its marker). Then ``spans`` (offsets in ``text``, each with what it
+    carries) moved to match, each end on its own: an end within a rewritten claim moves to the
+    end of its new words, and a span left empty (all of it taken out) goes. And where each
+    rewritten claim's new words are in the new text."""
+    edits: list[_Edit] = []
     for claim in sorted(found, key=lambda c: c.start):
-        if claim.n not in new:
-            continue
-        start, end, words = claim.start, claim.end, new[claim.n]
-        if not words:
-            while end < len(text) and text[end] in " \t":
-                end += 1
-            if (start == 0 or text[start - 1] == "\n") and end < len(text) and text[end] == "\n":
-                end += 1
-        edits.append((start, end, words))
+        if claim.n in new:
+            edits.append(_cut(text, claim, new[claim.n], edits[-1].cut_end if edits else 0))
     out: list[str] = []
-    at = 0
-    moved: list[tuple[int, int, int]] = []  # each edit's old start, old end, new start
-    for start, end, words in edits:
-        out.append(text[at:start])
-        moved.append((start, end, sum(len(p) for p in out)))
-        out.append(words)
-        at = end
+    at = length = 0
+    for n, cut in enumerate(edits):
+        out.append(text[at : cut.cut_start])
+        length += cut.cut_start - at
+        edits[n] = _Edit(cut.cut_start, cut.cut_end, cut.words, cut.rewritten, length)
+        out.append(cut.words)
+        length += len(cut.words)
+        at = cut.cut_end
     out.append(text[at:])
 
-    def place(offset: int) -> int:
+    def moved(offset: int, *, end: bool) -> int:
         shift = 0
-        for (_, end, new_start), (_, _, words) in zip(moved, edits, strict=True):
-            if end <= offset:
-                shift = new_start + len(words) - end
+        for edit in edits:
+            if offset < edit.cut_start or (end and offset == edit.cut_start):
+                break
+            if offset < edit.cut_end or (end and offset == edit.cut_end):
+                return edit.new_start + (len(edit.words) if end else 0)
+            shift = edit.new_start + len(edit.words) - edit.cut_end
         return offset + shift
 
     kept: list[tuple[int, int, T]] = []
     for a, b, carried in spans:
-        inside = next(
-            (
-                (new_start, words)
-                for (start, end, new_start), (_, _, words) in zip(moved, edits, strict=True)
-                if a < end and b > start
-            ),
-            None,
-        )
-        if inside is None:
-            kept.append((place(a), place(b), carried))
-        elif inside[1]:
-            kept.append((inside[0], inside[0] + len(inside[1]), carried))
-    return "".join(out), kept
+        first, last = moved(a, end=False), moved(b, end=True)
+        if first < last:
+            kept.append((first, last, carried))
+    regions = [(e.new_start, e.new_start + len(e.words)) for e in edits if e.rewritten]
+    return "".join(out), kept, regions
+
+
+_FENCE_LINE = re.compile(r"^[ \t]*(?:`{3,}|~{3,})")
+
+
+def prose(text: str, claim: Claim) -> bool:
+    """Whether ``claim`` is a sentence of prose: not a line of a code block (a fenced one, or
+    one indented as code) nor of a table, which a rewrite would break."""
+    if claim.text.startswith("|"):
+        return False
+    line_start = text.rfind("\n", 0, claim.start) + 1
+    if text[line_start : claim.start].startswith(("    ", "\t")):
+        return False
+    inside = False
+    for line in text[:line_start].split("\n"):
+        if _FENCE_LINE.match(line):
+            inside = not inside
+    return not inside and not _FENCE_LINE.match(claim.text)
 
 
 async def whole(

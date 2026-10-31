@@ -23,6 +23,7 @@ from sensei_engine.agent.verify import (
     claims,
     existing,
     identifiers,
+    prose,
     spliced,
     unknown,
 )
@@ -198,6 +199,12 @@ class _Model:
         if "against the code it cites" in system:
             self.checks.append("support")
             verdict = self.verdicts.pop(0) if len(self.verdicts) > 1 else self.verdicts[0]
+            if verdict == "fail":  # the check's request fails
+                error = {
+                    "type": "error",
+                    "error": {"type": "invalid_request_error", "message": "x"},
+                }
+                return httpx2.Response(400, json=error)
             verdicts = {"claims": [{"n": 1, "verdict": verdict}]}
             return httpx2.Response(200, json=message(json.dumps(verdicts)))
         if "You correct sentences" in system:
@@ -322,13 +329,13 @@ def test_a_rewritten_claim_is_spliced_in_and_the_citations_move_with_the_text() 
     found = claims(text, [])
     first, second, third = found
     spans = [(0, 18, "a"), (19, 42, "b"), (43, 59, "c")]  # one per sentence
-    out, moved = spliced(text, spans, found, {second.n: "It has two models."})
+    out, moved, _ = spliced(text, spans, found, {second.n: "It has two models."})
     assert out == "It saves the item. It has two models. Then it commits."
     assert [(out[a:b], what) for a, b, what in moved] == [
         ("It saves the item.", "a"), ("It has two models.", "b"), ("Then it commits.", "c"),
     ]  # fmt: skip
     # A claim its lines show nothing of goes, with its space, and its citation with it.
-    out, moved = spliced(text, spans, found, {second.n: ""})
+    out, moved, _ = spliced(text, spans, found, {second.n: ""})
     assert out == "It saves the item. Then it commits."
     assert [(out[a:b], what) for a, b, what in moved] == [
         ("It saves the item.", "a"), ("Then it commits.", "c"),
@@ -341,7 +348,7 @@ def test_a_list_line_taken_out_leaves_no_empty_line() -> None:
     found = claims(text, [])
     gone = next(c for c in found if "models" in c.text)
     none: list[tuple[int, int, str]] = []
-    out, _ = spliced(text, none, found, {gone.n: ""})
+    out, _, _ = spliced(text, none, found, {gone.n: ""})
     assert out == "- Saves it.\n- Commits."
 
 
@@ -352,3 +359,102 @@ def test_a_rewritten_list_line_keeps_its_marker() -> None:
     assert _marked("2. Then it saves.", "2. Then it adds.") == "2. Then it adds."
     assert _marked("It saves.", "It adds.") == "It adds."
     assert _marked("- Gone.", "") == ""
+
+
+def test_a_citation_starting_in_the_space_a_removal_takes_stays_with_its_claim() -> None:
+    text = "It saves it. Only two. Then it commits."
+    found = claims(text, [])
+    gone = next(c for c in found if c.text == "Only two.")
+    # The next claim's citation starts in the space after the claim taken out.
+    out, moved, _ = spliced(text, [(22, 39, "c")], found, {gone.n: ""})
+    assert out == "It saves it. Then it commits."
+    assert [(out[a:b], what) for a, b, what in moved] == [("Then it commits.", "c")]
+
+
+def test_a_citation_across_two_claims_keeps_covering_both() -> None:
+    text = "It saves it. It commits."
+    found = claims(text, [])
+    first, second = found
+    across = [(0, len(text), "x")]
+    out, moved, regions = spliced(text, across, found, {second.n: "It flushes."})
+    assert out == "It saves it. It flushes."
+    assert [(out[a:b], what) for a, b, what in moved] == [("It saves it. It flushes.", "x")]
+    assert [out[a:b] for a, b in regions] == ["It flushes."]
+    out, moved, _ = spliced(text, across, found, {first.n: "It adds it.", second.n: "It flushes."})
+    assert [(out[a:b], what) for a, b, what in moved] == [("It adds it. It flushes.", "x")]
+
+
+def test_a_removal_keeps_a_list_line_and_leaves_no_trailing_space() -> None:
+    text = "- **Label:** Only two. It saves it.\n- Next.\nIt adds. Only that."
+    found = claims(text, [])
+    label = next(c for c in found if c.text.startswith("- **Label:**"))
+    last = next(c for c in found if c.text == "Only that.")
+    none: list[tuple[int, int, str]] = []
+    out, _, _ = spliced(text, none, found, {label.n: "", last.n: ""})
+    assert out == "- It saves it.\n- Next.\nIt adds."
+
+
+def test_code_and_table_lines_are_not_prose_to_rewrite() -> None:
+    text = "It runs:\n```python\nsave(item)\n```\n| a | b |\n    indented()\nThen it ends."
+    found = {c.text: c for c in claims(text, [])}
+    assert prose(text, found["It runs:"])
+    assert not prose(text, found["```python"])
+    assert not prose(text, found["save(item)"])
+    assert not prose(text, found["| a | b |"])
+    assert not prose(text, found["indented()"])
+    assert prose(text, found["Then it ends."])
+
+
+async def test_a_failed_check_of_the_rewrite_keeps_the_answer_as_it_was_verified(
+    ctx: ToolContext,
+) -> None:
+    model = _Model(
+        [_streamed([SUBMIT], "tool_use"), _streamed([ANSWER], "end_turn")],
+        complete=True,
+        verdicts=["partial", "fail"],
+        rewritten="create_item adds the item.",
+    )
+    fake = FakeAnthropic(routes={"/v1/messages": model})
+    events = [
+        e
+        async for e in AskAgent(fake.client(), pre_retrieval=False).run(
+            "where is an item saved?", ctx, overview="o"
+        )
+    ]
+    done = events[-1]
+    assert isinstance(done, Done)
+    assert done.answer.text == ANSWER["text"]  # not the unchecked rewrite
+    check = done.answer.verification
+    assert check is not None
+    assert [c.verdict for c in check.claims] == ["partial"]
+    assert model.checks == ["support", "whole", "rewrite", "support"]
+
+
+async def test_a_later_answer_cut_short_is_not_rewritten_by_the_checks_of_the_one_before(
+    ctx: ToolContext,
+) -> None:
+    cut = _streamed([{"type": "text", "text": "create_item adds it."}], "max_tokens")
+    model = _Model(
+        # The first answer, a gap search, and the answer after it cut short.
+        [
+            _streamed([SUBMIT], "tool_use"),
+            _streamed([ANSWER], "end_turn"),
+            _streamed([SUBMIT], "tool_use"),
+            cut,
+        ],
+        complete=False,
+        verdicts=["partial"],
+        rewritten="create_item adds the item.",
+    )
+    fake = FakeAnthropic(routes={"/v1/messages": model})
+    events = [
+        e
+        async for e in AskAgent(fake.client(), pre_retrieval=False).run(
+            "where is an item saved?", ctx, overview="o"
+        )
+    ]
+    done = events[-1]
+    assert isinstance(done, Done)
+    assert done.answer.text == "create_item adds it."
+    assert done.answer.verification is None  # its checks were of another text
+    assert "rewrite" not in model.checks
