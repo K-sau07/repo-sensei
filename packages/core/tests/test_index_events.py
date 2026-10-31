@@ -6,7 +6,7 @@ import uuid
 
 import pytest
 
-from sensei_core.indexing.events import ORG_TYPES, JobOutbox, payloads_for
+from sensei_core.indexing.events import MAX_CHANGED, ORG_TYPES, JobOutbox, payloads_for
 from sensei_core.indexing.state import IndexJobStateMachine
 from sensei_core.models import IndexJob, JobKind, JobStatus, Stage
 
@@ -69,13 +69,14 @@ def test_log_levels_are_checked() -> None:
         _machine().log("x", level="debug")
 
 
-def test_the_org_stream_gets_the_lifecycle_only() -> None:
+def test_the_org_stream_gets_the_lifecycle_and_a_repository_moving_on() -> None:
     assert {t.value for t in ORG_TYPES} == {
         "queued",
         "stage_started",
         "done",
         "failed",
         "cancelled",
+        "repo_updated",  # a ref's index moved on (5.5)
     }
 
 
@@ -90,3 +91,17 @@ def test_constellation_events_say_how_far_points_can_be_read() -> None:
     assert (payload["type"], payload["stage"]) == ("constellation", "discover")
     assert (payload["cursor"], payload["total"], payload["generation"]) == (500, 1200, "g1")
     assert "constellation" not in {t.value for t in ORG_TYPES}  # the run's own stream only
+
+
+def test_a_repository_moving_on_names_its_ref_commit_and_changed_files() -> None:
+    machine = _machine()
+    outbox = JobOutbox()
+    outbox.repo_updated(
+        machine.job, ref="main", sha="b" * 40, changed=[f"f{n}.py" for n in range(MAX_CHANGED + 3)]
+    )
+    outbox.repo_updated(machine.job, ref="web", sha="c" * 40, changed=None)
+    (_, _, many), (_, _, full) = outbox.items
+    assert (many["type"], many["ref"], many["sha"]) == ("repo_updated", "main", "b" * 40)
+    assert len(many["changed_files"]) == MAX_CHANGED  # named up to a point, counted in full
+    assert many["changed_count"] == MAX_CHANGED + 3
+    assert (full["changed_files"], full["changed_count"]) == (None, None)  # read in full

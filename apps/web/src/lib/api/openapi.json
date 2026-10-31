@@ -524,6 +524,47 @@
         "title": "CitationOut",
         "type": "object"
       },
+      "CitedOut": {
+        "properties": {
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "reason": {
+            "enum": [
+              "unchanged",
+              "changed",
+              "deleted",
+              "unknown"
+            ],
+            "title": "Reason",
+            "type": "string"
+          },
+          "sha": {
+            "title": "Sha",
+            "type": "string"
+          },
+          "stale": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stale"
+          }
+        },
+        "required": [
+          "sha",
+          "path",
+          "stale",
+          "reason"
+        ],
+        "title": "CitedOut",
+        "type": "object"
+      },
       "ConnectRepo": {
         "properties": {
           "github_repo_id": {
@@ -4739,6 +4780,27 @@
           "stages"
         ],
         "title": "StagesOut",
+        "type": "object"
+      },
+      "StalenessOut": {
+        "properties": {
+          "citations": {
+            "items": {
+              "$ref": "#/components/schemas/CitedOut"
+            },
+            "title": "Citations",
+            "type": "array"
+          },
+          "sha": {
+            "title": "Sha",
+            "type": "string"
+          }
+        },
+        "required": [
+          "sha",
+          "citations"
+        ],
+        "title": "StalenessOut",
         "type": "object"
       },
       "StepOut": {
@@ -9740,6 +9802,95 @@
         "summary": "Search",
         "tags": [
           "search"
+        ]
+      }
+    },
+    "/api/v1/orgs/{org}/repos/{repo}/staleness": {
+      "get": {
+        "description": "Each citation (``citations=<sha>:<path>``, repeated) compared with the index now.",
+        "operationId": "staleness_api_v1_orgs__org__repos__repo__staleness_get",
+        "parameters": [
+          {
+            "description": "Repository slug",
+            "in": "path",
+            "name": "repo",
+            "required": true,
+            "schema": {
+              "description": "Repository slug",
+              "maxLength": 201,
+              "title": "Repo",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Organization slug",
+            "in": "path",
+            "name": "org",
+            "required": true,
+            "schema": {
+              "description": "Organization slug",
+              "title": "Org",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "citations",
+            "required": true,
+            "schema": {
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 200,
+              "title": "Citations",
+              "type": "array"
+            }
+          },
+          {
+            "description": "Branch or commit (or its first 7+ characters).",
+            "in": "query",
+            "name": "ref",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 255,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Branch or commit (or its first 7+ characters).",
+              "title": "Ref"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StalenessOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Staleness",
+        "tags": [
+          "staleness"
         ]
       }
     },

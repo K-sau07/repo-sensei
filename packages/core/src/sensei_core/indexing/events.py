@@ -13,7 +13,9 @@ Types: ``queued``, ``stage_started``, ``progress``, ``stage_done``, ``unlock`` (
 ``unlocks``: the features now available), ``log`` (``level``, ``message``), ``constellation``
 (``cursor``: how many of the run's constellation points can be read now, of ``total``, and the
 ``generation`` they belong to; the points themselves come from the constellation endpoint), and
-the final ``done``, ``failed`` (``code``, ``message``) or ``cancelled``.
+the final ``done``, ``failed`` (``code``, ``message``) or ``cancelled``; and on the org's stream,
+``repo_updated`` (``ref``, ``sha``, ``changed_files``, ``changed_count``: 5.5) when a run moves
+a ref's index on.
 
 Events are collected while the job row is locked and published after the transaction commits
 (:class:`JobOutbox`), so a listener never hears about a change that was rolled back.
@@ -50,11 +52,18 @@ class EventType(enum.StrEnum):
     DONE = "done"
     FAILED = "failed"
     CANCELLED = "cancelled"
+    # A ref's index moved on (5.5): its ref and commit, and the paths changed since its last
+    # index (None: read in full, nothing to compare with), so open pages can say so.
+    REPO_UPDATED = "repo_updated"
 
 
 TERMINAL = frozenset({EventType.DONE, EventType.FAILED, EventType.CANCELLED})
-# Org-wide events: the job's lifecycle, not its progress.
-ORG_TYPES = frozenset({EventType.QUEUED, EventType.STAGE_STARTED, *TERMINAL})
+# Org-wide events: the job's lifecycle, not its progress; and a repository's index moving on.
+ORG_TYPES = frozenset(
+    {EventType.QUEUED, EventType.STAGE_STARTED, *TERMINAL, EventType.REPO_UPDATED}
+)
+ORG_ONLY = frozenset({EventType.REPO_UPDATED})  # about the repository, not the run
+MAX_CHANGED = 500  # changed paths an update names (more: it says how many, and names these)
 
 _MACHINE_TYPES: dict[str, EventType | None] = {
     "job.started": None,  # the first stage_started says it
@@ -141,19 +150,34 @@ class JobOutbox:
         payload.update(cursor=cursor, total=total, generation=generation)
         self.items.append((str(job.id), str(job.org_id), payload))
 
+    def repo_updated(
+        self, job: IndexJob, *, ref: str, sha: str, changed: Iterable[str] | None
+    ) -> None:
+        """The run's ref reads its commit now; ``changed``: the paths it read again."""
+        payload = _payload(job, EventType.REPO_UPDATED, None)
+        listed = sorted(changed) if changed is not None else None
+        payload.update(
+            ref=ref,
+            sha=sha,
+            changed_files=listed[:MAX_CHANGED] if listed is not None else None,
+            changed_count=len(listed) if listed is not None else None,
+        )
+        self.items.append((str(job.id), str(job.org_id), payload))
+
     async def publish(self, redis: Redis) -> None:
         if not self.items:
             return
         async with redis.pipeline(transaction=False) as pipe:
             for job_id, org_id, payload in self.items:
                 data = orjson.dumps(payload).decode()
-                pipe.xadd(
-                    job_stream(job_id),
-                    {"data": data},
-                    maxlen=JOB_STREAM_MAXLEN,
-                    approximate=True,
-                )
-                pipe.expire(job_stream(job_id), STREAM_TTL_SECONDS)
+                if payload["type"] not in ORG_ONLY:  # the run's own stream: its progress
+                    pipe.xadd(
+                        job_stream(job_id),
+                        {"data": data},
+                        maxlen=JOB_STREAM_MAXLEN,
+                        approximate=True,
+                    )
+                    pipe.expire(job_stream(job_id), STREAM_TTL_SECONDS)
                 if payload["type"] in ORG_TYPES:
                     pipe.xadd(
                         org_stream(org_id),

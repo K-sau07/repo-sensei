@@ -1,10 +1,13 @@
-"""The answer cache (4.9): a question asked again at the same commit, in the same mode, is
-answered from the answer kept for it, in well under a second, instead of a new run.
+"""The answer cache (4.9): a question asked again in the same mode is answered from the answer
+kept for it, in well under a second, instead of a new run.
 
 A question matches one asked in the same words (normalized: case, spacing, the question mark),
 or, when embeddings are configured, one whose embedding is at least :data:`SIMILARITY` alike.
 An answer is kept only when it is whole and sure (answered, not abstained, its confidence not
-low); it is served only while every file it cites still has the content it cited.
+low); it is served only while every file it cites still has the content it cited. That holds
+across commits (5.5): an answer kept at an earlier commit is served at a later one when none of
+its files changed since (its citations then point at the later commit, at the same lines), and
+one whose cited file changed is never served again.
 """
 
 from __future__ import annotations
@@ -39,39 +42,49 @@ def keepable(answer: Answer) -> bool:
     )
 
 
+CANDIDATES = 5  # kept answers tried, nearest first, for the one whose files are unchanged
+
+
 async def lookup(
     db: AsyncSession,
     *,
+    repo_id: uuid.UUID,
     snapshot_id: uuid.UUID,
     mode: str,
     question: str,
     embedding: Sequence[float] | None,
 ) -> AnswerCacheEntry | None:
-    """The kept answer for ``question`` (the same words, else the nearest alike enough), when
-    its cited files are unchanged; None otherwise."""
-    same = (AnswerCacheEntry.snapshot_id == snapshot_id, AnswerCacheEntry.mode == mode)
-    found = await db.scalar(
-        select(AnswerCacheEntry)
-        .where(*same, AnswerCacheEntry.question_key == question_key(question))
-        .order_by(AnswerCacheEntry.created_at.desc())
-        .limit(1)
+    """The kept answer for ``question`` (the same words, else the nearest alike enough; this
+    commit's first, then the latest), when its cited files are as they are at ``snapshot_id``;
+    None otherwise."""
+    same = (AnswerCacheEntry.repo_id == repo_id, AnswerCacheEntry.mode == mode)
+    here = (AnswerCacheEntry.snapshot_id == snapshot_id).desc()
+    found = list(
+        await db.scalars(
+            select(AnswerCacheEntry)
+            .where(*same, AnswerCacheEntry.question_key == question_key(question))
+            .order_by(here, AnswerCacheEntry.created_at.desc())
+            .limit(CANDIDATES)
+        )
     )
-    if found is None and embedding is not None:
+    if not found and embedding is not None:
         distance = AnswerCacheEntry.embedding.op("<=>")(list(embedding))
-        row = (
-            await db.execute(
-                select(AnswerCacheEntry, distance.label("distance"))
-                .where(*same, AnswerCacheEntry.embedding.is_not(None))
-                .order_by(distance)
-                .limit(1)
-            )
-        ).first()
-        if row is not None and 1 - float(row[1]) >= SIMILARITY:
-            found = row[0]
-    if found is None or not await _unchanged(db, snapshot_id, found.file_hashes):
-        return None
-    message = await db.get(ConversationMessage, found.message_id)
-    return found if message is not None and message.status == "done" else None
+        rows = await db.execute(
+            select(AnswerCacheEntry, distance.label("distance"))
+            .where(*same, AnswerCacheEntry.embedding.is_not(None))
+            .order_by(distance, here, AnswerCacheEntry.created_at.desc())
+            .limit(CANDIDATES)
+        )
+        found = [entry for entry, d in rows.tuples() if 1 - float(d) >= SIMILARITY]
+    for entry in found:
+        if entry.snapshot_id != snapshot_id and not entry.file_hashes:
+            continue  # its files weren't known when kept: nothing to show they are the same now
+        if not await _unchanged(db, snapshot_id, entry.file_hashes):
+            continue  # a file it cites changed since: never served again
+        message = await db.get(ConversationMessage, entry.message_id)
+        if message is not None and message.status == "done":
+            return entry
+    return None
 
 
 async def keep(

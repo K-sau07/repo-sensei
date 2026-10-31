@@ -336,6 +336,7 @@ async def ask(
         embedding = await _embedded(request, db, repo.org_id, body.message)
         kept = await answer_cache.lookup(
             db,
+            repo_id=repo.id,
             snapshot_id=snapshot.id,
             mode=body.mode.value,
             question=body.message,
@@ -902,7 +903,8 @@ async def _served(
         conversation_id=conversation.id,
         role="assistant",
         status="done",
-        parts=[*source.parts, cache],
+        # Kept at an earlier commit whose cited files are unchanged (5.5): at this commit now.
+        parts=[*(_at_commit(part, snapshot.commit_sha) for part in source.parts), cache],
         confidence=source.confidence,
         abstained=source.abstained,
         snapshot_id=snapshot.id,
@@ -917,7 +919,7 @@ async def _served(
                 message_id=answer.id,
                 idx=row.idx,
                 repo_id=row.repo_id,
-                sha=row.sha,
+                sha=snapshot.commit_sha,
                 path=row.path,
                 start_line=row.start_line,
                 end_line=row.end_line,
@@ -939,6 +941,15 @@ async def _served(
     parts = replayed(str(answer.id), answer.parts)
     parts.insert(1, _conversation(conversation.id, None))
     return EventSourceResponse(_static(parts), ping=HEARTBEAT_SECONDS, headers=headers)
+
+
+def _at_commit(part: dict[str, Any], sha: str) -> dict[str, Any]:
+    """A kept answer's part, its citation (if it is one) pointing at ``sha``: served at a later
+    commit whose cited files have the same content, the same lines are at that one."""
+    data = part.get("data")
+    if part.get("type") != "data-citation" or not isinstance(data, dict):
+        return part
+    return {**part, "data": {**cast("dict[str, Any]", data), "sha": sha}}
 
 
 async def _static(parts: list[dict[str, Any]]) -> AsyncGenerator[ServerSentEvent]:

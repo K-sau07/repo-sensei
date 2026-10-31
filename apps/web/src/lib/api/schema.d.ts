@@ -1133,6 +1133,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/orgs/{org}/repos/{repo}/staleness": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Staleness
+         * @description Each citation (``citations=<sha>:<path>``, repeated) compared with the index now.
+         */
+        get: operations["staleness_api_v1_orgs__org__repos__repo__staleness_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/orgs/{org}/repos/{repo}/symbols": {
         parameters: {
             query?: never;
@@ -1464,6 +1484,20 @@ export interface components {
             symbol_key: string | null;
             /** Verified */
             verified: boolean;
+        };
+        /** CitedOut */
+        CitedOut: {
+            /** Path */
+            path: string;
+            /**
+             * Reason
+             * @enum {string}
+             */
+            reason: "unchanged" | "changed" | "deleted" | "unknown";
+            /** Sha */
+            sha: string;
+            /** Stale */
+            stale: boolean | null;
         };
         /** ConnectRepo */
         ConnectRepo: {
@@ -3092,6 +3126,13 @@ export interface components {
              * @description In the order they run.
              */
             stages: components["schemas"]["StageInfo"][];
+        };
+        /** StalenessOut */
+        StalenessOut: {
+            /** Citations */
+            citations: components["schemas"]["CitedOut"][];
+            /** Sha */
+            sha: string;
         };
         /** StepOut */
         StepOut: {
@@ -5754,6 +5795,44 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+        };
+    };
+    staleness_api_v1_orgs__org__repos__repo__staleness_get: {
+        parameters: {
+            query: {
+                citations: string[];
+                /** @description Branch or commit (or its first 7+ characters). */
+                ref?: string | null;
+            };
+            header?: never;
+            path: {
+                /** @description Repository slug */
+                repo: string;
+                /** @description Organization slug */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StalenessOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
             };
         };
     };

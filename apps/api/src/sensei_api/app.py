@@ -43,6 +43,7 @@ from sensei_api.routers import (
     runs,
     search,
     shared,
+    staleness,
     symbols,
     trace,
     webhooks,
@@ -175,6 +176,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         feature_maps,
         overview,
         refs,
+        staleness,
         home,
         shared,
     ):  # the order routes are matched in

@@ -307,10 +307,12 @@ def test_a_full_run_streams_its_stages_in_order(
     assert logs[-1].startswith("Indexed")
     assert {e["job_id"] for e in events} == {str(job_id)}
 
-    # The org's stream has the lifecycle only: each stage start and the end.
+    # The org's stream has the lifecycle only: each stage start and the end, and the
+    # repository's index moving on (5.5).
     org = [(e["type"], e["stage"]) for e in runtime.run(_events(runtime, org_stream(org_id)))]
     assert org[-1] == ("done", "finalize")
-    assert all(kind in ("stage_started", "done") for kind, _ in org)
+    assert all(kind in ("stage_started", "done", "repo_updated") for kind, _ in org)
+    assert [kind for kind, _ in org].count("repo_updated") == 1
 
 
 def test_cancelling_while_cloning_stops_the_rest(
@@ -1909,6 +1911,13 @@ def test_an_incremental_run_reads_only_what_changed_and_a_move_costs_nothing(
     assert moved.stages["symbols"]["details"]["carried"] == len(
         {k for k in fifth_keys if "client/greet.ts" not in k}
     )
+    # Open pages hear that main moved on, and which files (5.5): the move's both paths.
+    updates = [
+        e for e in runtime.run(_events(runtime, org_stream(org_id))) if e["type"] == "repo_updated"
+    ]
+    assert (updates[-1]["ref"], updates[-1]["sha"]) == ("main", bare_repo.fifth)
+    assert updates[-1]["changed_files"] == ["client/greet.ts", "web/greet.ts"]
+    assert updates[0]["changed_files"] is None  # the first run: read in full
 
     # One file changed, one deleted: only the changed one is read again and embedded.
     changed = _incremental(runtime, org_id, repo_id, bare_repo.sixth)

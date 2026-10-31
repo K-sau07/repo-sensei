@@ -45,7 +45,7 @@ from sensei_core.models import (
 )
 from sensei_core.usage import costs_of
 from sensei_engine.chunk.store import prune_chunks
-from sensei_engine.incremental import previous_of
+from sensei_engine.incremental import carried, changed_paths, previous_of
 from sensei_workers.app import celery_app
 from sensei_workers.base import NotYetError, SenseiTask
 from sensei_workers.jobstate import job_scope
@@ -95,6 +95,15 @@ def _send_once(job_id: str, what: str) -> bool:
     return bool(get_runtime().sync_redis.set(key, "1", nx=True, ex=CHAIN_TTL_SECONDS))
 
 
+async def _changed(db: AsyncSession, repo: Repo, snapshot: Snapshot) -> set[str] | None:
+    """The paths read otherwise than at the repository's last index (None: nothing to compare
+    with); worked out before the run's ref moves."""
+    base = await previous_of(db, repo, snapshot)
+    if base is None:
+        return None
+    return await changed_paths(db, snapshot, await carried(db, base, snapshot))
+
+
 async def _settle_ref(db: AsyncSession, job: IndexJob, repo: Repo, snapshot: Snapshot) -> int:
     """The run's ref reads its snapshot now. The repository's index is its default branch's: a
     tracked branch's (or a pull request's) run is an overlay beside it (5.4), which neither
@@ -141,7 +150,11 @@ def finalize_index(self: IngestTask, *, job_id: str, org_id: str, repo_id: str) 
                 raise NotYetError("the job has no snapshot")
             if ready:
                 machine.advance(Stage.FINALIZE)
+            changed = await _changed(scope.db, repo, snapshot)
             pruned = await _settle_ref(scope.db, job, repo, snapshot)
+            scope.outbox.repo_updated(
+                job, ref=job.ref or repo.default_branch, sha=snapshot.commit_sha, changed=changed
+            )
             settle_repo(repo, JobStatus.SUCCEEDED)
             # What the run was charged (embeddings, summaries), on the job and by kind.
             costs = await costs_of(scope.db, job.org_id, JOB_USAGE_REF, str(job.id))

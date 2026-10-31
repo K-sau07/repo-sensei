@@ -19,7 +19,7 @@ import httpx2
 import pytest
 from fakeredis import FakeAsyncRedis
 from fastapi import FastAPI, Request
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from sensei_api.answer_cache import lookup, question_key
@@ -551,11 +551,38 @@ async def test_a_kept_answer_whose_file_changed_is_not_served(
     assert entry is not None
     asked = "What does the README say?"
 
-    async def found() -> AnswerCacheEntry | None:
+    async def found(at: uuid.UUID | None = None) -> AnswerCacheEntry | None:
         return await lookup(
-            db_session, snapshot_id=entry.snapshot_id, mode="fast", question=asked, embedding=None
-        )
+            db_session, repo_id=entry.repo_id, snapshot_id=at or entry.snapshot_id, mode="fast",
+            question=asked, embedding=None,
+        )  # fmt: skip
 
+    assert await found() == entry
+    # At a later commit whose README is the same, the answer kept earlier is served (5.5).
+    later = Snapshot(org_id=entry.org_id, repo_id=entry.repo_id, ref="main", commit_sha="d" * 40)
+    db_session.add(later)
+    await db_session.flush()
+    for at in (entry.snapshot_id, later.id):
+        db_session.add(
+            RepoFile(
+                org_id=entry.org_id, repo_id=entry.repo_id, snapshot_id=at, path="README.md",
+                blob_sha="a" * 40, content_hash=b"\x01" * 32, size=10, role="docs",
+            )
+        )  # fmt: skip
+    await db_session.flush()
+    entry.file_hashes = {"README.md": (b"\x01" * 32).hex()}
+    await db_session.flush()
+    assert await found(later.id) == entry
+    # Changed there: never served again.
+    await db_session.execute(
+        text("UPDATE files SET content_hash = :h WHERE snapshot_id = :s AND path = 'README.md'"),
+        {"h": b"\x02" * 32, "s": later.id},
+    )
+    assert await found(later.id) is None
+    # Kept with no file known (none could be hashed): served at its own commit only.
+    entry.file_hashes = {}
+    await db_session.flush()
+    assert await found(later.id) is None
     assert await found() == entry
     entry.file_hashes = {"README.md": "ff" * 32}  # as if the file had changed since
     await db_session.flush()
