@@ -11,11 +11,15 @@ VACUUM that can't have its lock in time is tried again later.
 from __future__ import annotations
 
 import uuid
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy.exc import DBAPIError
 
+from sensei_core.indexing import retention
 from sensei_core.jobs import TaskName
 from sensei_core.logging import get_logger
+from sensei_core.storage import Bucket, repo_prefix, snapshot_key
 from sensei_workers.app import celery_app
 from sensei_workers.base import RetryableError, SenseiTask
 from sensei_workers.runtime import get_runtime
@@ -77,3 +81,50 @@ def vacuum_chunks(self: SenseiTask, *, partition: str) -> str:
         raise
     log.info("chunks vacuumed", partition=partition)
     return partition
+
+
+@dataclass(frozen=True, slots=True)
+class _Gone:
+    org_id: uuid.UUID
+    repo_id: uuid.UUID
+    commit_sha: str
+
+
+async def _expire(before: datetime) -> list[_Gone]:
+    """Delete the snapshots past their retention (their files, symbols, chunks and edges go
+    with them); what each was, for its objects."""
+    async with get_runtime().system_database.session() as db:
+        found = await retention.expired(db, before=before)
+        gone = [_Gone(s.org_id, s.repo_id, s.commit_sha) for s in found]
+        for snapshot in found:
+            await db.delete(snapshot)
+        return gone
+
+
+async def _drop_objects(gone: _Gone) -> None:
+    """A deleted snapshot's archive and artifacts (best effort: a repository's purge takes
+    whatever is left)."""
+    storage = await get_runtime().storage()
+    await storage.delete_prefix(
+        Bucket.SNAPSHOTS, snapshot_key(gone.org_id, gone.repo_id, gone.commit_sha)
+    )
+    prefix = repo_prefix(Bucket.ARTIFACTS, gone.org_id, gone.repo_id)
+    await storage.delete_prefix(Bucket.ARTIFACTS, f"{prefix}{gone.commit_sha}/")
+
+
+@celery_app.task(bind=True, base=SenseiTask, name=TaskName.SWEEP_SNAPSHOTS.value, system=True)
+def sweep_snapshots(self: SenseiTask) -> int:
+    """Delete the snapshots past ``ingest.snapshot_retention_days``; returns how many went."""
+    runtime = get_runtime()
+    days = runtime.settings.ingest.snapshot_retention_days
+    gone = runtime.run(_expire(datetime.now(UTC) - timedelta(days=days)))
+    for one in gone:
+        try:
+            runtime.run(_drop_objects(one))
+        except Exception:
+            log.warning(
+                "couldn't delete a snapshot's objects", repo_id=str(one.repo_id), exc_info=True
+            )
+    if gone:
+        log.info("snapshots expired", snapshots=len(gone))
+    return len(gone)

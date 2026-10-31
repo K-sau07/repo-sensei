@@ -23,12 +23,14 @@ from sqlalchemy import select
 from sensei_core.jobs import TaskName
 from sensei_core.logging import get_logger
 from sensei_core.models import ACTIVE_JOB_STATUSES, Repo, RepoFile, Snapshot, Stage
+from sensei_engine.incremental import Carry, carry_symbols
 from sensei_engine.ingest.classify import Flag
 from sensei_engine.parse.stage import ParseReport, parse_files, parseable
 from sensei_engine.snapshots import ArchiveTooLargeError
 from sensei_engine.symbols.store import FileSymbols, save_symbols
 from sensei_workers.app import celery_app
 from sensei_workers.base import NotYetError, SenseiTask
+from sensei_workers.incremental import carry_for
 from sensei_workers.ingest.cache import repo_lock
 from sensei_workers.jobstate import JobGoneError, job_scope
 from sensei_workers.runtime import get_runtime
@@ -142,8 +144,11 @@ async def _save(
     job_id: uuid.UUID,
     files: dict[str, tuple[uuid.UUID, str]],
     found: list[FileSymbols],
+    *,
+    carry: Carry | None,
 ) -> int:
-    """Replace the snapshot's symbols and complete the symbols stage."""
+    """Replace the snapshot's symbols (the parsed files', and the kept files' carried from the
+    last index) and complete the symbols stage."""
     async with job_scope(task, target.org_id, job_id) as scope:
         scope.require(Stage.SYMBOLS)
         snapshot = await scope.db.get(Snapshot, target.snapshot_id)
@@ -151,6 +156,8 @@ async def _save(
             raise JobGoneError("the snapshot is gone")
         ids = {path: file_id for path, (file_id, _) in files.items()}
         written = await save_symbols(scope.db, snapshot, ids, found)
+        kept = await carry_symbols(scope.db, snapshot, carry) if carry is not None else 0
+        written += kept
         snapshot.symbol_count = written
         machine = scope.machine
         total = max(written, 1)
@@ -159,7 +166,12 @@ async def _save(
         for file in found:
             for symbol in file.symbols:
                 kinds[symbol.kind.value] = kinds.get(symbol.kind.value, 0) + 1
-        machine.note(Stage.SYMBOLS, symbols=written, kinds=dict(sorted(kinds.items())))
+        machine.note(
+            Stage.SYMBOLS,
+            symbols=written,
+            kinds=dict(sorted(kinds.items())),  # of the files parsed
+            **({"carried": kept} if carry is not None else {}),
+        )
         machine.log(f"Found {written:,} definitions. Go to definition is ready.")
         machine.complete(Stage.SYMBOLS)
         return written
@@ -180,13 +192,16 @@ def parse_snapshot(self: IngestTask, *, job_id: str, org_id: str, repo_id: str) 
     if target is None:
         return None
     files = runtime.run(_files(self, target))
+    # An incremental run parses only what changed: the kept files' symbols are carried (5.2).
+    carry = runtime.run(carry_for(self, target.org_id, job, target.snapshot_id))
+    unread = {p: v for p, v in files.items() if carry is None or v[0] not in carry.kept}
     report = ParseReport()
     found: list[FileSymbols] = []
     started = last = time.monotonic()
     try:
         with repo_lock(runtime.settings.ingest.cache_dir, str(target.repo_id)):
             root = local_worktree(target)
-            pairs = [(path, language) for path, (_, language) in files.items()]
+            pairs = [(path, language) for path, (_, language) in unread.items()]
             for parsed in parse_files(root, pairs):
                 report.add(parsed)
                 if parsed.symbols:
@@ -194,7 +209,7 @@ def parse_snapshot(self: IngestTask, *, job_id: str, org_id: str, repo_id: str) 
                 now = time.monotonic()
                 if now - last >= PROGRESS_EVERY_SECONDS:
                     last = now
-                    runtime.run(_progress(self, org_id, job, report.files, len(files)))
+                    runtime.run(_progress(self, org_id, job, report.files, len(unread)))
     except SnapshotUnavailableError:
         message = "The snapshot of this commit is missing. Reindex the repository."
         runtime.run(fail_job(self, org_id, job, "snapshot_unavailable", message))
@@ -204,7 +219,7 @@ def parse_snapshot(self: IngestTask, *, job_id: str, org_id: str, repo_id: str) 
         runtime.run(fail_job(self, org_id, job, "snapshot_too_large", message))
         return None
     runtime.run(_finish_parse(self, target, job, report, time.monotonic() - started))
-    written = runtime.run(_save(self, target, job, files, found))
+    written = runtime.run(_save(self, target, job, files, found, carry=carry))
     runtime.run(analyze("nodes"))  # the lookups' plans need the new rows' statistics
     log.info(
         "files parsed",

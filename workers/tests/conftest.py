@@ -74,6 +74,8 @@ class BareRepo:
     third: str  # the second and web/ (on the "web" branch: main stays at the second)
     app: str  # src/app.py in the second commit
     fourth: str  # the second and stack/ (on the "stack" branch)
+    fifth: str = ""  # the third, web/greet.ts moved to client/greet.ts (the "moves" branch)
+    sixth: str = ""  # the fifth, web/main.ts changed and README.md deleted
 
 
 def _git(*args: str, cwd: Path) -> str:
@@ -90,6 +92,24 @@ def _git(*args: str, cwd: Path) -> str:
         [GIT, *args], cwd=cwd, env=env, check=True, capture_output=True, text=True
     )
     return result.stdout.strip()
+
+
+def _moves(work: Path) -> tuple[str, str]:
+    """The "moves" branch, from the checked-out commit (the third): a file moved and nothing
+    else, then one changed and one deleted (incremental runs, 5.2). Its two commits."""
+    _git("checkout", "--quiet", "-b", "moves", cwd=work)
+    (work / "client").mkdir()
+    _git("mv", "web/greet.ts", "client/greet.ts", cwd=work)
+    _git("commit", "--quiet", "-m", "fifth", cwd=work)
+    fifth = _git("rev-parse", "HEAD", cwd=work)
+    (work / "web" / "main.ts").write_text(
+        'import { greet } from "../client/greet"\n\nexport function main(): void {\n'
+        '  greet("once more")\n}\n\nexport function quiet(): void {}\n'
+    )
+    (work / "README.md").unlink()
+    _git("add", "-A", cwd=work)
+    _git("commit", "--quiet", "-m", "sixth", cwd=work)
+    return fifth, _git("rev-parse", "HEAD", cwd=work)
 
 
 @pytest.fixture(scope="session")
@@ -126,6 +146,7 @@ def bare_repo(tmp_path_factory: pytest.TempPathFactory) -> BareRepo:
     _git("add", "-A", cwd=work)
     _git("commit", "--quiet", "-m", "third", cwd=work)
     third = _git("rev-parse", "HEAD", cwd=work)
+    fifth, sixth = _moves(work)
     _git("checkout", "--quiet", "main", cwd=work)
     _git("checkout", "--quiet", "-b", "stack", cwd=work)
     (work / "stack").mkdir()
@@ -150,4 +171,6 @@ def bare_repo(tmp_path_factory: pytest.TempPathFactory) -> BareRepo:
         third=third,
         app=APP,
         fourth=fourth,
+        fifth=fifth,
+        sixth=sixth,
     )

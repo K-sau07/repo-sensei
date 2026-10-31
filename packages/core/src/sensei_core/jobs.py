@@ -52,6 +52,7 @@ class TaskName(enum.StrEnum):
     EVICT_REPO_CACHE = "sensei.maintenance.evict_repo_cache"
     VACUUM_CHUNKS = "sensei.maintenance.vacuum_chunks"
     SWEEP_STALLED_JOBS = "sensei.maintenance.sweep_stalled_jobs"
+    SWEEP_SNAPSHOTS = "sensei.maintenance.sweep_snapshots"
 
 
 # Tasks go to the queue named by the second part of their name ("sensei.<queue>.<task>").

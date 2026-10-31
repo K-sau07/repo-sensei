@@ -43,9 +43,11 @@ from sensei_engine.chunk.store import (
     new_generation,
     sweep_stale_generations,
 )
+from sensei_engine.incremental import Carry, carry_chunks, carry_moved_vectors
 from sensei_engine.snapshots import ArchiveTooLargeError
 from sensei_workers.app import celery_app
 from sensei_workers.base import NotYetError, SenseiTask
+from sensei_workers.incremental import carry_for
 from sensei_workers.ingest.cache import repo_lock
 from sensei_workers.jobstate import JobGoneError, job_scope
 from sensei_workers.runtime import get_runtime
@@ -174,18 +176,30 @@ async def _finish(
     generation: int,
     written: int,
     seconds: float,
+    carry: Carry | None,
 ) -> int:
-    """Make the generation live and complete the stage; returns the old rows deleted."""
+    """Carry the kept files' chunks into the generation (an incremental run's, 5.2), make it
+    live and complete the stage; returns the old rows deleted."""
     async with job_scope(task, target.org_id, job_id) as scope:
         scope.require(Stage.CHUNKS)
         snapshot = await scope.db.get(Snapshot, target.snapshot_id)
         if snapshot is None:
             raise JobGoneError("the snapshot is gone")
+        kept = moved = 0
+        if carry is not None:
+            kept = await carry_chunks(scope.db, snapshot, carry, generation=generation)
+            moved = await carry_moved_vectors(scope.db, snapshot, carry, generation=generation)
+            written += kept
         deleted = await make_live(scope.db, snapshot, generation, written)
         machine = scope.machine
         total = max(report.files, 1)
         machine.update_progress(Stage.CHUNKS, total, total)
-        machine.note(Stage.CHUNKS, **report.details(), wall_seconds=round(seconds, 3))
+        machine.note(
+            Stage.CHUNKS,
+            **report.details(),  # of the files cut
+            wall_seconds=round(seconds, 3),
+            **({"carried": kept, "moved_vectors": moved} if carry is not None else {}),
+        )
         machine.log(
             f"Cut {report.chunked:,} files into {written:,} chunks. Keyword search is ready."
         )
@@ -225,6 +239,10 @@ def chunk_snapshot(self: IngestTask, *, job_id: str, org_id: str, repo_id: str) 
     if target is None:
         return None
     files = runtime.run(_files(self, target))
+    # An incremental run cuts only what changed: the kept files' chunks are carried (5.2).
+    carry = runtime.run(carry_for(self, target.org_id, job, target.snapshot_id))
+    if carry is not None:
+        files = {p: v for p, v in files.items() if v[0] not in carry.kept}
     generation, swept = runtime.run(_generation(self, target))
     if swept:
         request_vacuum(target.repo_id, eager=bool(self.request.is_eager))
@@ -237,7 +255,14 @@ def chunk_snapshot(self: IngestTask, *, job_id: str, org_id: str, repo_id: str) 
         seconds = time.monotonic() - started
         deleted = runtime.run(
             _finish(
-                self, target, job, report, generation=generation, written=written, seconds=seconds
+                self,
+                target,
+                job,
+                report,
+                generation=generation,
+                written=written,
+                seconds=seconds,
+                carry=carry,
             )
         )
     except SnapshotUnavailableError:

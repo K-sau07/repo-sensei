@@ -145,6 +145,9 @@ class IngestSettings(BaseSettings):
     snapshot_cache_dir: Path = Path.home() / ".cache" / "repo-sensei" / "snapshots"
     snapshot_cache_max_bytes: int = Field(default=20 * 1024**3, gt=0)
     git_binary: str = "git"
+    # A snapshot no longer the repository's index, nor a branch's latest, is deleted this long
+    # after it was taken (with its archive and artifacts); incremental runs build on the latest.
+    snapshot_retention_days: int = Field(default=30, ge=1)
     # file:// remotes (local test fixtures only; never in a deployment).
     allow_file_protocol: bool = False
 

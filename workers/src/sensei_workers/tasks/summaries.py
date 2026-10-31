@@ -26,6 +26,11 @@ detectably undone: the files without a summary (``skipped`` in the artifact), no
 marker left at ``retrying`` or ``started``, and the stage's details say it is ``partial``. The
 wiki counts only what was written; the next index summarizes everything again.
 
+An incremental run (5.2) summarizes only the files that changed: a kept file (the same path and
+content as at the last index) keeps its summary from the last index's artifact, and a directory
+nothing under which changed keeps its rollup. Both go into this snapshot's artifacts as if
+written now.
+
 Summaries are optional: with no Anthropic key the stage is passed over, and when Claude can't
 do the work (refused requests, out of tries on an outage, nothing summarized) it is skipped
 with the reason, never failing the index.
@@ -37,9 +42,10 @@ import json
 import uuid
 from collections.abc import AsyncGenerator, Mapping, Sequence
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from pathlib import PurePosixPath
 from typing import Any
 
 from sqlalchemy import select
@@ -60,12 +66,15 @@ from sensei_core.models import (
     Stage,
 )
 from sensei_core.storage import Bucket, artifact_key
+from sensei_engine.incremental import Carry
 from sensei_engine.llm import batches, feature_maps, rollups
 from sensei_engine.llm.anthropic_client import LLMError, LLMUsage, Role, tier_for
 from sensei_engine.llm.glossary import build_glossary, save_glossary
 from sensei_engine.llm.ledger import usage_ledger
+from sensei_engine.llm.rollups import DirectorySummary
 from sensei_engine.llm.summaries import (
     KIND,
+    PROMPT_VERSION,
     CostCapExceeded,
     CostEstimate,
     FileInput,
@@ -84,6 +93,7 @@ from sensei_engine.llm.summaries import (
 from sensei_engine.snapshots import ArchiveTooLargeError
 from sensei_workers.app import celery_app
 from sensei_workers.base import NotYetError
+from sensei_workers.incremental import carry_for
 from sensei_workers.ingest.cache import repo_lock
 from sensei_workers.jobstate import JobScope, job_scope
 from sensei_workers.runtime import get_runtime
@@ -140,6 +150,27 @@ class FileRow:
     path: str
     language: str
     symbols: tuple[SymbolInput, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class Reuse:
+    """What an incremental run keeps of the last index's summaries (none for a full run)."""
+
+    summaries: dict[str, FileSummary] = field(default_factory=dict[str, FileSummary])
+    rollups: dict[str, DirectorySummary] = field(default_factory=dict[str, DirectorySummary])
+    previous: frozenset[str] = frozenset()  # the paths the last index summarized
+
+    def keep(self, summaries: Mapping[str, FileSummary]) -> dict[str, DirectorySummary]:
+        """The last index's directory summaries nothing under which changed: no file in it
+        summarized anew, and none gone."""
+        changed = {p for p in summaries if p not in self.summaries} | (
+            self.previous - set(summaries)
+        )
+        touched = {rollups.ROOT} if changed else set[str]()
+        for path in changed:
+            parts = PurePosixPath(path).parts
+            touched.update("/".join(parts[:depth]) for depth in range(1, len(parts)))
+        return {d: summary for d, summary in self.rollups.items() if d not in touched}
 
 
 def _now() -> datetime:
@@ -284,6 +315,33 @@ async def _file_rows(task: IngestTask, target: Target) -> list[FileRow]:
         if file_id in files
     ]
     return sorted(rows, key=lambda row: row.path)
+
+
+async def _reused(task: IngestTask, target: Target, carry: Carry | None) -> Reuse:
+    """The last index's summaries of the kept files, and its rollups (an incremental run's)."""
+    if carry is None or not carry.kept:
+        return Reuse()
+    async with task.org_session(target.org_id) as db:
+        kept = set(await db.scalars(select(RepoFile.path).where(RepoFile.id.in_(list(carry.kept)))))
+    storage = await get_runtime().storage()
+    found: dict[str, FileSummary] = {}
+    data = await storage.get_bytes(
+        Bucket.ARTIFACTS,
+        artifact_key(target.org_id, target.repo_id, carry.previous_sha, SUMMARIES_ARTIFACT),
+        max_bytes=MAX_ARTIFACT_BYTES,
+    )
+    previous: dict[str, FileSummary] = from_json(data)[0] if data is not None else {}
+    found = {
+        path: summary
+        for path, summary in previous.items()
+        if path in kept and summary.prompt_version == PROMPT_VERSION
+    }
+    data = await storage.get_bytes(
+        Bucket.ARTIFACTS,
+        artifact_key(target.org_id, target.repo_id, carry.previous_sha, ROLLUPS_ARTIFACT),
+        max_bytes=MAX_ARTIFACT_BYTES,
+    )
+    return Reuse(found, rollups.from_json(data) if data is not None else {}, frozenset(previous))
 
 
 def _inputs(target: Target, rows: Sequence[FileRow]) -> list[FileInput]:
@@ -445,7 +503,7 @@ async def _store(
 
 
 async def _collect(
-    task: IngestTask, target: Target, row: LLMBatch, files: Sequence[FileInput]
+    task: IngestTask, target: Target, row: LLMBatch, files: Sequence[FileInput], reuse: Reuse
 ) -> SummaryRun:
     """Claim the ended batch and store what it produced, in the transaction that records it."""
     runtime = get_runtime()
@@ -458,6 +516,8 @@ async def _collect(
             scope.db, runtime.anthropic, current, files, calculator=runtime.costs,
             org_id=target.org_id, ref_type=REF_TYPE, ref_id=str(target.job_id),
         )  # fmt: skip
+        for path, kept in reuse.summaries.items():  # an incremental run's, from the last index
+            run.summaries.setdefault(path, kept)
         await _store(scope.db, target, run.summaries, run.skipped)
         machine = scope.machine
         total = current.request_count
@@ -468,6 +528,19 @@ async def _collect(
             summarized=len(run.summaries),
             skipped=len(run.skipped),
             dropped_keys=run.dropped_keys,
+            **({"reused": len(reuse.summaries)} if reuse.summaries else {}),
+        )
+    return run
+
+
+async def _kept_only(task: IngestTask, target: Target, reuse: Reuse) -> SummaryRun:
+    """An incremental run with no file to summarize: the kept summaries, stored as this
+    snapshot's (no batch)."""
+    run = SummaryRun(summaries=dict(reuse.summaries))
+    async with _stage(task, target) as scope:
+        await _store(scope.db, target, run.summaries, run.skipped)
+        scope.machine.note(
+            STAGE, phase=COLLECTED, summarized=len(run.summaries), reused=len(run.summaries)
         )
     return run
 
@@ -549,7 +622,13 @@ async def _within_cap(task: IngestTask, target: Target, paths: Sequence[str]) ->
     return True
 
 
-async def _rollups(task: IngestTask, target: Target, summaries: Mapping[str, FileSummary]) -> int:
+async def _rollups(
+    task: IngestTask,
+    target: Target,
+    summaries: Mapping[str, FileSummary],
+    *,
+    keep: Mapping[str, DirectorySummary],
+) -> int:
     """Summarize the directories (within the cap, once), keep them as an artifact and complete
     the stage. Started before by this job and never written, they are left out."""
     async with _stage(task, target) as scope:
@@ -565,7 +644,7 @@ async def _rollups(task: IngestTask, target: Target, summaries: Mapping[str, Fil
                 scope.machine.note(STAGE, rollups=ROLLUPS_WRITTEN)
         written = written or 0
     else:
-        written = await _summarize_directories(task, target, summaries)
+        written = await _summarize_directories(task, target, summaries, keep)
     maps = await _feature_maps(task, target, summaries)
     async with _stage(task, target) as scope:
         machine = scope.machine
@@ -624,7 +703,10 @@ async def _rollups_written(target: Target) -> int | None:
 
 
 async def _summarize_directories(
-    task: IngestTask, target: Target, summaries: Mapping[str, FileSummary]
+    task: IngestTask,
+    target: Target,
+    summaries: Mapping[str, FileSummary],
+    keep: Mapping[str, DirectorySummary],
 ) -> int:
     """The directories' summaries, written as the rollups artifact (none over the cap)."""
     runtime = get_runtime()
@@ -643,7 +725,10 @@ async def _summarize_directories(
     async with _stage(task, target) as scope:
         scope.machine.note(STAGE, rollups=ROLLUPS_STARTED)
     found = await rollups.summarize_directories(
-        runtime.anthropic, {path: s.summary for path, s in summaries.items()}, on_usage=bill
+        runtime.anthropic,
+        {path: s.summary for path, s in summaries.items()},
+        on_usage=bill,
+        keep=keep,
     )
     storage = await runtime.storage()
     key = artifact_key(target.org_id, target.repo_id, target.commit_sha, ROLLUPS_ARTIFACT)
@@ -745,14 +830,14 @@ async def _directory_summaries(target: Target) -> dict[str, str]:
 
 
 async def _summaries(
-    task: IngestTask, target: Target, files: Sequence[FileInput]
+    task: IngestTask, target: Target, files: Sequence[FileInput], reuse: Reuse
 ) -> Wait | SummaryRun | None:
     """Steps 1 to 3: a Wait to come back later, the collected run, or None (skipped)."""
     async with task.org_session(target.org_id) as db:
         row = await _job_batch(db, target.job_id)
     if row is None:
         if not files:
-            return SummaryRun()
+            return await _kept_only(task, target, reuse) if reuse.summaries else SummaryRun()
         return await _send(task, target, files)
     if row.status is LLMBatchStatus.SUBMITTING:
         return await _settle(task, target, row)
@@ -760,11 +845,15 @@ async def _summaries(
         wait = await _poll(task, target, row)
         if wait is not None:
             return wait
-    return await _collect(task, target, row, files)
+    return await _collect(task, target, row, files, reuse)
 
 
 async def _after_collect(
-    task: IngestTask, target: Target, run: SummaryRun | None, files: Sequence[FileInput] | None
+    task: IngestTask,
+    target: Target,
+    run: SummaryRun | None,
+    files: Sequence[FileInput] | None,
+    reuse: Reuse,
 ) -> int | None:
     """Steps 4 and 5 (from the stored summaries when ``run`` is None)."""
     if run is None:
@@ -776,7 +865,7 @@ async def _after_collect(
     if not run.summaries:
         await _give_up(task, target, "nothing_summarized", "no file got a usable summary")
         return None
-    return await _rollups(task, target, run.summaries)
+    return await _rollups(task, target, run.summaries, keep=reuse.keep(run.summaries))
 
 
 @celery_app.task(
@@ -796,17 +885,26 @@ def summarize_snapshot(self: IngestTask, *, job_id: str, org_id: str, repo_id: s
     try:
         files: list[FileInput] | None = None
         run: SummaryRun | None = None
+        # An incremental run summarizes only what changed (worked out again on each attempt).
+        carry = runtime.run(carry_for(self, target.org_id, target.job_id, target.snapshot_id))
+        reuse = runtime.run(_reused(self, target, carry))
         if target.phase is None:
-            files = _inputs(target, runtime.run(_file_rows(self, target)))
-            outcome = runtime.run(_summaries(self, target, files))
+            rows = [
+                r for r in runtime.run(_file_rows(self, target)) if r.path not in reuse.summaries
+            ]
+            files = _inputs(target, rows)
+            outcome = runtime.run(_summaries(self, target, files, reuse))
             if isinstance(outcome, Wait):
                 self.wait_again(outcome.seconds)
             if outcome is None:
                 return None
             run = outcome
         elif target.phase == COLLECTED:
-            files = _inputs(target, runtime.run(_file_rows(self, target)))
-        written = runtime.run(_after_collect(self, target, run, files))
+            rows = [
+                r for r in runtime.run(_file_rows(self, target)) if r.path not in reuse.summaries
+            ]
+            files = _inputs(target, rows)
+        written = runtime.run(_after_collect(self, target, run, files, reuse))
     except LLMError as exc:
         if not exc.transient:
             runtime.run(_give_up(self, target, "llm_error", f"Claude refused ({exc.message})"))

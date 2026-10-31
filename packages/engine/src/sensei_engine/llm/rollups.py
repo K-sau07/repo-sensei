@@ -190,14 +190,20 @@ async def summarize_directories(
     *,
     on_usage: LLMUsageSink | None = None,
     concurrency: int = CONCURRENCY,
+    keep: Mapping[str, DirectorySummary] | None = None,
 ) -> dict[str, DirectorySummary]:
     """A summary for every directory above the summarized files (``file_summaries``: path ->
-    summary), by path."""
+    summary), by path. A directory in ``keep`` (an incremental run's: nothing under it changed
+    since its summary was written) keeps that summary, and isn't asked about again."""
     directories = tree(sorted(file_summaries))
     done: dict[str, DirectorySummary] = {}
     gate = asyncio.Semaphore(concurrency)
+    kept = keep or {}
 
     async def one(directory: str) -> None:
+        if directory in kept:
+            done[directory] = kept[directory]
+            return
         node = directories[directory]
         subdirectories = sorted(node.directories)
         if not node.files and len(subdirectories) == 1:
@@ -255,3 +261,22 @@ def to_json(rollups: Mapping[str, DirectorySummary], *, job_id: str | None = Non
         indent=2,
         ensure_ascii=False,
     )
+
+
+def from_json(data: bytes | str) -> dict[str, DirectorySummary]:
+    """What :func:`to_json` wrote: the directories' summaries, by path (none of another prompt
+    version: they'd be worded otherwise)."""
+    raw = json.loads(data)
+    version = raw.get("prompt_version", PROMPT_VERSION)
+    return {
+        found["path"]: DirectorySummary(
+            found["path"],
+            found["summary"],
+            int(found.get("files", 0)),
+            int(found.get("directories", 0)),
+            prompt_version=version,
+            inherited_from=found.get("inherited_from"),
+        )
+        for found in raw.get("directories", [])
+        if version == PROMPT_VERSION
+    }

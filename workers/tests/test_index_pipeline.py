@@ -32,6 +32,7 @@ from sensei_core.indexing.jobs import settle_repo
 from sensei_core.indexing.state import IndexJobStateMachine
 from sensei_core.jobs import TaskName
 from sensei_core.models import (
+    SYMBOL_KINDS,
     CodeChunk,
     CodeEdge,
     CodeNode,
@@ -809,30 +810,45 @@ def claude() -> FakeAnthropic:
     summaries one call at a time."""
     api = FakeAnthropic()
 
-    def submitted() -> list[dict[str, Any]]:
-        return api.bodies(BATCHES)[0]["requests"]
+    def submitted(n: int) -> list[dict[str, Any]]:
+        return api.bodies(BATCHES)[n - 1]["requests"]
 
-    def results(_: httpx2.Request) -> httpx2.Response:
-        lines = [
-            {
-                "custom_id": r["custom_id"],
-                "result": {
-                    "type": "succeeded",
-                    "message": message(json.dumps(_answer(r["params"])), usage=USAGE),
-                },
-            }
-            for r in submitted()
-        ]
-        return jsonl(*lines)
+    def results(n: int) -> Callable[[httpx2.Request], httpx2.Response]:
+        def answer(_: httpx2.Request) -> httpx2.Response:
+            lines = [
+                {
+                    "custom_id": r["custom_id"],
+                    "result": {
+                        "type": "succeeded",
+                        "message": message(json.dumps(_answer(r["params"])), usage=USAGE),
+                    },
+                }
+                for r in submitted(n)
+            ]
+            return jsonl(*lines)
 
-    def state(_: httpx2.Request) -> httpx2.Response:
-        return httpx2.Response(200, json=batch("msgbatch_1", "ended", succeeded=len(submitted())))
+        return answer
+
+    def state(n: int) -> Callable[[httpx2.Request], httpx2.Response]:
+        def answer(_: httpx2.Request) -> httpx2.Response:
+            ended = batch(f"msgbatch_{n}", "ended", succeeded=len(submitted(n)))
+            return httpx2.Response(200, json=ended)
+
+        return answer
+
+    def created(_: httpx2.Request) -> httpx2.Response:
+        # A batch of its own for each run's (msgbatch_1, msgbatch_2, ...); a test's own routes
+        # for one stay.
+        n = len(api.bodies(BATCHES))
+        api.routes.setdefault(f"{BATCHES}/msgbatch_{n}", state(n))
+        api.routes.setdefault(f"{BATCHES}/msgbatch_{n}/results", results(n))
+        return httpx2.Response(200, json=batch(f"msgbatch_{n}"))
 
     api.routes.update(
         {
-            BATCHES: httpx2.Response(200, json=batch("msgbatch_1")),
-            f"{BATCHES}/msgbatch_1": state,
-            f"{BATCHES}/msgbatch_1/results": results,
+            BATCHES: created,
+            f"{BATCHES}/msgbatch_1": state(1),
+            f"{BATCHES}/msgbatch_1/results": results(1),
             "/v1/messages": _single,
             "/v1/messages/count_tokens": httpx2.Response(200, json={"input_tokens": 2_000}),
         }
@@ -1800,3 +1816,153 @@ def test_a_push_timer_waits_for_a_run_then_starts_the_branchs_once(
     )
     assert timer("t3", "other") == (Outcome.UNTRACKED, None)
     assert runtime.run(pushes.due(redis, repo_id, "other", "t3")) is None
+
+
+# ---------------------------------------------------------------- incremental runs (5.2)
+
+
+async def _paths_and_vectors(
+    database: Database, repo_id: uuid.UUID, sha: str
+) -> tuple[Snapshot, dict[str, int], set[str]]:
+    """The snapshot of ``sha``, its live code chunks by path (each counted), and the paths
+    whose chunks all have a vector."""
+    async with database.session() as db:
+        snapshot = await db.scalar(
+            select(Snapshot).where(Snapshot.repo_id == repo_id, Snapshot.commit_sha == sha)
+        )
+        assert snapshot is not None
+        rows = list(
+            await db.execute(
+                select(CodeChunk.path, CodeChunk.embedding.is_not(None)).where(
+                    CodeChunk.snapshot_id == snapshot.id,
+                    CodeChunk.generation == snapshot.chunk_generation,
+                    CodeChunk.view == "code",
+                )
+            )
+        )
+    counted: dict[str, int] = {}
+    vectorless: set[str] = set()
+    for path, has in rows:
+        counted[path] = counted.get(path, 0) + 1
+        if not has:
+            vectorless.add(path)
+    return snapshot, counted, set(counted) - vectorless
+
+
+async def _symbol_keys(database: Database, snapshot_id: uuid.UUID) -> set[str]:
+    async with database.session() as db:
+        found = await db.scalars(
+            select(CodeNode.symbol_key).where(
+                CodeNode.snapshot_id == snapshot_id, CodeNode.kind.in_(sorted(SYMBOL_KINDS))
+            )
+        )
+        return set(found)
+
+
+def _incremental(runtime: Runtime, org_id: uuid.UUID, repo_id: uuid.UUID, sha: str) -> IndexJob:
+    job_id = runtime.run(_queued(runtime.system_database, org_id, repo_id))
+    runtime.run(_pin(runtime.system_database, job_id, None, sha))
+    _run(org_id, repo_id, job_id)
+    _, job = runtime.run(_state(runtime.system_database, repo_id, job_id))
+    assert job.status is JobStatus.SUCCEEDED
+    return job
+
+
+def test_an_incremental_run_reads_only_what_changed_and_a_move_costs_nothing(
+    runtime: Runtime,
+    ids: tuple[uuid.UUID, uuid.UUID, uuid.UUID],
+    github: respx.MockRouter,
+    bare_repo: Any,
+    voyage: FakeVoyage,
+) -> None:
+    org_id, repo_id, job_id = ids
+    database = runtime.system_database
+    runtime.run(_pin(database, job_id, None, bare_repo.third))
+    _run(org_id, repo_id, job_id)  # in full: the third (the second, and web/)
+    third, third_chunks, _ = runtime.run(_paths_and_vectors(database, repo_id, bare_repo.third))
+    third_keys = runtime.run(_symbol_keys(database, third.id))
+    embedded = sum(n for n, _ in voyage.calls)
+    assert embedded > 0
+
+    # A pure move: client/greet.ts is web/greet.ts, moved. Only it is read again, and its
+    # chunks take their vectors from the old path's: nothing is embedded.
+    moved = _incremental(runtime, org_id, repo_id, bare_repo.fifth)
+    assert moved.kind is JobKind.INCREMENTAL
+    assert moved.stages["parse"]["details"]["files"] == 1
+    assert moved.stages["chunks"]["details"]["files"] == 1
+    assert moved.stages["chunks"]["details"]["moved_vectors"] > 0
+    assert sum(n for n, _ in voyage.calls) == embedded  # nothing more was embedded
+    fifth, fifth_chunks, with_vectors = runtime.run(
+        _paths_and_vectors(database, repo_id, bare_repo.fifth)
+    )
+    assert "web/greet.ts" not in fifth_chunks
+    assert fifth_chunks["client/greet.ts"] == third_chunks["web/greet.ts"]
+    assert set(fifth_chunks) == with_vectors  # every chunk has its vector
+    kept = {k for k in third_keys if "web/greet.ts" not in k}
+    fifth_keys = runtime.run(_symbol_keys(database, fifth.id))
+    assert kept <= fifth_keys  # the kept files' definitions, carried
+    assert any("client/greet.ts" in k for k in fifth_keys)  # the moved file's, read again
+    assert moved.stages["symbols"]["details"]["carried"] == len(
+        {k for k in fifth_keys if "client/greet.ts" not in k}
+    )
+
+    # One file changed, one deleted: only the changed one is read again and embedded.
+    changed = _incremental(runtime, org_id, repo_id, bare_repo.sixth)
+    assert changed.stages["parse"]["details"]["files"] == 1
+    sixth, sixth_chunks, with_vectors = runtime.run(
+        _paths_and_vectors(database, repo_id, bare_repo.sixth)
+    )
+    assert "README.md" not in sixth_chunks  # deleted: none of its facts are carried
+    assert set(sixth_chunks) == with_vectors
+    sixth_keys = runtime.run(_symbol_keys(database, sixth.id))
+    assert any(k.endswith("quiet().") or "quiet" in k for k in sixth_keys)  # the new function
+    assert sum(n for n, _ in voyage.calls) - embedded <= sixth_chunks["web/main.ts"]
+    repo, _ = runtime.run(_state(database, repo_id, changed.id))
+    assert repo.last_indexed_sha == bare_repo.sixth
+
+
+def test_an_incremental_run_summarizes_only_the_files_that_changed(
+    claude: FakeAnthropic,
+    runtime: Runtime,
+    ids: tuple[uuid.UUID, uuid.UUID, uuid.UUID],
+    github: respx.MockRouter,
+    bare_repo: Any,
+) -> None:
+    org_id, repo_id, job_id = ids
+    database = runtime.system_database
+    runtime.run(_pin(database, job_id, None, bare_repo.third))
+    _run(org_id, repo_id, job_id)
+    [first] = claude.bodies(BATCHES)
+    full = len(first["requests"])
+    assert full >= 3  # src/app.py, web/greet.ts and web/main.ts
+    rollups_before = len(claude.bodies("/v1/messages"))
+
+    # A move: only the moved file is summarized again; the others keep theirs.
+    moved = _incremental(runtime, org_id, repo_id, bare_repo.fifth)
+    sent = claude.bodies(BATCHES)[1]["requests"]
+    assert len(sent) == 1
+    assert "client/greet.ts" in json.dumps(sent)
+    details = moved.stages["summaries"]["details"]
+    assert details["reused"] == full - 1
+    artifact, _, _ = runtime.run(_summaries(runtime, org_id, repo_id, moved.id, bare_repo.fifth))
+    paths = {file["path"] for file in artifact["files"]}
+    assert {"src/app.py", "web/main.ts", "client/greet.ts"} <= paths
+    assert "web/greet.ts" not in paths
+    # Directories nothing under which changed keep their rollups: src/ isn't asked about.
+    asked = [
+        b["messages"][0]["content"].split("\n")[0]
+        for b in claude.bodies("/v1/messages")[rollups_before:]
+        if b["messages"][0]["content"].startswith("<directory>")
+    ]
+    # web/ lost greet.ts and client/ is new (and so the root); src/ is as it was.
+    assert sorted(asked) == [
+        "<directory>(repository root)</directory>",
+        "<directory>client</directory>",
+        "<directory>web</directory>",
+    ]
+
+    # One file changed: it alone is sent.
+    _incremental(runtime, org_id, repo_id, bare_repo.sixth)
+    sent = claude.bodies(BATCHES)[2]["requests"]
+    assert len(sent) == 1
+    assert "web/main.ts" in json.dumps(sent)
