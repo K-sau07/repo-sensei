@@ -58,6 +58,7 @@ from sensei_core.models import (
     ACTIVE_JOB_STATUSES,
     SYMBOL_KINDS,
     CodeNode,
+    FeatureMap,
     LLMBatch,
     LLMBatchStatus,
     Repo,
@@ -159,6 +160,7 @@ class Reuse:
     summaries: dict[str, FileSummary] = field(default_factory=dict[str, FileSummary])
     rollups: dict[str, DirectorySummary] = field(default_factory=dict[str, DirectorySummary])
     previous: frozenset[str] = frozenset()  # the paths the last index summarized
+    snapshot: uuid.UUID | None = None  # the last index's (its feature maps may be kept)
 
     def keep(self, summaries: Mapping[str, FileSummary]) -> dict[str, DirectorySummary]:
         """The last index's directory summaries nothing under which changed: no file in it
@@ -319,8 +321,10 @@ async def _file_rows(task: IngestTask, target: Target) -> list[FileRow]:
 
 async def _reused(task: IngestTask, target: Target, carry: Carry | None) -> Reuse:
     """The last index's summaries of the kept files, and its rollups (an incremental run's)."""
-    if carry is None or not carry.kept:
+    if carry is None:
         return Reuse()
+    if not carry.kept:
+        return Reuse(snapshot=carry.previous)
     async with task.org_session(target.org_id) as db:
         kept = set(await db.scalars(select(RepoFile.path).where(RepoFile.id.in_(list(carry.kept)))))
     storage = await get_runtime().storage()
@@ -341,7 +345,12 @@ async def _reused(task: IngestTask, target: Target, carry: Carry | None) -> Reus
         artifact_key(target.org_id, target.repo_id, carry.previous_sha, ROLLUPS_ARTIFACT),
         max_bytes=MAX_ARTIFACT_BYTES,
     )
-    return Reuse(found, rollups.from_json(data) if data is not None else {}, frozenset(previous))
+    return Reuse(
+        found,
+        rollups.from_json(data) if data is not None else {},
+        frozenset(previous),
+        carry.previous,
+    )
 
 
 def _inputs(target: Target, rows: Sequence[FileRow]) -> list[FileInput]:
@@ -628,6 +637,7 @@ async def _rollups(
     summaries: Mapping[str, FileSummary],
     *,
     keep: Mapping[str, DirectorySummary],
+    previous: uuid.UUID | None = None,
 ) -> int:
     """Summarize the directories (within the cap, once), keep them as an artifact and complete
     the stage. Started before by this job and never written, they are left out."""
@@ -645,7 +655,7 @@ async def _rollups(
         written = written or 0
     else:
         written = await _summarize_directories(task, target, summaries, keep)
-    maps = await _feature_maps(task, target, summaries)
+    maps = await _feature_maps(task, target, summaries, previous)
     async with _stage(task, target) as scope:
         machine = scope.machine
         machine.note(STAGE, maps=maps)
@@ -743,9 +753,14 @@ async def _summarize_directories(
 
 
 async def _feature_maps(
-    task: IngestTask, target: Target, summaries: Mapping[str, FileSummary]
+    task: IngestTask,
+    target: Target,
+    summaries: Mapping[str, FileSummary],
+    previous: uuid.UUID | None = None,
 ) -> int:
-    """A map of each module (within the cap, once), stored for the snapshot: how many."""
+    """A map of each module (within the cap, once), stored for the snapshot: how many. An
+    incremental run keeps the last index's map of a module that is as it was (``previous``),
+    and pays only for the others."""
     async with _stage(task, target) as scope:
         details = (scope.require(STAGE).stages or {}).get(STAGE.value, {}).get("details", {})
         state = details.get("feature_maps")
@@ -757,7 +772,13 @@ async def _feature_maps(
             scope.machine.note(STAGE, feature_maps=MAPS_WRITTEN, maps=written)
         return written
     modules = feature_maps.modules(list(summaries))
-    if not modules or not await _maps_within_cap(task, target, modules, summaries):
+    same: list[FeatureMap] = []
+    if previous is not None and modules:
+        async with task.org_session(target.org_id) as db:
+            same = await feature_maps.kept(db, previous, target.snapshot_id, modules)
+    skip = {m.path for m in same}
+    changed = [module for module in modules if module[0] not in skip]
+    if not modules or (changed and not await _maps_within_cap(task, target, changed, summaries)):
         return 0
     runtime = get_runtime()
 
@@ -771,14 +792,20 @@ async def _feature_maps(
 
     async with _stage(task, target) as scope:
         scope.machine.note(STAGE, feature_maps=MAPS_STARTED)
-    found = await feature_maps.generate(
-        runtime.anthropic, summaries, await _directory_summaries(target), on_usage=bill
-    )
+    found = (
+        await feature_maps.generate(
+            runtime.anthropic, summaries, await _directory_summaries(target), on_usage=bill,
+            skip=skip,
+        )
+        if changed
+        else []
+    )  # fmt: skip
     async with task.org_session(target.org_id) as db:
         written = await feature_maps.store(
             db, org_id=target.org_id, repo_id=target.repo_id, snapshot_id=target.snapshot_id,
             drafts=found,
         )  # fmt: skip
+        written += await feature_maps.carry(db, target.snapshot_id, same)
     async with _stage(task, target) as scope:
         scope.machine.note(STAGE, feature_maps=MAPS_WRITTEN, maps=written)
     return written
@@ -865,7 +892,9 @@ async def _after_collect(
     if not run.summaries:
         await _give_up(task, target, "nothing_summarized", "no file got a usable summary")
         return None
-    return await _rollups(task, target, run.summaries, keep=reuse.keep(run.summaries))
+    return await _rollups(
+        task, target, run.summaries, keep=reuse.keep(run.summaries), previous=reuse.snapshot
+    )
 
 
 @celery_app.task(

@@ -2030,6 +2030,8 @@ def test_the_apps_routes_are_read_again_only_when_python_changed() -> None:
     assert not links_task.introspect_again({"web/main.ts", "README.md"})
     assert links_task.introspect_again({"web/main.ts", "stack/api.py"})
     assert links_task.introspect_again({"app/types.pyi"})
+    assert links_task.introspect_again({"backend/pyproject.toml"})  # its dependencies
+    assert links_task.introspect_again({"backend/.env.example"})  # its configuration
     routes = RuntimeRoutes(
         [Route("GET", "/items", "py a.py/read().", "runtime", tags=("items",), entry="a:app")],
         limitation=None,
@@ -2037,6 +2039,9 @@ def test_the_apps_routes_are_read_again_only_when_python_changed() -> None:
         detail="ok",
     )
     assert links_task.routes_from(links_task.routes_json(routes)) == routes
+    # Another version's, or one that can't be read, is read again from the apps.
+    assert links_task.routes_from(b'{"version": 0, "routes": []}') is None
+    assert links_task.routes_from(b'{"version": 1, "routes": [{"nope": 1}]}') is None
 
 
 # ---------------------------------------------------------------- overlays (5.4)
@@ -2111,3 +2116,37 @@ def test_a_closed_pull_requests_overlay_is_dropped(
     with pytest.raises(NotFoundError):
         runtime.run(_read(database, repo_id, "pull/3"))
     assert runtime.run(_read(database, repo_id, None))[0].commit_sha == bare_repo.second
+
+
+async def _track(database: Database, repo_id: uuid.UUID, branch: str) -> None:
+    async with database.session() as db:
+        repo = await db.get(Repo, repo_id)
+        assert repo is not None
+        repo.settings = {**(repo.settings or {}), "tracked_branches": [branch]}
+
+
+def test_a_push_of_a_commit_already_indexed_runs_nothing_and_its_branch_reads_it(
+    runtime: Runtime,
+    ids: tuple[uuid.UUID, uuid.UUID, uuid.UUID],
+    github: respx.MockRouter,
+    bare_repo: Any,
+) -> None:
+    """A branch made from the default branch (its first push names main's commit): no run, its
+    ref points at the snapshot there is, and it reads it by its name."""
+    org_id, repo_id, job_id = ids
+    database = runtime.system_database
+    _run(org_id, repo_id, job_id)  # main, at the second
+    runtime.run(_track(database, repo_id, "release"))
+    redis = runtime.redis
+    runtime.run(
+        pushes.note(
+            redis, repo_id, "release", after=bare_repo.second, before=None, forced=False, token="r"
+        )
+    )
+    outcome, job = runtime.run(
+        begin(start_push_index, redis, org_id=org_id, repo_id=repo_id, branch="release", token="r")
+    )
+    assert (outcome, job) == (Outcome.INDEXED, None)
+    release, _, chunks = runtime.run(_read(database, repo_id, "release"))
+    assert release.commit_sha == bare_repo.second
+    assert chunks > 0

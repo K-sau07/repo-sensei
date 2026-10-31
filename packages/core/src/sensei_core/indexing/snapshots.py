@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import re
 
-from sqlalchemy import select
+from sqlalchemy import func, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from sensei_core.errors import InvalidError, NotFoundError
@@ -13,6 +14,7 @@ from sensei_core.models import (
     IndexJob,
     JobStatus,
     Repo,
+    RepoRef,
     Snapshot,
     SnapshotStatus,
 )
@@ -72,9 +74,13 @@ async def resolve_snapshot(db: AsyncSession, repo: Repo, ref: str | None) -> Sna
             )
         if matches:
             return matches[0]
-    found = await db.scalar(
-        browsable.where(Snapshot.ref == ref).order_by(Snapshot.ready_at.desc()).limit(1)
-    )
+    # The ref's index, as its runs left it (5.4); else the latest snapshot taken from it.
+    pointed = select(RepoRef.snapshot_id).where(RepoRef.repo_id == repo.id, RepoRef.ref == ref)
+    found = await db.scalar(browsable.where(Snapshot.id.in_(pointed)))
+    if found is None:
+        found = await db.scalar(
+            browsable.where(Snapshot.ref == ref).order_by(Snapshot.ready_at.desc()).limit(1)
+        )
     if found is None:
         raise _not_indexed(ref)
     return found
@@ -97,17 +103,29 @@ async def _first_run_snapshot(db: AsyncSession, repo: Repo) -> Snapshot | None:
 
 
 async def ref_heads(db: AsyncSession, repo: Repo) -> dict[str, Snapshot]:
-    """Each ref's latest ready snapshot but the default branch's (a tracked branch's, a pull
-    request's: 5.4), by ref. What a ``ref`` reads: kept searchable when the default branch's
-    index moves on."""
-    found = await db.scalars(
-        select(Snapshot)
+    """What each ref but the default branch reads (a tracked branch, a pull request: 5.4), by
+    ref: kept searchable, and kept at all, when the default branch's index moves on."""
+    rows = await db.execute(
+        select(RepoRef.ref, Snapshot)
+        .join(Snapshot, Snapshot.id == RepoRef.snapshot_id)
         .where(
-            Snapshot.repo_id == repo.id,
-            Snapshot.ref != repo.default_branch,
+            RepoRef.repo_id == repo.id,
+            RepoRef.ref != repo.default_branch,
             Snapshot.status == SnapshotStatus.READY,
         )
-        .order_by(Snapshot.ref, Snapshot.ready_at.desc().nulls_last(), Snapshot.created_at.desc())
-        .distinct(Snapshot.ref)
+        .order_by(RepoRef.ref)
     )
-    return {snapshot.ref: snapshot for snapshot in found}
+    found: dict[str, Snapshot] = dict(rows.tuples().all())
+    return found
+
+
+async def point_ref(db: AsyncSession, repo: Repo, ref: str, snapshot: Snapshot) -> None:
+    """``ref`` reads ``snapshot`` from now on (its run finished, or its commit was indexed)."""
+    await db.execute(
+        pg_insert(RepoRef)
+        .values(org_id=repo.org_id, repo_id=repo.id, ref=ref, snapshot_id=snapshot.id)
+        .on_conflict_do_update(
+            index_elements=[RepoRef.repo_id, RepoRef.ref],
+            set_={"snapshot_id": snapshot.id, "updated_at": func.now()},
+        )
+    )

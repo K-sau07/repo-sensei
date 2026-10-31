@@ -28,6 +28,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from sensei_core.audit import AuditAction, audit
 from sensei_core.indexing.events import JobOutbox
+from sensei_core.indexing.snapshots import point_ref
 from sensei_core.models import IndexJob, JobKind, JobStatus, Repo, RepoStatus, Snapshot
 from sensei_core.models.audit import ActorType
 from sensei_core.models.indexing import SnapshotStatus
@@ -105,20 +106,19 @@ async def note(
     forced: bool,
     token: str,
 ) -> Pending:
-    """Note a push as the branch's pending one, folded into what was pending: its commit and
-    token replace theirs, the first's starting commit is kept, and forced stays forced."""
+    """Note a push as the branch's pending one, folded into what was pending. Deliveries come
+    in any order, so they are put in order by their commits: a push that goes on from the
+    pending one (it starts at its commit) moves it on; one that ends where the pending one
+    starts came before it (delivered late), so the pending commit stays and the start moves
+    back; one that does neither is taken as the latest. Its token is the timer's either way,
+    and forced stays forced."""
     key = pending_key(repo_id, branch)
     async with redis.pipeline(transaction=True) as pipe:
         for _ in range(TRIES):
             try:
                 await pipe.watch(key)
                 was = _read(cast("bytes | str | None", await pipe.get(key)))
-                pending = Pending(
-                    after=after,
-                    before=was.before if was is not None else before,
-                    forced=forced or (was is not None and was.forced),
-                    token=token,
-                )
+                pending = _folded(was, after=after, before=before, forced=forced, token=token)
                 pipe.multi()
                 pipe.set(key, pending.model_dump_json(), ex=PENDING_TTL_SECONDS)
                 await pipe.execute()
@@ -127,6 +127,17 @@ async def note(
                 continue
     msg = "the branch's pending push kept changing"
     raise RuntimeError(msg)
+
+
+def _folded(
+    was: Pending | None, *, after: str, before: str | None, forced: bool, token: str
+) -> Pending:
+    if was is None:
+        return Pending(after=after, before=before, forced=forced, token=token)
+    forced = forced or was.forced
+    if before is not None and after == was.before:  # an earlier push, delivered late
+        return Pending(after=was.after, before=before, forced=forced, token=token)
+    return Pending(after=after, before=was.before, forced=forced, token=token)
 
 
 async def due(redis: Redis, repo_id: uuid.UUID, branch: str, token: str) -> Pending | None:
@@ -196,11 +207,43 @@ class JobRunningError(Exception):
     """The repository has a run going: the push's run waits for it."""
 
 
+async def indexed(db: AsyncSession, repo: Repo, sha: str) -> Snapshot | None:
+    """The commit's snapshot, if a run already indexed it and it is searchable still (a branch
+    made from the default branch, a fast-forward): the ref only needs to point at it."""
+    finished = (
+        select(IndexJob.id)
+        .where(
+            IndexJob.snapshot_id == Snapshot.id,
+            IndexJob.status == JobStatus.SUCCEEDED,
+        )
+        .exists()
+    )
+    return await db.scalar(
+        select(Snapshot).where(
+            Snapshot.repo_id == repo.id,
+            Snapshot.commit_sha == sha,
+            Snapshot.status == SnapshotStatus.READY,
+            Snapshot.chunk_generation.is_not(None),
+            finished,
+        )
+    )
+
+
 async def start(
     db: AsyncSession, repo: Repo, branch: str, pending: Pending, outbox: JobOutbox
-) -> IndexJob:
-    """The run a branch's pending push asks for (the system's: no one asked for it), queued.
-    Raises :class:`JobRunningError` if the repository has one queued or going."""
+) -> IndexJob | None:
+    """The run a branch's pending push asks for (the system's: no one asked for it), queued;
+    None when its commit is indexed already (the ref is pointed at it, nothing is run). Raises
+    :class:`JobRunningError` if the repository has one queued or going."""
+    if not pending.forced and (found := await indexed(db, repo, pending.after)) is not None:
+        await point_ref(db, repo, branch, found)
+        if branch == repo.default_branch:
+            repo.last_indexed_sha = found.commit_sha
+        log.info(
+            "push already indexed",
+            extra={"repo_id": str(repo.id), "branch": branch, "sha": found.commit_sha},
+        )
+        return None
     kind, why = await kind_for(db, repo, pending)
     if why is not None:
         log.info(

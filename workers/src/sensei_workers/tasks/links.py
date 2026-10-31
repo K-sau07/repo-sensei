@@ -77,7 +77,11 @@ PROGRESS_EVERY_SECONDS = 1.0
 # The running apps' routes, as the sandbox read them, kept with the snapshot: an incremental run
 # that changed no Python file reads them from the last index rather than running the apps again.
 ROUTES_ARTIFACT = "runtime-routes.json"
+ROUTES_VERSION = 1  # of what it holds (a Route's fields): another version's isn't read
 MAX_ROUTES_BYTES = 64 * 1024 * 1024
+# What the running apps' routes depend on besides Python: their dependencies and configuration.
+APP_INPUTS = (".py", ".pyi", ".toml", ".cfg", ".ini", ".txt", ".lock", ".yaml", ".yml", ".json")
+APP_NAMES = ("Pipfile", "Dockerfile", ".env")
 STAGE_ORDER = list(Stage)
 UNREAD_FLAGS = frozenset({Flag.BINARY, Flag.TOO_LARGE, Flag.LFS_POINTER})
 
@@ -186,12 +190,20 @@ async def _runtime(
 
 
 def routes_json(routes: RuntimeRoutes) -> bytes:
-    return orjson.dumps(asdict(routes))
+    return orjson.dumps({"version": ROUTES_VERSION, **asdict(routes)})
 
 
-def routes_from(data: bytes) -> RuntimeRoutes:
-    """What :func:`routes_json` wrote."""
-    raw = cast("dict[str, Any]", orjson.loads(data))
+def routes_from(data: bytes) -> RuntimeRoutes | None:
+    """What :func:`routes_json` wrote (None: another version's, or unreadable)."""
+    try:
+        return _routes(cast("dict[str, Any]", orjson.loads(data)))
+    except (orjson.JSONDecodeError, TypeError, KeyError, ValueError):
+        return None
+
+
+def _routes(raw: dict[str, Any]) -> RuntimeRoutes | None:
+    if raw.get("version") != ROUTES_VERSION:
+        return None
     routes: list[Route] = []
     for found in cast("list[dict[str, Any]]", raw.get("routes", [])):
         fields = dict(found)
@@ -208,8 +220,12 @@ def routes_from(data: bytes) -> RuntimeRoutes:
 
 def introspect_again(changed: set[str]) -> bool:
     """Whether an incremental run reads the apps' routes again: a Python file (a router, an
-    app, or what they import) was added, changed, moved or deleted."""
-    return any(path.endswith((".py", ".pyi")) for path in changed)
+    app, or what they import), a dependency manifest or a configuration file was added,
+    changed, moved or deleted."""
+    return any(
+        path.endswith(APP_INPUTS) or path.rsplit("/", 1)[-1].startswith(APP_NAMES)
+        for path in changed
+    )
 
 
 async def _kept_routes(task: SenseiTask, target: Target, carry: Carry) -> RuntimeRoutes | None:
@@ -333,7 +349,7 @@ def build_links(self: IngestTask, *, job_id: str, org_id: str, repo_id: str) -> 
             kept = routes is not None
             if not kept:
                 routes = runtime.run(_runtime(self, target, root, found))
-            if routes is not None:
+            if routes is not None and routes.limitation is None:  # a sandbox's failure isn't kept
                 runtime.run(_keep_routes(target, routes))
             counts = runtime.run(
                 _build(

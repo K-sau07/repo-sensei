@@ -15,7 +15,17 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from sensei_core.mail import MemoryMailer
-from sensei_core.models import IndexJob, JobKind, JobStatus, Membership, Org, Repo, Snapshot, User
+from sensei_core.models import (
+    IndexJob,
+    JobKind,
+    JobStatus,
+    Membership,
+    Org,
+    Repo,
+    RepoRef,
+    Snapshot,
+    User,
+)
 from sensei_core.models.indexing import SnapshotStatus
 from sensei_core.orgs.service import OrgService
 from sensei_testing import sign_in
@@ -56,8 +66,11 @@ async def test_refs_say_what_each_ones_index_is(
         db_session.add(found)
         return found
 
-    snapshot("web", "c", overlay_of=main.id)
-    snapshot("pull/12", "d", overlay_of=main.id)
+    web = snapshot("web", "c", overlay_of=main.id)
+    pull = snapshot("pull/12", "d", overlay_of=main.id)
+    await db_session.flush()
+    for ref, found in (("main", main), ("web", web), ("pull/12", pull)):  # as their runs left them
+        db_session.add(RepoRef(org_id=repo.org_id, repo_id=repo.id, ref=ref, snapshot_id=found.id))
     db_session.add_all(
         [
             IndexJob(

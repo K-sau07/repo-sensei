@@ -117,6 +117,27 @@ class Snapshot(IdMixin, OrgScopedMixin, Base):
     ready_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
+class RepoRef(IdMixin, OrgScopedMixin, Base):
+    """What a ref reads (5.4): a repository's branch or pull request (``pull/N``), and the
+    snapshot its index is. Snapshots are one per commit, so refs at one commit share one."""
+
+    __tablename__ = "repo_refs"
+    __table_args__ = (
+        UniqueConstraint("repo_id", "ref"),
+        Index("ix_repo_refs_snapshot_id", "snapshot_id"),
+        ForeignKeyConstraint(
+            ["repo_id", "org_id"], ["repos.id", "repos.org_id"], ondelete="CASCADE"
+        ),
+    )
+
+    repo_id: Mapped[uuid.UUID] = mapped_column()
+    ref: Mapped[str] = mapped_column(String(255))
+    snapshot_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("snapshots.id", ondelete="CASCADE"))
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
 class IndexJob(IdMixin, OrgScopedMixin, Base):
     """One indexing run. ``stages`` holds per-stage progress::
 

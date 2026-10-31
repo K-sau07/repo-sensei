@@ -26,10 +26,11 @@ from typing import Any
 
 from celery import chain
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from sensei_core.indexing.events import JobOutbox
 from sensei_core.indexing.jobs import JOB_USAGE_REF, settle_repo
-from sensei_core.indexing.snapshots import ref_heads
+from sensei_core.indexing.snapshots import point_ref, ref_heads
 from sensei_core.indexing.state import IndexJobStateMachine
 from sensei_core.jobs import TaskName, chain_key
 from sensei_core.logging import get_logger
@@ -94,6 +95,22 @@ def _send_once(job_id: str, what: str) -> bool:
     return bool(get_runtime().sync_redis.set(key, "1", nx=True, ex=CHAIN_TTL_SECONDS))
 
 
+async def _settle_ref(db: AsyncSession, job: IndexJob, repo: Repo, snapshot: Snapshot) -> int:
+    """The run's ref reads its snapshot now. The repository's index is its default branch's: a
+    tracked branch's (or a pull request's) run is an overlay beside it (5.4), which neither
+    moves it nor prunes; the default branch's prunes what no ref reads. Returns the chunks
+    pruned."""
+    await point_ref(db, repo, job.ref or repo.default_branch, snapshot)
+    if job.ref is None or job.ref == repo.default_branch:
+        repo.last_indexed_sha = snapshot.commit_sha
+        heads = [s.id for s in (await ref_heads(db, repo)).values()]
+        return await prune_chunks(db, repo.id, keep=snapshot.id, also=heads)
+    if job.kind is JobKind.INCREMENTAL:  # built on the default branch's index
+        base = await previous_of(db, repo, snapshot)
+        snapshot.overlay_of = base.id if base is not None else None
+    return 0
+
+
 @celery_app.task(
     bind=True,
     base=IngestTask,
@@ -124,20 +141,7 @@ def finalize_index(self: IngestTask, *, job_id: str, org_id: str, repo_id: str) 
                 raise NotYetError("the job has no snapshot")
             if ready:
                 machine.advance(Stage.FINALIZE)
-            # The repository's index is its default branch's: a tracked branch's run (5.1) is kept
-            # beside it, and neither moves it nor prunes its chunks.
-            default = job.ref is None or job.ref == repo.default_branch
-            pruned = 0
-            if default:
-                repo.last_indexed_sha = snapshot.commit_sha
-                # Branches' and pull requests' latest stay searchable by their ref (5.4).
-                heads = [s.id for s in (await ref_heads(scope.db, repo)).values()]
-                pruned = await prune_chunks(scope.db, repo.id, keep=snapshot.id, also=heads)
-            elif job.kind is JobKind.INCREMENTAL:
-                # An overlay (5.4): built on the default branch's index, its unchanged files'
-                # facts carried from it.
-                base = await previous_of(scope.db, repo, snapshot)
-                snapshot.overlay_of = base.id if base is not None else None
+            pruned = await _settle_ref(scope.db, job, repo, snapshot)
             settle_repo(repo, JobStatus.SUCCEEDED)
             # What the run was charged (embeddings, summaries), on the job and by kind.
             costs = await costs_of(scope.db, job.org_id, JOB_USAGE_REF, str(job.id))

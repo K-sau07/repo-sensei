@@ -28,6 +28,7 @@ log = get_logger(__name__)
 class Outcome(enum.StrEnum):
     STARTED = "started"
     WAITING = "waiting"  # a run is going: tried again later
+    INDEXED = "indexed"  # its commit was indexed already: the ref points at it, nothing ran
     SUPERSEDED = "superseded"  # a later push's timer has the branch (or it was indexed)
     UNTRACKED = "untracked"  # the repository went, or no longer tracks the branch
 
@@ -47,6 +48,7 @@ async def begin(
     if pending is None:
         return Outcome.SUPERSEDED, None
     outbox = JobOutbox()
+    outcome = Outcome.UNTRACKED
     async with task.org_session(org_id) as db:
         repo = await db.get(Repo, repo_id)
         if repo is None or not pushes.indexable(repo) or not pushes.tracks(repo, branch):
@@ -58,9 +60,11 @@ async def begin(
                 job = await pushes.start(db, repo, branch, pending, outbox)
             except pushes.JobRunningError:
                 return Outcome.WAITING, None
+            if job is None:
+                outcome = Outcome.INDEXED
     await pushes.done(redis, repo_id, branch, token)
     if job is None:
-        return Outcome.UNTRACKED, None
+        return outcome, None
     await outbox.publish(redis)
     return Outcome.STARTED, job
 

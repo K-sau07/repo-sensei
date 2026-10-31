@@ -145,6 +145,7 @@ async def test_a_burst_of_pushes_is_one_pending_push_whose_last_timer_runs_it(
     # Its run is queued once; a second start while it is queued waits for it.
     outbox = JobOutbox()
     job = await pushes.start(system_session, repo, "main", pending, outbox)
+    assert job is not None
     assert (job.kind, job.ref, job.target_sha) == (JobKind.FULL, "main", SHA[3])  # no index yet
     assert await pushes.running(system_session, repo)
     with pytest.raises(pushes.JobRunningError):
@@ -189,6 +190,7 @@ async def test_a_push_after_an_index_is_incremental_and_a_forced_one_full(
     kind, why = await pushes.kind_for(system_session, repo, pending)
     assert (kind, why) == (JobKind.FULL, "a forced push rewrote the branch's history")
     job = await pushes.start(system_session, repo, "main", pending, JobOutbox())
+    assert job is not None
     assert job.kind is JobKind.FULL
     assert token != latest
 
@@ -243,6 +245,7 @@ async def test_a_tracked_branch_is_noted_and_its_run_kept_apart(
     pending = await pushes.due(fake_redis, repo.id, "release", timers.set[0][2])
     assert pending is not None
     job = await pushes.start(system_session, repo, "release", pending, JobOutbox())
+    assert job is not None
     assert (job.ref, job.status) == ("release", JobStatus.QUEUED)
     found = await system_session.scalar(select(IndexJob).where(IndexJob.id == job.id))
     assert found is not None
@@ -288,3 +291,20 @@ async def test_a_pull_request_is_indexed_as_an_overlay_only_when_the_repository_
         system_session, fake_redis, timers, _push("refs/heads/pull/7", SHA[0], SHA[2])
     )
     assert status is DeliveryStatus.IGNORED
+
+
+@pytest.mark.integration
+async def test_pushes_delivered_out_of_order_index_the_latest_commit(
+    fake_redis: FakeAsyncRedis,
+) -> None:
+    repo_id = uuid.uuid4()
+    # A pushes to B, then B to C; their deliveries come C first.
+    late = await pushes.note(
+        fake_redis, repo_id, "main", after=SHA[2], before=SHA[1], forced=False, token="c"
+    )
+    assert (late.after, late.before) == (SHA[2], SHA[1])
+    folded = await pushes.note(
+        fake_redis, repo_id, "main", after=SHA[1], before=SHA[0], forced=False, token="b"
+    )
+    assert (folded.after, folded.before) == (SHA[2], SHA[0])  # still C, from A
+    assert folded.token == "b"  # the last delivered's timer runs it

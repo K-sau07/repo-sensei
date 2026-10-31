@@ -3,18 +3,19 @@
 Each index run takes a snapshot of its own; an incremental one builds on the repository's last
 index, and the snapshots before it serve diffs and older links for a while. A snapshot taken
 more than ``ingest.snapshot_retention_days`` ago goes, unless it is still in use: the
-repository's index (its last indexed commit), the latest of any branch's runs, or one a run
-queued or going is building.
+repository's index (its last indexed commit), what a ref reads (``repo_refs``: a branch's or a
+pull request's last good run, not merely its latest), or one a run queued or going is
+building.
 """
 
 from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import exists, func, select, tuple_
+from sqlalchemy import exists, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from sensei_core.models import ACTIVE_JOB_STATUSES, IndexJob, Repo, Snapshot
+from sensei_core.models import ACTIVE_JOB_STATUSES, IndexJob, Repo, RepoRef, Snapshot
 
 SWEEP_LIMIT = 200  # snapshots deleted per sweep (the next one takes the rest)
 
@@ -24,11 +25,7 @@ async def expired(
 ) -> list[Snapshot]:
     """Snapshots taken before ``before`` and in no use (see the module), oldest first. Reads
     every org's: a system session."""
-    latest = (
-        select(Snapshot.repo_id, Snapshot.ref, func.max(Snapshot.created_at).label("at"))
-        .group_by(Snapshot.repo_id, Snapshot.ref)
-        .subquery()
-    )
+    pointed = exists().where(RepoRef.snapshot_id == Snapshot.id)  # what a ref reads (5.4)
     building = exists().where(
         IndexJob.snapshot_id == Snapshot.id, IndexJob.status.in_(ACTIVE_JOB_STATUSES)
     )
@@ -38,9 +35,7 @@ async def expired(
         .where(
             Snapshot.created_at < before,
             Snapshot.commit_sha != func.coalesce(Repo.last_indexed_sha, ""),
-            tuple_(Snapshot.repo_id, Snapshot.ref, Snapshot.created_at).not_in(
-                select(latest.c.repo_id, latest.c.ref, latest.c.at)
-            ),
+            ~pointed,
             ~building,
         )
         .order_by(Snapshot.created_at)
