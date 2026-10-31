@@ -149,6 +149,16 @@ class GraphSnapshot:
         index = self._index.get(key)
         return self.nodes[index] if index is not None else None
 
+    def edges_out(self, key: str) -> list[tuple[str, Edge]]:
+        """The edges out of ``key``: where each goes, and the edge (unknown key: none)."""
+        index = self._index.get(key)
+        if index is None:
+            return []
+        return [
+            (self.nodes[there].symbol_key, self.edges[edge_index])
+            for _, there, edge_index in self.graph.out_edges(index)
+        ]
+
     # ------------------------------------------------------------------ building
 
     @classmethod

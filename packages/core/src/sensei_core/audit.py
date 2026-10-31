@@ -50,6 +50,8 @@ class AuditAction(enum.StrEnum):
     AGENT_COST_CAP_WARNING = "agent.cost_cap_warning"
     CONVERSATION_SHARED = "conversation.shared"
     CONVERSATION_UNSHARED = "conversation.unshared"
+    DIAGRAM_SHARED = "diagram.shared"
+    DIAGRAM_UNSHARED = "diagram.unshared"
 
 
 def _clean_meta(meta: dict[str, Any] | None) -> dict[str, Any]:

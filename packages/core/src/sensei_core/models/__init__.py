@@ -14,6 +14,7 @@ from sensei_core.models.conversations import (
     MessageCitation,
     MessageFeedback,
 )
+from sensei_core.models.diagrams import Diagram, DiagramKind, DiagramSource
 from sensei_core.models.embeddings import EmbeddingCache
 from sensei_core.models.evals import EvalRun
 from sensei_core.models.files import RepoFile
@@ -61,6 +62,9 @@ __all__ = [
     "Conversation",
     "ConversationMessage",
     "DeliveryStatus",
+    "Diagram",
+    "DiagramKind",
+    "DiagramSource",
     "EdgeType",
     "EmbeddingCache",
     "EvalRun",

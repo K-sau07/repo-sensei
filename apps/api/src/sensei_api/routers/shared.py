@@ -1,17 +1,20 @@
-"""``GET /s/{token}`` (4.11): a shared conversation, read-only, signed in or not.
+"""``GET /s/{token}`` (4.11): a shared conversation, read-only, signed in or not; and
+``GET /d/{token}`` (6.1), a shared diagram, likewise.
 
 The token's hash finds the one conversation (row-level security lets a transaction read the
 conversation whose hash it presents, and no other). Its citations are shown to a viewer who can
 read its repository: anyone, for a public repository imported by its URL; else a member of the
 org whom GitHub lets read it. Anyone else sees the answers with their citations redacted
 (:mod:`sensei_api.sharing`). An unknown or reset link is not found, nor is one whose org or
-repository is gone, or whose sharer has left the org.
+repository is gone, or whose sharer has left the org. A diagram shown to a viewer who can't read
+its repository keeps its labels but not its code: no files, no lines, no links.
 """
 
 from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from typing import Any, cast
 
 import structlog
 from fastapi import APIRouter, Request
@@ -24,12 +27,21 @@ from sensei_api.deps import DbSession
 from sensei_api.repos import repo_access
 from sensei_api.routers.ask import MessageOut, citations_of, message_out
 from sensei_api.routers.auth import GitHubOAuthDep
+from sensei_api.routers.diagrams import DiagramOut, diagram_out
 from sensei_api.sharing import share_token_hash, shown
 from sensei_core.db.tenancy import set_org_context, set_share_context
 from sensei_core.errors import NotFoundError
 from sensei_core.github.client import GitHubError
 from sensei_core.github.oauth import GitHubOAuth, OAuthError
-from sensei_core.models import Conversation, ConversationMessage, Membership, Org, Repo, User
+from sensei_core.models import (
+    Conversation,
+    ConversationMessage,
+    Diagram,
+    Membership,
+    Org,
+    Repo,
+    User,
+)
 from sensei_core.repos.access import open_to_all
 
 log = structlog.get_logger(__name__)
@@ -94,6 +106,57 @@ async def shared(
             for m in messages
         ],
     )
+
+
+class SharedDiagram(BaseModel):
+    repo: str | None  # "owner/name", for a viewer who can read it
+    redacted: bool  # its code is hidden from this viewer
+    diagram: DiagramOut
+
+
+@router.get("/d/{token}", response_model=SharedDiagram)
+async def shared_diagram(
+    *, request: Request, db: DbSession, oauth: GitHubOAuthDep, token: str
+) -> SharedDiagram:
+    """A shared diagram, read-only."""
+    if not token or len(token) > MAX_TOKEN_CHARS:
+        raise _gone()
+    token_hash = share_token_hash(token)
+    await set_share_context(db, token_hash)
+    found = await db.scalar(select(Diagram).where(Diagram.share_token_hash == token_hash))
+    if found is None:
+        raise _gone()
+    org = await db.get(Org, found.org_id)
+    if org is None or org.deleted_at is not None:
+        raise _gone()
+    viewer = await _viewer(request, db)
+    await set_org_context(db, found.org_id)
+    repo = await db.get(Repo, found.repo_id)
+    if repo is None or repo.deleted_at is not None:
+        raise _gone()
+    if found.created_by is None or not await _member(db, found.created_by, found.org_id):
+        raise _gone()
+    readable = await _can_read(request, db, oauth, viewer, repo)
+    shown_diagram = diagram_out(found, org.slug, repo, links=readable)
+    if not readable:
+        shown_diagram.spec = _without_code(shown_diagram.spec)
+        shown_diagram.prompt = {}
+    return SharedDiagram(
+        repo=f"{repo.owner}/{repo.name}" if readable else None,
+        redacted=not readable,
+        diagram=shown_diagram,
+    )
+
+
+def _without_code(spec: dict[str, Any]) -> dict[str, Any]:
+    """A spec with its nodes' citations and its edges' evidence left out."""
+    nodes = cast("list[dict[str, Any]]", spec.get("nodes") or [])
+    edges = cast("list[dict[str, Any]]", spec.get("edges") or [])
+    return {
+        **spec,
+        "nodes": [{**node, "citation": None} for node in nodes],
+        "edges": [{**edge, "provenance": None} for edge in edges],
+    }
 
 
 async def _viewer(request: Request, db: AsyncSession) -> User | None:

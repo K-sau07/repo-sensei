@@ -78,6 +78,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/d/{token}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Shared Diagram
+         * @description A shared diagram, read-only.
+         */
+        get: operations["shared_diagram_api_v1_d__token__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/github/install": {
         parameters: {
             query?: never;
@@ -826,6 +846,74 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/orgs/{org}/repos/{repo}/diagrams": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Diagrams
+         * @description The repository's diagrams, newest first.
+         */
+        get: operations["list_diagrams_api_v1_orgs__org__repos__repo__diagrams_get"];
+        put?: never;
+        /**
+         * Create Diagram
+         * @description Draw a diagram from a trace or a question, at the index (or ``ref``), and keep it.
+         */
+        post: operations["create_diagram_api_v1_orgs__org__repos__repo__diagrams_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/repos/{repo}/diagrams/{diagram_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Diagram
+         * @description A diagram: its spec and its Mermaid.
+         */
+        get: operations["get_diagram_api_v1_orgs__org__repos__repo__diagrams__diagram_id__get"];
+        put?: never;
+        post?: never;
+        /** Delete Diagram */
+        delete: operations["delete_diagram_api_v1_orgs__org__repos__repo__diagrams__diagram_id__delete"];
+        options?: never;
+        head?: never;
+        /** Rename Diagram */
+        patch: operations["rename_diagram_api_v1_orgs__org__repos__repo__diagrams__diagram_id__patch"];
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/repos/{repo}/diagrams/{diagram_id}/share": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Share Diagram
+         * @description A link that opens the diagram read-only, signed in or not (its code hidden from a viewer
+         *     who can't read the repository). Asked again, a new link: the old one stops working.
+         */
+        post: operations["share_diagram_api_v1_orgs__org__repos__repo__diagrams__diagram_id__share_post"];
+        /** Unshare Diagram */
+        delete: operations["unshare_diagram_api_v1_orgs__org__repos__repo__diagrams__diagram_id__share_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/orgs/{org}/repos/{repo}/feature-maps": {
         parameters: {
             query?: never;
@@ -1392,7 +1480,7 @@ export interface components {
          * AuditAction
          * @enum {string}
          */
-        AuditAction: "auth.login" | "auth.logout" | "auth.logout_all" | "org.create" | "org.update" | "org.delete" | "invitation.create" | "invitation.revoke" | "invitation.accept" | "member.role_change" | "member.remove" | "member.leave" | "github.install.linked" | "github.install.deleted" | "github.install.suspended" | "github.install.unsuspended" | "github.install.permissions_accepted" | "repo.connected" | "repo.settings_update" | "repo.disconnected" | "repo.index_started" | "repo.index_cancelled" | "agent.cost_cap_warning" | "conversation.shared" | "conversation.unshared";
+        AuditAction: "auth.login" | "auth.logout" | "auth.logout_all" | "org.create" | "org.update" | "org.delete" | "invitation.create" | "invitation.revoke" | "invitation.accept" | "member.role_change" | "member.remove" | "member.leave" | "github.install.linked" | "github.install.deleted" | "github.install.suspended" | "github.install.unsuspended" | "github.install.permissions_accepted" | "repo.connected" | "repo.settings_update" | "repo.disconnected" | "repo.index_started" | "repo.index_cancelled" | "agent.cost_cap_warning" | "conversation.shared" | "conversation.unshared" | "diagram.shared" | "diagram.unshared";
         /** AuditEventOut */
         AuditEventOut: {
             /** Action */
@@ -1681,6 +1769,111 @@ export interface components {
         };
         /** ConversationUpdate */
         ConversationUpdate: {
+            /** Title */
+            title: string;
+        };
+        /** DiagramIn */
+        DiagramIn: {
+            from_trace?: components["schemas"]["FromTrace"] | null;
+            /** @default flowchart */
+            kind: components["schemas"]["DiagramKind"];
+            /** Question */
+            question?: string | null;
+            /** Title */
+            title?: string | null;
+        };
+        /**
+         * DiagramKind
+         * @enum {string}
+         */
+        DiagramKind: "sequence" | "flowchart" | "architecture";
+        /** DiagramList */
+        DiagramList: {
+            /** Diagrams */
+            diagrams: components["schemas"]["DiagramSummary"][];
+        };
+        /** DiagramOut */
+        DiagramOut: {
+            /** Commit Sha */
+            commit_sha: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Created By */
+            created_by: string | null;
+            /** Edges */
+            edges: number;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            kind: components["schemas"]["DiagramKind"];
+            /** Mermaid */
+            mermaid: string;
+            /** Nodes */
+            nodes: number;
+            /** Prompt */
+            prompt: {
+                [key: string]: unknown;
+            };
+            /** Shared */
+            shared: boolean;
+            source: components["schemas"]["DiagramSource"];
+            /** Spec */
+            spec: {
+                [key: string]: unknown;
+            };
+            /** Title */
+            title: string;
+            /** Verified Ratio */
+            verified_ratio: number;
+        };
+        /** DiagramShareOut */
+        DiagramShareOut: {
+            /** Path */
+            path: string;
+            /** Token */
+            token: string;
+        };
+        /**
+         * DiagramSource
+         * @enum {string}
+         */
+        DiagramSource: "trace" | "question";
+        /** DiagramSummary */
+        DiagramSummary: {
+            /** Commit Sha */
+            commit_sha: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Created By */
+            created_by: string | null;
+            /** Edges */
+            edges: number;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            kind: components["schemas"]["DiagramKind"];
+            /** Nodes */
+            nodes: number;
+            /** Shared */
+            shared: boolean;
+            source: components["schemas"]["DiagramSource"];
+            /** Title */
+            title: string;
+            /** Verified Ratio */
+            verified_ratio: number;
+        };
+        /** DiagramUpdate */
+        DiagramUpdate: {
             /** Title */
             title: string;
         };
@@ -1974,6 +2167,33 @@ export interface components {
             behind: number | null;
             /** Indexed At */
             indexed_at: string | null;
+        };
+        /** FromTrace */
+        FromTrace: {
+            /**
+             * Direction
+             * @default both
+             * @enum {string}
+             */
+            direction: "down" | "up" | "both";
+            /** Feature */
+            feature?: string | null;
+            /** From */
+            from: string;
+            /**
+             * Kind
+             * @default auto
+             * @enum {string}
+             */
+            kind: "auto" | "ui" | "route" | "symbol";
+            /**
+             * Path
+             * @description Which of its paths (1: the surest).
+             * @default 1
+             */
+            path: number;
+            /** To */
+            to?: string | null;
         };
         /** GraphEdgeOut */
         GraphEdgeOut: {
@@ -3092,6 +3312,14 @@ export interface components {
              */
             updated_at: string;
         };
+        /** SharedDiagram */
+        SharedDiagram: {
+            diagram: components["schemas"]["DiagramOut"];
+            /** Redacted */
+            redacted: boolean;
+            /** Repo */
+            repo: string | null;
+        };
         /** SlugAvailability */
         SlugAvailability: {
             /** Available */
@@ -3558,6 +3786,37 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+        };
+    };
+    shared_diagram_api_v1_d__token__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                token: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SharedDiagram"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
             };
         };
     };
@@ -5149,6 +5408,258 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["ConversationList"];
                 };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_diagrams_api_v1_orgs__org__repos__repo__diagrams_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                /** @description Repository slug */
+                repo: string;
+                /** @description Organization slug */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DiagramList"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_diagram_api_v1_orgs__org__repos__repo__diagrams_post: {
+        parameters: {
+            query?: {
+                /** @description Branch or commit (or its first 7+ characters). */
+                ref?: string | null;
+            };
+            header?: never;
+            path: {
+                /** @description Organization slug */
+                org: string;
+                /** @description Repository slug */
+                repo: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DiagramIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DiagramOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_diagram_api_v1_orgs__org__repos__repo__diagrams__diagram_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                diagram_id: string;
+                /** @description Organization slug */
+                org: string;
+                /** @description Repository slug */
+                repo: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DiagramOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_diagram_api_v1_orgs__org__repos__repo__diagrams__diagram_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                diagram_id: string;
+                /** @description Organization slug */
+                org: string;
+                /** @description Repository slug */
+                repo: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    rename_diagram_api_v1_orgs__org__repos__repo__diagrams__diagram_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                diagram_id: string;
+                /** @description Organization slug */
+                org: string;
+                /** @description Repository slug */
+                repo: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DiagramUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DiagramOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    share_diagram_api_v1_orgs__org__repos__repo__diagrams__diagram_id__share_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                diagram_id: string;
+                /** @description Organization slug */
+                org: string;
+                /** @description Repository slug */
+                repo: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DiagramShareOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    unshare_diagram_api_v1_orgs__org__repos__repo__diagrams__diagram_id__share_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                diagram_id: string;
+                /** @description Organization slug */
+                org: string;
+                /** @description Repository slug */
+                repo: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Validation Error */
             422: {

@@ -241,7 +241,9 @@
           "repo.index_cancelled",
           "agent.cost_cap_warning",
           "conversation.shared",
-          "conversation.unshared"
+          "conversation.unshared",
+          "diagram.shared",
+          "diagram.unshared"
         ],
         "title": "AuditAction",
         "type": "string"
@@ -973,6 +975,277 @@
         "title": "ConversationUpdate",
         "type": "object"
       },
+      "DiagramIn": {
+        "properties": {
+          "from_trace": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FromTrace"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "kind": {
+            "$ref": "#/components/schemas/DiagramKind",
+            "default": "flowchart"
+          },
+          "question": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Question"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          }
+        },
+        "title": "DiagramIn",
+        "type": "object"
+      },
+      "DiagramKind": {
+        "enum": [
+          "sequence",
+          "flowchart",
+          "architecture"
+        ],
+        "title": "DiagramKind",
+        "type": "string"
+      },
+      "DiagramList": {
+        "properties": {
+          "diagrams": {
+            "items": {
+              "$ref": "#/components/schemas/DiagramSummary"
+            },
+            "title": "Diagrams",
+            "type": "array"
+          }
+        },
+        "required": [
+          "diagrams"
+        ],
+        "title": "DiagramList",
+        "type": "object"
+      },
+      "DiagramOut": {
+        "properties": {
+          "commit_sha": {
+            "title": "Commit Sha",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "created_by": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created By"
+          },
+          "edges": {
+            "title": "Edges",
+            "type": "integer"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/DiagramKind"
+          },
+          "mermaid": {
+            "title": "Mermaid",
+            "type": "string"
+          },
+          "nodes": {
+            "title": "Nodes",
+            "type": "integer"
+          },
+          "prompt": {
+            "additionalProperties": true,
+            "title": "Prompt",
+            "type": "object"
+          },
+          "shared": {
+            "title": "Shared",
+            "type": "boolean"
+          },
+          "source": {
+            "$ref": "#/components/schemas/DiagramSource"
+          },
+          "spec": {
+            "additionalProperties": true,
+            "title": "Spec",
+            "type": "object"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "verified_ratio": {
+            "title": "Verified Ratio",
+            "type": "number"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "kind",
+          "source",
+          "commit_sha",
+          "verified_ratio",
+          "nodes",
+          "edges",
+          "created_by",
+          "shared",
+          "created_at",
+          "prompt",
+          "spec",
+          "mermaid"
+        ],
+        "title": "DiagramOut",
+        "type": "object"
+      },
+      "DiagramShareOut": {
+        "properties": {
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "token": {
+            "title": "Token",
+            "type": "string"
+          }
+        },
+        "required": [
+          "token",
+          "path"
+        ],
+        "title": "DiagramShareOut",
+        "type": "object"
+      },
+      "DiagramSource": {
+        "enum": [
+          "trace",
+          "question"
+        ],
+        "title": "DiagramSource",
+        "type": "string"
+      },
+      "DiagramSummary": {
+        "properties": {
+          "commit_sha": {
+            "title": "Commit Sha",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "created_by": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created By"
+          },
+          "edges": {
+            "title": "Edges",
+            "type": "integer"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/DiagramKind"
+          },
+          "nodes": {
+            "title": "Nodes",
+            "type": "integer"
+          },
+          "shared": {
+            "title": "Shared",
+            "type": "boolean"
+          },
+          "source": {
+            "$ref": "#/components/schemas/DiagramSource"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "verified_ratio": {
+            "title": "Verified Ratio",
+            "type": "number"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "kind",
+          "source",
+          "commit_sha",
+          "verified_ratio",
+          "nodes",
+          "edges",
+          "created_by",
+          "shared",
+          "created_at"
+        ],
+        "title": "DiagramSummary",
+        "type": "object"
+      },
+      "DiagramUpdate": {
+        "properties": {
+          "title": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "title"
+        ],
+        "title": "DiagramUpdate",
+        "type": "object"
+      },
       "DirectorySummaryOut": {
         "properties": {
           "path": {
@@ -1647,6 +1920,76 @@
           "behind"
         ],
         "title": "FreshnessOut",
+        "type": "object"
+      },
+      "FromTrace": {
+        "properties": {
+          "direction": {
+            "default": "both",
+            "enum": [
+              "down",
+              "up",
+              "both"
+            ],
+            "title": "Direction",
+            "type": "string"
+          },
+          "feature": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Feature"
+          },
+          "from": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "From",
+            "type": "string"
+          },
+          "kind": {
+            "default": "auto",
+            "enum": [
+              "auto",
+              "ui",
+              "route",
+              "symbol"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "path": {
+            "default": 1,
+            "description": "Which of its paths (1: the surest).",
+            "maximum": 3.0,
+            "minimum": 1.0,
+            "title": "Path",
+            "type": "integer"
+          },
+          "to": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "To"
+          }
+        },
+        "required": [
+          "from"
+        ],
+        "title": "FromTrace",
         "type": "object"
       },
       "GraphEdgeOut": {
@@ -4702,6 +5045,35 @@
         "title": "SharedConversation",
         "type": "object"
       },
+      "SharedDiagram": {
+        "properties": {
+          "diagram": {
+            "$ref": "#/components/schemas/DiagramOut"
+          },
+          "redacted": {
+            "title": "Redacted",
+            "type": "boolean"
+          },
+          "repo": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Repo"
+          }
+        },
+        "required": [
+          "repo",
+          "redacted",
+          "diagram"
+        ],
+        "title": "SharedDiagram",
+        "type": "object"
+      },
       "SlugAvailability": {
         "properties": {
           "available": {
@@ -5963,6 +6335,49 @@
         "summary": "Logout All",
         "tags": [
           "auth"
+        ]
+      }
+    },
+    "/api/v1/d/{token}": {
+      "get": {
+        "description": "A shared diagram, read-only.",
+        "operationId": "shared_diagram_api_v1_d__token__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "token",
+            "required": true,
+            "schema": {
+              "title": "Token",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SharedDiagram"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Shared Diagram",
+        "tags": [
+          "ask"
         ]
       }
     },
@@ -8563,6 +8978,481 @@
         "summary": "Conversations",
         "tags": [
           "ask"
+        ]
+      }
+    },
+    "/api/v1/orgs/{org}/repos/{repo}/diagrams": {
+      "get": {
+        "description": "The repository's diagrams, newest first.",
+        "operationId": "list_diagrams_api_v1_orgs__org__repos__repo__diagrams_get",
+        "parameters": [
+          {
+            "description": "Repository slug",
+            "in": "path",
+            "name": "repo",
+            "required": true,
+            "schema": {
+              "description": "Repository slug",
+              "maxLength": 201,
+              "title": "Repo",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Organization slug",
+            "in": "path",
+            "name": "org",
+            "required": true,
+            "schema": {
+              "description": "Organization slug",
+              "title": "Org",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 50,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DiagramList"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Diagrams",
+        "tags": [
+          "diagrams"
+        ]
+      },
+      "post": {
+        "description": "Draw a diagram from a trace or a question, at the index (or ``ref``), and keep it.",
+        "operationId": "create_diagram_api_v1_orgs__org__repos__repo__diagrams_post",
+        "parameters": [
+          {
+            "description": "Organization slug",
+            "in": "path",
+            "name": "org",
+            "required": true,
+            "schema": {
+              "description": "Organization slug",
+              "title": "Org",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Repository slug",
+            "in": "path",
+            "name": "repo",
+            "required": true,
+            "schema": {
+              "description": "Repository slug",
+              "maxLength": 201,
+              "title": "Repo",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Branch or commit (or its first 7+ characters).",
+            "in": "query",
+            "name": "ref",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 255,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Branch or commit (or its first 7+ characters).",
+              "title": "Ref"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DiagramIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DiagramOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Diagram",
+        "tags": [
+          "diagrams"
+        ]
+      }
+    },
+    "/api/v1/orgs/{org}/repos/{repo}/diagrams/{diagram_id}": {
+      "delete": {
+        "operationId": "delete_diagram_api_v1_orgs__org__repos__repo__diagrams__diagram_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "diagram_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Diagram Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Organization slug",
+            "in": "path",
+            "name": "org",
+            "required": true,
+            "schema": {
+              "description": "Organization slug",
+              "title": "Org",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Repository slug",
+            "in": "path",
+            "name": "repo",
+            "required": true,
+            "schema": {
+              "description": "Repository slug",
+              "maxLength": 201,
+              "title": "Repo",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Diagram",
+        "tags": [
+          "diagrams"
+        ]
+      },
+      "get": {
+        "description": "A diagram: its spec and its Mermaid.",
+        "operationId": "get_diagram_api_v1_orgs__org__repos__repo__diagrams__diagram_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "diagram_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Diagram Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Organization slug",
+            "in": "path",
+            "name": "org",
+            "required": true,
+            "schema": {
+              "description": "Organization slug",
+              "title": "Org",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Repository slug",
+            "in": "path",
+            "name": "repo",
+            "required": true,
+            "schema": {
+              "description": "Repository slug",
+              "maxLength": 201,
+              "title": "Repo",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DiagramOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Diagram",
+        "tags": [
+          "diagrams"
+        ]
+      },
+      "patch": {
+        "operationId": "rename_diagram_api_v1_orgs__org__repos__repo__diagrams__diagram_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "diagram_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Diagram Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Organization slug",
+            "in": "path",
+            "name": "org",
+            "required": true,
+            "schema": {
+              "description": "Organization slug",
+              "title": "Org",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Repository slug",
+            "in": "path",
+            "name": "repo",
+            "required": true,
+            "schema": {
+              "description": "Repository slug",
+              "maxLength": 201,
+              "title": "Repo",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DiagramUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DiagramOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Rename Diagram",
+        "tags": [
+          "diagrams"
+        ]
+      }
+    },
+    "/api/v1/orgs/{org}/repos/{repo}/diagrams/{diagram_id}/share": {
+      "delete": {
+        "operationId": "unshare_diagram_api_v1_orgs__org__repos__repo__diagrams__diagram_id__share_delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "diagram_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Diagram Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Organization slug",
+            "in": "path",
+            "name": "org",
+            "required": true,
+            "schema": {
+              "description": "Organization slug",
+              "title": "Org",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Repository slug",
+            "in": "path",
+            "name": "repo",
+            "required": true,
+            "schema": {
+              "description": "Repository slug",
+              "maxLength": 201,
+              "title": "Repo",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Unshare Diagram",
+        "tags": [
+          "diagrams"
+        ]
+      },
+      "post": {
+        "description": "A link that opens the diagram read-only, signed in or not (its code hidden from a viewer\nwho can't read the repository). Asked again, a new link: the old one stops working.",
+        "operationId": "share_diagram_api_v1_orgs__org__repos__repo__diagrams__diagram_id__share_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "diagram_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Diagram Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Organization slug",
+            "in": "path",
+            "name": "org",
+            "required": true,
+            "schema": {
+              "description": "Organization slug",
+              "title": "Org",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Repository slug",
+            "in": "path",
+            "name": "repo",
+            "required": true,
+            "schema": {
+              "description": "Repository slug",
+              "maxLength": 201,
+              "title": "Repo",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DiagramShareOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Share Diagram",
+        "tags": [
+          "diagrams"
         ]
       }
     },
