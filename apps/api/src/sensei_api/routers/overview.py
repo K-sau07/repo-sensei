@@ -19,7 +19,7 @@ from typing import Annotated, Any, cast
 
 import orjson
 from fastapi import APIRouter, Query, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 from redis.exceptions import RedisError
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -79,7 +79,10 @@ DEPENDS = (
     EdgeType.WRITES,
 )
 LAYERS = ("ui", "api", "svc", "db", "other")
-CACHE_PREFIX = "overview:v2:"
+# Bumped whenever what an overview holds or how it is worked out changes (its shape, the
+# module split, the questions): an entry kept by older code is then not read.
+CACHE_VERSION = 3
+CACHE_PREFIX = f"overview:v{CACHE_VERSION}:"
 CACHE_SECONDS = 24 * 3600
 
 
@@ -200,7 +203,8 @@ async def overview(
     except RedisError:
         kept = None
     if kept is not None:
-        return OverviewOut.model_validate_json(kept)
+        with suppress(ValidationError):  # kept in a shape this code doesn't read: worked out again
+            return OverviewOut.model_validate_json(kept)
     found = await _overview(request, repo, db, snapshot, job)
     with suppress(RedisError):  # unkept, it is served all the same and read again next time
         await redis.set(key, found.model_dump_json(), ex=CACHE_SECONDS)
@@ -320,7 +324,10 @@ def modules_of(files: Sequence[tuple[str, str]]) -> dict[str, str]:
     module_of = assign(modules)
     while True:
         code = code_in(module_of)
-        heaviest = max((m for m in modules if m not in done), key=lambda m: code[m], default=None)
+        # The heaviest, a tie broken by path (a set's order differs from process to process).
+        heaviest = max(
+            (m for m in modules if m not in done), key=lambda m: (code[m], m), default=None
+        )
         if heaviest is None or code[heaviest] <= SPLIT_SHARE * total:
             break
         done.add(heaviest)

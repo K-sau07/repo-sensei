@@ -93,10 +93,11 @@ export function moduleOf(files: readonly File[]): Map<string, string> {
   for (;;) {
     const code = codeIn(held);
     const open = [...modules].filter((m) => !done.has(m));
-    const heaviest = open.reduce<string | null>(
-      (best, m) => (best === null || (code.get(m) ?? 0) > (code.get(best) ?? 0) ? m : best),
-      null,
-    );
+    const heaviest = open.reduce<string | null>((best, m) => {
+      if (best === null) return m;
+      const [a, b] = [code.get(m) ?? 0, code.get(best) ?? 0];
+      return a > b || (a === b && m > best) ? m : best; // a tie: the later path, as the API
+    }, null);
     if (heaviest === null || (code.get(heaviest) ?? 0) <= SPLIT_SHARE * total) break;
     done.add(heaviest);
     const children = new Set([...(below.get(heaviest) ?? [])].map(through));

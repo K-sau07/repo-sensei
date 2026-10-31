@@ -7,7 +7,7 @@ from __future__ import annotations
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import httpx
 import orjson
@@ -17,7 +17,7 @@ from fastapi import FastAPI
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from sensei_api.routers.overview import endpoint_question, modules_of
+from sensei_api.routers.overview import CACHE_VERSION, endpoint_question, modules_of
 from sensei_core.mail import MemoryMailer
 from sensei_core.models import IndexJob, JobKind, JobStatus, Membership, Org, Repo, User
 from sensei_core.models.indexing import SnapshotStatus
@@ -51,6 +51,16 @@ def test_modules_split_where_the_code_is() -> None:
     assert module_of[f"{java}/repository/Repository0.java"] == f"{java}/repository"
     assert module_of["docs/page0.html"] == "docs"  # no code: one module, not split
     assert module_of["README.md"] == rollups.ROOT
+
+
+def test_the_split_is_the_same_in_every_process() -> None:
+    # Two folders with as much code, and room on the map to split only one: the tie is broken
+    # by path ("beta" over "alpha"), not by a set's order, which differs between processes.
+    files = [(f"{top}/m{n}/x.py", "service") for top in ("alpha", "beta") for n in range(7)]
+    module_of = modules_of(files)
+    assert module_of["beta/m0/x.py"] == "beta/m0"
+    assert module_of["alpha/m0/x.py"] == "alpha"
+    assert modules_of(list(reversed(files))) == module_of
 
 
 def test_a_split_into_more_modules_than_the_map_holds_is_not_made() -> None:
@@ -98,7 +108,11 @@ async def client(api_app: FastAPI, fake_redis: FakeAsyncRedis) -> AsyncGenerator
 
 @pytest.mark.integration
 async def test_an_indexed_repository_has_its_overview(
-    api_app: FastAPI, client: httpx.AsyncClient, db_session: AsyncSession, tmp_path: Path
+    api_app: FastAPI,
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    fake_redis: FakeAsyncRedis,
+    tmp_path: Path,
 ) -> None:
     snapshot, _ = await index_repo(db_session, tmp_path, ITEMS)
     snapshot.status = SnapshotStatus.READY
@@ -173,6 +187,14 @@ async def test_an_indexed_repository_has_its_overview(
     api_app.state.storage = _Storage({})
     again = await client.get(f"{API}/orgs/{found_org.slug}/repos/items/overview")
     assert again.json() == body
+    # One kept in a shape this code doesn't read is worked out again, not a 500.
+    key = f"overview:v{CACHE_VERSION}:"
+    keys = cast("list[str]", await fake_redis.keys(f"{key}*"))  # pyright: ignore[reportUnknownMemberType]
+    assert len(keys) == 1
+    await fake_redis.set(keys[0], '{"sha": 1}')
+    worked = await client.get(f"{API}/orgs/{found_org.slug}/repos/items/overview")
+    assert worked.status_code == 200
+    assert worked.json()["sha"] == snapshot.commit_sha
 
 
 @pytest.mark.integration
