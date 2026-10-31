@@ -251,4 +251,6 @@ def _definition(result: Result, chunk: ChunkText) -> tuple[int, tuple[str, ...]]
     return first, chunk.lines[first - chunk.start_line : last - chunk.start_line + 1]
 
 
-TOOL = Tool("code_search", DESCRIPTION, SCHEMA, EXAMPLES, run)
+# It checks its own arguments; strict, its seven optional ones would leave the other tools
+# too few (MAX_STRICT_OPTIONAL).
+TOOL = Tool("code_search", DESCRIPTION, SCHEMA, EXAMPLES, run, strict=False)

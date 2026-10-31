@@ -13,6 +13,7 @@ from collections.abc import Mapping
 from itertools import pairwise
 from pathlib import Path
 from typing import Any, cast
+from uuid import uuid4
 
 import pytest
 from sqlalchemy import event
@@ -22,12 +23,14 @@ from sensei_engine.agent.overview import repo_overview
 from sensei_engine.agent.tools import TOOLS, CitationIndex, ToolContext, definitions, run_tool
 from sensei_engine.agent.tools.base import (
     MAX_RESULT_TOKENS,
+    MAX_STRICT_OPTIONAL,
     Results,
     ToolResult,
     args_key,
     block_spans,
     code_result,
     next_cursor,
+    optional_parameters,
 )
 from sensei_engine.chunk.tokens import count_tokens
 from sensei_testing.indexed import ITEMS, ROUTE, SERVICE, index_repo
@@ -71,7 +74,41 @@ def _strict(schema: Mapping[str, Any], where: str) -> None:
         _strict(schema["items"], f"{where}[]")
 
 
-def test_every_tool_is_strict_described_and_its_examples_valid() -> None:
+async def test_files_are_found_whatever_order_the_tree_comes_in(tmp_path: Path) -> None:
+    # As en_US collation orders them (punctuation ignored at first): not as bisection needs.
+    collated = ["app/alembic/env.py", "app/alembic.ini", "app/alembic_utils.py"]
+    for path in collated:
+        (tmp_path / path).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / path).write_text(f"# {path}\n")
+    ctx = ToolContext(
+        db=cast("AsyncSession", None), org_id=uuid4(), repo_id=uuid4(), snapshot_id=uuid4(),
+        repo="o/r", sha="a" * 40, root=tmp_path, tree=collated,
+    )  # fmt: skip
+    assert list(ctx.tree) == sorted(collated)
+    for path in collated:
+        done = await run_tool(ctx, "read_code", {"path": path})
+        assert not done.is_error, (path, done.summary)
+
+
+def test_a_result_with_search_results_holds_only_them_and_its_notes_follow() -> None:
+    code: dict[str, Any] = {"type": "search_result", "source": "a.py", "title": "a", "content": []}
+    note = {"type": "text", "text": "2 more results were left out."}
+    mixed = ToolResult([note, code], [], "found")
+    assert mixed.param("t1")["content"] == [code]
+    assert mixed.notes("code_search") == [
+        {"type": "text", "text": "(About the code_search result.) 2 more results were left out."}
+    ]
+    plain = ToolResult([note], [], "nothing")
+    assert (plain.param("t2")["content"], plain.notes("grep")) == ([note], [])
+
+
+def test_the_strict_tools_keep_within_the_apis_optional_parameters() -> None:
+    strict = [tool for tool in TOOLS if tool.strict]
+    assert sum(optional_parameters(tool.schema) for tool in strict) <= MAX_STRICT_OPTIONAL
+    assert [tool.name for tool in TOOLS if not tool.strict] == ["code_search", "grep"]
+
+
+def test_every_tool_is_closed_described_and_its_examples_valid() -> None:
     found = definitions()
     assert [d["name"] for d in found] == [
         "code_search", "grep", "find_symbol", "graph_neighbors", "trace_feature", "read_code",
@@ -79,7 +116,7 @@ def test_every_tool_is_strict_described_and_its_examples_valid() -> None:
     ]  # fmt: skip
     for definition in found:
         name = definition["name"]
-        assert definition["strict"] is True
+        assert definition["strict"] is (name not in {"code_search", "grep"})
         assert definition["description"].count(". ") >= 3, name  # when to use it, and when not
         _strict(definition["input_schema"], name)
         assert definition["input_examples"], name

@@ -182,4 +182,6 @@ def _runs(hits: Sequence[GrepHit]) -> list[tuple[int, tuple[str, ...], int]]:
     ]
 
 
-TOOL = Tool("grep", DESCRIPTION, SCHEMA, EXAMPLES, run)
+# It checks its own arguments; strict, its four optional ones would leave the other tools
+# too few (MAX_STRICT_OPTIONAL).
+TOOL = Tool("grep", DESCRIPTION, SCHEMA, EXAMPLES, run, strict=False)

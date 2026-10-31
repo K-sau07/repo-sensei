@@ -38,7 +38,16 @@ from uuid_utils.compat import uuid7
 
 from sensei_core.config import get_settings
 from sensei_core.usage import CostCalculator
-from sensei_engine.agent.loop import Answer, AskAgent, Done, Mode, StepStarted, TextDelta
+from sensei_engine.agent.loop import (
+    Answer,
+    AskAgent,
+    Done,
+    Mode,
+    StepStarted,
+    TextDelta,
+    ToolAnswered,
+    ToolCalled,
+)
 from sensei_engine.agent.tools.base import Cited, ToolContext
 from sensei_engine.llm.anthropic_client import (
     AnthropicClient,
@@ -89,6 +98,7 @@ class AnswerOutcome:
     first_token_ms: float | None
     total_ms: float
     error: str | None = None
+    tools: tuple[dict[str, Any], ...] = ()  # each call: the tool, its input, what it answered
 
     @property
     def citations(self) -> tuple[Cited, ...]:
@@ -113,8 +123,13 @@ async def ask(agent: Agent, question: str, ctx: ToolContext, *, mode: Mode) -> A
         return round((time.perf_counter() - started) * 1000, 3)
 
     answering = False  # the open turn writes the answer (it may call no tools)
+    calls: dict[str, dict[str, Any]] = {}
     try:
         async for event in agent.run(question, ctx, mode=mode):
+            if isinstance(event, ToolCalled):
+                calls[event.id] = {"tool": event.name, "input": event.input}
+            if isinstance(event, ToolAnswered) and event.id in calls:
+                calls[event.id] |= {"summary": event.summary, "error": event.is_error}
             if first_event is None:
                 first_event = since()
             if isinstance(event, StepStarted):
@@ -129,8 +144,9 @@ async def ask(agent: Agent, question: str, ctx: ToolContext, *, mode: Mode) -> A
     except BudgetExceeded:
         raise
     except (LLMError, RuntimeError, ValueError) as error:
-        return AnswerOutcome(None, first_event, first_token, since(), error=str(error))
-    return AnswerOutcome(answer, first_event, first_token, since())
+        made = tuple(calls.values())
+        return AnswerOutcome(None, first_event, first_token, since(), str(error), made)
+    return AnswerOutcome(answer, first_event, first_token, since(), tools=tuple(calls.values()))
 
 
 # ---------------------------------------------------------------- the judge
@@ -282,7 +298,9 @@ def score_answer(
     scores["citation_supported"] = (
         supported[0] / supported[1] if supported is not None and supported[1] else None
     )
-    scores["checklist"] = judged.score if judged is not None else None
+    # A run that failed states none of the checklist (it isn't judged: nothing to read).
+    failed_checklist = 0.0 if answer is None and item.answer is not None else None
+    scores["checklist"] = judged.score if judged is not None else failed_checklist
     scores["contradicted"] = float(judged.contradicted) if judged is not None else None
     scores["confidence"] = (
         answer.confidence.score if answer is not None and answer.confidence else None
@@ -315,6 +333,14 @@ def item_result(item: GoldenItem, outcome: AnswerOutcome, judged: Judged | None)
         metrics=score_answer(item, outcome, judged),
         hits=[_citation_json(c) for c in outcome.citations[:KEPT_CITATIONS]],
         missed=[t.model_dump(mode="json", exclude_none=True) for t in item.gold if t not in found],
+        answer=outcome.answer.text if outcome.answer is not None else None,
+        verdicts=(
+            [{"verdict": verdict, "why": why} for verdict, why in judged.verdicts]
+            if judged is not None
+            else None
+        ),
+        error=outcome.error,
+        tools=list(outcome.tools) or None,
     )
 
 
@@ -424,14 +450,14 @@ async def run_answers(
             async with contexts() as ctx:
                 outcome = await ask(agent, item.query, ctx, mode=mode)
             judged = None
-            if judge is not None and item.answer is not None:
-                text = outcome.answer.text if outcome.answer is not None else ""
+            # A run that failed answered nothing to grade (it scores 0 as it is): no judge paid.
+            if judge is not None and item.answer is not None and outcome.answer is not None:
                 try:
-                    judged = await judge.judge(item, text)
+                    judged = await judge.judge(item, outcome.answer.text)
                 except LLMError as error:
                     outcome = AnswerOutcome(
                         outcome.answer, outcome.first_event_ms, outcome.first_token_ms,
-                        outcome.total_ms, error=f"judge: {error}",
+                        outcome.total_ms, error=f"judge: {error}", tools=outcome.tools,
                     )  # fmt: skip
         except BudgetExceeded as error:
             stopped = str(error)

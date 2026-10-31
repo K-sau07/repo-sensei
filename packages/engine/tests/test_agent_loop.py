@@ -205,9 +205,13 @@ async def test_research_commits_to_evidence_and_the_answer_cites_only_it(tmp_pat
         "type": "thinking", "thinking": "", "signature": "sig",
     }  # fmt: skip
     results = second["messages"][2]["content"]
-    assert [(r["type"], r["tool_use_id"]) for r in results] == [
-        ("tool_result", "t1"), ("tool_result", "t2"),
-    ]  # fmt: skip
+    answered = [r for r in results if r["type"] == "tool_result"]
+    assert [r["tool_use_id"] for r in answered] == ["t1", "t2"]
+    assert results[: len(answered)] == answered  # the results first, then any notes
+    # A result holding search results holds nothing else (the API refuses a mix).
+    for r in answered:
+        kinds = {block["type"] for block in r["content"]}
+        assert "search_result" not in kinds or kinds == {"search_result"}
     # The answer's turn: the same prefix, no tools to call, the evidence and the question.
     assert (third["tools"], third["system"]) == (first["tools"], first["system"])
     assert third["tool_choice"] == {"type": "none"}

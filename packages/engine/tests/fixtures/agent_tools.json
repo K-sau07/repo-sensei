@@ -69,7 +69,7 @@
    "type": "object"
   },
   "name": "code_search",
-  "strict": true
+  "strict": false
  },
  {
   "description": "Find an exact string, or a regular expression, in every file of the repository at this commit (ripgrep). Use it for a literal you know: an error message, a route path (\"/api/v1/items\"), a config key, an identifier's every use, a TODO. Each file with matches is one citable search result: its matching lines, two lines of context around each, files with more matches first. Don't use it to search by meaning (use code_search) or to find where a name is defined (use find_symbol). The pattern is a fixed string unless regex is true; matching is case-insensitive while the pattern is all lower case. Narrow with path_glob (\"frontend/src/**/*.tsx\"); page with next_cursor.",
@@ -113,7 +113,7 @@
    "type": "object"
   },
   "name": "grep",
-  "strict": true
+  "strict": false
  },
  {
   "description": "Find where a function, class, method, React component, hook or variable is defined, by its name (create_item, ItemsService, useAuth) or part of its qualified name (ItemsService.createItem). Use it when you know or can guess a name: it is faster and surer than code_search for that. Each match gives its symbol id (sym:<path>::<name>), kind, file and lines and signature; exact names come first, then prefixes, then near misses. Pass a match's symbol id to graph_neighbors or trace_feature, or its lines to read_code. With response_format detailed, each match also shows its definition's first lines, citable. Don't use it for text in the code (use grep) or a question in words (use code_search).",

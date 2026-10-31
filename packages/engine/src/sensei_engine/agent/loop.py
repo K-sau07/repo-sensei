@@ -679,8 +679,10 @@ async def _call_tools(
     answered: list[dict[str, Any]],
 ) -> AsyncIterator[ToolCalled | ToolAnswered]:
     """The turn's tool calls, run in order: each one's result into ``answered`` (one message
-    for all of them), its search results into the run's citation index, the call into what the
-    run searched, a trace's best path into its trail."""
+    for all of them, the results first and then the texts they couldn't hold), its search
+    results into the run's citation index, the call into what the run searched, a trace's best
+    path into its trail."""
+    notes: list[dict[str, Any]] = []
     for call in (block for block in result.content if block["type"] == "tool_use"):
         yield ToolCalled(call["id"], call["name"], dict(call["input"]))
         started = time.monotonic()
@@ -701,6 +703,8 @@ async def _call_tools(
             done.card,
         )
         answered.append(done.param(call["id"]))
+        notes += done.notes(call["name"])
+    answered.extend(notes)
 
 
 def _answer(

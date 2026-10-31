@@ -76,7 +76,10 @@ class ToolContext:
     repo: str  # owner/name, as a citation's source names it
     sha: str  # the commit
     root: Path
-    tree: Sequence[str]  # every file the snapshot records, sorted
+    # Every file the snapshot records, sorted as Python sorts strings (by code point; the tools
+    # search it by bisection): given in any order, it is sorted here, since a database's
+    # ``ORDER BY`` sorts by its collation (en_US puts ``alembic/env.py`` before ``alembic.ini``).
+    tree: Sequence[str]
     searchable: Container[str] | None = None  # the files grep may report (None: every one)
     search: SearchService = field(default_factory=SearchService)
     exact: ExactSearch = field(default_factory=ExactSearch)
@@ -84,6 +87,9 @@ class ToolContext:
     grep_legs: GrepLegs | None = None  # code_search's exact legs (None: grep on ``root``)
     dense: DenseLegs | None = None  # its semantic legs (None: embeddings not ready)
     evidence: list[Evidence] = field(default_factory=list[Evidence])
+
+    def __post_init__(self) -> None:
+        self.tree = sorted(self.tree)
 
     def source(self, path: str, start_line: int, end_line: int) -> str:
         return f"{self.repo}@{self.sha}:{path}#L{start_line}-L{end_line}"
@@ -200,40 +206,87 @@ class ToolResult:
     trail: Trail | None = None  # a trace's best path
     card: dict[str, Any] | None = None  # what it found, for the page to draw (agent.cards)
 
+    def _mixed(self) -> bool:
+        kinds = {block["type"] for block in self.content}
+        return "search_result" in kinds and len(kinds) > 1
+
     def param(self, tool_use_id: str) -> dict[str, Any]:
-        """The ``tool_result`` block that answers the call ``tool_use_id``."""
+        """The ``tool_result`` block that answers the call ``tool_use_id``. One holding
+        ``search_result`` blocks may hold nothing else (the API refuses it), so its texts (a
+        heading, a page's note, what was left out) are left to :meth:`notes`."""
+        content = (
+            [block for block in self.content if block["type"] == "search_result"]
+            if self._mixed()
+            else self.content
+        )
         block: dict[str, Any] = {
             "type": "tool_result",
             "tool_use_id": tool_use_id,
-            "content": self.content,
+            "content": content,
         }
         if self.is_error:
             block["is_error"] = True
         return block
 
+    def notes(self, name: str) -> list[dict[str, Any]]:
+        """The texts :meth:`param` leaves out, each saying which tool's result it is about: they
+        follow the turn's results in the same message."""
+        if not self._mixed():
+            return []
+        return [
+            {"type": "text", "text": f"(About the {name} result.) {block['text']}"}
+            for block in self.content
+            if block["type"] == "text"
+        ]
+
 
 Run = Callable[[ToolContext, Mapping[str, Any]], Awaitable[ToolResult]]
+
+
+# The most optional parameters the Messages API takes across a request's strict tools (it
+# compiles them into one grammar, and refuses a request with more).
+MAX_STRICT_OPTIONAL = 24
 
 
 @dataclass(frozen=True, slots=True)
 class Tool:
     """A tool as the model is given it (:meth:`definition`, byte-stable: a cached prefix), and
-    what runs it. ``schema`` is strict: no property it doesn't name, the required ones listed."""
+    what runs it. ``schema`` is closed: no property it doesn't name, the required ones listed.
+
+    A ``strict`` tool's calls are held to its schema as the model writes them. The API takes at
+    most :data:`MAX_STRICT_OPTIONAL` optional parameters across a request's strict tools, so a
+    tool with many, that checks its own arguments (a wrong one is an error result saying how to
+    call it), isn't strict."""
 
     name: str
     description: str
     schema: Mapping[str, Any]
     examples: tuple[Mapping[str, Any], ...]
     run: Run
+    strict: bool = True
 
     def definition(self) -> dict[str, Any]:
         return {
             "name": self.name,
             "description": self.description,
             "input_schema": dict(self.schema),
-            "strict": True,
+            "strict": self.strict,
             "input_examples": [dict(example) for example in self.examples],
         }
+
+
+def optional_parameters(schema: Mapping[str, Any]) -> int:
+    """The parameters ``schema`` doesn't require, nested objects' included, as the API counts
+    them against :data:`MAX_STRICT_OPTIONAL`."""
+    required = set(schema.get("required", ()))
+    count = 0
+    for name, prop in schema.get("properties", {}).items():
+        count += name not in required
+        if prop.get("type") == "object":
+            count += optional_parameters(prop)
+        elif prop.get("type") == "array" and prop.get("items", {}).get("type") == "object":
+            count += optional_parameters(prop["items"])
+    return count
 
 
 def block_tokens(block: Mapping[str, Any]) -> int:

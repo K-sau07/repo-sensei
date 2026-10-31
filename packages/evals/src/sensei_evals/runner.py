@@ -47,6 +47,12 @@ class ItemResult(BaseModel):
     metrics: dict[str, float | None]
     hits: list[dict[str, Any]]  # the first KEPT_HITS: path, lines, score, symbol
     missed: list[dict[str, Any]]  # gold targets not covered at the largest k (symbol level)
+    # Answer evals: what was answered, the judge's verdict on each checklist fact and why (for
+    # reading its grading against one's own), and why a run that failed did.
+    answer: str | None = None
+    verdicts: list[dict[str, str]] | None = None
+    error: str | None = None
+    tools: list[dict[str, Any]] | None = None  # the agent's calls: tool, input, summary, error
 
 
 class RunRecord(BaseModel):

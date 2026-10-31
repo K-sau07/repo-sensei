@@ -216,14 +216,24 @@ async def test_a_question_is_timed_to_its_first_event_and_first_token() -> None:
     assert (failed.answer, failed.abstained, failed.error) == (None, False, "Anthropic 500: down")
 
 
+class _NoJudge:
+    model = "none"
+
+    async def judge(self, item: object, text: str) -> object:
+        raise AssertionError("a failed run has nothing to judge")
+
+
 async def test_a_failed_run_is_a_failure_not_an_abstention() -> None:
     guard = CostGuard(Decimal("1"), CostCalculator(DEFAULT_PRICE_TABLE))
     agent = _Agent([], LLMError(500, "down"))
     record = await run_answers(
-        SUITE, SUITE.items, agent=agent, contexts=_contexts, judge=None, guard=guard, repo=REPO
-    )
+        SUITE, SUITE.items, agent=agent, contexts=_contexts, judge=cast("Judge", _NoJudge()),
+        guard=guard, repo=REPO,
+    )  # fmt: skip
     assert record.metrics["overall"]["failed"] == 1.0  # both failed: the rate, not a flag
     assert record.metrics["overall"]["abstention_accuracy"] is None  # none answered to judge
+    assert record.metrics["overall"]["checklist"] == 0.0  # not judged, and nothing stated
+    assert [item.error for item in record.per_item] == ["Anthropic 500: down"] * 2
 
 
 def test_an_answer_is_scored_on_its_citations_and_checklist() -> None:
@@ -245,7 +255,7 @@ def test_an_answer_is_scored_on_its_citations_and_checklist() -> None:
     # An unanswerable item has no gold to find: only what applies to it.
     none = score_answer(BILLING, AnswerOutcome(None, None, None, 10.0), None)
     assert "f0.5_file" not in none
-    assert none["checklist"] is None
+    assert none["checklist"] == 0.0  # the run failed: it stated none of the checklist
 
 
 # ---------------------------------------------------------------- the gate
