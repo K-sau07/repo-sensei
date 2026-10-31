@@ -2725,6 +2725,7 @@ source = { editable = "apps/api" }
 dependencies = [
     { name = "fastapi" },
     { name = "httpx" },
+    { name = "markdown-it-py" },
     { name = "opentelemetry-instrumentation-fastapi" },
     { name = "sensei-core" },
     { name = "sensei-engine" },
@@ -2737,6 +2738,7 @@ dependencies = [
 requires-dist = [
     { name = "fastapi", specifier = ">=0.120" },
     { name = "httpx", specifier = ">=0.28" },
+    { name = "markdown-it-py", specifier = ">=4.0" },
     { name = "opentelemetry-instrumentation-fastapi", specifier = ">=0.57b0" },
     { name = "sensei-core", editable = "packages/core" },
     { name = "sensei-engine", editable = "packages/engine" },

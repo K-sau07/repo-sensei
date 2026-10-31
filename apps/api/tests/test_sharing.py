@@ -85,6 +85,12 @@ def test_a_reader_sees_it_whole_but_for_the_run_behind_it() -> None:
         "It reads:\n\n    SECRET = load()\n    use(SECRET)\n\nThen it returns.",
         "Tabbed:\n\n\tSECRET = load()\n",
         "Unclosed:\n  ~~~\n  SECRET = load()",
+        # Indented code that follows no blank line, as markdown renders it all the same.
+        "## Code\n    SECRET = load()",
+        "```\nfirst()\n```\n    SECRET = load()",
+        "Above.\n\n---\n    SECRET = load()",
+        "x:\n   \n    SECRET = load()",
+        "Raw:\n\n<pre>\nSECRET = load()\n</pre>",
     ],
 )
 def test_code_in_a_list_item_or_indented_is_hidden_too(answer: str) -> None:
@@ -99,3 +105,18 @@ def test_prose_around_hidden_code_stays() -> None:
     text = shown([{"type": "text", "text": answer}], redact=True)[0]["text"]
     assert text.startswith("First the route.\n\n")
     assert text.endswith("Then `save` writes it.")
+
+
+def test_citations_are_placed_in_the_last_text_wherever_it_sits() -> None:
+    """An answer searched again (or rewritten) comes again whole after the first, and after its
+    citations: their spans are offsets into it, the code hidden in the first doesn't move them."""
+    draft = "A first go.\n```\nSECRET = 1\n```\nMore of it."
+    final = "It saves the item. Then it commits."
+    parts: list[dict[str, Any]] = [
+        {"type": "text", "text": draft},
+        {"type": "data-citation", "id": "c1", "data": {"n": 1, "span": [0, 18]}},
+        {"type": "text", "text": final},
+    ]
+    out = shown(parts, redact=True)
+    (citation,) = [p for p in out if p["type"] == "data-citation"]
+    assert final[slice(*citation["data"]["span"])] == "It saves the item."

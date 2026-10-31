@@ -6,6 +6,7 @@ requires-python = ">=3.13"
 dependencies = [
     "fastapi>=0.120",
     "httpx>=0.28",
+    "markdown-it-py>=4.0",
     "opentelemetry-instrumentation-fastapi>=0.57b0",
     "sensei-core",
     "sensei-engine",
