@@ -26,6 +26,7 @@ from uuid_utils.compat import uuid7
 
 from sensei_core.config import Settings
 from sensei_core.db import Database
+from sensei_core.indexing import pushes
 from sensei_core.indexing.events import JobOutbox, job_stream, org_stream
 from sensei_core.indexing.jobs import settle_repo
 from sensei_core.indexing.state import IndexJobStateMachine
@@ -68,6 +69,7 @@ from sensei_workers.tasks import links as links_task
 from sensei_workers.tasks import maintenance, orchestrate
 from sensei_workers.tasks.merkle import build_merkle
 from sensei_workers.tasks.orchestrate import run_index_job
+from sensei_workers.tasks.pushes import Outcome, begin, start_push_index
 from sensei_workers.tasks.summaries import summarize_snapshot
 
 pytestmark = pytest.mark.integration
@@ -1690,3 +1692,111 @@ def test_a_resolver_that_fails_skips_the_graph_and_the_index_still_finishes(
     assert job.stages["graph"]["details"]["reason"] == "graph_failed"
     assert job.snapshot_id is not None
     assert runtime.run(_graph(runtime.system_database, job.snapshot_id)) == set()
+
+
+# ---------------------------------------------------------------- pushes (5.1)
+
+
+async def _pin(database: Database, job_id: uuid.UUID, ref: str | None, sha: str | None) -> None:
+    async with database.session() as db:
+        job = await db.get(IndexJob, job_id)
+        assert job is not None
+        job.ref, job.target_sha = ref, sha
+
+
+def test_a_pushed_commit_is_indexed_as_it_was_pushed(
+    runtime: Runtime,
+    ids: tuple[uuid.UUID, uuid.UUID, uuid.UUID],
+    github: respx.MockRouter,
+    bare_repo: Any,
+) -> None:
+    """The push named its commit: that one is indexed, not the branch's head when the run got
+    to it (GitHub isn't asked)."""
+    org_id, repo_id, job_id = ids
+    runtime.run(_pin(runtime.system_database, job_id, "main", bare_repo.first))
+    _run(org_id, repo_id, job_id)
+    repo, job = runtime.run(_state(runtime.system_database, repo_id, job_id))
+    assert job.status is JobStatus.SUCCEEDED
+    assert repo.last_indexed_sha == bare_repo.first  # the head is second; first was pushed
+    assert not github.routes[0].called
+
+
+def test_a_tracked_branchs_run_leaves_the_repositorys_index_as_it_was(
+    runtime: Runtime,
+    ids: tuple[uuid.UUID, uuid.UUID, uuid.UUID],
+    github: respx.MockRouter,
+    bare_repo: Any,
+) -> None:
+    org_id, repo_id, job_id = ids
+    _run(org_id, repo_id, job_id)  # main, at its head: second
+    branch = runtime.run(_queued(runtime.system_database, org_id, repo_id))
+    runtime.run(_pin(runtime.system_database, branch, "web", bare_repo.third))
+    _run(org_id, repo_id, branch)
+    repo, job = runtime.run(_state(runtime.system_database, repo_id, branch))
+    assert job.status is JobStatus.SUCCEEDED
+    assert repo.last_indexed_sha == bare_repo.second  # still main's
+    main = runtime.run(_chunks_at(runtime.system_database, repo_id, bare_repo.second))
+    assert main > 0  # main's chunks weren't pruned by the branch's run
+
+
+async def _queued(database: Database, org_id: uuid.UUID, repo_id: uuid.UUID) -> uuid.UUID:
+    async with database.session() as db:
+        job = IndexJob(org_id=org_id, repo_id=repo_id, kind=JobKind.INCREMENTAL)
+        db.add(job)
+        await db.flush()
+        return job.id
+
+
+async def _chunks_at(database: Database, repo_id: uuid.UUID, sha: str) -> int:
+    async with database.session() as db:
+        snapshot = await db.scalar(
+            select(Snapshot).where(Snapshot.repo_id == repo_id, Snapshot.commit_sha == sha)
+        )
+        assert snapshot is not None
+        count = await db.scalar(
+            select(func.count()).select_from(CodeChunk).where(CodeChunk.snapshot_id == snapshot.id)
+        )
+        return int(count or 0)
+
+
+async def _settle(database: Database, job_id: uuid.UUID) -> None:
+    async with database.session() as db:
+        job = await db.get(IndexJob, job_id)
+        assert job is not None
+        job.status = JobStatus.CANCELLED
+
+
+def test_a_push_timer_waits_for_a_run_then_starts_the_branchs_once(
+    runtime: Runtime, ids: tuple[uuid.UUID, uuid.UUID, uuid.UUID], bare_repo: Any
+) -> None:
+    org_id, repo_id, queued = ids
+    redis = runtime.redis
+
+    async def noted(token: str, after: str) -> None:
+        await pushes.note(
+            redis, repo_id, "main", after=after, before=None, forced=False, token=token
+        )
+
+    def timer(token: str, branch: str = "main") -> tuple[Outcome, IndexJob | None]:
+        return runtime.run(
+            begin(
+                start_push_index, redis, org_id=org_id, repo_id=repo_id, branch=branch, token=token
+            )
+        )
+
+    runtime.run(noted("t1", bare_repo.first))
+    runtime.run(noted("t2", bare_repo.second))
+    assert timer("t1") == (Outcome.SUPERSEDED, None)  # a later push's timer has it
+    assert timer("t2") == (Outcome.WAITING, None)  # the repository has a run queued
+    runtime.run(_settle(runtime.system_database, queued))
+    outcome, job = timer("t2")
+    assert outcome is Outcome.STARTED
+    assert job is not None
+    assert (job.kind, job.ref, job.target_sha) == (JobKind.FULL, "main", bare_repo.second)
+    assert timer("t2") == (Outcome.SUPERSEDED, None)  # it was indexed: the pending push went
+    # A branch the repository doesn't track is let go.
+    runtime.run(
+        pushes.note(redis, repo_id, "other", after="e" * 40, before=None, forced=False, token="t3")
+    )
+    assert timer("t3", "other") == (Outcome.UNTRACKED, None)
+    assert runtime.run(pushes.due(redis, repo_id, "other", "t3")) is None

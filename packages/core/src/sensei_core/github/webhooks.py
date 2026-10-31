@@ -32,6 +32,8 @@ from sensei_core.db.base import new_id
 from sensei_core.github.app import forget_installation_tokens
 from sensei_core.github.client import GitHubError, as_object
 from sensei_core.github.installations import installation_details
+from sensei_core.indexing import pushes
+from sensei_core.indexing.pushes import PushTimers
 from sensei_core.logging import get_logger
 from sensei_core.models import (
     ActorType,
@@ -153,6 +155,7 @@ class HandlerContext:
     redis: Redis
     delivery: WebhookDelivery
     app: InstallationSource | None = None
+    timers: PushTimers | None = None  # what starts a push's run later (None: pushes are noted)
 
     @property
     def payload(self) -> dict[str, Any]:
@@ -303,8 +306,58 @@ async def _installation_changed(ctx: HandlerContext) -> DeliveryStatus:
     return DeliveryStatus.PROCESSED
 
 
+async def _pushed(ctx: HandlerContext) -> DeliveryStatus:
+    """A push (5.1): for each repository the installation reads that tracks the branch, the push
+    is noted as the branch's pending one and its timer set; the run starts when pushes stop
+    (:mod:`sensei_core.indexing.pushes`). A tag, a deleted branch, or a branch none tracks is
+    ignored."""
+    payload = ctx.payload
+    branch = pushes.branch_of(payload.get("ref"))
+    after = payload.get("after")
+    repository = as_object(payload.get("repository")) or {}
+    github_repo_id = repository.get("id")
+    if (
+        branch is None
+        or payload.get("deleted")
+        or not isinstance(after, str)
+        or not after.strip("0")
+        or not isinstance(github_repo_id, int)
+        or ctx.delivery.installation_id is None
+    ):
+        return DeliveryStatus.IGNORED
+    repos = await ctx.db.scalars(
+        select(Repo)
+        .join(GitHubInstallation, GitHubInstallation.id == Repo.installation_id)
+        .where(
+            Repo.github_repo_id == github_repo_id,
+            Repo.deleted_at.is_(None),
+            GitHubInstallation.installation_id == ctx.delivery.installation_id,
+        )
+    )
+    before = payload.get("before")
+    noted = 0
+    for repo in repos:
+        if not pushes.indexable(repo) or not pushes.tracks(repo, branch):
+            continue
+        pending = await pushes.note(
+            ctx.redis,
+            repo.id,
+            branch,
+            after=after,
+            before=before if isinstance(before, str) and before.strip("0") else None,
+            forced=bool(payload.get("forced")),
+            token=ctx.delivery.delivery_id,
+        )
+        if ctx.timers is not None:
+            await ctx.timers.schedule(
+                repo.org_id, repo.id, branch, pending.token, countdown=pushes.DEBOUNCE_SECONDS
+            )
+        noted += 1
+    return DeliveryStatus.PROCESSED if noted else DeliveryStatus.IGNORED
+
+
 async def _store_only(_: HandlerContext) -> DeliveryStatus:
-    """Kept for later phases (pushes drive freshness; pull requests drive reviews)."""
+    """Kept for later phases (pull requests drive reviews)."""
     return DeliveryStatus.STORED
 
 
@@ -317,7 +370,7 @@ HANDLERS: dict[tuple[str, str | None], Handler] = {
     ("installation", "new_permissions_accepted"): _installation_changed,
     ("installation_repositories", "added"): _installation_changed,
     ("installation_repositories", "removed"): _installation_changed,
-    ("push", None): _store_only,
+    ("push", None): _pushed,
     ("pull_request", None): _store_only,
 }
 
@@ -334,6 +387,7 @@ async def process_delivery(
     delivery_id: uuid.UUID,
     *,
     app: InstallationSource | None = None,
+    timers: PushTimers | None = None,
 ) -> ProcessResult:
     """Run the handler for one delivery, at most once to completion.
 
@@ -359,7 +413,9 @@ async def process_delivery(
     else:
         try:
             async with db.begin_nested():
-                context = HandlerContext(db=db, redis=redis, delivery=delivery, app=app)
+                context = HandlerContext(
+                    db=db, redis=redis, delivery=delivery, app=app, timers=timers
+                )
                 status = await handler(context)
         except Exception as exc:
             status, error = DeliveryStatus.FAILED, exc

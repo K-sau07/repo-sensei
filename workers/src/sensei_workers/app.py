@@ -36,6 +36,7 @@ TASK_MODULES = [
     "sensei_workers.tasks.graph",
     "sensei_workers.tasks.links",
     "sensei_workers.tasks.orchestrate",
+    "sensei_workers.tasks.pushes",
     "sensei_workers.tasks.maintenance",
 ]
 

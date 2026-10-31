@@ -48,6 +48,7 @@ class TaskName(enum.StrEnum):
     BUILD_LINKS = "sensei.graph.build_links"
     FINALIZE_INDEX = "sensei.ingest.finalize_index"
     RUN_INDEX_JOB = "sensei.ingest.run_index_job"
+    START_PUSH_INDEX = "sensei.ingest.start_push_index"
     EVICT_REPO_CACHE = "sensei.maintenance.evict_repo_cache"
     VACUUM_CHUNKS = "sensei.maintenance.vacuum_chunks"
     SWEEP_STALLED_JOBS = "sensei.maintenance.sweep_stalled_jobs"
@@ -160,6 +161,30 @@ class CeleryRepoJobs:
             await asyncio.to_thread(self._app.control.revoke, task_ids)
         except Exception:
             log.warning("could not revoke index tasks", exc_info=True)
+
+
+class CeleryPushTimers:
+    """A branch's push timer (5.1): the task that starts its run, ``countdown`` seconds on."""
+
+    def __init__(self, app: Celery) -> None:
+        self._app = app
+
+    async def schedule(
+        self, org_id: uuid.UUID, repo_id: uuid.UUID, branch: str, token: str, *, countdown: int
+    ) -> None:
+        # Raised, not logged: the delivery is then retried, and noting the push again is safe.
+        await asyncio.to_thread(
+            self._app.send_task,
+            TaskName.START_PUSH_INDEX.value,
+            kwargs={
+                "org_id": str(org_id),
+                "repo_id": str(repo_id),
+                "branch": branch,
+                "token": token,
+            },
+            queue=Queue.INGEST.value,
+            countdown=countdown,
+        )
 
 
 class CeleryDispatcher:

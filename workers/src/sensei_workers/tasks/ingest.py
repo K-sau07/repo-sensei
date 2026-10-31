@@ -80,6 +80,7 @@ class Target:
     github_repo_id: int
     installation_id: int | None  # GitHub's id, for an installation token
     size_kb: int  # as GitHub reported it at connect time (history included)
+    sha: str | None = None  # the commit a push named (5.1); None: the branch's head now
 
 
 def _now() -> datetime:
@@ -209,11 +210,12 @@ async def _begin(task: SenseiTask, org_id: str, job_id: uuid.UUID) -> Target | N
             repo_id=repo.id,
             org_id=repo.org_id,
             full_name=repo.full_name,
-            ref=repo.default_branch,
+            ref=job.ref or repo.default_branch,
             source=repo.source,
             github_repo_id=repo.github_repo_id,
             installation_id=installation.installation_id if installation else None,
             size_kb=repo.size_kb,
+            sha=job.target_sha,
         )
 
 
@@ -386,7 +388,8 @@ def clone_snapshot(self: IngestTask, *, job_id: str, org_id: str, repo_id: str) 
                 "index.",
             )
         token = runtime.run(_token(target))
-        sha = runtime.run(_resolve(target, token))
+        # A push names its commit; otherwise the branch's head, as GitHub has it now.
+        sha = target.sha or runtime.run(_resolve(target, token))
         runtime.run(_step(self, org_id, job, 1))
         url = f"{settings.github.web_url.rstrip('/')}/{target.full_name}.git"
         name = str(target.repo_id)

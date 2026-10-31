@@ -140,6 +140,9 @@ class IndexJob(IdMixin, OrgScopedMixin, Base):
     kind: Mapped[JobKind] = mapped_column(
         Enum(JobKind, name="index_job_kind", values_callable=_values)
     )
+    # The branch and commit a push named (5.1); null: the default branch's head when it runs.
+    ref: Mapped[str | None] = mapped_column(String(255))
+    target_sha: Mapped[str | None] = mapped_column(String(64))
     status: Mapped[JobStatus] = mapped_column(
         Enum(JobStatus, name="index_job_status", values_callable=_values),
         default=JobStatus.QUEUED,

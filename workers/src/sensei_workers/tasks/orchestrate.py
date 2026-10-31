@@ -114,8 +114,12 @@ def finalize_index(self: IngestTask, *, job_id: str, org_id: str, repo_id: str) 
                 raise NotYetError("the job has no snapshot")
             if ready:
                 machine.advance(Stage.FINALIZE)
-            repo.last_indexed_sha = snapshot.commit_sha
-            pruned = await prune_chunks(scope.db, repo.id, keep=snapshot.id)
+            # The repository's index is its default branch's: a tracked branch's run (5.1) is kept
+            # beside it, and neither moves it nor prunes its chunks.
+            default = job.ref is None or job.ref == repo.default_branch
+            if default:
+                repo.last_indexed_sha = snapshot.commit_sha
+            pruned = await prune_chunks(scope.db, repo.id, keep=snapshot.id) if default else 0
             settle_repo(repo, JobStatus.SUCCEEDED)
             # What the run was charged (embeddings, summaries), on the job and by kind.
             costs = await costs_of(scope.db, job.org_id, JOB_USAGE_REF, str(job.id))

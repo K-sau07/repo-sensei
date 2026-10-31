@@ -6,7 +6,7 @@ import uuid
 from datetime import timedelta
 
 from sensei_core.github.webhooks import ProcessResult, claim_stale_deliveries, process_delivery
-from sensei_core.jobs import TaskName
+from sensei_core.jobs import CeleryPushTimers, TaskName
 from sensei_workers.app import celery_app
 from sensei_workers.base import SenseiTask
 from sensei_workers.runtime import get_runtime
@@ -30,7 +30,11 @@ def process_github_webhook(self: SenseiTask, *, delivery_id: str) -> str | None:
     async def _process() -> ProcessResult:
         async with self.system_session() as db:
             return await process_delivery(
-                db, runtime.redis, uuid.UUID(delivery_id), app=runtime.github_app
+                db,
+                runtime.redis,
+                uuid.UUID(delivery_id),
+                app=runtime.github_app,
+                timers=CeleryPushTimers(celery_app),
             )
 
     # The delivery's status (failed, with the error) is committed before deciding on a retry.

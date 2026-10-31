@@ -82,7 +82,7 @@ def test_bad_signatures_are_rejected(secret: str, body: bytes, header: str | Non
         ("installation", "new_permissions_accepted", "_installation_changed"),
         ("installation_repositories", "added", "_installation_changed"),
         ("installation_repositories", "removed", "_installation_changed"),
-        ("push", None, "_store_only"),
+        ("push", None, "_pushed"),
         ("pull_request", "opened", "_store_only"),
         ("pull_request", "synchronize", "_store_only"),
         ("installation", "renamed", None),
@@ -357,7 +357,7 @@ async def test_events_for_unlinked_installations_are_harmless(
 @pytest.mark.parametrize(
     ("event", "action", "status"),
     [
-        ("push", None, DeliveryStatus.STORED),
+        ("push", None, DeliveryStatus.IGNORED),  # this one names no branch (see test_pushes)
         ("pull_request", "opened", DeliveryStatus.STORED),
         ("star", "created", DeliveryStatus.IGNORED),
         ("ping", None, DeliveryStatus.IGNORED),
