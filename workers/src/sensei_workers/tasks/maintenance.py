@@ -14,13 +14,13 @@ import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import delete, or_, select
 from sqlalchemy.exc import DBAPIError
 
 from sensei_core.indexing import retention
 from sensei_core.jobs import TaskName
 from sensei_core.logging import get_logger
-from sensei_core.models import ACTIVE_JOB_STATUSES, IndexJob, Snapshot
+from sensei_core.models import ACTIVE_JOB_STATUSES, IndexJob, Repo, RepoRef, Snapshot
 from sensei_core.storage import Bucket, repo_prefix, snapshot_key
 from sensei_workers.app import celery_app
 from sensei_workers.base import RetryableError, SenseiTask
@@ -96,6 +96,8 @@ async def _expire(before: datetime) -> list[_Gone]:
     """Delete the snapshots past their retention (their files, symbols, chunks and edges go
     with them); what each was, for its objects."""
     async with get_runtime().system_database.session() as db:
+        await retention.untracked_refs(db)
+        await db.flush()
         found = await retention.expired(db, before=before)
         gone = [_Gone(s.org_id, s.repo_id, s.commit_sha) for s in found]
         for snapshot in found:
@@ -138,26 +140,49 @@ DROP_WAIT_SECONDS = 60  # a ref whose run is going is dropped once it ends
 async def _drop_ref(
     task: SenseiTask, org_id: uuid.UUID, repo_id: uuid.UUID, ref: str
 ) -> list[_Gone] | None:
-    """Delete a ref's snapshots (a closed pull request's overlay, 5.4); None while a run of it
-    is queued or going (dropped once it ends)."""
+    """Drop a ref (a closed pull request's overlay, 5.4): its ``repo_refs`` row goes, and so do
+    the snapshots it made or read that nothing else reads (a snapshot is one per commit, so
+    another ref, or the default branch's last index, may share it: those are kept). None while
+    a run of it, or of any of those snapshots, is queued or going (dropped once it ends)."""
     async with task.org_session(org_id) as db:
+        repo = await db.get(Repo, repo_id)
+        if repo is None:
+            return []
+        pointed = await db.scalar(
+            select(RepoRef.snapshot_id).where(RepoRef.repo_id == repo_id, RepoRef.ref == ref)
+        )
+        made = select(Snapshot.id).where(Snapshot.repo_id == repo_id, Snapshot.ref == ref)
+        candidates = set(await db.scalars(made))
+        if pointed is not None:
+            candidates.add(pointed)
         building = await db.scalar(
             select(IndexJob.id).where(
                 IndexJob.repo_id == repo_id,
-                IndexJob.ref == ref,
                 IndexJob.status.in_(ACTIVE_JOB_STATUSES),
+                or_(IndexJob.ref == ref, IndexJob.snapshot_id.in_(candidates)),
             )
         )
         if building is not None:
             return None
-        found = list(
-            await db.scalars(
-                select(Snapshot).where(Snapshot.repo_id == repo_id, Snapshot.ref == ref)
-            )
+        await db.execute(delete(RepoRef).where(RepoRef.repo_id == repo_id, RepoRef.ref == ref))
+        readers = await db.execute(
+            select(RepoRef.snapshot_id, RepoRef.ref)
+            .where(RepoRef.repo_id == repo_id, RepoRef.snapshot_id.in_(candidates))
+            .order_by(RepoRef.ref)
         )
-        gone = [_Gone(s.org_id, s.repo_id, s.commit_sha) for s in found]
-        for snapshot in found:
-            await db.delete(snapshot)
+        read: dict[uuid.UUID, str] = {}
+        for snapshot_id, reader in readers.tuples():
+            read.setdefault(snapshot_id, reader)
+        gone: list[_Gone] = []
+        for snapshot in await db.scalars(select(Snapshot).where(Snapshot.id.in_(candidates))):
+            indexed = snapshot.commit_sha == repo.last_indexed_sha
+            if snapshot.id not in read and not indexed:
+                gone.append(_Gone(snapshot.org_id, snapshot.repo_id, snapshot.commit_sha))
+                await db.delete(snapshot)
+            elif snapshot.ref == ref:
+                # Kept for another ref: it no longer names the dropped one (which a ref without
+                # a row would otherwise still resolve to).
+                snapshot.ref = read.get(snapshot.id, repo.default_branch)
         return gone
 
 

@@ -7,7 +7,9 @@ An answer is kept only when it is whole and sure (answered, not abstained, its c
 low); it is served only while every file it cites still has the content it cited. That holds
 across commits (5.5): an answer kept at an earlier commit is served at a later one when none of
 its files changed since (its citations then point at the later commit, at the same lines), and
-one whose cited file changed is never served again.
+one whose cited file changed is never served again. Only along the same ref, though: an answer
+kept at a branch or a pull request may rest on code the default branch doesn't have (files it
+read but didn't cite), so it is served at that ref's later commits, never at another ref's.
 """
 
 from __future__ import annotations
@@ -19,7 +21,7 @@ from collections.abc import Sequence
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from sensei_core.models import AnswerCacheEntry, ConversationMessage, RepoFile
+from sensei_core.models import AnswerCacheEntry, ConversationMessage, RepoFile, Snapshot
 from sensei_engine.agent.loop import Answer
 
 SIMILARITY = 0.95
@@ -76,9 +78,14 @@ async def lookup(
             .limit(CANDIDATES)
         )
         found = [entry for entry, d in rows.tuples() if 1 - float(d) >= SIMILARITY]
+    current = await db.get(Snapshot, snapshot_id)
     for entry in found:
-        if entry.snapshot_id != snapshot_id and not entry.file_hashes:
-            continue  # its files weren't known when kept: nothing to show they are the same now
+        if entry.snapshot_id != snapshot_id:
+            if not entry.file_hashes:
+                continue  # its files weren't known when kept: nothing to show they are the same
+            kept_at = await db.get(Snapshot, entry.snapshot_id)
+            if current is None or kept_at is None or kept_at.ref != current.ref:
+                continue  # kept at another ref: it may rest on code this one doesn't have
         if not await _unchanged(db, snapshot_id, entry.file_hashes):
             continue  # a file it cites changed since: never served again
         message = await db.get(ConversationMessage, entry.message_id)

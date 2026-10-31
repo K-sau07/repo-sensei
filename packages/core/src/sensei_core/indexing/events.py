@@ -34,7 +34,7 @@ import orjson
 from redis.asyncio import Redis
 
 from sensei_core.indexing.state import IndexJobStateMachine, JobEvent
-from sensei_core.models import IndexJob
+from sensei_core.models import IndexJob, Repo
 
 JOB_STREAM_MAXLEN = 10_000
 ORG_STREAM_MAXLEN = 1_000
@@ -153,18 +153,28 @@ class JobOutbox:
         self.items.append((str(job.id), str(job.org_id), payload))
 
     def repo_updated(
-        self, job: IndexJob, *, ref: str, sha: str, changed: Iterable[str] | None
+        self,
+        repo: Repo,
+        *,
+        job: IndexJob | None,
+        ref: str,
+        sha: str,
+        changed: Iterable[str] | None,
     ) -> None:
-        """The run's ref reads its commit now; ``changed``: the paths it read again."""
-        payload = _payload(job, EventType.REPO_UPDATED, None)
+        """``ref`` reads ``sha`` now: a run's (``job``) finished, or its commit was indexed
+        already (no run); ``changed``: the paths read otherwise than at what it read before."""
         listed = sorted(changed) if changed is not None else None
-        payload.update(
-            ref=ref,
-            sha=sha,
-            changed_files=listed[:MAX_CHANGED] if listed is not None else None,
-            changed_count=len(listed) if listed is not None else None,
-        )
-        self.items.append((str(job.id), str(job.org_id), payload))
+        payload: dict[str, Any] = {
+            "type": EventType.REPO_UPDATED.value,
+            "job_id": str(job.id) if job is not None else None,
+            "repo_id": str(repo.id),
+            "ref": ref,
+            "sha": sha,
+            "changed_files": listed[:MAX_CHANGED] if listed is not None else None,
+            "changed_count": len(listed) if listed is not None else None,
+            "ts": _now(),
+        }
+        self.items.append((payload["job_id"] or "", str(repo.org_id), payload))
 
     async def publish(self, redis: Redis) -> None:
         if not self.items:

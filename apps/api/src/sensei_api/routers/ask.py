@@ -15,7 +15,7 @@ import asyncio
 import dataclasses
 import time
 import uuid
-from collections.abc import AsyncGenerator, Awaitable, Callable
+from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -168,6 +168,8 @@ class MessageOut(BaseModel):
     citations: list[CitationOut]
     feedback: FeedbackOut | None = None  # what the signed-in user said of it
     run_id: uuid.UUID | None = None  # the agent run that wrote it (its timeline)
+    # The ref it was asked at (5.6: what its citations are checked against); None: unknown.
+    ref: str | None = None
 
 
 class ConversationOut(BaseModel):
@@ -493,9 +495,13 @@ async def conversation(
             )
         )
         said = {row.message_id: _feedback_out(row) for row in rows}
+    asked_at = await refs_of(db, messages)
     return ConversationDetail(
         **conversation_out(found).model_dump(),
-        messages=[message_out(m, m.parts, cited.get(m.id, []), said.get(m.id)) for m in messages],
+        messages=[
+            message_out(m, m.parts, cited.get(m.id, []), said.get(m.id), ref=asked_at.get(m.id))
+            for m in messages
+        ],
     )
 
 
@@ -1058,6 +1064,22 @@ async def citations_of(
     return cited
 
 
+async def refs_of(
+    db: AsyncSession, messages: Sequence[ConversationMessage]
+) -> dict[uuid.UUID, str]:
+    """The ref each message was asked at (its snapshot's), by message."""
+    ids = {m.snapshot_id for m in messages if m.snapshot_id is not None}
+    if not ids:
+        return {}
+    rows = await db.execute(select(Snapshot.id, Snapshot.ref).where(Snapshot.id.in_(ids)))
+    taken: dict[uuid.UUID, str] = dict(rows.tuples().all())
+    return {
+        m.id: taken[m.snapshot_id]
+        for m in messages
+        if m.snapshot_id is not None and m.snapshot_id in taken
+    }
+
+
 def message_out(
     m: ConversationMessage,
     parts: list[dict[str, Any]],
@@ -1065,6 +1087,7 @@ def message_out(
     feedback: FeedbackOut | None = None,
     *,
     with_run: bool = True,
+    ref: str | None = None,
 ) -> MessageOut:
     return MessageOut(
         id=m.id,
@@ -1077,6 +1100,7 @@ def message_out(
         citations=citations,
         feedback=feedback,
         run_id=m.run_id if with_run else None,
+        ref=ref,
     )
 
 

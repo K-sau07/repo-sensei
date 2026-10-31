@@ -110,3 +110,9 @@ async def test_citations_are_stale_when_their_file_changed_or_went(
         f"{API}/orgs/{org.slug}/repos/items/staleness", params={"citations": ["nope"]}
     )
     assert bad.status_code == 422
+    # Hex only: a LIKE wildcard isn't a commit (it would match any).
+    for cited in ("%%%%%%%:README.md", "_______:README.md", f"{'g' * 7}:{ROUTE}"):
+        wild = await client.get(
+            f"{API}/orgs/{org.slug}/repos/items/staleness", params={"citations": [cited]}
+        )
+        assert wild.status_code == 422, cited

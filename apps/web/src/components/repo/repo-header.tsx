@@ -24,7 +24,7 @@ import {
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
-  isCommit,
+  isPinned,
   readable,
   refLabel,
   refParam,
@@ -43,7 +43,7 @@ export function RefSwitcher({ defaultBranch }: { defaultBranch: string }) {
   const [open, setOpen] = useState(false);
   const refs = useRefs(open);
   const label = refLabel(ref, defaultBranch);
-  const pinned = ref !== null && isCommit(ref);
+  const pinned = ref !== null && isPinned(ref);
   const Icon = pinned ? GitCommitHorizontal : ref?.startsWith("pull/") ? GitPullRequest : GitBranch;
   const current = ref ?? defaultBranch;
   return (
@@ -139,6 +139,7 @@ function RefGroup({
           <span className="flex min-w-0 flex-1 flex-col gap-0.5">
             <span className="flex items-center gap-1.5">
               <span className="truncate font-mono text-xs">{ref.name}</span>
+              {ref.name === current ? <span className="sr-only">(current)</span> : null}
               {ref.default ? (
                 <Badge variant="outline" className="h-4 px-1 text-[10px]">
                   default

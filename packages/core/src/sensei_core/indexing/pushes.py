@@ -29,7 +29,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sensei_core.audit import AuditAction, audit
 from sensei_core.indexing.events import JobOutbox
 from sensei_core.indexing.snapshots import point_ref
-from sensei_core.models import IndexJob, JobKind, JobStatus, Repo, RepoStatus, Snapshot
+from sensei_core.models import (
+    IndexJob,
+    JobKind,
+    JobStatus,
+    Repo,
+    RepoRef,
+    RepoStatus,
+    Snapshot,
+)
 from sensei_core.models.audit import ActorType
 from sensei_core.models.indexing import SnapshotStatus
 from sensei_core.repos.service import RepoSettings
@@ -96,6 +104,16 @@ async def forget(redis: Redis, repo_id: uuid.UUID, ref: str) -> None:
     await redis.delete(pending_key(repo_id, ref))
 
 
+async def kept(db: AsyncSession, repo: Repo, ref: str) -> bool:
+    """Whether anything of ``ref`` is kept (its row in ``repo_refs``, or a snapshot taken from
+    it): a closed pull request's overlay to drop."""
+    pointed = select(RepoRef.id).where(RepoRef.repo_id == repo.id, RepoRef.ref == ref)
+    taken = select(Snapshot.id).where(Snapshot.repo_id == repo.id, Snapshot.ref == ref)
+    return (await db.scalar(pointed.limit(1))) is not None or (
+        await db.scalar(taken.limit(1))
+    ) is not None
+
+
 async def note(
     redis: Redis,
     repo_id: uuid.UUID,
@@ -110,8 +128,9 @@ async def note(
     in any order, so they are put in order by their commits: a push that goes on from the
     pending one (it starts at its commit) moves it on; one that ends where the pending one
     starts came before it (delivered late), so the pending commit stays and the start moves
-    back; one that does neither is taken as the latest. Its token is the timer's either way,
-    and forced stays forced."""
+    back, unless it starts at the pending commit (a rollback to the start: the latest); one
+    that does neither is taken as the latest. Its token is the timer's either way, and
+    forced stays forced."""
     key = pending_key(repo_id, branch)
     async with redis.pipeline(transaction=True) as pipe:
         for _ in range(TRIES):
@@ -134,8 +153,10 @@ def _folded(
 ) -> Pending:
     if was is None:
         return Pending(after=after, before=before, forced=forced, token=token)
+    # One back from the pending commit to where it started (a forced rollback) is the latest.
+    late = before is not None and after == was.before and before != was.after
     forced = forced or was.forced
-    if before is not None and after == was.before:  # an earlier push, delivered late
+    if late:  # an earlier push, delivered late
         return Pending(after=was.after, before=before, forced=forced, token=token)
     return Pending(after=after, before=was.before, forced=forced, token=token)
 

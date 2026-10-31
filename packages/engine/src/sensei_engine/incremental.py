@@ -24,6 +24,7 @@ from typing import Any
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from sensei_core.indexing.snapshots import ref_snapshot
 from sensei_core.models import SYMBOL_KINDS, Repo, RepoFile, Snapshot
 from sensei_core.models.indexing import SnapshotStatus
 from sensei_engine.chunk.store import COLUMNS
@@ -214,3 +215,22 @@ async def changed_paths(db: AsyncSession, snapshot: Snapshot, carry: Carry) -> s
     old = set(await db.scalars(select(RepoFile.path).where(RepoFile.snapshot_id == carry.previous)))
     kept = {new[file_id] for file_id in carry.kept if file_id in new}
     return {path for path in new.values() if path not in kept} | (old - set(new.values()))
+
+
+async def moved_on(
+    db: AsyncSession, repo: Repo, ref: str, snapshot: Snapshot
+) -> tuple[bool, set[str] | None]:
+    """Whether ``ref`` moves on in reading ``snapshot`` (it read another, or nothing), and the
+    paths read otherwise than at what it read before (None: nothing to compare with). Worked
+    out before the ref is pointed at it: a branch is compared with its own last index, not the
+    default branch's."""
+    before = await ref_snapshot(db, repo, ref)
+    if before is None and ref == repo.default_branch:
+        before = await previous_of(db, repo, snapshot)
+    if before is None:
+        return True, None
+    if before.id == snapshot.id:
+        return False, None  # the same commit indexed again: nothing new
+    if before.status is not SnapshotStatus.READY or before.merkle_root is None:
+        return True, None
+    return True, await changed_paths(db, snapshot, await carried(db, before, snapshot))

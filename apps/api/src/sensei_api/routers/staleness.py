@@ -19,8 +19,9 @@ from sensei_api.deps import DbSession
 from sensei_api.repos import RepoDep
 from sensei_api.routers.browse import RefParam
 from sensei_core.errors import InvalidError
-from sensei_core.indexing.snapshots import resolve_snapshot
+from sensei_core.indexing.snapshots import SHA_PREFIX, resolve_snapshot
 from sensei_core.models import RepoFile, Snapshot
+from sensei_core.models.indexing import SnapshotStatus
 
 router = APIRouter(prefix="/orgs/{org}/repos/{repo}", tags=["staleness"])
 
@@ -42,10 +43,11 @@ class StalenessOut(BaseModel):
 
 def _parse(cited: str) -> tuple[str, str]:
     sha, _, path = cited.partition(":")
-    if not (7 <= len(sha) <= 64) or not path or len(path) > 1024:
+    sha = sha.lower()
+    if not SHA_PREFIX.fullmatch(sha) or not path or len(path) > 1024:
         message = f"{cited[:80]!r} isn't a citation (<sha>:<path>)."
         raise InvalidError(message, code="invalid_citation")
-    return sha.lower(), path
+    return sha, path
 
 
 @router.get("/staleness", response_model=StalenessOut)
@@ -75,13 +77,23 @@ async def staleness(
     then: dict[tuple[str, str], bytes] = {}
     known: set[str] = set()
     for sha in shas:
-        snapshot = await db.scalar(
-            select(Snapshot)
-            .where(Snapshot.repo_id == repo.id, Snapshot.commit_sha.startswith(sha))
-            .limit(1)
+        # Its index, as a finished run left it (one commit: a prefix of two is no answer).
+        matches = list(
+            await db.scalars(
+                select(Snapshot)
+                .where(
+                    Snapshot.repo_id == repo.id,
+                    Snapshot.commit_sha.startswith(sha, autoescape=True),
+                    Snapshot.status == SnapshotStatus.READY,
+                    Snapshot.merkle_root.is_not(None),
+                )
+                .order_by(Snapshot.commit_sha)
+                .limit(2)
+            )
         )
-        if snapshot is None:
+        if len(matches) != 1:
             continue
+        [snapshot] = matches
         known.add(sha)
         rows = await db.execute(
             select(RepoFile.path, RepoFile.content_hash).where(

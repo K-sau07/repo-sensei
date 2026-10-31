@@ -148,6 +148,10 @@ function Ask({ onNamed }: { onNamed: (id: string) => void }) {
   const runs = new Map<string, string>(
     (chat.stored?.messages ?? []).flatMap((m) => (m.run_id ? [[m.id, m.run_id]] : [])),
   );
+  // The ref each stored answer was asked at (a new one's is the page's).
+  const askedAt = new Map<string, string>(
+    (chat.stored?.messages ?? []).flatMap((m) => (m.ref ? [[m.id, m.ref]] : [])),
+  );
   const runHref = (message: AskMessage) => {
     const id = runOf(message) ?? runs.get(message.id);
     return id ? repoPath(org, repo, `runs/${id}`) : null;
@@ -195,7 +199,16 @@ function Ask({ onNamed }: { onNamed: (id: string) => void }) {
                   key={message.id}
                   message={message}
                   streaming={streaming && i === chat.messages.length - 1}
-                  onRerun={streaming ? undefined : rerun(chat.messages[i - 1], chat.ask)}
+                  askedAt={askedAt.get(message.id) ?? null}
+                  onRerun={
+                    streaming
+                      ? undefined
+                      : rerun(
+                          chat.messages[i - 1],
+                          ref ?? askedAt.get(message.id) ?? null,
+                          chat.ask,
+                        )
+                  }
                   onOpen={setOpened}
                   onAsk={streaming ? undefined : (text) => void chat.ask(text)}
                   feedback={said.get(message.id) ?? null}
@@ -262,22 +275,26 @@ function Ask({ onNamed }: { onNamed: (id: string) => void }) {
 
 /** An answer with its citations checked against the index the page is read at (once it is
  * written): a cited file changed since shows as stale. */
-function CheckedAnswer(props: ComponentProps<typeof Answer>) {
-  const staleness = useStaleness(citationsOf(props.message), !props.streaming);
+function CheckedAnswer({
+  askedAt,
+  ...props
+}: ComponentProps<typeof Answer> & { askedAt: string | null }) {
+  const staleness = useStaleness(citationsOf(props.message), !props.streaming, askedAt);
   return <Answer {...props} staleness={staleness} />;
 }
 
-/** Asks the question an answer answered again (with its scope), now: a cited file changed, so
- * the kept answer isn't served and the run reads the latest index. */
+/** Asks the question an answer answered again (with its scope), now, at the ref it is checked
+ * at: a cited file changed, so the kept answer isn't served and the run reads the latest index. */
 function rerun(
   question: AskMessage | undefined,
-  ask: (text: string, scope: ScopeData | null) => unknown,
+  at: string | null,
+  ask: (text: string, scope: ScopeData | null, at: string | null) => unknown,
 ): (() => void) | undefined {
   if (question?.role !== "user") return undefined;
   const text = answerText(question);
   if (!text) return undefined;
   const scope = scopeOf(question);
-  return () => void ask(text, scope);
+  return () => void ask(text, scope, at);
 }
 
 /** A question the Ask bar sent here (`?q=`, its scope `?scope=` and `?L=`): asked once, the

@@ -560,9 +560,10 @@ async def test_a_kept_answer_whose_file_changed_is_not_served(
     assert await found() == entry
     # At a later commit whose README is the same, the answer kept earlier is served (5.5).
     later = Snapshot(org_id=entry.org_id, repo_id=entry.repo_id, ref="main", commit_sha="d" * 40)
-    db_session.add(later)
+    pull = Snapshot(org_id=entry.org_id, repo_id=entry.repo_id, ref="pull/3", commit_sha="e" * 40)
+    db_session.add_all([later, pull])
     await db_session.flush()
-    for at in (entry.snapshot_id, later.id):
+    for at in (entry.snapshot_id, later.id, pull.id):
         db_session.add(
             RepoFile(
                 org_id=entry.org_id, repo_id=entry.repo_id, snapshot_id=at, path="README.md",
@@ -573,6 +574,8 @@ async def test_a_kept_answer_whose_file_changed_is_not_served(
     entry.file_hashes = {"README.md": (b"\x01" * 32).hex()}
     await db_session.flush()
     assert await found(later.id) == entry
+    # Not at another ref's, the same README or not: it may rest on code that ref doesn't have.
+    assert await found(pull.id) is None
     # Changed there: never served again.
     await db_session.execute(
         text("UPDATE files SET content_hash = :h WHERE snapshot_id = :s AND path = 'README.md'"),

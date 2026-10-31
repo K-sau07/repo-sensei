@@ -5,7 +5,9 @@ index, and the snapshots before it serve diffs and older links for a while. A sn
 more than ``ingest.snapshot_retention_days`` ago goes, unless it is still in use: the
 repository's index (its last indexed commit), what a ref reads (``repo_refs``: a branch's or a
 pull request's last good run, not merely its latest), or one a run queued or going is
-building.
+building. A ref the repository no longer indexes (a branch untracked, the default branch
+renamed, pull requests turned off) stops counting: :func:`untracked_refs` drops its row first,
+so what only it read expires too.
 """
 
 from __future__ import annotations
@@ -15,6 +17,7 @@ from datetime import datetime
 from sqlalchemy import exists, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from sensei_core.indexing.pushes import tracks
 from sensei_core.models import ACTIVE_JOB_STATUSES, IndexJob, Repo, RepoRef, Snapshot
 
 SWEEP_LIMIT = 200  # snapshots deleted per sweep (the next one takes the rest)
@@ -42,3 +45,13 @@ async def expired(
         .limit(limit)
     )
     return list(found)
+
+
+async def untracked_refs(db: AsyncSession) -> int:
+    """Drop the ``repo_refs`` rows of refs their repository no longer indexes (see the module);
+    returns how many went. Reads every org's: a system session."""
+    rows = await db.execute(select(RepoRef, Repo).join(Repo, Repo.id == RepoRef.repo_id))
+    stale = [row for row, repo in rows.tuples() if not tracks(repo, row.ref)]
+    for row in stale:
+        await db.delete(row)
+    return len(stale)

@@ -13,6 +13,9 @@ export type StaleReason = Schemas["CitedOut"]["reason"];
 /** A whole commit id: SHA-1 (40 hex) or SHA-256 (64 hex). */
 export const isCommit = (ref: string) => /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(ref);
 
+/** A ref that pins a commit: its id, or the first 7+ characters of it (as the API reads one). */
+export const isPinned = (ref: string) => /^[0-9a-f]{7,64}$/i.test(ref);
+
 /** What the switcher's button says the page is read at: the branch, the pull request (`#12`), or
  * a pinned commit's first 7 characters. */
 export function refLabel(ref: string | null, defaultBranch: string): string {

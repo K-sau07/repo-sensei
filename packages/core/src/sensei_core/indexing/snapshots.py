@@ -19,7 +19,7 @@ from sensei_core.models import (
     SnapshotStatus,
 )
 
-_SHA_PREFIX = re.compile(r"[0-9a-f]{7,64}")
+SHA_PREFIX = re.compile(r"[0-9a-f]{7,64}")
 MAX_REF_LENGTH = 255
 
 
@@ -31,9 +31,9 @@ def _not_indexed(ref: str | None) -> NotFoundError:
 
 async def resolve_snapshot(db: AsyncSession, repo: Repo, ref: str | None) -> Snapshot:
     """The browsable snapshot for ``ref``: None means the last index; a hex string of 7 or more
-    characters is a commit id (or the start of one); anything else is a branch, whose most
-    recently indexed commit is used. Only snapshots an index run finished count (one left by a
-    failed or cancelled run may have its tree, but was never indexed)."""
+    characters is a commit id (or the start of one); anything else is a branch or a pull
+    request, read at what its ``repo_refs`` row points at. Only snapshots an index run finished
+    count (one left by a failed or cancelled run may have its tree, but was never indexed)."""
     finished = (
         select(IndexJob.id)
         .where(
@@ -63,7 +63,7 @@ async def resolve_snapshot(db: AsyncSession, repo: Repo, ref: str | None) -> Sna
         return found
     if len(ref) > MAX_REF_LENGTH or not ref.strip():
         raise InvalidError("That isn't a branch or commit.", code="invalid_ref")
-    if _SHA_PREFIX.fullmatch(ref):
+    if SHA_PREFIX.fullmatch(ref):
         matches = list(
             await db.scalars(browsable.where(Snapshot.commit_sha.startswith(ref)).limit(2))
         )
@@ -74,13 +74,13 @@ async def resolve_snapshot(db: AsyncSession, repo: Repo, ref: str | None) -> Sna
             )
         if matches:
             return matches[0]
-    # The ref's index, as its runs left it (5.4); else the latest snapshot taken from it.
+    # The ref's index, as its runs left it (5.4): a ref is read only while it has one (one the
+    # repository stopped indexing, or a closed pull request, has none); the default branch's is
+    # the last index.
     pointed = select(RepoRef.snapshot_id).where(RepoRef.repo_id == repo.id, RepoRef.ref == ref)
     found = await db.scalar(browsable.where(Snapshot.id.in_(pointed)))
-    if found is None:
-        found = await db.scalar(
-            browsable.where(Snapshot.ref == ref).order_by(Snapshot.ready_at.desc()).limit(1)
-        )
+    if found is None and ref == repo.default_branch and repo.last_indexed_sha is not None:
+        found = await db.scalar(browsable.where(Snapshot.commit_sha == repo.last_indexed_sha))
     if found is None:
         raise _not_indexed(ref)
     return found
@@ -117,6 +117,15 @@ async def ref_heads(db: AsyncSession, repo: Repo) -> dict[str, Snapshot]:
     )
     found: dict[str, Snapshot] = dict(rows.tuples().all())
     return found
+
+
+async def ref_snapshot(db: AsyncSession, repo: Repo, ref: str) -> Snapshot | None:
+    """The snapshot ``ref`` reads now (its ``repo_refs`` row), if any."""
+    return await db.scalar(
+        select(Snapshot)
+        .join(RepoRef, RepoRef.snapshot_id == Snapshot.id)
+        .where(RepoRef.repo_id == repo.id, RepoRef.ref == ref)
+    )
 
 
 async def point_ref(db: AsyncSession, repo: Repo, ref: str, snapshot: Snapshot) -> None:

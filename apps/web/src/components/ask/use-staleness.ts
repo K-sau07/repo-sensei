@@ -18,9 +18,12 @@ const STALE_MS = 60_000;
 export function useStaleness(
   citations: readonly { sha: string; path: string }[],
   enabled = true,
+  /** The ref the answer was asked at, checked against when the page picks none. */
+  askedAt: string | null = null,
 ): { checked: ReadonlyMap<string, StaleReason>; head: string | null } {
   const { org, repo } = useRepoSlug();
-  const [ref] = useViewRef();
+  const [picked] = useViewRef();
+  const ref = picked ?? askedAt;
   const cited = citedKeys(citations);
   const query = useQuery({
     queryKey: queryKeys.staleness(org, repo, ref, cited),

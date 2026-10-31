@@ -8,15 +8,15 @@
 import { RotateCw } from "lucide-react";
 
 import { StaleBadge } from "@/components/feedback/banners";
-import { isCommit } from "@/lib/api/refs";
+import { isPinned } from "@/lib/api/refs";
 
 import { useViewRef } from "./use-ref";
 import { useRepo } from "./use-repo";
 
 /** Whether a view at `ref` is older than the default branch's index at `indexed`. */
 export function pinnedBehind(ref: string | null, indexed: string | null | undefined): boolean {
-  if (ref === null || !isCommit(ref) || !indexed) return false;
-  return ref.toLowerCase() !== indexed.toLowerCase();
+  if (ref === null || !isPinned(ref) || !indexed) return false;
+  return !indexed.toLowerCase().startsWith(ref.toLowerCase());
 }
 
 export function PinnedStale({ what }: { what: string }) {

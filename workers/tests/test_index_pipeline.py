@@ -27,10 +27,10 @@ from uuid_utils.compat import uuid7
 from sensei_core.config import Settings
 from sensei_core.db import Database
 from sensei_core.errors import NotFoundError
-from sensei_core.indexing import pushes
+from sensei_core.indexing import pushes, retention
 from sensei_core.indexing.events import JobOutbox, job_stream, org_stream
 from sensei_core.indexing.jobs import settle_repo
-from sensei_core.indexing.snapshots import resolve_snapshot
+from sensei_core.indexing.snapshots import point_ref, resolve_snapshot
 from sensei_core.indexing.state import IndexJobStateMachine
 from sensei_core.jobs import TaskName
 from sensei_core.models import (
@@ -309,7 +309,7 @@ def test_a_full_run_streams_its_stages_in_order(
 
     # The org's stream has the lifecycle only: each stage start and the end, and the
     # repository's index moving on (5.5).
-    org = [(e["type"], e["stage"]) for e in runtime.run(_events(runtime, org_stream(org_id)))]
+    org = [(e["type"], e.get("stage")) for e in runtime.run(_events(runtime, org_stream(org_id)))]
     assert org[-1] == ("done", "finalize")
     assert all(kind in ("stage_started", "done", "repo_updated") for kind, _ in org)
     assert [kind for kind, _ in org].count("repo_updated") == 1
@@ -2127,6 +2127,56 @@ def test_a_closed_pull_requests_overlay_is_dropped(
     assert runtime.run(_read(database, repo_id, None))[0].commit_sha == bare_repo.second
 
 
+async def _point(database: Database, repo_id: uuid.UUID, ref: str, sha: str) -> None:
+    """``ref`` reads the snapshot of ``sha`` (as a push of an indexed commit points it)."""
+    async with database.session() as db:
+        repo = await db.get(Repo, repo_id)
+        snapshot = await db.scalar(
+            select(Snapshot).where(Snapshot.repo_id == repo_id, Snapshot.commit_sha == sha)
+        )
+        assert repo is not None
+        assert snapshot is not None
+        await point_ref(db, repo, ref, snapshot)
+
+
+def test_a_closed_pull_requests_overlay_another_ref_reads_is_kept_for_it(
+    runtime: Runtime,
+    ids: tuple[uuid.UUID, uuid.UUID, uuid.UUID],
+    github: respx.MockRouter,
+    bare_repo: Any,
+) -> None:
+    """A snapshot is one per commit: a tracked branch at the pull request's head reads the same
+    one, so closing the pull request drops its ref, not the branch's index."""
+    org_id, repo_id, job_id = ids
+    database = runtime.system_database
+    _run(org_id, repo_id, job_id)
+    pull = runtime.run(_queued(database, org_id, repo_id))
+    runtime.run(_pin(database, pull, "pull/3", bare_repo.third))
+    _run(org_id, repo_id, pull)
+    runtime.run(_track(database, repo_id, "feature"))
+    runtime.run(_point(database, repo_id, "feature", bare_repo.third))
+    dropped = maintenance.drop_ref.apply(
+        kwargs={"org_id": str(org_id), "repo_id": str(repo_id), "ref": "pull/3"}
+    ).get()
+    assert dropped == 0
+    feature, _, chunks = runtime.run(_read(database, repo_id, "feature"))
+    assert (feature.commit_sha, feature.ref) == (bare_repo.third, "feature")
+    assert chunks > 0
+    with pytest.raises(NotFoundError):  # the pull request's ref is gone all the same
+        runtime.run(_read(database, repo_id, "pull/3"))
+    # Untracked, the branch's row goes at the next sweep: what only it read can expire.
+    runtime.run(_track(database, repo_id, "other"))
+
+    async def sweep() -> int:
+        async with database.session() as db:
+            return await retention.untracked_refs(db)
+
+    assert runtime.run(sweep()) == 1
+    with pytest.raises(NotFoundError):
+        runtime.run(_read(database, repo_id, "feature"))
+    assert runtime.run(_read(database, repo_id, None))[0].commit_sha == bare_repo.second
+
+
 async def _track(database: Database, repo_id: uuid.UUID, branch: str) -> None:
     async with database.session() as db:
         repo = await db.get(Repo, repo_id)
@@ -2159,3 +2209,12 @@ def test_a_push_of_a_commit_already_indexed_runs_nothing_and_its_branch_reads_it
     release, _, chunks = runtime.run(_read(database, repo_id, "release"))
     assert release.commit_sha == bare_repo.second
     assert chunks > 0
+    # Its pages hear of it as of a run's (no run: no job), read in full (nothing to compare).
+    updated = [
+        e
+        for e in runtime.run(_events(runtime, org_stream(org_id)))
+        if e["type"] == "repo_updated" and e["ref"] == "release"
+    ]
+    assert [(e["job_id"], e["sha"], e["changed_files"]) for e in updated] == [
+        (None, bare_repo.second, None)
+    ]

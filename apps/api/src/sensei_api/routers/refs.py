@@ -24,6 +24,7 @@ router = APIRouter(prefix="/orgs/{org}/repos/{repo}", tags=["refs"])
 
 RefStatus = Literal["indexed", "indexing", "failed", "not_indexed"]
 RECENT_JOBS = 200
+ACTIVE = frozenset(ACTIVE_JOB_STATUSES)
 
 
 class RefOut(BaseModel):
@@ -79,7 +80,15 @@ async def refs(*, repo: RepoDep, db: DbSession) -> RefList:
         repo.default_branch,
         *sorted(set(settings.tracked_branches) - {repo.default_branch}),
         *sorted(
-            {name for name in [*heads, *latest] if name.startswith(PULLS)},
+            # The pull requests it indexes: an overlay kept, or one being built (a closed one's
+            # is dropped, and its runs don't list it again).
+            {
+                name
+                for name in [*heads, *(n for n, j in latest.items() if j.status in ACTIVE)]
+                if name.startswith(PULLS)
+            }
+            if settings.index_pull_requests
+            else set(),
             key=lambda name: int(name.removeprefix(PULLS)) if name[len(PULLS) :].isdigit() else 0,
         ),
     ]

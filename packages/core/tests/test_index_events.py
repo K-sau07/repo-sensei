@@ -8,7 +8,7 @@ import pytest
 
 from sensei_core.indexing.events import MAX_CHANGED, ORG_TYPES, JobOutbox, payloads_for
 from sensei_core.indexing.state import IndexJobStateMachine
-from sensei_core.models import IndexJob, JobKind, JobStatus, Stage
+from sensei_core.models import IndexJob, JobKind, JobStatus, Repo, Stage
 
 
 def _machine() -> IndexJobStateMachine:
@@ -96,11 +96,18 @@ def test_constellation_events_say_how_far_points_can_be_read() -> None:
 def test_a_repository_moving_on_names_its_ref_commit_and_changed_files() -> None:
     machine = _machine()
     outbox = JobOutbox()
+    repo = Repo(id=machine.job.repo_id, org_id=machine.job.org_id)
     outbox.repo_updated(
-        machine.job, ref="main", sha="b" * 40, changed=[f"f{n}.py" for n in range(MAX_CHANGED + 3)]
+        repo,
+        job=machine.job,
+        ref="main",
+        sha="b" * 40,
+        changed=[f"f{n}.py" for n in range(MAX_CHANGED + 3)],
     )
-    outbox.repo_updated(machine.job, ref="web", sha="c" * 40, changed=None)
-    (_, _, many), (_, _, full) = outbox.items
+    outbox.repo_updated(repo, job=None, ref="web", sha="c" * 40, changed=None)  # the ref moved
+    (job_id, _, many), (no_job, org_id, full) = outbox.items
+    assert (job_id, many["job_id"]) == (str(machine.job.id), str(machine.job.id))
+    assert (no_job, full["job_id"], org_id) == ("", None, str(machine.job.org_id))
     assert (many["type"], many["ref"], many["sha"]) == ("repo_updated", "main", "b" * 40)
     assert len(many["changed_files"]) == MAX_CHANGED  # named up to a point, counted in full
     assert many["changed_count"] == MAX_CHANGED + 3

@@ -308,3 +308,27 @@ async def test_pushes_delivered_out_of_order_index_the_latest_commit(
     )
     assert (folded.after, folded.before) == (SHA[2], SHA[0])  # still C, from A
     assert folded.token == "b"  # the last delivered's timer runs it
+
+
+@pytest.mark.integration
+async def test_a_forced_rollback_within_the_wait_indexes_where_it_went_back_to(
+    fake_redis: FakeAsyncRedis,
+) -> None:
+    repo_id = uuid.uuid4()
+    await pushes.note(
+        fake_redis, repo_id, "main", after=SHA[1], before=SHA[0], forced=False, token="b"
+    )
+    # Then forced back: B → A. Not an earlier push delivered late: the branch is at A now.
+    back = await pushes.note(
+        fake_redis, repo_id, "main", after=SHA[0], before=SHA[1], forced=True, token="a"
+    )
+    assert (back.after, back.forced) == (SHA[0], True)
+    # A forced push delivered late is still put before the pending one.
+    other = uuid.uuid4()
+    await pushes.note(
+        fake_redis, other, "main", after=SHA[2], before=SHA[1], forced=False, token="c"
+    )
+    folded = await pushes.note(
+        fake_redis, other, "main", after=SHA[1], before=SHA[0], forced=True, token="b"
+    )
+    assert (folded.after, folded.before, folded.forced) == (SHA[2], SHA[0], True)

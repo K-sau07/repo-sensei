@@ -11,25 +11,26 @@ import { useState } from "react";
 
 import { useRepoUpdates, updateLabel, type RepoUpdate } from "@/components/repos/repo-updates";
 import { Button } from "@/components/ui/button";
-import { isCommit } from "@/lib/api/refs";
+import { isPinned } from "@/lib/api/refs";
 import type { Repo } from "@/lib/api/types";
 
 import { useViewRef } from "./use-ref";
 
 /** Whether an update concerns a page read at `ref` (none: the default branch). */
 export function concerns(update: RepoUpdate, ref: string | null, defaultBranch: string): boolean {
-  if (ref !== null && isCommit(ref)) return update.ref === defaultBranch;
+  if (ref !== null && isPinned(ref)) return update.ref === defaultBranch;
   return update.ref === (ref ?? defaultBranch);
 }
 
 export function NewCommitsBanner({ repo }: { repo: Repo }) {
   const [opened] = useState(() => Date.now());
   const [ref, setRef] = useViewRef();
-  const update = useRepoUpdates((state) => state.updates[repo.id]);
+  const pinned = ref !== null && isPinned(ref);
+  const at = pinned ? repo.default_branch : (ref ?? repo.default_branch);
+  const update = useRepoUpdates((state) => state.updates[repo.id]?.[at]);
   const dismiss = useRepoUpdates((state) => state.dismiss);
   const queryClient = useQueryClient();
   if (!update || update.at < opened || !concerns(update, ref, repo.default_branch)) return null;
-  const pinned = ref !== null && isCommit(ref);
   const files = update.changedFiles ?? [];
   return (
     <NewCommitsNotice
@@ -38,7 +39,7 @@ export function NewCommitsBanner({ repo }: { repo: Repo }) {
       files={files}
       action={pinned ? `View ${repo.default_branch}'s latest` : "Refresh view"}
       onAction={() => {
-        dismiss(repo.id);
+        dismiss(repo.id, at);
         if (pinned) {
           void setRef(null);
           return;
@@ -49,7 +50,7 @@ export function NewCommitsBanner({ repo }: { repo: Repo }) {
         void queryClient.invalidateQueries();
       }}
       onDismiss={() => {
-        dismiss(repo.id);
+        dismiss(repo.id, at);
       }}
     />
   );

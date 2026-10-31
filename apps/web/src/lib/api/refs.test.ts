@@ -4,7 +4,7 @@ import { concerns } from "@/components/repo/new-commits-banner";
 import { pinnedBehind } from "@/components/repo/pinned-stale";
 import { withRef } from "@/components/repo/use-ref";
 import { describeStatus, updatePercent } from "@/components/repos/repo-status";
-import { updateLabel, type RepoUpdate } from "@/components/repos/repo-updates";
+import { updateLabel, useRepoUpdates, type RepoUpdate } from "@/components/repos/repo-updates";
 import type { ActiveJob } from "@/lib/api/types";
 
 import {
@@ -106,6 +106,8 @@ describe("stale citations", () => {
     expect(pinnedBehind("release", NEW)).toBe(false); // a branch follows its index
     expect(pinnedBehind(null, NEW)).toBe(false);
     expect(pinnedBehind(SHA, null)).toBe(false);
+    expect(pinnedBehind("b1125d8", SHA)).toBe(false); // the first 7 characters pin it too
+    expect(pinnedBehind("b1125d8", NEW)).toBe(true);
   });
 });
 
@@ -124,6 +126,20 @@ describe("new commits indexed", () => {
     expect(concerns(update, "release", "main")).toBe(false);
     expect(concerns({ ...update, ref: "release" }, "release", "main")).toBe(true);
     expect(concerns(update, SHA, "main")).toBe(true); // pinned: it offers the latest
+    expect(concerns(update, "b1125d8", "main")).toBe(true);
+  });
+
+  it("keeps each ref's latest, so one ref's doesn't replace another's", () => {
+    const { note, dismiss } = useRepoUpdates.getState();
+    note("r", update);
+    note("r", { ...update, ref: "pull/7", sha: SHA });
+    expect(Object.keys(useRepoUpdates.getState().updates.r ?? {}).sort()).toEqual([
+      "main",
+      "pull/7",
+    ]);
+    dismiss("r", "pull/7");
+    expect(useRepoUpdates.getState().updates.r?.main?.sha).toBe(NEW);
+    expect(useRepoUpdates.getState().updates.r?.["pull/7"]).toBeUndefined();
   });
 
   it("says how much changed", () => {

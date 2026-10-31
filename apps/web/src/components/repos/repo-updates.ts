@@ -1,6 +1,6 @@
 /**
- * New indexes (5.6): each repository's latest `repo_updated` from the org stream (a ref's index
- * moved on to a new commit), for the "New commits indexed" banner of its open pages.
+ * New indexes (5.6): each repository's latest `repo_updated` from the org stream for each ref (a
+ * ref's index moved on to a new commit), for the "New commits indexed" banner of its open pages.
  */
 import { create } from "zustand";
 
@@ -15,20 +15,23 @@ export interface RepoUpdate {
 }
 
 interface RepoUpdates {
-  updates: Readonly<Record<string, RepoUpdate>>;
+  /** By repository, then ref. */
+  updates: Readonly<Record<string, Readonly<Record<string, RepoUpdate>>>>;
   note: (repoId: string, update: RepoUpdate) => void;
-  dismiss: (repoId: string) => void;
+  dismiss: (repoId: string, ref: string) => void;
 }
 
 export const useRepoUpdates = create<RepoUpdates>((set) => ({
   updates: {},
   note: (repoId, update) => {
-    set((state) => ({ updates: { ...state.updates, [repoId]: update } }));
+    set((state) => ({
+      updates: { ...state.updates, [repoId]: { ...state.updates[repoId], [update.ref]: update } },
+    }));
   },
-  dismiss: (repoId) => {
+  dismiss: (repoId, ref) => {
     set((state) => {
-      const { [repoId]: _gone, ...rest } = state.updates;
-      return { updates: rest };
+      const { [ref]: _gone, ...rest } = state.updates[repoId] ?? {};
+      return { updates: { ...state.updates, [repoId]: rest } };
     });
   },
 }));

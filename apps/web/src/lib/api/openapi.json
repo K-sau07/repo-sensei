@@ -2885,6 +2885,17 @@
             "title": "Parts",
             "type": "array"
           },
+          "ref": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ref"
+          },
           "role": {
             "enum": [
               "user",

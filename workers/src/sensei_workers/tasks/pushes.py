@@ -15,9 +15,12 @@ from redis.asyncio import Redis
 
 from sensei_core.indexing import pushes
 from sensei_core.indexing.events import JobOutbox
+from sensei_core.indexing.snapshots import ref_heads
 from sensei_core.jobs import TaskName
 from sensei_core.logging import get_logger
 from sensei_core.models import IndexJob, Repo
+from sensei_engine.chunk.store import prune_chunks
+from sensei_engine.incremental import moved_on
 from sensei_workers.app import celery_app
 from sensei_workers.base import SenseiTask
 from sensei_workers.runtime import get_runtime
@@ -56,17 +59,25 @@ async def begin(
         elif await pushes.running(db, repo):
             return Outcome.WAITING, None
         else:
+            # Its commit indexed already: the ref only moves (what it reads changes all the same).
+            found = None if pending.forced else await pushes.indexed(db, repo, pending.after)
+            moved = await moved_on(db, repo, branch, found) if found is not None else None
             try:
                 job = await pushes.start(db, repo, branch, pending, outbox)
             except pushes.JobRunningError:
                 return Outcome.WAITING, None
             if job is None:
                 outcome = Outcome.INDEXED
+                if found is not None and moved is not None and moved[0]:
+                    outbox.repo_updated(
+                        repo, job=None, ref=branch, sha=found.commit_sha, changed=moved[1]
+                    )
+                    if branch == repo.default_branch:  # its index moved: prune as a run does
+                        heads = [s.id for s in (await ref_heads(db, repo)).values()]
+                        await prune_chunks(db, repo.id, keep=found.id, also=heads)
     await pushes.done(redis, repo_id, branch, token)
-    if job is None:
-        return outcome, None
     await outbox.publish(redis)
-    return Outcome.STARTED, job
+    return (outcome, None) if job is None else (Outcome.STARTED, job)
 
 
 @celery_app.task(

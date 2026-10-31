@@ -105,8 +105,9 @@ export function useAsk(conversationId: string | null, onConversation: (id: strin
   }, [stored.data, setMessages]);
   // The conversation the stream named, until the page's own catches up with it.
   // A scoped question shows what it was asked about, as the stored one does.
-  const ask = (text: string, scope: ScopeData | null = null) => {
-    const body = { conversationId: conversationId ?? loaded.current, mode, scope, ref };
+  /** Asks `text` (about `scope`), at the page's ref or at `at` (an answer asked again). */
+  const ask = (text: string, scope: ScopeData | null = null, at: string | null = ref) => {
+    const body = { conversationId: conversationId ?? loaded.current, mode, scope, ref: at };
     if (scope === null) return sendMessage({ text }, { body });
     const parts: AskMessage["parts"] = [
       { type: "text", text },

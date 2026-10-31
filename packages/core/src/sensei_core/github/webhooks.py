@@ -361,7 +361,14 @@ async def _pull_request(ctx: HandlerContext) -> DeliveryStatus:
     ref = pushes.pull_ref(number)
     handled = 0
     for repo in await _pushed_repos(ctx):
-        if not pushes.indexable(repo) or not pushes.tracks(repo, ref):
+        if not pushes.indexable(repo):
+            continue
+        if action == "closed":
+            # Dropped even once the repository stopped indexing pull requests: its overlay
+            # would be kept otherwise.
+            if not (pushes.tracks(repo, ref) or await pushes.kept(ctx.db, repo, ref)):
+                continue
+        elif not pushes.tracks(repo, ref):
             continue
         handled += 1
         if action == "closed":

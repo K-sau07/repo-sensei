@@ -2477,6 +2477,8 @@ export interface components {
             parts: {
                 [key: string]: unknown;
             }[];
+            /** Ref */
+            ref?: string | null;
             /**
              * Role
              * @enum {string}
