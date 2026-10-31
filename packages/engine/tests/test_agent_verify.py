@@ -16,7 +16,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sensei_engine.agent.loop import AskAgent, Done, GapFound, Verified
 from sensei_engine.agent.tools import ToolContext
 from sensei_engine.agent.tools.base import Cited
-from sensei_engine.agent.verify import MAX_ROUNDS, agreement, claims, existing, identifiers, unknown
+from sensei_engine.agent.verify import (
+    MAX_ROUNDS,
+    agreement,
+    claims,
+    existing,
+    identifiers,
+    spliced,
+    unknown,
+)
 from sensei_testing.anthropic import FakeAnthropic, message, sse
 from sensei_testing.indexed import ITEMS, SERVICE, index_repo
 
@@ -166,9 +174,18 @@ def _streamed(content: list[dict[str, Any]], stop_reason: str) -> dict[str, Any]
 class _Model:
     """Streams the run's turns in order; answers the checks as told."""
 
-    def __init__(self, turns: list[dict[str, Any]], *, complete: bool) -> None:
+    def __init__(
+        self,
+        turns: list[dict[str, Any]],
+        *,
+        complete: bool,
+        verdicts: list[str] | None = None,
+        rewritten: str = "",
+    ) -> None:
         self.turns = turns
         self.complete = complete
+        self.verdicts = verdicts or ["supported"]  # the support checks', in turn (the last stays)
+        self.rewritten = rewritten
         self.checks: list[str] = []
 
     def __call__(self, request: httpx2.Request) -> httpx2.Response:
@@ -179,8 +196,13 @@ class _Model:
         system = body["system"][0]["text"]
         if "against the code it cites" in system:
             self.checks.append("support")
-            verdicts = {"claims": [{"n": 1, "verdict": "supported"}]}
+            verdict = self.verdicts.pop(0) if len(self.verdicts) > 1 else self.verdicts[0]
+            verdicts = {"claims": [{"n": 1, "verdict": verdict}]}
             return httpx2.Response(200, json=message(json.dumps(verdicts)))
+        if "You correct sentences" in system:
+            self.checks.append("rewrite")
+            fixed = {"claims": [{"n": 1, "text": self.rewritten}]}
+            return httpx2.Response(200, json=message(json.dumps(fixed)))
         self.checks.append("whole")
         whole = {
             "complete": self.complete,
@@ -262,3 +284,61 @@ async def test_a_gap_search_cut_short_keeps_the_answer_it_had(ctx: ToolContext) 
     assert isinstance(done, Done)
     assert done.answer.text == "create_item adds the item to the session."
     assert len([e for e in events if isinstance(e, GapFound)]) == 1
+
+
+async def test_a_claim_its_lines_show_only_part_of_is_rewritten_and_checked_again(
+    ctx: ToolContext,
+) -> None:
+    model = _Model(
+        [_streamed([SUBMIT], "tool_use"), _streamed([ANSWER], "end_turn")],
+        complete=True,
+        verdicts=["partial", "supported"],
+        rewritten="create_item adds the item.",
+    )
+    fake = FakeAnthropic(routes={"/v1/messages": model})
+    events = [
+        e
+        async for e in AskAgent(fake.client(), pre_retrieval=False).run(
+            "where is an item saved?", ctx, overview="o"
+        )
+    ]
+    done = events[-1]
+    assert isinstance(done, Done)
+    assert done.answer.text == "create_item adds the item."
+    (citation,) = done.answer.citations
+    assert (citation.start, citation.end) == (0, len(done.answer.text))  # it moved with it
+    check = done.answer.verification
+    assert check is not None
+    assert [(c.claim.text, c.verdict) for c in check.claims] == [
+        ("create_item adds the item.", "supported")
+    ]
+    assert model.checks == ["support", "whole", "rewrite", "support"]
+    assert len([e for e in events if isinstance(e, Verified)]) == 2
+
+
+def test_a_rewritten_claim_is_spliced_in_and_the_citations_move_with_the_text() -> None:
+    text = "It saves the item. It only has two models. Then it commits."
+    found = claims(text, [])
+    first, second, third = found
+    spans = [(0, 18, "a"), (19, 42, "b"), (43, 59, "c")]  # one per sentence
+    out, moved = spliced(text, spans, found, {second.n: "It has two models."})
+    assert out == "It saves the item. It has two models. Then it commits."
+    assert [(out[a:b], what) for a, b, what in moved] == [
+        ("It saves the item.", "a"), ("It has two models.", "b"), ("Then it commits.", "c"),
+    ]  # fmt: skip
+    # A claim its lines show nothing of goes, with its space, and its citation with it.
+    out, moved = spliced(text, spans, found, {second.n: ""})
+    assert out == "It saves the item. Then it commits."
+    assert [(out[a:b], what) for a, b, what in moved] == [
+        ("It saves the item.", "a"), ("Then it commits.", "c"),
+    ]  # fmt: skip
+    assert (first.n, third.n) == (1, 3)
+
+
+def test_a_list_line_taken_out_leaves_no_empty_line() -> None:
+    text = "- Saves it.\n- Only two models.\n- Commits."
+    found = claims(text, [])
+    gone = next(c for c in found if "models" in c.text)
+    none: list[tuple[int, int, str]] = []
+    out, _ = spliced(text, none, found, {gone.n: ""})
+    assert out == "- Saves it.\n- Commits."

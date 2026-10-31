@@ -32,7 +32,7 @@ import asyncio
 import enum
 import time
 from collections.abc import AsyncIterator, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from decimal import Decimal
 from importlib import resources
 from typing import Any, Literal
@@ -47,10 +47,13 @@ from sensei_engine.agent.tools.base import Cited, Evidence, Trail
 from sensei_engine.agent.verify import (
     MAX_ROUNDS,
     Checked,
+    Verdict,
     Verification,
     claims,
     existing,
     identifiers,
+    rewrite,
+    spliced,
     support,
     unknown,
     whole,
@@ -406,6 +409,8 @@ class AskAgent:
         layers = tuple(dict.fromkeys(lane_of(layer).value for layer in route.layers))
         async for event in self._verified(run, ctx, question, conversation, layers):
             yield event
+        async for event in self._rewritten(run, ctx):
+            yield event
         result = run.result
         if result is None:
             raise RuntimeError(NO_RESULT)
@@ -479,6 +484,36 @@ class AskAgent:
             gap_left -= run.turn - before
             if run.answered is answered:  # no new answer (its research cut short): keep this one
                 return
+
+    async def _rewritten(self, run: _Run, ctx: ToolContext) -> AsyncIterator[AgentEvent]:
+        """The verified answer's claims its lines show only part or none of, rewritten to say
+        what they show (engine §15.4), spliced in, and checked again; its citations moved to
+        match. The answer as it was when there is nothing to rewrite, or the rewrite fails."""
+        check = run.verification
+        if check is None or run.spent.over:
+            return
+        _, files = existing(ctx, [c.cited for c in run.citations])
+        new = await rewrite(self.client, check.claims, files, on_usage=self._counted(run))
+        if not new:
+            return
+        text, spans = spliced(
+            run.text,
+            [(c.start, c.end, c) for c in run.citations],
+            [c.claim for c in check.claims],
+            new,
+        )
+        run.text = text
+        run.citations = tuple(replace(c, start=a, end=b) for a, b, c in spans)
+        found = claims(run.text, [(c.start, c.end, c.cited) for c in run.citations])
+        before: dict[str, Verdict | None] = {c.claim.text: c.verdict for c in check.claims}
+        changed = [claim for claim in found if claim.text not in before]
+        verdicts = await support(self.client, changed, files, on_usage=self._counted(run))
+        checked = tuple(
+            Checked(claim, before[claim.text] if claim.text in before else verdicts.get(claim.n))
+            for claim in found
+        )
+        run.verification = replace(check, claims=checked)
+        yield Verified(run.verification)
 
     async def _verify(
         self, run: _Run, ctx: ToolContext, question: str, layers: tuple[str, ...], rounds: int

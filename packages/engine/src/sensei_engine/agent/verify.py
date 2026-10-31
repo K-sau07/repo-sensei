@@ -10,12 +10,15 @@
 * **The answer is whole** (the fast model; the standard one in deep mode): does the evidence
   answer the question, in every layer it asks about? If not, what is missing: the agent
   searches once more for it, and answers again (at most :data:`MAX_ROUNDS` times).
+* **Claims are rewritten** (engine §15.4; the fast model, all in one request): a sentence its
+  lines show only part of, or none of, is rewritten to say only what they show (or taken out
+  when they show nothing of it), spliced into the answer (:func:`spliced`) and checked again.
 """
 
 from __future__ import annotations
 
 import re
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from importlib import resources
 from typing import Any, Literal
@@ -324,6 +327,126 @@ async def support(
         for item in result.data.get("claims", [])
         if int(item["n"]) in known
     }
+
+
+REWRITE_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "claims": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {"n": {"type": "integer"}, "text": {"type": "string"}},
+                "required": ["n", "text"],
+                "additionalProperties": False,
+            },
+        }
+    },
+    "required": ["claims"],
+    "additionalProperties": False,
+}
+
+
+async def rewrite(
+    client: AnthropicClient,
+    checked: Sequence[Checked],
+    files: dict[str, list[str]],
+    *,
+    on_usage: LLMUsageSink | None = None,
+) -> dict[int, str]:
+    """Each citing claim the support check found partial or unsupported, rewritten to say only
+    what its lines show ("": they show none of it, and it goes). One request for all; nothing
+    when there is nothing to rewrite or the call fails (the claims stand, marked as checked)."""
+    wrong = [c for c in checked if c.verdict in ("partial", "unsupported") and c.claim.cited]
+    if not wrong:
+        return {}
+    parts: list[str] = []
+    for one in wrong:
+        claim = one.claim
+        parts.append(f"[{claim.n}] ({one.verdict}) {claim.text}")
+        for cited in claim.cited:
+            lines = files.get(cited.path, [])
+            end = min(cited.end_line, cited.start_line + MAX_CITED_LINES - 1)
+            shown = "\n".join(
+                f"{n}\t{clip(lines[n - 1])}"
+                for n in range(cited.start_line, end + 1)
+                if n - 1 < len(lines)
+            )
+            parts.append(f"  cites {cited.path}:{cited.start_line}-{cited.end_line}\n{shown}")
+    request = LLMRequest(
+        "\n\n".join(parts),
+        system=_prompt("verify_rewrite.v1"),
+        tier=Tier.FAST,
+        max_tokens=4_000,
+        effort="low",
+        schema=REWRITE_SCHEMA,
+        cache_system=True,
+    )
+    try:
+        result = await client.complete(request, on_usage=on_usage)
+    except LLMError:
+        return {}
+    known = {one.claim.n for one in wrong}
+    return {
+        int(item["n"]): str(item["text"]).strip()
+        for item in result.data.get("claims", [])
+        if int(item["n"]) in known
+    }
+
+
+def spliced[T](
+    text: str,
+    spans: Sequence[tuple[int, int, T]],
+    found: Sequence[Claim],
+    new: Mapping[int, str],
+) -> tuple[str, list[tuple[int, int, T]]]:
+    """``text`` with each claim ``new`` names replaced by its new words (taken out, with the
+    spaces after it, when they are empty; a line left empty goes too), and ``spans`` (offsets
+    in ``text``, each with what it carries) moved to match: one within a replaced claim covers
+    its new words (and goes with it, when it is taken out); any other moves with the text."""
+    edits: list[tuple[int, int, str]] = []
+    for claim in sorted(found, key=lambda c: c.start):
+        if claim.n not in new:
+            continue
+        start, end, words = claim.start, claim.end, new[claim.n]
+        if not words:
+            while end < len(text) and text[end] in " \t":
+                end += 1
+            if (start == 0 or text[start - 1] == "\n") and end < len(text) and text[end] == "\n":
+                end += 1
+        edits.append((start, end, words))
+    out: list[str] = []
+    at = 0
+    moved: list[tuple[int, int, int]] = []  # each edit's old start, old end, new start
+    for start, end, words in edits:
+        out.append(text[at:start])
+        moved.append((start, end, sum(len(p) for p in out)))
+        out.append(words)
+        at = end
+    out.append(text[at:])
+
+    def place(offset: int) -> int:
+        shift = 0
+        for (_, end, new_start), (_, _, words) in zip(moved, edits, strict=True):
+            if end <= offset:
+                shift = new_start + len(words) - end
+        return offset + shift
+
+    kept: list[tuple[int, int, T]] = []
+    for a, b, carried in spans:
+        inside = next(
+            (
+                (new_start, words)
+                for (start, end, new_start), (_, _, words) in zip(moved, edits, strict=True)
+                if a < end and b > start
+            ),
+            None,
+        )
+        if inside is None:
+            kept.append((place(a), place(b), carried))
+        elif inside[1]:
+            kept.append((inside[0], inside[0] + len(inside[1]), carried))
+    return "".join(out), kept
 
 
 async def whole(
