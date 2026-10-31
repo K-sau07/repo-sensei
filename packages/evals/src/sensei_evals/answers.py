@@ -77,6 +77,7 @@ TARGETS: dict[str, tuple[Literal[">=", "<"], float]] = {
     # Runs that failed (no answer) are left out of the rates above: a run with many must not
     # pass on the few that answered.
     "failed": ("<", 0.05),
+    "unasked": ("<", 1),  # every item asked (a run the budget stopped isn't the gate's)
 }
 # First token, p50, by kind of question: a lookup (symbol, regex, conceptual) or a trace (flow).
 FIRST_TOKEN_MS: dict[str, float] = {"lookup": 6_000, "trace": 15_000}
@@ -450,6 +451,7 @@ def gate(metrics: dict[str, Any]) -> list[Miss]:
         "first_event_ms.p50": answer.get("first_event_ms", {}).get("p50"),
         "cost_usd.mean": answer.get("cost_usd", {}).get("mean"),
         "failed": overall.get("failed"),
+        "unasked": overall.get("unasked", 0.0),
     }
     for kind in FIRST_TOKEN_MS:
         values[f"first_token_ms.{kind}.p50"] = (
@@ -511,6 +513,8 @@ async def run_answers(
         result.metrics["failed"] = 1.0 if outcome.answer is None else 0.0  # its mean: the rate
         results.append(result)
     metrics = answer_aggregate(results)
+    # A run the budget stopped wasn't the suite: what it left unasked keeps the gate shut.
+    metrics["overall"]["unasked"] = float(len(items) - len(results))
     metrics["gate"] = [
         {"metric": m.metric, "value": m.value, "bound": m.bound} for m in gate(metrics)
     ]

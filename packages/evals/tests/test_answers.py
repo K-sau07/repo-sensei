@@ -278,6 +278,9 @@ def test_the_gate_names_what_it_misses_and_counts_the_unmeasured_as_missed() -> 
     # Runs that failed don't count in the rates: so many of them is a miss of its own.
     overall["failed"] = 0.3
     assert ("failed", "< 0.05") in [(m.metric, m.bound) for m in gate(metrics)]
+    # Nor does a run the budget stopped pass on the items it got to.
+    overall["unasked"] = 25.0
+    assert ("unasked", "< 1") in [(m.metric, m.bound) for m in gate(metrics)]
 
 
 # ---------------------------------------------------------------- the run
