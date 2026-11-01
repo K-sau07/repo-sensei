@@ -9,6 +9,7 @@ import { impactHandlers } from "./impact";
 import { invitationHandlers } from "./invitations";
 import { meHandlers } from "./me";
 import { memberHandlers } from "./members";
+import { oauthHandlers } from "./oauth";
 import { orgHandlers } from "./orgs";
 import { overviewHandlers } from "./overview";
 import { refHandlers } from "./refs";
@@ -23,6 +24,7 @@ export { apiError } from "./errors";
 /** Order matters: specific paths (slug-available) are listed before parameterised ones. */
 export const handlers = [
   ...meHandlers,
+  ...oauthHandlers,
   ...constellationHandlers,
   ...browseHandlers,
   ...symbolHandlers,
