@@ -8,6 +8,11 @@ beside the snapshot as an artifact), its layer, size and cluster (its group a le
 edge with its counts by type, its surest edge's confidence and a few evidence lines. Asked with
 ``Accept: application/x-msgpack``, the answer is MessagePack, gzipped (a level of 20,000 nodes
 travels small). ``edge-evidence`` is the exact import and call lines behind one edge.
+
+``deps/dsm`` (6.3) is the level as a dependency structure matrix (rows and columns by layer,
+then name; a cell, the edges from its row to its column, flagged when both are in one cycle),
+with its cycles (Tarjan's strongly connected components) and each group's coupling (afferent,
+efferent, instability); ``deps/cycles`` is the cycles alone.
 """
 
 from __future__ import annotations
@@ -37,10 +42,14 @@ from sensei_core.storage import Bucket, ObjectStorage, artifact_key
 from sensei_engine.deps import (
     MANIFESTS,
     MAX_FORCE,
+    Cycle,
     DepGraph,
     Grouping,
     Level,
     aggregate,
+    coupling,
+    cycles,
+    dsm,
     evidence,
     focus,
     grouping,
@@ -180,6 +189,32 @@ def _types(raw: str | None) -> frozenset[str] | None:
     return frozenset(t.strip() for t in raw.split(",") if t.strip()) or None
 
 
+async def _level(
+    request: Request,
+    db: DbSession,
+    repo: RepoDep,
+    *,
+    level: Level,
+    types: str | None,
+    min_conf: float,
+    ref: str | None,
+) -> tuple[Snapshot, GraphSnapshot, DepGraph, DepGraph]:
+    """The snapshot, its graph, the whole level, and the level as filtered."""
+    snapshot, graph = await _graph(request, db, repo, ref)
+    roots = await _roots(request, db, snapshot)
+    cache = _cache(request)
+    plain_key = ("level", snapshot.id, graph.version, level)
+    whole: DepGraph | None = cache.get(plain_key)
+    if whole is None:
+        whole = await asyncio.to_thread(aggregate, graph, level, roots)
+        cache.put(plain_key, whole)
+    wanted = _types(types)
+    if wanted is None and min_conf <= 0:
+        return snapshot, graph, whole, whole
+    shown = await asyncio.to_thread(aggregate, graph, level, roots, types=wanted, min_conf=min_conf)
+    return snapshot, graph, whole, shown
+
+
 async def _positions(
     request: Request, snapshot: Snapshot, graph: GraphSnapshot, whole: DepGraph
 ) -> dict[str, tuple[float, float]]:
@@ -229,20 +264,9 @@ async def deps(
 ) -> Any:
     """The level's nodes (where each is drawn) and edges (counted by type), or a focus of it."""
     await limit_graph(request, redis, access)
-    snapshot, graph = await _graph(request, db, repo, ref)
-    roots = await _roots(request, db, snapshot)
-    cache = _cache(request)
-    plain_key = ("level", snapshot.id, graph.version, level)
-    whole: DepGraph | None = cache.get(plain_key)
-    if whole is None:
-        whole = await asyncio.to_thread(aggregate, graph, level, roots)
-        cache.put(plain_key, whole)
-    shown = whole
-    wanted = _types(types)
-    if wanted is not None or min_conf > 0:
-        shown = await asyncio.to_thread(
-            aggregate, graph, level, roots, types=wanted, min_conf=min_conf
-        )
+    snapshot, graph, whole, shown = await _level(
+        request, db, repo, level=level, types=types, min_conf=min_conf, ref=ref
+    )
     if focus_on is not None:
         if focus_on not in shown.nodes:
             raise NotFoundError(f"No {level} named {focus_on!r}.", code="deps_focus_not_found")
@@ -353,3 +377,119 @@ async def edge_evidence(
             for e in found
         ],
     )
+
+
+class DsmNodeOut(BaseModel):
+    id: str
+    label: str
+    layer: str
+    size: int
+    afferent: int  # Ca: the groups that depend on it
+    efferent: int  # Ce: the groups it depends on
+    instability: float | None  # Ce / (Ca + Ce)
+
+
+class DsmCellOut(BaseModel):
+    row: int  # the depending group's index in ``order``
+    col: int  # the depended-on group's
+    count: int
+    cycle: bool  # both in one cycle
+
+
+class CycleEdgeOut(BaseModel):
+    source: str
+    target: str
+    weight: int
+
+
+class CycleOut(BaseModel):
+    nodes: list[str]
+    edges: list[CycleEdgeOut]
+
+
+class CyclesOut(BaseModel):
+    level: Level
+    sha: str
+    cycles: list[CycleOut]
+
+
+class DsmOut(CyclesOut):
+    order: list[DsmNodeOut]
+    cells: list[DsmCellOut]
+
+
+def _cycles_out(found: list[Cycle]) -> list[CycleOut]:
+    return [
+        CycleOut(
+            nodes=list(c.nodes),
+            edges=[CycleEdgeOut(source=a, target=b, weight=w) for a, b, w in c.edges],
+        )
+        for c in found
+    ]
+
+
+@router.get("/deps/dsm", response_model=DsmOut)
+async def deps_dsm(
+    *,
+    request: Request,
+    response: Response,
+    access: OrgAccessDep,
+    repo: RepoDep,
+    db: DbSession,
+    redis: RedisClient,
+    level: Level = "module",
+    types: Annotated[str | None, Query(max_length=500)] = None,
+    min_conf: Annotated[float, Query(ge=0, le=1)] = 0.0,
+    ref: RefParam = None,
+) -> DsmOut:
+    """The level as a dependency structure matrix, with its cycles and coupling metrics."""
+    await limit_graph(request, redis, access)
+    snapshot, _, _, shown = await _level(
+        request, db, repo, level=level, types=types, min_conf=min_conf, ref=ref
+    )
+    found = await asyncio.to_thread(cycles, shown)
+    matrix = await asyncio.to_thread(dsm, shown, found)
+    metrics = coupling(shown)
+    response.headers[COMMIT_HEADER] = snapshot.commit_sha
+    return DsmOut(
+        level=level,
+        sha=snapshot.commit_sha,
+        cycles=_cycles_out(found),
+        order=[
+            DsmNodeOut(
+                id=key,
+                label=shown.nodes[key].label,
+                layer=shown.nodes[key].layer,
+                size=shown.nodes[key].size,
+                afferent=metrics[key].afferent,
+                efferent=metrics[key].efferent,
+                instability=metrics[key].instability,
+            )
+            for key in matrix.order
+        ],
+        cells=[DsmCellOut(row=r, col=c, count=n, cycle=y) for r, c, n, y in matrix.cells],
+    )
+
+
+@router.get("/deps/cycles", response_model=CyclesOut)
+async def deps_cycles(
+    *,
+    request: Request,
+    response: Response,
+    access: OrgAccessDep,
+    repo: RepoDep,
+    db: DbSession,
+    redis: RedisClient,
+    level: Level = "module",
+    types: Annotated[str | None, Query(max_length=500)] = None,
+    min_conf: Annotated[float, Query(ge=0, le=1)] = 0.0,
+    ref: RefParam = None,
+) -> CyclesOut:
+    """The level's cycles, the largest first, each with the edges that close it."""
+    await limit_graph(request, redis, access)
+    snapshot, _, _, shown = await _level(
+        request, db, repo, level=level, types=types, min_conf=min_conf, ref=ref
+    )
+    found = await asyncio.to_thread(cycles, shown)
+    response.headers[COMMIT_HEADER] = snapshot.commit_sha
+    return CyclesOut(level=level, sha=snapshot.commit_sha, cycles=_cycles_out(found))

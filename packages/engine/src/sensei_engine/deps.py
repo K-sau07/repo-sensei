@@ -372,3 +372,102 @@ def _normalized(points: Mapping[str, tuple[float, float]]) -> dict[str, tuple[fl
         key: (round((x - cx) * 2 / span, 5), round((y - cy) * 2 / span, 5))
         for key, (x, y) in points.items()
     }
+
+
+# ---------------------------------------------------------------- cycles, DSM, coupling (6.3)
+
+LAYER_ORDER = ("ui", "state", "client", "route", "handler", "service", "db", "other")
+
+
+@dataclass(frozen=True, slots=True)
+class Cycle:
+    """Groups that depend on each other, round (a strongly connected component of 2+), and the
+    edges among them."""
+
+    nodes: tuple[str, ...]
+    edges: tuple[tuple[str, str, int], ...]  # source, target, weight
+
+
+def cycles(dep: DepGraph) -> list[Cycle]:
+    """The level's cycles (Tarjan's strongly connected components with more than one node), the
+    largest first, then by their first node."""
+    ids = sorted(dep.nodes)
+    at = {key: i for i, key in enumerate(ids)}
+    graph: rx.PyDiGraph[str, None] = rx.PyDiGraph()
+    graph.add_nodes_from(ids)
+    graph.add_edges_from_no_data([(at[src], at[dst]) for src, dst in dep.edges])
+    found: list[Cycle] = []
+    for component in rx.strongly_connected_components(graph):
+        if len(component) < 2:
+            continue
+        members = sorted(ids[i] for i in component)
+        inside = set(members)
+        found.append(
+            Cycle(
+                tuple(members),
+                tuple(
+                    (src, dst, edge.weight)
+                    for (src, dst), edge in dep.edges.items()
+                    if src in inside and dst in inside
+                ),
+            )
+        )
+    found.sort(key=lambda c: (-len(c.nodes), c.nodes))
+    return found
+
+
+@dataclass(frozen=True, slots=True)
+class Dsm:
+    """The dependency structure matrix: ``order`` its rows and columns (by layer, then name);
+    a cell (row, column, count) is the edges from the row's group to the column's, and says
+    whether both are in one cycle."""
+
+    order: tuple[str, ...]
+    cells: tuple[tuple[int, int, int, bool], ...]
+
+
+def dsm(dep: DepGraph, found: Sequence[Cycle] | None = None) -> Dsm:
+    """The level's matrix (see :class:`Dsm`)."""
+    rank = {layer: i for i, layer in enumerate(LAYER_ORDER)}
+    order = sorted(
+        dep.nodes,
+        key=lambda key: (rank.get(dep.nodes[key].layer, len(rank)), dep.nodes[key].label, key),
+    )
+    at = {key: i for i, key in enumerate(order)}
+    cycle_of: dict[str, int] = {}
+    for n, cycle in enumerate(found if found is not None else cycles(dep)):
+        for key in cycle.nodes:
+            cycle_of[key] = n
+    cells = sorted(
+        (
+            at[src],
+            at[dst],
+            edge.weight,
+            src in cycle_of and cycle_of.get(src) == cycle_of.get(dst),
+        )
+        for (src, dst), edge in dep.edges.items()
+    )
+    return Dsm(tuple(order), tuple(cells))
+
+
+@dataclass(frozen=True, slots=True)
+class Coupling:
+    afferent: int  # Ca: the groups that depend on it
+    efferent: int  # Ce: the groups it depends on
+    instability: float | None  # I = Ce / (Ca + Ce); None when it has neither
+
+    @classmethod
+    def of(cls, afferent: int, efferent: int) -> Coupling:
+        total = afferent + efferent
+        return cls(afferent, efferent, round(efferent / total, 4) if total else None)
+
+
+def coupling(dep: DepGraph) -> dict[str, Coupling]:
+    """Each group's afferent and efferent coupling and instability (Martin's metrics), counting
+    the distinct groups on each side."""
+    into: defaultdict[str, set[str]] = defaultdict(set)
+    out_of: defaultdict[str, set[str]] = defaultdict(set)
+    for src, dst in dep.edges:
+        out_of[src].add(dst)
+        into[dst].add(src)
+    return {key: Coupling.of(len(into[key]), len(out_of[key])) for key in sorted(dep.nodes)}

@@ -4,6 +4,7 @@ the same every time."""
 
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Sequence
 
 import pytest
@@ -12,9 +13,13 @@ from sensei_core.models import EdgeType, NodeKind, Provenance
 from sensei_engine.deps import (
     MAX_FORCE,
     TOP,
+    DepEdge,
     DepGraph,
     DepNode,
     aggregate,
+    coupling,
+    cycles,
+    dsm,
     evidence,
     focus,
     group_of,
@@ -207,3 +212,45 @@ def test_levels_cover_the_same_code(graph: GraphSnapshot) -> None:
         for level in ("service", "package", "module", "file", "symbol")
     ]
     assert len(set(sizes)) == 1  # every code node, once at each level
+
+
+def _dep(layers: dict[str, str], edges: dict[tuple[str, str], int]) -> DepGraph:
+    nodes = {key: DepNode(key, key, layer, 1, None) for key, layer in layers.items()}
+    made: dict[tuple[str, str], DepEdge] = {}
+    for (src, dst), count in edges.items():
+        made[(src, dst)] = DepEdge(src, dst, Counter({"imports": count}), 1.0)
+    return DepGraph("module", nodes, made)
+
+
+# A cycle of three (a → b → c → a), one of two (d ⇄ e), and f hanging off a.
+CYCLIC = _dep(
+    {"a": "service", "b": "service", "c": "db", "d": "ui", "e": "ui", "f": "route"},
+    {("a", "b"): 2, ("b", "c"): 1, ("c", "a"): 5, ("d", "e"): 1, ("e", "d"): 1, ("f", "a"): 3},
+)
+
+
+def test_cycles_are_the_strongly_connected_groups() -> None:
+    found = cycles(CYCLIC)
+    assert [c.nodes for c in found] == [("a", "b", "c"), ("d", "e")]
+    assert set(found[0].edges) == {("a", "b", 2), ("b", "c", 1), ("c", "a", 5)}
+    assert cycles(_dep({"x": "other", "y": "other"}, {("x", "y"): 1})) == []
+
+
+def test_the_dsm_is_ordered_by_layer_and_flags_cycle_cells() -> None:
+    matrix = dsm(CYCLIC)
+    assert matrix.order == ("d", "e", "f", "a", "b", "c")  # ui, route, service, db
+    at = {key: i for i, key in enumerate(matrix.order)}
+    cells = {(row, col): (count, cyclic) for row, col, count, cyclic in matrix.cells}
+    assert cells[(at["c"], at["a"])] == (5, True)
+    assert cells[(at["d"], at["e"])] == (1, True)
+    assert cells[(at["f"], at["a"])] == (3, False)  # into a cycle, not in one
+    assert len(matrix.cells) == len(CYCLIC.edges)
+
+
+def test_coupling_metrics() -> None:
+    metrics = coupling(CYCLIC)
+    assert (metrics["a"].afferent, metrics["a"].efferent) == (2, 1)  # c and f in, b out
+    assert metrics["a"].instability == pytest.approx(1 / 3, abs=1e-4)
+    assert metrics["f"].instability == 1.0  # depends, depended on by none
+    lone = coupling(_dep({"x": "other"}, {}))
+    assert lone["x"].instability is None

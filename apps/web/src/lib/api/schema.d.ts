@@ -866,6 +866,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/orgs/{org}/repos/{repo}/deps/cycles": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Deps Cycles
+         * @description The level's cycles, the largest first, each with the edges that close it.
+         */
+        get: operations["deps_cycles_api_v1_orgs__org__repos__repo__deps_cycles_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/repos/{repo}/deps/dsm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Deps Dsm
+         * @description The level as a dependency structure matrix, with its cycles and coupling metrics.
+         */
+        get: operations["deps_dsm_api_v1_orgs__org__repos__repo__deps_dsm_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/orgs/{org}/repos/{repo}/deps/edge-evidence": {
         parameters: {
             query?: never;
@@ -1820,6 +1860,34 @@ export interface components {
             /** Title */
             title: string;
         };
+        /** CycleEdgeOut */
+        CycleEdgeOut: {
+            /** Source */
+            source: string;
+            /** Target */
+            target: string;
+            /** Weight */
+            weight: number;
+        };
+        /** CycleOut */
+        CycleOut: {
+            /** Edges */
+            edges: components["schemas"]["CycleEdgeOut"][];
+            /** Nodes */
+            nodes: string[];
+        };
+        /** CyclesOut */
+        CyclesOut: {
+            /** Cycles */
+            cycles: components["schemas"]["CycleOut"][];
+            /**
+             * Level
+             * @enum {string}
+             */
+            level: "service" | "package" | "module" | "file" | "symbol";
+            /** Sha */
+            sha: string;
+        };
         /** DepEdgeOut */
         DepEdgeOut: {
             /** Confidence */
@@ -1987,6 +2055,50 @@ export interface components {
             path: string;
             /** Summary */
             summary: string;
+        };
+        /** DsmCellOut */
+        DsmCellOut: {
+            /** Col */
+            col: number;
+            /** Count */
+            count: number;
+            /** Cycle */
+            cycle: boolean;
+            /** Row */
+            row: number;
+        };
+        /** DsmNodeOut */
+        DsmNodeOut: {
+            /** Afferent */
+            afferent: number;
+            /** Efferent */
+            efferent: number;
+            /** Id */
+            id: string;
+            /** Instability */
+            instability: number | null;
+            /** Label */
+            label: string;
+            /** Layer */
+            layer: string;
+            /** Size */
+            size: number;
+        };
+        /** DsmOut */
+        DsmOut: {
+            /** Cells */
+            cells: components["schemas"]["DsmCellOut"][];
+            /** Cycles */
+            cycles: components["schemas"]["CycleOut"][];
+            /**
+             * Level
+             * @enum {string}
+             */
+            level: "service" | "package" | "module" | "file" | "symbol";
+            /** Order */
+            order: components["schemas"]["DsmNodeOut"][];
+            /** Sha */
+            sha: string;
         };
         /** EdgeEvidenceOut */
         EdgeEvidenceOut: {
@@ -5585,6 +5697,86 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["DepsOut"];
                     "application/x-msgpack": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    deps_cycles_api_v1_orgs__org__repos__repo__deps_cycles_get: {
+        parameters: {
+            query?: {
+                level?: "service" | "package" | "module" | "file" | "symbol";
+                types?: string | null;
+                min_conf?: number;
+                /** @description Branch or commit (or its first 7+ characters). */
+                ref?: string | null;
+            };
+            header?: never;
+            path: {
+                /** @description Organization slug */
+                org: string;
+                /** @description Repository slug */
+                repo: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CyclesOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    deps_dsm_api_v1_orgs__org__repos__repo__deps_dsm_get: {
+        parameters: {
+            query?: {
+                level?: "service" | "package" | "module" | "file" | "symbol";
+                types?: string | null;
+                min_conf?: number;
+                /** @description Branch or commit (or its first 7+ characters). */
+                ref?: string | null;
+            };
+            header?: never;
+            path: {
+                /** @description Organization slug */
+                org: string;
+                /** @description Repository slug */
+                repo: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DsmOut"];
                 };
             };
             /** @description Validation Error */

@@ -52,10 +52,18 @@ async def client(api_app: FastAPI, fake_redis: FakeAsyncRedis) -> AsyncGenerator
             yield http
 
 
+A = "backend/app/loop/a.py"
+B = "backend/app/loop/b.py"
+CYCLE = {
+    A: "from app.loop.b import second\n\n\ndef first():\n    return second()\n",
+    B: "from app.loop.a import first\n\n\ndef second():\n    return first()\n",
+}
+
+
 async def _indexed(
     api_app: FastAPI, client: httpx.AsyncClient, db: AsyncSession, tmp_path: Path
 ) -> str:
-    snapshot, _ = await index_repo(db, tmp_path, ITEMS)
+    snapshot, _ = await index_repo(db, tmp_path, {**ITEMS, **CYCLE})
     snapshot.status, snapshot.merkle_root, snapshot.ready_at = SnapshotStatus.READY, "00" * 32, NOW
     repo = await db.get(Repo, snapshot.repo_id)
     assert repo is not None
@@ -139,3 +147,29 @@ async def test_a_focus_and_the_evidence_behind_an_edge(
     assert "py backend/app/services/items.py/create_item()." in {n["id"] for n in symbols["nodes"]}
     services = (await client.get(f"{url}/deps", params={"level": "service"})).json()
     assert [n["label"] for n in services["nodes"]] == ["app"]  # no Compose, no app framework
+
+
+@pytest.mark.integration
+async def test_the_dsm_shows_a_cycle_and_coupling(
+    api_app: FastAPI, client: httpx.AsyncClient, db_session: AsyncSession, tmp_path: Path
+) -> None:
+    url = await _indexed(api_app, client, db_session, tmp_path)
+    got = await client.get(f"{url}/deps/dsm", params={"level": "file"})
+    assert got.status_code == 200, got.text
+    body = got.json()
+    [cycle] = body["cycles"]
+    assert cycle["nodes"] == [A, B]
+    assert {(e["source"], e["target"]) for e in cycle["edges"]} == {(A, B), (B, A)}
+    order = [n["id"] for n in body["order"]]
+    cells = {(order[c["row"]], order[c["col"]]): c for c in body["cells"]}
+    assert cells[(A, B)]["cycle"] is True
+    assert cells[(ROUTE, SERVICE)]["cycle"] is False
+    metrics = {n["id"]: n for n in body["order"]}
+    assert (metrics[SERVICE]["afferent"], metrics[SERVICE]["efferent"]) == (1, 0)
+    assert metrics[SERVICE]["instability"] == 0.0
+    assert metrics[ROUTE]["instability"] == 1.0
+    alone = await client.get(f"{url}/deps/cycles", params={"level": "file"})
+    assert alone.json()["cycles"] == body["cycles"]
+    # A module holding both: no cycle at that level.
+    modules = await client.get(f"{url}/deps/cycles", params={"level": "module"})
+    assert modules.json()["cycles"] == []

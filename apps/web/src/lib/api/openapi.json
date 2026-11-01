@@ -993,6 +993,86 @@
         "title": "ConversationUpdate",
         "type": "object"
       },
+      "CycleEdgeOut": {
+        "properties": {
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "target": {
+            "title": "Target",
+            "type": "string"
+          },
+          "weight": {
+            "title": "Weight",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "source",
+          "target",
+          "weight"
+        ],
+        "title": "CycleEdgeOut",
+        "type": "object"
+      },
+      "CycleOut": {
+        "properties": {
+          "edges": {
+            "items": {
+              "$ref": "#/components/schemas/CycleEdgeOut"
+            },
+            "title": "Edges",
+            "type": "array"
+          },
+          "nodes": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Nodes",
+            "type": "array"
+          }
+        },
+        "required": [
+          "nodes",
+          "edges"
+        ],
+        "title": "CycleOut",
+        "type": "object"
+      },
+      "CyclesOut": {
+        "properties": {
+          "cycles": {
+            "items": {
+              "$ref": "#/components/schemas/CycleOut"
+            },
+            "title": "Cycles",
+            "type": "array"
+          },
+          "level": {
+            "enum": [
+              "service",
+              "package",
+              "module",
+              "file",
+              "symbol"
+            ],
+            "title": "Level",
+            "type": "string"
+          },
+          "sha": {
+            "title": "Sha",
+            "type": "string"
+          }
+        },
+        "required": [
+          "level",
+          "sha",
+          "cycles"
+        ],
+        "title": "CyclesOut",
+        "type": "object"
+      },
       "DepEdgeOut": {
         "properties": {
           "confidence": {
@@ -1438,6 +1518,133 @@
           "summary"
         ],
         "title": "DirectorySummaryOut",
+        "type": "object"
+      },
+      "DsmCellOut": {
+        "properties": {
+          "col": {
+            "title": "Col",
+            "type": "integer"
+          },
+          "count": {
+            "title": "Count",
+            "type": "integer"
+          },
+          "cycle": {
+            "title": "Cycle",
+            "type": "boolean"
+          },
+          "row": {
+            "title": "Row",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "row",
+          "col",
+          "count",
+          "cycle"
+        ],
+        "title": "DsmCellOut",
+        "type": "object"
+      },
+      "DsmNodeOut": {
+        "properties": {
+          "afferent": {
+            "title": "Afferent",
+            "type": "integer"
+          },
+          "efferent": {
+            "title": "Efferent",
+            "type": "integer"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "instability": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Instability"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "layer": {
+            "title": "Layer",
+            "type": "string"
+          },
+          "size": {
+            "title": "Size",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "label",
+          "layer",
+          "size",
+          "afferent",
+          "efferent",
+          "instability"
+        ],
+        "title": "DsmNodeOut",
+        "type": "object"
+      },
+      "DsmOut": {
+        "properties": {
+          "cells": {
+            "items": {
+              "$ref": "#/components/schemas/DsmCellOut"
+            },
+            "title": "Cells",
+            "type": "array"
+          },
+          "cycles": {
+            "items": {
+              "$ref": "#/components/schemas/CycleOut"
+            },
+            "title": "Cycles",
+            "type": "array"
+          },
+          "level": {
+            "enum": [
+              "service",
+              "package",
+              "module",
+              "file",
+              "symbol"
+            ],
+            "title": "Level",
+            "type": "string"
+          },
+          "order": {
+            "items": {
+              "$ref": "#/components/schemas/DsmNodeOut"
+            },
+            "title": "Order",
+            "type": "array"
+          },
+          "sha": {
+            "title": "Sha",
+            "type": "string"
+          }
+        },
+        "required": [
+          "level",
+          "sha",
+          "cycles",
+          "order",
+          "cells"
+        ],
+        "title": "DsmOut",
         "type": "object"
       },
       "EdgeEvidenceOut": {
@@ -9401,6 +9608,250 @@
           }
         },
         "summary": "Deps",
+        "tags": [
+          "deps"
+        ]
+      }
+    },
+    "/api/v1/orgs/{org}/repos/{repo}/deps/cycles": {
+      "get": {
+        "description": "The level's cycles, the largest first, each with the edges that close it.",
+        "operationId": "deps_cycles_api_v1_orgs__org__repos__repo__deps_cycles_get",
+        "parameters": [
+          {
+            "description": "Organization slug",
+            "in": "path",
+            "name": "org",
+            "required": true,
+            "schema": {
+              "description": "Organization slug",
+              "title": "Org",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Repository slug",
+            "in": "path",
+            "name": "repo",
+            "required": true,
+            "schema": {
+              "description": "Repository slug",
+              "maxLength": 201,
+              "title": "Repo",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "level",
+            "required": false,
+            "schema": {
+              "default": "module",
+              "enum": [
+                "service",
+                "package",
+                "module",
+                "file",
+                "symbol"
+              ],
+              "title": "Level",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "types",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 500,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Types"
+            }
+          },
+          {
+            "in": "query",
+            "name": "min_conf",
+            "required": false,
+            "schema": {
+              "default": 0.0,
+              "maximum": 1,
+              "minimum": 0,
+              "title": "Min Conf",
+              "type": "number"
+            }
+          },
+          {
+            "description": "Branch or commit (or its first 7+ characters).",
+            "in": "query",
+            "name": "ref",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 255,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Branch or commit (or its first 7+ characters).",
+              "title": "Ref"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CyclesOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Deps Cycles",
+        "tags": [
+          "deps"
+        ]
+      }
+    },
+    "/api/v1/orgs/{org}/repos/{repo}/deps/dsm": {
+      "get": {
+        "description": "The level as a dependency structure matrix, with its cycles and coupling metrics.",
+        "operationId": "deps_dsm_api_v1_orgs__org__repos__repo__deps_dsm_get",
+        "parameters": [
+          {
+            "description": "Organization slug",
+            "in": "path",
+            "name": "org",
+            "required": true,
+            "schema": {
+              "description": "Organization slug",
+              "title": "Org",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Repository slug",
+            "in": "path",
+            "name": "repo",
+            "required": true,
+            "schema": {
+              "description": "Repository slug",
+              "maxLength": 201,
+              "title": "Repo",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "level",
+            "required": false,
+            "schema": {
+              "default": "module",
+              "enum": [
+                "service",
+                "package",
+                "module",
+                "file",
+                "symbol"
+              ],
+              "title": "Level",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "types",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 500,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Types"
+            }
+          },
+          {
+            "in": "query",
+            "name": "min_conf",
+            "required": false,
+            "schema": {
+              "default": 0.0,
+              "maximum": 1,
+              "minimum": 0,
+              "title": "Min Conf",
+              "type": "number"
+            }
+          },
+          {
+            "description": "Branch or commit (or its first 7+ characters).",
+            "in": "query",
+            "name": "ref",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 255,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Branch or commit (or its first 7+ characters).",
+              "title": "Ref"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DsmOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Deps Dsm",
         "tags": [
           "deps"
         ]
