@@ -82,7 +82,10 @@ def test_package_json_and_config_files_per_root() -> None:
 def test_alembic_compose_and_openapi() -> None:
     manifests = {
         "backend/alembic.ini": "[alembic]\nscript_location = app/alembic\n",
-        "compose.yml": "services:\n  db:\n    image: postgres\n  api:\n    build: .\n",
+        "compose.yml": (
+            "services:\n  db:\n    image: postgres\n  api:\n    build: .\n"
+            "  web:\n    build:\n      context: ./frontend\n  out:\n    build: ../elsewhere\n"
+        ),
         "compose.override.yml": "services:\n  mailpit:\n    image: axllent/mailpit\n",
         "docker-compose.yaml": ": not yaml : [",
         "api/openapi.yaml": "openapi: 3.1.0\ninfo: {title: x}\n",
@@ -95,7 +98,11 @@ def test_alembic_compose_and_openapi() -> None:
         ("api", "openapi"),
         ("spec", "openapi"),
     }
-    assert frameworks[".", "docker-compose"].details == {"services": ["api", "db", "mailpit"]}
+    assert frameworks[".", "docker-compose"].details == {
+        "services": ["api", "db", "mailpit", "out", "web"],
+        # What each is built from (one outside the repository left out); merged across files.
+        "builds": {"api": ".", "web": "frontend"},
+    }
     assert frameworks["api", "openapi"].version == "3.1.0"
     assert frameworks["spec", "openapi"].version == "2.0"
 

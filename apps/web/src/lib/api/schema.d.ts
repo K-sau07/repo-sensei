@@ -846,6 +846,47 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/orgs/{org}/repos/{repo}/deps": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Deps
+         * @description The level's nodes (where each is drawn) and edges (counted by type), or a focus of it.
+         */
+        get: operations["deps_api_v1_orgs__org__repos__repo__deps_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/repos/{repo}/deps/edge-evidence": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Edge Evidence
+         * @description The code's edges behind the level's edge from ``src`` to ``dst``: each import or call,
+         *     with its line, surest first.
+         */
+        get: operations["edge_evidence_api_v1_orgs__org__repos__repo__deps_edge_evidence_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/orgs/{org}/repos/{repo}/diagrams": {
         parameters: {
             query?: never;
@@ -1594,6 +1635,13 @@ export interface components {
             /** Stale */
             stale: boolean | null;
         };
+        /** ClusterOut */
+        ClusterOut: {
+            /** Id */
+            id: string;
+            /** Nodes */
+            nodes: number;
+        };
         /** ConnectRepo */
         ConnectRepo: {
             /** Github Repo Id */
@@ -1772,6 +1820,62 @@ export interface components {
             /** Title */
             title: string;
         };
+        /** DepEdgeOut */
+        DepEdgeOut: {
+            /** Confidence */
+            confidence: number;
+            /** Samples */
+            samples: components["schemas"]["SampleOut"][];
+            /** Source */
+            source: string;
+            /** Target */
+            target: string;
+            /** Types */
+            types: {
+                [key: string]: number;
+            };
+            /** Weight */
+            weight: number;
+        };
+        /** DepNodeOut */
+        DepNodeOut: {
+            /** Cluster */
+            cluster: string | null;
+            /** Id */
+            id: string;
+            /** Label */
+            label: string;
+            /** Layer */
+            layer: string;
+            /** Size */
+            size: number;
+            /** X */
+            x: number;
+            /** Y */
+            y: number;
+        };
+        /** DepsOut */
+        DepsOut: {
+            /** Clusters */
+            clusters: components["schemas"]["ClusterOut"][];
+            /** Edges */
+            edges: components["schemas"]["DepEdgeOut"][];
+            /** Layout */
+            layout: string;
+            /**
+             * Level
+             * @enum {string}
+             */
+            level: "service" | "package" | "module" | "file" | "symbol";
+            /** Nodes */
+            nodes: components["schemas"]["DepNodeOut"][];
+            /** Sha */
+            sha: string;
+            /** Total */
+            total: number;
+            /** Truncated */
+            truncated: boolean;
+        };
         /** DiagramIn */
         DiagramIn: {
             from_trace?: components["schemas"]["FromTrace"] | null;
@@ -1883,6 +1987,13 @@ export interface components {
             path: string;
             /** Summary */
             summary: string;
+        };
+        /** EdgeEvidenceOut */
+        EdgeEvidenceOut: {
+            /** Edges */
+            edges: components["schemas"]["EvidenceOut"][];
+            /** Total */
+            total: number;
         };
         /** EdgeHealthOut */
         EdgeHealthOut: {
@@ -2047,6 +2158,23 @@ export interface components {
             suite: string;
             /** Suite Version */
             suite_version: number;
+        };
+        /** EvidenceOut */
+        EvidenceOut: {
+            /** Confidence */
+            confidence: number;
+            /** Line */
+            line: number | null;
+            /** Path */
+            path: string | null;
+            /** Provenance */
+            provenance: string;
+            /** Source */
+            source: string;
+            /** Target */
+            target: string;
+            /** Type */
+            type: string;
         };
         /**
          * Feature
@@ -3079,6 +3207,13 @@ export interface components {
             turns: number;
             /** User */
             user: string | null;
+        };
+        /** SampleOut */
+        SampleOut: {
+            /** Line */
+            line: number;
+            /** Path */
+            path: string;
         };
         /** SearchExactQuery */
         SearchExactQuery: {
@@ -5407,6 +5542,92 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ConversationList"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    deps_api_v1_orgs__org__repos__repo__deps_get: {
+        parameters: {
+            query?: {
+                level?: "service" | "package" | "module" | "file" | "symbol";
+                focus?: string | null;
+                depth?: number;
+                types?: string | null;
+                min_conf?: number;
+                /** @description Branch or commit (or its first 7+ characters). */
+                ref?: string | null;
+            };
+            header?: never;
+            path: {
+                /** @description Organization slug */
+                org: string;
+                /** @description Repository slug */
+                repo: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DepsOut"];
+                    "application/x-msgpack": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    edge_evidence_api_v1_orgs__org__repos__repo__deps_edge_evidence_get: {
+        parameters: {
+            query: {
+                src: string;
+                dst: string;
+                level?: "service" | "package" | "module" | "file" | "symbol";
+                types?: string | null;
+                min_conf?: number;
+                limit?: number;
+                /** @description Branch or commit (or its first 7+ characters). */
+                ref?: string | null;
+            };
+            header?: never;
+            path: {
+                /** @description Organization slug */
+                org: string;
+                /** @description Repository slug */
+                repo: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EdgeEvidenceOut"];
                 };
             };
             /** @description Validation Error */

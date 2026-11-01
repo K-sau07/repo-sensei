@@ -585,6 +585,24 @@
         "title": "CitedOut",
         "type": "object"
       },
+      "ClusterOut": {
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "nodes": {
+            "title": "Nodes",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "nodes"
+        ],
+        "title": "ClusterOut",
+        "type": "object"
+      },
       "ConnectRepo": {
         "properties": {
           "github_repo_id": {
@@ -975,6 +993,164 @@
         "title": "ConversationUpdate",
         "type": "object"
       },
+      "DepEdgeOut": {
+        "properties": {
+          "confidence": {
+            "title": "Confidence",
+            "type": "number"
+          },
+          "samples": {
+            "items": {
+              "$ref": "#/components/schemas/SampleOut"
+            },
+            "title": "Samples",
+            "type": "array"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "target": {
+            "title": "Target",
+            "type": "string"
+          },
+          "types": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Types",
+            "type": "object"
+          },
+          "weight": {
+            "title": "Weight",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "source",
+          "target",
+          "weight",
+          "types",
+          "confidence",
+          "samples"
+        ],
+        "title": "DepEdgeOut",
+        "type": "object"
+      },
+      "DepNodeOut": {
+        "properties": {
+          "cluster": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cluster"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "layer": {
+            "title": "Layer",
+            "type": "string"
+          },
+          "size": {
+            "title": "Size",
+            "type": "integer"
+          },
+          "x": {
+            "title": "X",
+            "type": "number"
+          },
+          "y": {
+            "title": "Y",
+            "type": "number"
+          }
+        },
+        "required": [
+          "id",
+          "label",
+          "layer",
+          "size",
+          "cluster",
+          "x",
+          "y"
+        ],
+        "title": "DepNodeOut",
+        "type": "object"
+      },
+      "DepsOut": {
+        "properties": {
+          "clusters": {
+            "items": {
+              "$ref": "#/components/schemas/ClusterOut"
+            },
+            "title": "Clusters",
+            "type": "array"
+          },
+          "edges": {
+            "items": {
+              "$ref": "#/components/schemas/DepEdgeOut"
+            },
+            "title": "Edges",
+            "type": "array"
+          },
+          "layout": {
+            "title": "Layout",
+            "type": "string"
+          },
+          "level": {
+            "enum": [
+              "service",
+              "package",
+              "module",
+              "file",
+              "symbol"
+            ],
+            "title": "Level",
+            "type": "string"
+          },
+          "nodes": {
+            "items": {
+              "$ref": "#/components/schemas/DepNodeOut"
+            },
+            "title": "Nodes",
+            "type": "array"
+          },
+          "sha": {
+            "title": "Sha",
+            "type": "string"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          },
+          "truncated": {
+            "title": "Truncated",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "level",
+          "sha",
+          "layout",
+          "total",
+          "truncated",
+          "nodes",
+          "edges",
+          "clusters"
+        ],
+        "title": "DepsOut",
+        "type": "object"
+      },
       "DiagramIn": {
         "properties": {
           "from_trace": {
@@ -1262,6 +1438,27 @@
           "summary"
         ],
         "title": "DirectorySummaryOut",
+        "type": "object"
+      },
+      "EdgeEvidenceOut": {
+        "properties": {
+          "edges": {
+            "items": {
+              "$ref": "#/components/schemas/EvidenceOut"
+            },
+            "title": "Edges",
+            "type": "array"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "total",
+          "edges"
+        ],
+        "title": "EdgeEvidenceOut",
         "type": "object"
       },
       "EdgeHealthOut": {
@@ -1610,6 +1807,63 @@
           "created_at"
         ],
         "title": "EvalRunSummary",
+        "type": "object"
+      },
+      "EvidenceOut": {
+        "properties": {
+          "confidence": {
+            "title": "Confidence",
+            "type": "number"
+          },
+          "line": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Line"
+          },
+          "path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Path"
+          },
+          "provenance": {
+            "title": "Provenance",
+            "type": "string"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "target": {
+            "title": "Target",
+            "type": "string"
+          },
+          "type": {
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source",
+          "target",
+          "type",
+          "confidence",
+          "provenance",
+          "path",
+          "line"
+        ],
+        "title": "EvidenceOut",
         "type": "object"
       },
       "Feature": {
@@ -4311,6 +4565,24 @@
           "finished_at"
         ],
         "title": "RunOut",
+        "type": "object"
+      },
+      "SampleOut": {
+        "properties": {
+          "line": {
+            "title": "Line",
+            "type": "integer"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "line"
+        ],
+        "title": "SampleOut",
         "type": "object"
       },
       "SearchExactQuery": {
@@ -8978,6 +9250,315 @@
         "summary": "Conversations",
         "tags": [
           "ask"
+        ]
+      }
+    },
+    "/api/v1/orgs/{org}/repos/{repo}/deps": {
+      "get": {
+        "description": "The level's nodes (where each is drawn) and edges (counted by type), or a focus of it.",
+        "operationId": "deps_api_v1_orgs__org__repos__repo__deps_get",
+        "parameters": [
+          {
+            "description": "Organization slug",
+            "in": "path",
+            "name": "org",
+            "required": true,
+            "schema": {
+              "description": "Organization slug",
+              "title": "Org",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Repository slug",
+            "in": "path",
+            "name": "repo",
+            "required": true,
+            "schema": {
+              "description": "Repository slug",
+              "maxLength": 201,
+              "title": "Repo",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "level",
+            "required": false,
+            "schema": {
+              "default": "module",
+              "enum": [
+                "service",
+                "package",
+                "module",
+                "file",
+                "symbol"
+              ],
+              "title": "Level",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "focus",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 2000,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Focus"
+            }
+          },
+          {
+            "in": "query",
+            "name": "depth",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "maximum": 3,
+              "minimum": 1,
+              "title": "Depth",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "types",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 500,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Types"
+            }
+          },
+          {
+            "in": "query",
+            "name": "min_conf",
+            "required": false,
+            "schema": {
+              "default": 0.0,
+              "maximum": 1,
+              "minimum": 0,
+              "title": "Min Conf",
+              "type": "number"
+            }
+          },
+          {
+            "description": "Branch or commit (or its first 7+ characters).",
+            "in": "query",
+            "name": "ref",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 255,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Branch or commit (or its first 7+ characters).",
+              "title": "Ref"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DepsOut"
+                }
+              },
+              "application/x-msgpack": {}
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Deps",
+        "tags": [
+          "deps"
+        ]
+      }
+    },
+    "/api/v1/orgs/{org}/repos/{repo}/deps/edge-evidence": {
+      "get": {
+        "description": "The code's edges behind the level's edge from ``src`` to ``dst``: each import or call,\nwith its line, surest first.",
+        "operationId": "edge_evidence_api_v1_orgs__org__repos__repo__deps_edge_evidence_get",
+        "parameters": [
+          {
+            "description": "Organization slug",
+            "in": "path",
+            "name": "org",
+            "required": true,
+            "schema": {
+              "description": "Organization slug",
+              "title": "Org",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Repository slug",
+            "in": "path",
+            "name": "repo",
+            "required": true,
+            "schema": {
+              "description": "Repository slug",
+              "maxLength": 201,
+              "title": "Repo",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "src",
+            "required": true,
+            "schema": {
+              "maxLength": 2000,
+              "minLength": 1,
+              "title": "Src",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "dst",
+            "required": true,
+            "schema": {
+              "maxLength": 2000,
+              "minLength": 1,
+              "title": "Dst",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "level",
+            "required": false,
+            "schema": {
+              "default": "module",
+              "enum": [
+                "service",
+                "package",
+                "module",
+                "file",
+                "symbol"
+              ],
+              "title": "Level",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "types",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 500,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Types"
+            }
+          },
+          {
+            "in": "query",
+            "name": "min_conf",
+            "required": false,
+            "schema": {
+              "default": 0.0,
+              "maximum": 1,
+              "minimum": 0,
+              "title": "Min Conf",
+              "type": "number"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 200,
+              "maximum": 500,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Branch or commit (or its first 7+ characters).",
+            "in": "query",
+            "name": "ref",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 255,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Branch or commit (or its first 7+ characters).",
+              "title": "Ref"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EdgeEvidenceOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Edge Evidence",
+        "tags": [
+          "deps"
         ]
       }
     },

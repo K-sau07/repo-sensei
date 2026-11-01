@@ -26,6 +26,7 @@ from sensei_api.routers import (
     auth,
     browse,
     constellation,
+    deps,
     diagrams,
     feature_maps,
     github,
@@ -179,6 +180,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         refs,
         staleness,
         diagrams,
+        deps,
         home,
         shared,
     ):  # the order routes are matched in

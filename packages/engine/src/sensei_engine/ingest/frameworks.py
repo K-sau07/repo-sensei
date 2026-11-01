@@ -4,13 +4,15 @@ Every manifest counts where it sits, so a monorepo reports ``fastapi`` at ``back
 at ``frontend`` (the repository root is ``.``). Python dependencies come from ``pyproject.toml``
 (PEP 621, PEP 735 groups, Poetry, uv) and ``requirements*.txt``; JavaScript ones from
 ``package.json``. ``next.config.*`` and ``alembic.ini`` mark Next.js and Alembic by their presence,
-Compose files list their services and an ``openapi.{json,yaml,yml}`` is an API description.
+Compose files list their services (and the directory each is built from) and an
+``openapi.{json,yaml,yml}`` is an API description.
 ``version`` is the declared constraint (``^19.1.0``, ``>=0.115,<1``), not a resolved version.
 """
 
 from __future__ import annotations
 
 import json
+import posixpath
 import re
 import tomllib
 from collections.abc import Iterable, Mapping
@@ -223,6 +225,22 @@ def _compose_services(text: str) -> list[str]:
     return sorted(str(name) for name in services)
 
 
+def _compose_builds(text: str, root: str) -> dict[str, str]:
+    """Each service built from the repository: the directory it is built from (its build
+    context, from the repository's root; one outside the repository, or a URL, is left out)."""
+    builds: dict[str, str] = {}
+    for name, service in _table(_table(_yaml(text)).get("services")).items():
+        build = _table(service).get("build")
+        context = build if isinstance(build, str) else _table(build).get("context")
+        if not isinstance(context, str) or "://" in context or context.startswith("/"):
+            continue
+        joined = posixpath.normpath(posixpath.join("" if root == ROOT else root, context))
+        if joined == ".." or joined.startswith("../"):
+            continue
+        builds[str(name)] = ROOT if joined in (".", "") else joined
+    return builds
+
+
 def _openapi_version(path: str, text: str) -> str | None:
     if path.endswith(".json"):
         try:
@@ -257,6 +275,9 @@ class _Found:
             if isinstance(value, list):
                 merged = set(cast("list[str]", framework.details.get(key, [])))
                 framework.details[key] = sorted(merged.union(cast("list[str]", value)))
+            elif isinstance(value, dict):
+                held = cast("dict[str, Any]", framework.details.get(key, {}))
+                framework.details[key] = {**held, **cast("dict[str, Any]", value)}
             else:
                 framework.details[key] = value
         return framework
@@ -290,7 +311,8 @@ def _detect_one(found: _Found, path: str, text: str) -> None:
     elif name == "alembic.ini":
         found.add("alembic", root, path)
     elif _COMPOSE.match(name):
-        found.add("docker-compose", root, path, details={"services": _compose_services(text)})
+        details = {"services": _compose_services(text), "builds": _compose_builds(text, root)}
+        found.add("docker-compose", root, path, details=details)
     elif _OPENAPI.match(name):
         found.add("openapi", root, path, _openapi_version(path, text))
 
