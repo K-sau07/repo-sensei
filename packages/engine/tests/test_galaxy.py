@@ -1,9 +1,10 @@
-"""The Codebase Galaxy's semantic layout (6.9): files about the same thing near each other, the
-same each time, in clusters named by their own terms."""
+"""The Codebase Galaxy (6.9): by meaning, files about the same thing near each other, the same
+each time, in clusters named by their own terms; by folder, a big folder shown as its parts."""
 
 from __future__ import annotations
 
 import math
+from typing import Any
 
 import numpy as np
 
@@ -13,6 +14,7 @@ from sensei_engine.galaxy import (
     cluster_count,
     cluster_labels,
     file_vectors,
+    folder_groups,
     layout_galaxy,
     semantic_positions,
 )
@@ -94,3 +96,35 @@ def test_a_handful_of_files_sit_around_a_circle() -> None:
     assert placed["a.py"] == (1.0, 0.0, 0.0)
     assert math.isclose(placed["b.py"][0], -1.0)
     assert semantic_positions({}) == {}
+
+
+def _named(paths: list[str], **kw: Any) -> list[tuple[str, int]]:
+    return [(label, len(members)) for label, members in folder_groups(paths, **kw)]
+
+
+def test_by_folder_a_big_folder_is_its_parts_and_the_smallest_go_together() -> None:
+    paths = (
+        [f"src/web/app/f{i}.ts" for i in range(40)]
+        + [f"src/api/m{i}.py" for i in range(30)]
+        + [f"src/f{i}.py" for i in range(2)]
+        + [f"docs/d{i}.md" for i in range(20)]
+        + ["README.md", "tools/a.sh", "ci/b.yml"]
+    )
+    # src (72 of 95) is split; src/web (40, 42%) again, to its one subfolder: src/web/app.
+    # src's own 2 files are under 3%: with the rest.
+    groups = _named(paths, small=0.03)
+    assert groups == [
+        ("src/web/app", 40), ("src/api", 30), ("docs", 20), ("(the rest)", 5),
+    ]  # fmt: skip
+    # Every file in one group, once.
+    found = sorted(i for _, members in folder_groups(paths) for i in members)
+    assert found == list(range(len(paths)))
+    # No room for every part: the biggest their own, the rest under the folder's name.
+    assert _named(paths, small=0.02, most=4) == [
+        ("src/web/app", 40), ("src", 32), ("docs", 20), ("(the rest)", 3),
+    ]  # fmt: skip
+
+
+def test_by_folder_a_small_repository_keeps_its_top_folders() -> None:
+    paths = [f"backend/app/f{i}.py" for i in range(4)] + ["README.md"]
+    assert _named(paths) == [("backend", 4), ("(root)", 1)]

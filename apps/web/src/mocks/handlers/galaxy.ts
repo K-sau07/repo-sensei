@@ -1,6 +1,6 @@
 /**
  * The mock `GET …/galaxy?layout=semantic|structural`: by folder, the mock constellation's stars
- * each in its top folder's cluster (as the API groups them); by meaning, fixtures/galaxy.json
+ * grouped by folder (as the API groups them: a big folder split into its parts); by meaning, fixtures/galaxy.json
  * (scripts/mock_galaxy.py: the engine's layout of the files' content).
  *
  * Situations worth seeing, from the browser:
@@ -41,39 +41,109 @@ function scenario(): string | null {
   return typeof localStorage === "undefined" ? null : localStorage.getItem(GALAXY_SCENARIO_KEY);
 }
 
-/** By folder: each star in its top folder's cluster, the biggest first (as the API). */
-export function structural(points: ConstellationFixture["points"]): Omit<Galaxy, "sha"> {
-  const top = (path: string) => (path.includes("/") ? (path.split("/")[0] ?? ROOT) : ROOT);
-  const members = new Map<string, number[]>();
-  points.forEach((p, i) => {
-    const key = top(p.path);
-    members.set(key, [...(members.get(key) ?? []), i]);
+// As the engine's layout by folder (`sensei_engine.galaxy.folder_groups`).
+const SPLIT = 0.25;
+const SPLIT_FILES = 40;
+const SMALL = 0.005;
+const MAX_FOLDERS = 16;
+const REST = "(the rest)";
+
+function partOf(path: string, folder: string): string {
+  if (!folder) return path.includes("/") ? (path.split("/")[0] ?? ROOT) : ROOT;
+  const rest = path.slice(folder.length + 1);
+  return rest.includes("/") ? `${folder}/${rest.split("/")[0] ?? ""}` : folder;
+}
+
+const biggestFirst =
+  (groups: Map<string, number[]>) =>
+  (a: string, b: string): number =>
+    (groups.get(b)?.length ?? 0) - (groups.get(a)?.length ?? 0) || (a < b ? -1 : a > b ? 1 : 0);
+
+/**
+ * The files (their indexes in `paths`) grouped by folder, biggest first, as the engine groups
+ * them: the top folders; one with more than a quarter of the files (and 40 or more) split into
+ * its subfolders (its own files left under its name), again while one is and there is room;
+ * then the groups under 0.5% of the files, and the smallest past 16, together as the rest.
+ */
+export function folderGroups(
+  paths: readonly string[],
+  { split = SPLIT, small = SMALL, most = MAX_FOLDERS } = {},
+): [string, number[]][] {
+  const total = paths.length;
+  const groups = new Map<string, number[]>();
+  const add = (into: Map<string, number[]>, key: string, i: number) => {
+    const held = into.get(key);
+    if (held) held.push(i);
+    else into.set(key, [i]);
+  };
+  paths.forEach((path, i) => {
+    add(groups, partOf(path, ""), i);
   });
-  const order = [...members.keys()].sort(
-    (a, b) => (members.get(b)?.length ?? 0) - (members.get(a)?.length ?? 0) || (a < b ? -1 : 1),
-  );
-  const ids = new Map(order.map((key, i) => [key, i]));
-  const stars: GalaxyStar[] = points.map((p) => ({
+  const done = new Set([ROOT]);
+  for (;;) {
+    const big = [...groups].filter(
+      ([f, m]) => !done.has(f) && m.length > split * total && m.length >= SPLIT_FILES,
+    );
+    if (big.length === 0) break;
+    const [folder, members] = big.reduce((best, g) =>
+      g[1].length > best[1].length || (g[1].length === best[1].length && g[0] > best[0]) ? g : best,
+    );
+    const parts = new Map<string, number[]>();
+    for (const i of members) add(parts, partOf(paths[i] ?? "", folder), i);
+    const named = [...groups].filter(([f, m]) => f !== folder && m.length >= small * total).length;
+    const room = most - named - 1;
+    if ((parts.size === 1 && parts.has(folder)) || (parts.size > 1 && room < 2)) {
+      done.add(folder);
+      continue;
+    }
+    groups.delete(folder);
+    const ranked = [...parts.keys()].sort(biggestFirst(parts));
+    if (ranked.length > room) {
+      const left: number[] = [];
+      for (const f of ranked.slice(room - 1)) {
+        left.push(...(parts.get(f) ?? []));
+        parts.delete(f);
+      }
+      groups.set(
+        folder,
+        [...(groups.get(folder) ?? []), ...left].sort((a, b) => a - b),
+      );
+      done.add(folder);
+    }
+    for (const [f, m] of parts) groups.set(f, [...(groups.get(f) ?? []), ...m]);
+  }
+  const ranked = [...groups.keys()].sort(biggestFirst(groups));
+  let kept = ranked.filter((f) => (groups.get(f)?.length ?? 0) >= small * total).slice(0, most - 1);
+  if (kept.length === ranked.length - 1) kept = ranked; // one left over: its own name
+  const out: [string, number[]][] = kept.map((f) => [f, groups.get(f) ?? []]);
+  const rest = ranked
+    .filter((f) => !kept.includes(f))
+    .flatMap((f) => groups.get(f) ?? [])
+    .sort((a, b) => a - b);
+  if (rest.length > 0) out.push([REST, rest]);
+  return out.sort(([a, am], [b, bm]) => bm.length - am.length || (a < b ? -1 : a > b ? 1 : 0));
+}
+
+/** By folder: the constellation's places, its stars grouped by folder (as the API). */
+export function structural(points: ConstellationFixture["points"]): Omit<Galaxy, "sha"> {
+  const groups = folderGroups(points.map((p) => p.path));
+  const clusterOf = new Map<number, number>();
+  groups.forEach(([, members], c) => {
+    for (const i of members) clusterOf.set(i, c);
+  });
+  const stars: GalaxyStar[] = points.map((p, i) => ({
     path: p.path,
     x: p.x,
     y: p.y,
     z: p.z,
-    cluster: ids.get(top(p.path)) ?? 0,
+    cluster: clusterOf.get(i) ?? 0,
     layer: p.layer,
     language: p.language,
   }));
-  const clusters: GalaxyCluster[] = order.map((key) => {
-    const at = members.get(key) ?? [];
+  const clusters: GalaxyCluster[] = groups.map(([label, at], c) => {
     const mean = (axis: "x" | "y" | "z") =>
       at.reduce((sum, i) => sum + (points[i]?.[axis] ?? 0), 0) / Math.max(1, at.length);
-    return {
-      id: ids.get(key) ?? 0,
-      label: key,
-      x: mean("x"),
-      y: mean("y"),
-      z: mean("z"),
-      files: at.length,
-    };
+    return { id: c, label, x: mean("x"), y: mean("y"), z: mean("z"), files: at.length };
   });
   return { layout: "structural", stars, clusters };
 }

@@ -7,6 +7,10 @@ scaled into [-1, 1]³. The stars are grouped into clusters (k-means on those pla
 per twenty files, 2 to 12), each named by the glossary terms (2.8) most particular to its files:
 said often in it, seldom elsewhere.
 
+The layout by folder (:func:`folder_groups`) keeps the constellation's places (a directory
+treemap) and groups the files by folder: the top folders, a big one split into its subfolders
+(a monorepo's ``src`` is its parts), the smallest put together.
+
 UMAP is imported when a layout is made (its import compiles code: seconds), in the worker that
 makes it (:mod:`sensei_workers.tasks.galaxy`); the API only reads the result.
 """
@@ -15,7 +19,7 @@ from __future__ import annotations
 
 import math
 import warnings
-from collections import Counter
+from collections import Counter, defaultdict
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, cast
@@ -29,6 +33,14 @@ MAX_CLUSTERS = 12
 FILES_PER_CLUSTER = 20
 LABEL_TERMS = 3
 PARTICULAR = 1.5  # how much likelier inside a cluster a term must be to name it
+# The layout by folder: a folder with more of the files than SPLIT (and at least SPLIT_FILES) is
+# split into its subfolders, groups with fewer than SMALL go together, at most MAX_FOLDERS.
+SPLIT = 0.25
+SPLIT_FILES = 2 * FILES_PER_CLUSTER
+SMALL = 0.005
+MAX_FOLDERS = 16
+ROOT = "(root)"
+REST = "(the rest)"
 
 Vector = Sequence[float]
 
@@ -221,3 +233,67 @@ def layout_galaxy(
             Cluster(cluster, names[cluster], float(at[0]), float(at[1]), float(at[2]), len(paths))
         )
     return Galaxy(stars, out)
+
+
+def _part(path: str, folder: str) -> str:
+    """The group ``path`` falls in one level below ``folder`` ("" for the top): the subfolder it
+    is in, or ``folder`` itself for its own files."""
+    if not folder:
+        return path.split("/", 1)[0] if "/" in path else ROOT
+    rest = path[len(folder) + 1 :]
+    return f"{folder}/{rest.split('/', 1)[0]}" if "/" in rest else folder
+
+
+def folder_groups(
+    paths: Sequence[str],
+    *,
+    split: float = SPLIT,
+    small: float = SMALL,
+    most: int = MAX_FOLDERS,
+) -> list[tuple[str, list[int]]]:
+    """The files (their indexes in ``paths``) grouped by folder, biggest first: the top folders;
+    one holding more than ``split`` of the files (and :data:`SPLIT_FILES` or more) split into its
+    subfolders (its own files left under its name), again while one does and there is room for
+    its parts; then the groups with fewer than ``small`` of the files, and the smallest past
+    ``most``, put together as :data:`REST`."""
+    total = len(paths)
+    groups: dict[str, list[int]] = defaultdict(list)
+    for i, path in enumerate(paths):
+        groups[_part(path, "")].append(i)
+    done: set[str] = {ROOT}
+    while True:
+        big = [
+            f
+            for f, m in groups.items()
+            if f not in done and len(m) > split * total and len(m) >= SPLIT_FILES
+        ]
+        if not big:
+            break
+        folder = max(big, key=lambda f: (len(groups[f]), f))
+        parts: dict[str, list[int]] = defaultdict(list)
+        for i in groups[folder]:
+            parts[_part(paths[i], folder)].append(i)
+        # Room among the groups that will keep a name (the small ones go to the rest: one more).
+        named = sum(1 for f, m in groups.items() if f != folder and len(m) >= small * total)
+        room = most - named - 1
+        if list(parts) == [folder] or (len(parts) > 1 and room < 2):
+            done.add(folder)  # its own files only, or no room to show its parts
+            continue
+        del groups[folder]
+        ranked = sorted(parts, key=lambda f: (-len(parts[f]), f))
+        if len(ranked) > room:  # the biggest parts their own; the rest left under the folder's name
+            for f in ranked[room - 1 :]:
+                groups[folder].extend(parts.pop(f))
+            groups[folder].sort()
+            done.add(folder)
+        for f, members in parts.items():
+            groups[f].extend(members)
+    ranked = sorted(groups, key=lambda f: (-len(groups[f]), f))
+    kept = [f for f in ranked if len(groups[f]) >= small * total][: most - 1]
+    if len(kept) == len(ranked) - 1:
+        kept = ranked  # one left over: its own name says more than "the rest"
+    out = [(f, groups[f]) for f in kept]
+    rest = sorted(i for f in ranked if f not in kept for i in groups[f])
+    if rest:
+        out.append((REST, rest))
+    return sorted(out, key=lambda g: (-len(g[1]), g[0]))

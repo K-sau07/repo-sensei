@@ -185,7 +185,8 @@ function Map() {
         </h1>
         <ToggleGroup
           aria-label="Layout"
-          value={[layout]}
+          // What is shown: by folder while the layout by meaning is being made or can't be.
+          value={[shownLayout]}
           onValueChange={(value: string[]) => {
             const next = value[0];
             if (next === "semantic" || next === "structural") {
@@ -195,7 +196,12 @@ function Map() {
           }}
         >
           {GALAXY_LAYOUTS.map((l) => (
-            <ToggleGroupItem key={l} value={l} size="sm">
+            <ToggleGroupItem
+              key={l}
+              value={l}
+              size="sm"
+              disabled={l === "semantic" && semanticError === "semantic_not_ready"}
+            >
               {LAYOUT_LABELS[l]}
             </ToggleGroupItem>
           ))}

@@ -274,7 +274,7 @@ export default function GalaxyCanvas({
               }}
               type="button"
               style={{ visibility: "hidden" }}
-              className="bg-surface/80 pointer-events-auto absolute top-0 left-0 rounded-sm px-1.5 py-0.5 text-[11px] whitespace-nowrap text-fg-muted shadow-sm hover:text-fg"
+              className="pointer-events-auto absolute top-0 left-0 rounded-sm border border-line bg-surface-1/90 px-1.5 py-0.5 text-[11px] whitespace-nowrap text-fg shadow-sm hover:border-line-strong"
               onPointerDown={(event) => {
                 event.stopPropagation();
               }}

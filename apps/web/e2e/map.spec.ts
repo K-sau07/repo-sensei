@@ -45,7 +45,12 @@ test.describe("codebase galaxy", () => {
     );
     const canvas = page.getByTestId("galaxy-canvas");
     await expect(canvas).toHaveAttribute("data-layout", "structural");
+    // The toggle says what is drawn.
+    const byFolder = page.getByRole("button", { name: "By folder" });
+    const byMeaning = page.getByRole("button", { name: "By meaning" });
+    await expect(byFolder).toHaveAttribute("aria-pressed", "true");
     await expect(canvas).toHaveAttribute("data-layout", "semantic", { timeout: 15_000 });
+    await expect(byMeaning).toHaveAttribute("aria-pressed", "true");
   });
 
   test("without summaries it says so, by folder", async ({ page, context }) => {
@@ -55,6 +60,11 @@ test.describe("codebase galaxy", () => {
     await page.goto("/acme/api/map");
     await expect(page.getByTestId("galaxy-note")).toContainText("needs this commit's summaries");
     await expect(page.getByTestId("galaxy-canvas")).toHaveAttribute("data-layout", "structural");
+    await expect(page.getByRole("button", { name: "By folder" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    await expect(page.getByRole("button", { name: "By meaning" })).toBeDisabled();
   });
 
   test("a trace's stars are joined", async ({ page }) => {

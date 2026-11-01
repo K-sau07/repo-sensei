@@ -1,8 +1,8 @@
 """The Codebase Galaxy (6.9): ``GET …/galaxy?layout=semantic|structural`` (``ref`` as in
 browsing), every file of the snapshot a star in 3D, in named clusters.
 
-- **structural** is the constellation's layout (1.14: by folder), each star in its top folder's
-  cluster.
+- **structural** is the constellation's layout (1.14: by folder), its stars grouped by folder
+  (:func:`sensei_engine.galaxy.folder_groups`: a big folder split into its subfolders).
 - **semantic** places files by what their summaries mean (:mod:`sensei_engine.galaxy`), made in
   a worker and kept (the ``galaxy-semantic.msgpack`` artifact). Not kept yet but possible (the
   snapshot's summaries are embedded): it is asked for, and the answer is 409
@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import gzip
 import uuid
-from collections import defaultdict
 from collections.abc import Callable
 from typing import Annotated, Any, Literal, Protocol, cast
 
@@ -38,7 +37,7 @@ from sensei_core.jobs import galaxy_key
 from sensei_core.logging import get_logger
 from sensei_core.models import CodeChunk, Snapshot
 from sensei_core.storage import Bucket, ObjectStorage, artifact_key
-from sensei_engine.galaxy import Galaxy
+from sensei_engine.galaxy import Galaxy, folder_groups
 from sensei_engine.ingest.constellation import Constellation
 
 router = APIRouter(prefix="/orgs/{org}/repos/{repo}", tags=["galaxy"])
@@ -48,7 +47,6 @@ ARTIFACT = "galaxy-semantic.msgpack"
 MAX_ARTIFACT_BYTES = 128 << 20
 RETRY_SECONDS = 15
 KEY_TTL_SECONDS = 15 * 60
-ROOT = "(root)"
 _unpack = cast("Callable[[bytes], object]", msgpack.unpackb)  # pyright: ignore[reportUnknownMemberType]
 
 Layout = Literal["semantic", "structural"]
@@ -87,33 +85,26 @@ class GalaxyOut(BaseModel):
 
 
 def _structural(found: Constellation) -> tuple[list[GalaxyStar], list[GalaxyCluster]]:
-    """The constellation, each file in its top folder's cluster (the biggest first)."""
-    members: defaultdict[str, list[int]] = defaultdict(list)
-    for i, point in enumerate(found.points):
-        members[point.path.split("/", 1)[0] if "/" in point.path else ROOT].append(i)
-    order = sorted(members, key=lambda top: (-len(members[top]), top))
-    ids = {top: i for i, top in enumerate(order)}
-    stars: list[GalaxyStar] = []
-    for point in found.points:
-        top = point.path.split("/", 1)[0] if "/" in point.path else ROOT
-        x, y, z = point.position
-        stars.append(
-            GalaxyStar(
-                path=point.path, x=x, y=y, z=z, cluster=ids[top],
-                layer=point.layer, language=point.language,
+    """The constellation, its files grouped by folder (:func:`folder_groups`, biggest first)."""
+    groups = folder_groups([p.path for p in found.points])
+    cluster_of = {i: c for c, (_, members) in enumerate(groups) for i in members}
+    stars = [
+        GalaxyStar(
+            path=point.path, x=point.position[0], y=point.position[1], z=point.position[2],
+            cluster=cluster_of[i], layer=point.layer, language=point.language,
+        )
+        for i, point in enumerate(found.points)
+    ]  # fmt: skip
+    clusters: list[GalaxyCluster] = []
+    for c, (label, members) in enumerate(groups):
+        at = [found.points[i].position for i in members]
+        clusters.append(
+            GalaxyCluster(
+                id=c, label=label, x=sum(p[0] for p in at) / len(at),
+                y=sum(p[1] for p in at) / len(at), z=sum(p[2] for p in at) / len(at),
+                files=len(members),
             )
         )  # fmt: skip
-    clusters = [
-        GalaxyCluster(
-            id=ids[top],
-            label=top,
-            x=sum(found.points[i].position[0] for i in members[top]) / len(members[top]),
-            y=sum(found.points[i].position[1] for i in members[top]) / len(members[top]),
-            z=sum(found.points[i].position[2] for i in members[top]) / len(members[top]),
-            files=len(members[top]),
-        )
-        for top in order
-    ]
     return stars, clusters
 
 
