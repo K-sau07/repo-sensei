@@ -8,7 +8,7 @@ from datetime import datetime
 from fastapi import APIRouter, Response, status
 from pydantic import BaseModel
 
-from sensei_api.auth import CurrentUser, RequiredSession, Sessions
+from sensei_api.auth import CurrentUser, OptionalBearer, RequiredSession, Sessions
 from sensei_api.deps import DbSession
 from sensei_api.errors import NotFound
 from sensei_api.orgs import OrgServiceDep
@@ -48,8 +48,14 @@ class SessionInfo(BaseModel):
     current: bool
 
 
-async def _me(user: User, db: DbSession, orgs: OrgService) -> MeResponse:
+async def _me(
+    user: User, db: DbSession, orgs: OrgService, only: uuid.UUID | None = None
+) -> MeResponse:
+    """The user and their orgs; through an API key or token, only the org it is for (another
+    looks like none)."""
     memberships = await orgs.list_for_user(db, user)
+    if only is not None:
+        memberships = [(org, role) for org, role in memberships if org.id == only]
     slugs = {org.slug for org, _ in memberships}
     return MeResponse(
         id=user.id,
@@ -64,8 +70,10 @@ async def _me(user: User, db: DbSession, orgs: OrgService) -> MeResponse:
 
 
 @router.get("", response_model=MeResponse)
-async def get_me(user: CurrentUser, db: DbSession, orgs: OrgServiceDep) -> MeResponse:
-    return await _me(user, db, orgs)
+async def get_me(
+    user: CurrentUser, bearer: OptionalBearer, db: DbSession, orgs: OrgServiceDep
+) -> MeResponse:
+    return await _me(user, db, orgs, only=bearer.org_id if bearer is not None else None)
 
 
 @router.patch("", response_model=MeResponse)

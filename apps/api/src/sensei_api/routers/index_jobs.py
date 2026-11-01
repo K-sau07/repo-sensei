@@ -17,11 +17,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sse_starlette import EventSourceResponse, ServerSentEvent
 
 from sensei_api import streams
+from sensei_api.auth import RequiredSession
 from sensei_api.deps import DbSession, RedisClient
 from sensei_api.orgs import OrgAccessDep
 from sensei_api.repos import RepoDep, repo_access
 from sensei_api.routers.auth import GitHubOAuthDep
-from sensei_core.auth.sessions import ActiveSession
 from sensei_core.db import Database
 from sensei_core.db.tenancy import set_org_context, set_user_context
 from sensei_core.github.client import GitHubError
@@ -288,14 +288,18 @@ async def index_job_events(
     responses={200: {"content": {"text/event-stream": {}}}},
 )
 async def org_events(
-    request: Request, access: OrgAccessDep, redis: RedisClient, oauth: GitHubOAuthDep
+    request: Request,
+    access: OrgAccessDep,
+    active: RequiredSession,
+    redis: RedisClient,
+    oauth: GitHubOAuthDep,
 ) -> EventSourceResponse:
     """The org's index runs starting and ending, as server-sent events (for status dots and the
     inbox), limited to repositories the signed-in user can read. Closes only when the session
     ends or the user leaves the org (checked every minute); the browser's reconnect then gets
     the error."""
+    # A browser's stream, kept open while its session lives: API keys and tokens can't.
     org_id, user_id = access.org.id, access.user.id
-    active: ActiveSession = request.state.active_session
     session_id = active.session.id
     key = org_stream(org_id)
     cursor = (

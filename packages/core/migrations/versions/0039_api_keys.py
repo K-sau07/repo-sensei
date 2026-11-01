@@ -1,8 +1,7 @@
 # pyright: basic
-"""API keys (7.1): ``api_keys``, a member's key for one org (its prefix and an argon2id hash of
-the key, its scopes, when it was last used, expires, was revoked). Row-level security on
-org_id, plus the ``key_by_prefix`` policy that lets a bearer key be found before its org is
-known.
+"""API keys (7.1): ``api_keys``, a member's key for one org (its prefix and a hash of the key,
+its scopes, when it was last used, expires, was revoked). Row-level security on org_id, plus
+the ``key_by_prefix`` policy that lets a bearer key be found before its org is known.
 
 Revision ID: 0039
 Revises: 0038

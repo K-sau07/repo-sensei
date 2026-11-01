@@ -1,7 +1,7 @@
 """API keys (7.1): a member's key for one org, for tools (the MCP server, the CLI, scripts).
 
 The key itself (``rs_<prefix>_<secret>``) is shown once; only its prefix (to find it) and an
-argon2id hash of the whole key are kept. A key acts as its user, in its org, within its scopes.
+SHA-256 hash of the whole key are kept. A key acts as its user, in its org, within its scopes.
 """
 
 from __future__ import annotations

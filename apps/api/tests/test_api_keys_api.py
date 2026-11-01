@@ -136,6 +136,12 @@ async def test_a_key_acts_as_its_user_where_keys_are_let_in_within_its_scopes(
 
     me = await client.get(f"{API}/me", headers=_bearer(reader))
     assert (me.status_code, me.json()["login"]) == (200, owner.login)
+    # The user is in "other" too, but a key for "acme" shows only "acme".
+    assert [o["slug"] for o in me.json()["orgs"]] == ["acme"]
+    grep = await client.post(
+        f"{API}/orgs/acme/repos/items/grep", json={"pattern": "x"}, headers=_bearer(reader)
+    )
+    assert grep.status_code != 403, grep.text  # a read that is a POST, allowed by name
     repos = await client.get(f"{API}/orgs/acme/repos", headers=_bearer(reader))
     assert repos.status_code == 200, repos.text
     assert [r["slug"] for r in repos.json()] == ["items"]
@@ -164,6 +170,7 @@ async def test_a_key_acts_as_its_user_where_keys_are_let_in_within_its_scopes(
         ("GET", "/orgs/acme/api-keys"),
         ("GET", "/orgs/acme/members"),
         ("GET", "/me/sessions"),
+        ("GET", "/orgs/acme/events"),  # a browser's stream, kept while its session lives
         ("POST", "/auth/logout"),
     ):
         response = await client.request(method, f"{API}{path}", headers=_bearer(reader), json={})

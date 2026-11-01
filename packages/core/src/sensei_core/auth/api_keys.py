@@ -1,10 +1,12 @@
 """API keys (7.1): made, checked, listed and revoked.
 
 * A key is ``rs_<prefix>_<secret>``: an 8-character prefix and 32 random bytes, both base62. It
-  is shown once; only the prefix (to find it) and an argon2id hash of the whole key are kept.
-* Checking a key finds it by prefix and verifies the hash (off the event loop: argon2 is slow on
-  purpose). A key that isn't there, or isn't one, is verified against a dummy hash all the same,
-  so the time taken doesn't say which prefixes exist.
+  is shown once; only the prefix (to find it) and a SHA-256 hash of the whole key are kept. With
+  256 random bits there is nothing to guess, so a slow hash (argon2) would protect nothing more
+  and would hand anyone a way to burn the server's CPU, one unauthenticated request at a time.
+* Checking a key finds it by prefix and compares the hashes in constant time. A key that isn't
+  there, or isn't one, is compared against a dummy hash all the same, so the time taken doesn't
+  say which prefixes exist.
 * A key acts as its user, in its org, within its scopes: membership and roles are checked as
   for a browser, live. Revoked and expired keys stop at once. ``last_used_at`` is written at
   most once per ``touch_after`` (not a write per call).
@@ -12,8 +14,9 @@
 
 from __future__ import annotations
 
-import asyncio
 import enum
+import hashlib
+import hmac
 import re
 import secrets
 import uuid
@@ -21,8 +24,6 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
-from argon2 import PasswordHasher
-from argon2.exceptions import InvalidHashError, VerificationError
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -37,7 +38,9 @@ Clock = Callable[[], datetime]
 
 
 class Scope(enum.StrEnum):
-    READ_REPO = "read:repo"  # search, code, trace, graph, impact
+    # Search, code, trace, graph, impact. Searching may spend some of the org's model budget
+    # (query routing and reranking), metered like any search.
+    READ_REPO = "read:repo"
     ASK = "ask"  # ask questions (spends the org's model budget)
     FIX = "fix"  # later (phase 8)
     ADMIN = "admin"  # none for now
@@ -49,10 +52,7 @@ PREFIX_LENGTH = 8
 SECRET_BYTES = 32
 _ALPHABET = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 KEY_RE = re.compile(r"^rs_([0-9A-Za-z]{8})_([0-9A-Za-z]{40,48})$")
-# OWASP's argon2id floor (19 MiB, 2 passes): a key is 256 random bits, so the hash guards a
-# leaked table, not a guessable secret; a check stays in the tens of milliseconds.
-_HASHER = PasswordHasher(time_cost=2, memory_cost=19_456, parallelism=1)
-_DUMMY = _HASHER.hash("rs_00000000_" + "0" * 43)
+_DUMMY = hashlib.sha256(b"rs_00000000_" + b"0" * 43).hexdigest()
 
 
 def utcnow() -> datetime:
@@ -75,11 +75,12 @@ def new_key() -> tuple[str, str]:
     return f"rs_{prefix}_{secret}", prefix
 
 
+def hash_key(key: str) -> str:
+    return hashlib.sha256(key.encode()).hexdigest()
+
+
 def _verify(key_hash: str, key: str) -> bool:
-    try:
-        return _HASHER.verify(key_hash, key)
-    except (VerificationError, InvalidHashError):
-        return False
+    return hmac.compare_digest(key_hash, hash_key(key))
 
 
 @dataclass(frozen=True, slots=True)
@@ -139,7 +140,7 @@ class ApiKeyService:
                 "A key expires in 30, 90 or 365 days, or never.", code="invalid_expiry"
             )
         token, prefix = new_key()
-        key_hash = await asyncio.to_thread(_HASHER.hash, token)
+        key_hash = hash_key(token)
         now = self._clock()
         key = ApiKey(
             id=new_id(),
@@ -173,7 +174,7 @@ class ApiKeyService:
         if match:
             await set_api_key_context(db, match.group(1))
             key = await db.scalar(select(ApiKey).where(ApiKey.prefix == match.group(1)))
-        ok = await asyncio.to_thread(_verify, key.key_hash if key else _DUMMY, token)
+        ok = _verify(key.key_hash if key else _DUMMY, token)
         if key is None or not ok:
             raise KeyRejected("invalid")
         now = self._clock()
