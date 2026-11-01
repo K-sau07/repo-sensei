@@ -141,6 +141,9 @@ async def shared_diagram(
     if not readable:
         shown_diagram.spec = _without_code(shown_diagram.spec)
         shown_diagram.prompt = {}
+        # Which commit, and who drew it, are the repository's too.
+        shown_diagram.commit_sha = ""
+        shown_diagram.created_by = None
     return SharedDiagram(
         repo=f"{repo.owner}/{repo.name}" if readable else None,
         redacted=not readable,
@@ -149,13 +152,23 @@ async def shared_diagram(
 
 
 def _without_code(spec: dict[str, Any]) -> dict[str, Any]:
-    """A spec with its nodes' citations and its edges' evidence left out."""
+    """A spec with its nodes' citations and its edges' evidence left out, and its nodes
+    renumbered (``n1``...): a node's id is its symbol key, which names its file."""
     nodes = cast("list[dict[str, Any]]", spec.get("nodes") or [])
     edges = cast("list[dict[str, Any]]", spec.get("edges") or [])
+    ids = {str(node.get("id")): f"n{i + 1}" for i, node in enumerate(nodes)}
     return {
         **spec,
-        "nodes": [{**node, "citation": None} for node in nodes],
-        "edges": [{**edge, "provenance": None} for edge in edges],
+        "nodes": [{**node, "id": ids[str(node.get("id"))], "citation": None} for node in nodes],
+        "edges": [
+            {
+                **edge,
+                "from": ids.get(str(edge.get("from")), "n0"),
+                "to": ids.get(str(edge.get("to")), "n0"),
+                "provenance": None,
+            }
+            for edge in edges
+        ],
     }
 
 

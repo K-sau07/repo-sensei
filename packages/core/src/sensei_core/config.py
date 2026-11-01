@@ -377,6 +377,8 @@ class AgentSettings(BaseSettings):
     cap_warning_share: float = Field(default=0.8, gt=0, le=1)
     # Questions one user may ask a minute (a token bucket).
     ask_per_minute: int = Field(default=6, gt=0)
+    # Diagrams drawn from a question (6.1) call a model too: up to three times each.
+    diagrams_per_minute: int = Field(default=6, gt=0)
     # A step's output up to this size is kept in its row; a larger one in object storage.
     inline_output_bytes: int = Field(default=16_384, gt=0)
 

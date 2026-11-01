@@ -28,13 +28,16 @@ from sqlalchemy import select
 from sensei_api.deps import DbSession, RedisClient
 from sensei_api.graphs import GraphStore
 from sensei_api.orgs import OrgAccessDep
+from sensei_api.ratelimit import TokenBucket
 from sensei_api.repos import RepoDep
 from sensei_api.routers import search
 from sensei_api.routers.browse import RefParam
 from sensei_api.routers.graph import limit_graph
 from sensei_api.sharing import new_share_token, share_token_hash
+from sensei_api.spend import remaining_today
 from sensei_core.audit import AuditAction, audit
-from sensei_core.errors import ForbiddenError, InvalidError, NotFoundError
+from sensei_core.config import Settings
+from sensei_core.errors import ForbiddenError, InvalidError, NotFoundError, RateLimitedError
 from sensei_core.indexing.snapshots import resolve_snapshot
 from sensei_core.models import Diagram, DiagramKind, DiagramSource, Repo, Role
 from sensei_core.orgs.service import OrgAccess
@@ -208,6 +211,16 @@ async def create_diagram(
     if (body.from_trace is None) == (body.question is None):
         raise InvalidError("Give from_trace or a question, not both.", code="diagram_source")
     await limit_graph(request, redis, access)
+    # A model labels it (up to three calls): its own bucket, within the org's day of spend.
+    settings: Settings = request.app.state.settings
+    bucket = TokenBucket(redis, name="diagram", per_minute=settings.agent.diagrams_per_minute)
+    wait = await bucket.take(str(access.user.id))
+    if wait is not None:
+        raise RateLimitedError(
+            "Too many diagrams at once; try again in a moment.",
+            headers={"Retry-After": str(wait)},
+        )
+    await remaining_today(db, redis, settings.agent, org_id=repo.org_id, user_id=access.user.id)
     snapshot = await resolve_snapshot(db, repo, ref)
     store: GraphStore = request.app.state.graph_store
     storage: ObjectStorage = request.app.state.storage

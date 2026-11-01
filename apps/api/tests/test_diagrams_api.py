@@ -25,6 +25,7 @@ from sensei_core.models import (
     Membership,
     Org,
     Repo,
+    RepoSource,
     Role,
     Snapshot,
     UsageEvent,
@@ -92,6 +93,14 @@ async def _indexed(
     return f"{API}/orgs/{org.slug}/repos/items", snapshot, headers
 
 
+async def _owner(db: AsyncSession, repo: Repo) -> User:
+    owner = await db.get(
+        User, await db.scalar(select(Membership.user_id).where(Membership.org_id == repo.org_id))
+    )
+    assert owner is not None
+    return owner
+
+
 @pytest.mark.integration
 async def test_a_diagram_drawn_from_a_trace_is_kept_listed_renamed_shared_and_deleted(
     api_app: FastAPI, client: httpx.AsyncClient, db_session: AsyncSession, tmp_path: Path
@@ -131,6 +140,26 @@ async def test_a_diagram_drawn_from_a_trace_is_kept_listed_renamed_shared_and_de
     assert public.status_code == 200, public.text
     assert public.json()["redacted"] is False  # a public repository: anyone may read it
     assert public.json()["diagram"]["title"] == "Creating an item"
+    # A private one, to someone signed out: the diagram, nothing that names its code.
+    repo = await db_session.get(Repo, snapshot.repo_id)
+    assert repo is not None
+    repo.source = RepoSource.GITHUB_APP
+    await db_session.flush()
+    client.cookies.clear()
+    outsider = await client.get(f"{API}{shared.json()['path']}")
+    assert outsider.status_code == 200, outsider.text
+    seen = outsider.json()
+    assert (seen["redacted"], seen["repo"]) == (True, None)
+    shown = seen["diagram"]
+    assert [n["id"] for n in shown["spec"]["nodes"]] == ["n1", "n2"]
+    assert [(e["from"], e["to"]) for e in shown["spec"]["edges"]] == [("n1", "n2")]
+    assert [n["citation"] for n in shown["spec"]["nodes"]] == [None, None]
+    assert (shown["commit_sha"], shown["created_by"], shown["prompt"]) == ("", None, {})
+    assert "backend/" not in outsider.text
+    assert snapshot.commit_sha not in outsider.text
+    repo.source = RepoSource.PUBLIC_URL
+    await db_session.flush()
+    _, headers = await sign_in(api_app, client, db_session, await _owner(db_session, repo))
     await client.delete(f"{diagram}/share", headers=headers)
     assert (await client.get(f"{API}{shared.json()['path']}")).status_code == 404
 
@@ -219,3 +248,21 @@ async def test_what_a_diagram_is_drawn_from_and_who_may_change_it(
     denied = await client.delete(diagram, headers=theirs)
     assert (denied.status_code, denied.json()["error"]["code"]) == (403, "diagram_not_yours")
     assert (await client.post(f"{diagram}/share", headers=theirs)).status_code == 403
+
+
+@pytest.mark.integration
+async def test_drawing_is_limited_per_minute(
+    api_app: FastAPI,
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    url, _, headers = await _indexed(api_app, client, db_session, tmp_path)
+    monkeypatch.setattr(api_app.state.settings.agent, "diagrams_per_minute", 1)
+    asked = {"from_trace": {"from": "create_item_route", "direction": "down"}}
+    first = await client.post(f"{url}/diagrams", json=asked, headers=headers)
+    assert first.status_code == 201, first.text
+    again = await client.post(f"{url}/diagrams", json=asked, headers=headers)
+    assert again.status_code == 429
+    assert int(again.headers["Retry-After"]) >= 1
