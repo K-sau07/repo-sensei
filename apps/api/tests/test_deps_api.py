@@ -263,6 +263,13 @@ async def test_guessed_edges_are_left_out_unless_asked_for(
         f"{url}/deps/edge-evidence", params={"level": "file", "src": GUESS_X, "dst": GUESS_Y}
     )
     assert unasked.json()["total"] == 0
+    # Levels kept in memory: the whole and the default bar only, not any filter asked for.
+    cache = api_app.state.deps_cache
+    before = len(cache._held)  # pyright: ignore[reportPrivateUsage]
+    for bar in (0.31, 0.32, 0.33):
+        odd = await client.get(f"{url}/deps/cycles", params={"level": "module", "min_conf": bar})
+        assert odd.status_code == 200
+    assert len(cache._held) == before  # pyright: ignore[reportPrivateUsage]
 
 
 @pytest.mark.integration

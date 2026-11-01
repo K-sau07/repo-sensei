@@ -153,6 +153,10 @@ class DepsCache:
             self._held.move_to_end(key)
         return found
 
+    def holds(self, value: Any) -> bool:
+        """Whether ``value`` itself is kept (by identity)."""
+        return any(held is value for held in self._held.values())
+
     def put(self, key: Key, value: Any) -> None:
         self._held[key] = value
         self._held.move_to_end(key)
@@ -226,26 +230,31 @@ async def _level(
     wanted = _types(types)
     if wanted is None and min_conf <= 0:
         return snapshot, graph, whole, whole
-    shown_key = (*plain_key, wanted, min_conf)
-    shown: DepGraph | None = cache.get(shown_key)
+    # Kept only as the web app asks for it (the default bar, every type): other filters are
+    # anyone's to vary, and a level can be big, so they are worked out each time.
+    kept = wanted is None and min_conf == MIN_CONF
+    shown_key = (*plain_key, MIN_CONF)
+    shown: DepGraph | None = cache.get(shown_key) if kept else None
     if shown is None:
         shown = await asyncio.to_thread(
             aggregate, graph, level, roots, types=wanted, min_conf=min_conf
         )
-        cache.put(shown_key, shown)
+        if kept:
+            cache.put(shown_key, shown)
     return snapshot, graph, whole, shown
 
 
 async def _cycles(request: Request, snapshot: Snapshot, shown: DepGraph) -> list[Cycle]:
     """The level's cycles, each with what closes it (seconds for a tangle of thousands): kept
-    beside the level they are of."""
+    beside the level they are of, while it is kept."""
     cache = _cache(request)
     key = ("cycles", snapshot.id, id(shown))
     held: tuple[DepGraph, list[Cycle]] | None = cache.get(key)
     if held is not None and held[0] is shown:  # the very level (not one at a reused id)
         return held[1]
     found = await asyncio.to_thread(cycles, shown)
-    cache.put(key, (shown, found))
+    if cache.holds(shown):  # a level not kept (an unusual filter) doesn't keep its cycles
+        cache.put(key, (shown, found))
     return found
 
 
