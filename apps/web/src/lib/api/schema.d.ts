@@ -315,7 +315,7 @@ export interface paths {
         };
         /**
          * Authorize
-         * @description Check the client's request; on to the consent page (or back with an error).
+         * @description Check the client's request; on to the consent page (or there with the error).
          */
         get: operations["authorize_api_v1_oauth_authorize_get"];
         put?: never;

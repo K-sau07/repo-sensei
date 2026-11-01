@@ -3,7 +3,8 @@
 export const SCOPE_LABELS: Record<string, { title: string; detail: string }> = {
   "read:repo": {
     title: "Read your repositories",
-    detail: "Search, read code, trace flows and explore the dependency graph.",
+    detail:
+      "Search, read code, trace flows and explore the dependency graph. Searching may use some of your organization's AI budget.",
   },
   ask: {
     title: "Ask questions",

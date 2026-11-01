@@ -77,11 +77,12 @@ API_PREFIX = "/api/v1"
 # Where an API key is let in (7.1), and with which scope: to read, and to call the unsafe
 # endpoints listed (reads that are POSTs, and asking). Every other router refuses keys.
 _READ_ONLY = (
-    "me", "repos", "indexing", "index_jobs", "browse", "constellation", "symbols", "graph",
+    "me", "repos", "indexing", "index_jobs", "constellation", "symbols", "graph",
     "feature_maps", "overview", "refs", "staleness", "diagrams", "deps", "impact", "galaxy",
 )  # fmt: skip
 KEY_ACCESS: dict[str, tuple[Scope, frozenset[Callable[..., object]]]] = {
     **{name: (Scope.READ_REPO, frozenset()) for name in _READ_ONLY},
+    "browse": (Scope.READ_REPO, frozenset({browse.grep})),
     "search": (Scope.READ_REPO, frozenset({search.search})),
     "trace": (Scope.READ_REPO, frozenset({trace.trace})),
     "ask": (Scope.ASK, frozenset({ask.ask})),
@@ -219,6 +220,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         oauth,
     ):  # the order routes are matched in
         name = module.__name__.rsplit(".", 1)[-1]
+        if name == "oauth":
+            # The client's side takes no user and ignores a bearer sent along; the pages' side
+            # needs a browser session (refusing keys and tokens there itself).
+            app.include_router(module.router, prefix=API_PREFIX)
+            continue
         scope, writes = KEY_ACCESS.get(name, (None, frozenset[Callable[..., object]]()))
         app.include_router(
             module.router,
@@ -226,7 +232,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             dependencies=[Depends(key_access(scope, writes))],
         )
     # OAuth discovery, at the origin's root (RFC 8414, RFC 9728; the web app forwards it).
-    app.include_router(oauth.well_known, dependencies=[Depends(key_access(None))])
+    app.include_router(oauth.well_known)
     # Wraps the whole middleware stack; RequestIdMiddleware tags the server span it creates.
     FastAPIInstrumentor.instrument_app(app, server_request_hook=scrub_server_span)
     return app

@@ -18,13 +18,14 @@ import httpx
 import pytest
 from fakeredis import FakeAsyncRedis
 from fastapi import FastAPI
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from sensei_core.mail import MemoryMailer
-from sensei_core.models import AuditEvent, Repo, RepoSource, User
+from sensei_core.models import AuditEvent, IssuedToken, OAuthGrant, Repo, RepoSource, User
+from sensei_core.oauth import clients as clients_module
 from sensei_core.oauth.clients import ClientError, ClientRegistry
-from sensei_core.oauth.service import OAuthService
+from sensei_core.oauth.service import OAuthService, prune
 from sensei_core.orgs.service import OrgService
 from sensei_testing import make_user, sign_in
 
@@ -237,32 +238,45 @@ async def test_the_code_flow_with_pkce_and_a_code_used_once(
     assert 'error="invalid_token"' in revoked.headers["www-authenticate"]
 
 
-async def test_authorize_errors_go_back_only_to_a_known_redirect(
+async def test_authorize_errors_are_shown_here_never_bounced_to_the_client(
     client: httpx.AsyncClient, db_session: AsyncSession, clock: Clock
 ) -> None:
+    """Anyone can register a client with any https redirect: bouncing errors there would make
+    this origin an open redirect. Every error is shown on our page."""
     client_id = await _register(client)
+    evil = (
+        await client.post(
+            f"{API}/oauth/register", json={"redirect_uris": ["https://evil.example/landing"]}
+        )
+    ).json()["client_id"]
     _, challenge = _pkce()
     base = {"client_id": client_id, "response_type": "code", "code_challenge": challenge,
-            "code_challenge_method": "S256", "state": "s1"}  # fmt: skip
-    # Unknown redirect URI or client: shown on our page, the browser sent nowhere else.
-    for params in (
-        {**base, "redirect_uri": "https://evil.example/cb"},
-        {**base, "client_id": "rsc_nope", "redirect_uri": CALLBACK},
-    ):
+            "code_challenge_method": "S256", "state": "s1", "redirect_uri": CALLBACK}  # fmt: skip
+    for params, error in (
+        ({**base, "redirect_uri": "https://evil.example/cb"}, "invalid_request"),
+        ({**base, "client_id": "rsc_nope"}, "invalid_client"),
+        ({**base, "code_challenge_method": "plain"}, "invalid_request"),
+        ({**base, "scope": "admin"}, "invalid_scope"),
+        ({**base, "resource": "https://other.example"}, "invalid_target"),
+        # The audit's open redirect: a registered evil redirect, a malformed request.
+        ({"client_id": evil, "redirect_uri": "https://evil.example/landing"},
+         "unsupported_response_type"),
+    ):  # fmt: skip
         answer = await client.get(f"{API}/oauth/authorize", params=params)
         location = answer.headers["location"]
         assert location.startswith(f"{ISSUER}/oauth/consent?"), location
-        assert "error=" in location
-    # Known redirect URI: the error goes back there, with state and iss.
-    for params, error in (
-        ({**base, "redirect_uri": CALLBACK, "code_challenge_method": "plain"}, "invalid_request"),
-        ({**base, "redirect_uri": CALLBACK, "scope": "admin"}, "invalid_scope"),
-        ({**base, "redirect_uri": CALLBACK, "resource": "https://other.example"}, "invalid_target"),
-    ):
-        answer = await client.get(f"{API}/oauth/authorize", params=params)
-        back = _query(answer.headers["location"])
-        assert answer.headers["location"].startswith(CALLBACK)
-        assert (back["error"], back["state"], back["iss"]) == (error, "s1", ISSUER)
+        assert _query(location)["error"] == error, params
+
+
+async def test_authorize_is_rate_limited_per_caller(
+    client: httpx.AsyncClient, db_session: AsyncSession, clock: Clock
+) -> None:
+    errors: list[str] = []
+    for _ in range(31):
+        answer = await client.get(f"{API}/oauth/authorize", params={"client_id": "rsc_nope"})
+        errors.append(_query(answer.headers["location"])["error"])
+    assert errors[:30] == ["invalid_client"] * 30
+    assert errors[30] == "slow_down"
 
 
 async def test_a_denied_request_goes_back_as_access_denied(
@@ -359,6 +373,7 @@ async def test_a_token_is_for_its_resource_scopes_and_until_revoked(
             client_id=client_id,
             code=code,
             code_verifier=verifier,
+            redirect_uri=CALLBACK,
         )
     ).json()["access_token"]
     elsewhere = await client.get(f"{API}/orgs/acme/repos", headers=_bearer(for_mcp))
@@ -373,6 +388,7 @@ async def test_a_token_is_for_its_resource_scopes_and_until_revoked(
             client_id=client_id,
             code=code,
             code_verifier=verifier,
+            redirect_uri=CALLBACK,
         )
     ).json()["access_token"]
     asked = await client.post(
@@ -467,3 +483,157 @@ async def test_metadata_documents_are_never_fetched_from_private_addresses() -> 
             await registry.read_document(url)
         assert found.value.error == "invalid_client", url
     assert json.dumps(_document())  # (the documents above are well-formed)
+
+
+async def test_a_code_or_refresh_token_raced_twice_is_a_replay(
+    api_app: FastAPI, client: httpx.AsyncClient, db_session: AsyncSession, clock: Clock
+) -> None:
+    """Two requests with one code (or refresh token) at once: both may read it unused; only
+    one claims it. Here the second one's stale read is made by hand: the row is marked used
+    behind the session's back after it was loaded."""
+    owner = await _org(db_session)
+    client_id = await _register(client)
+    code, verifier = await _authorize(api_app, client, db_session, owner, client_id)
+    grant = await db_session.scalar(select(OAuthGrant).where(OAuthGrant.status == "approved"))
+    assert grant is not None  # loaded: the session now holds it as approved
+    await db_session.execute(
+        update(OAuthGrant)
+        .where(OAuthGrant.id == grant.id)
+        .values(status="used")
+        .execution_options(synchronize_session=False)
+    )
+    lost = await _token(
+        client, grant_type="authorization_code", client_id=client_id, code=code,
+        code_verifier=verifier, redirect_uri=CALLBACK,
+    )  # fmt: skip
+    assert (lost.status_code, lost.json()["error"]) == (400, "invalid_grant")
+
+    code, verifier = await _authorize(api_app, client, db_session, owner, client_id)
+    first = (
+        await _token(
+            client,
+            grant_type="authorization_code",
+            client_id=client_id,
+            code=code,
+            code_verifier=verifier,
+            redirect_uri=CALLBACK,
+        )
+    ).json()
+    token = await db_session.scalar(
+        select(IssuedToken).where(IssuedToken.kind == "refresh", IssuedToken.used_at.is_(None))
+    )
+    assert token is not None
+    await db_session.execute(
+        update(IssuedToken)
+        .where(IssuedToken.id == token.id)
+        .values(used_at=clock.now)
+        .execution_options(synchronize_session=False)
+    )
+    raced = await _token(
+        client, grant_type="refresh_token", client_id=client_id,
+        refresh_token=first["refresh_token"],
+    )  # fmt: skip
+    assert (raced.status_code, raced.json()["error"]) == (400, "invalid_grant")
+    # A reuse: the family went with it.
+    gone = await client.get(f"{API}/orgs/acme/repos", headers=_bearer(first["access_token"]))
+    assert gone.status_code == 401
+
+
+async def test_a_redirect_named_when_authorizing_must_be_named_for_the_token(
+    api_app: FastAPI, client: httpx.AsyncClient, db_session: AsyncSession, clock: Clock
+) -> None:
+    owner = await _org(db_session)
+    client_id = await _register(client)
+    code, verifier = await _authorize(api_app, client, db_session, owner, client_id)
+    unnamed = await _token(
+        client, grant_type="authorization_code", client_id=client_id, code=code,
+        code_verifier=verifier,
+    )  # fmt: skip
+    assert unnamed.json()["error"] == "invalid_grant"
+    named = await _token(
+        client, grant_type="authorization_code", client_id=client_id, code=code,
+        code_verifier=verifier, redirect_uri=CALLBACK,
+    )  # fmt: skip
+    assert named.status_code == 200, named.text
+
+
+async def test_discovery_and_revocation_ignore_a_bearer_sent_along(
+    client: httpx.AsyncClient, clock: Clock
+) -> None:
+    habit = {"Authorization": "Bearer rs_AAAAAAAA_" + "A" * 43}
+    assert (
+        await client.get("/.well-known/oauth-authorization-server", headers=habit)
+    ).status_code == 200
+    assert (
+        await client.get("/.well-known/oauth-protected-resource/mcp", headers=habit)
+    ).status_code == 200
+    assert (
+        await client.post(f"{API}/oauth/revoke", data={"token": "x"}, headers=habit)
+    ).status_code == 200
+
+
+async def test_a_metadata_document_is_fetched_from_the_address_checked(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen: list[httpx.Request] = []
+
+    def serve(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(404)
+
+    async def resolved(host: str, port: int) -> str:
+        assert (host, port) == ("client.example", 443)
+        return "93.184.215.14"
+
+    monkeypatch.setattr(clients_module, "_public_address", resolved)
+    async with httpx.AsyncClient(transport=httpx.MockTransport(serve)) as http:
+        registry = ClientRegistry(lambda: http)
+        with pytest.raises(ClientError):
+            await registry.read_document(DOC_URL)
+    [request] = seen
+    assert request.url.host == "93.184.215.14"  # pinned: no second lookup to be rebound
+    assert request.headers["host"] == "client.example"
+    assert request.extensions["sni_hostname"] == "client.example"
+
+
+async def test_a_document_that_cant_be_had_isnt_fetched_again_at_once(
+    api_app: FastAPI, client: httpx.AsyncClient, clock: Clock
+) -> None:
+    fetched: list[str] = []
+
+    def serve(request: httpx.Request) -> httpx.Response:
+        fetched.append(str(request.url))
+        return httpx.Response(500)
+
+    outside = httpx.AsyncClient(transport=httpx.MockTransport(serve))
+    api_app.state.oauth_service = OAuthService(
+        api_app.state.settings, ClientRegistry(lambda: outside, allow_private=True), clock=clock
+    )
+    params = {"client_id": "https://down.example/c.json", "redirect_uri": CALLBACK}
+    for _ in range(3):
+        answer = await client.get(f"{API}/oauth/authorize", params=params)
+        assert _query(answer.headers["location"])["error"] == "invalid_client"
+    assert len(fetched) == 1
+    clock.now += timedelta(minutes=2)
+    await client.get(f"{API}/oauth/authorize", params=params)
+    assert len(fetched) == 2
+    await outside.aclose()
+
+
+async def test_expired_requests_codes_and_tokens_are_pruned(
+    api_app: FastAPI, client: httpx.AsyncClient, db_session: AsyncSession, clock: Clock
+) -> None:
+    owner = await _org(db_session)
+    client_id = await _register(client)
+    code, verifier = await _authorize(api_app, client, db_session, owner, client_id)
+    await _token(
+        client, grant_type="authorization_code", client_id=client_id, code=code,
+        code_verifier=verifier, redirect_uri=CALLBACK,
+    )  # fmt: skip
+    await client.post(f"{API}/oauth/device/code")
+    soon = await prune(db_session, clock.now + timedelta(hours=2))
+    assert soon == {"grants": 0, "device_codes": 0, "tokens": 0}  # a day's grace
+    later = await prune(db_session, clock.now + timedelta(days=2))
+    assert (later["grants"], later["device_codes"], later["tokens"]) == (1, 1, 1)  # the access
+    gone = await prune(db_session, clock.now + timedelta(days=40))
+    assert gone["tokens"] == 1  # the refresh token, once it expired

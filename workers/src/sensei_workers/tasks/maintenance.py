@@ -21,6 +21,7 @@ from sensei_core.indexing import retention
 from sensei_core.jobs import TaskName
 from sensei_core.logging import get_logger
 from sensei_core.models import ACTIVE_JOB_STATUSES, IndexJob, Repo, RepoRef, Snapshot
+from sensei_core.oauth.service import prune as oauth_prune
 from sensei_core.storage import Bucket, repo_prefix, snapshot_key
 from sensei_workers.app import celery_app
 from sensei_workers.base import RetryableError, SenseiTask
@@ -208,3 +209,16 @@ def drop_ref(self: SenseiTask, *, org_id: str, repo_id: str, ref: str) -> int:
             log.warning("couldn't delete a snapshot's objects", ref=ref, exc_info=True)
     log.info("ref dropped", ref=ref, snapshots=len(gone))
     return len(gone)
+
+
+@celery_app.task(bind=True, base=SenseiTask, name=TaskName.PRUNE_OAUTH.value, system=True)
+def prune_oauth(self: SenseiTask) -> dict[str, int]:
+    """Delete expired OAuth requests, device codes and tokens."""
+    counts = get_runtime().run(_prune_oauth())
+    log.info("oauth pruned", **counts)
+    return counts
+
+
+async def _prune_oauth() -> dict[str, int]:
+    async with get_runtime().system_database.session() as db:
+        return await oauth_prune(db, datetime.now(UTC))

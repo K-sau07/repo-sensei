@@ -6,8 +6,8 @@ At the origin's root (the web app forwards them): the authorization server's met
 server's). Under the API:
 
 * ``GET /oauth/authorize`` checks the request and sends the browser to the consent page
-  (``/oauth/consent?request=…``), or back to the client with an error (when the client and its
-  redirect URI are known good), or to the consent page with the error (when they aren't);
+  (``/oauth/consent?request=…``), or there with the error: errors are never bounced to the
+  client's redirect URI (no open redirect); only the user's answer goes back to the client;
 * ``POST /oauth/token`` (form): ``authorization_code`` (with the PKCE verifier),
   ``refresh_token`` (rotating), and the device code; RFC 6749's error shape, ``no-store``;
 * ``POST /oauth/register`` (RFC 7591), ``POST /oauth/device/code`` (RFC 8628) and
@@ -15,8 +15,8 @@ server's). Under the API:
 * for the web app's pages, signed in: the request the consent page shows and the user's answer,
   and the same for a device's code.
 
-API keys and access tokens aren't let in here (see ``sensei_api.app``): a browser session
-decides.
+A bearer sent along (a client's habit) is ignored by the client's side; the pages' endpoints
+need a browser session, and refuse API keys and access tokens: a person decides.
 """
 
 from __future__ import annotations
@@ -51,7 +51,25 @@ well_known = APIRouter(tags=["oauth"], include_in_schema=False)
 
 OAuth = Annotated[OAuthService, Depends(get_oauth_service)]
 NO_STORE = {"Cache-Control": "no-store", "Pragma": "no-cache"}
+# Per caller IP: these answer anyone, signed in or not.
 REGISTRATIONS_PER_MINUTE = 10
+AUTHORIZATIONS_PER_MINUTE = 30
+DEVICE_CODES_PER_MINUTE = 10
+TOKENS_PER_MINUTE = 60
+
+
+async def _too_many(redis: RedisClient, name: str, per_minute: int) -> int | None:
+    """Seconds to wait when this caller has asked too often, else None."""
+    bucket = TokenBucket(redis, name=f"oauth_{name}", per_minute=per_minute)
+    return await bucket.take(current_client_ip() or "unknown")
+
+
+def _slow_down(wait: int) -> JSONResponse:
+    return JSONResponse(
+        {"error": "slow_down", "error_description": "Too many requests; try again later."},
+        status_code=429,
+        headers={"Retry-After": str(wait), **NO_STORE},
+    )
 
 
 def _oauth_error(error: OAuthError) -> JSONResponse:
@@ -97,15 +115,9 @@ async def register_client(
     request: Request, db: DbSession, redis: RedisClient, oauth: OAuth
 ) -> JSONResponse:
     """Dynamic client registration (RFC 7591): public clients only."""
-    wait = await TokenBucket(
-        redis, name="oauth_register", per_minute=REGISTRATIONS_PER_MINUTE
-    ).take(current_client_ip() or "unknown")
+    wait = await _too_many(redis, "register", REGISTRATIONS_PER_MINUTE)
     if wait is not None:
-        return JSONResponse(
-            {"error": "slow_down", "error_description": "Too many registrations; try later."},
-            status_code=429,
-            headers={"Retry-After": str(wait)},
-        )
+        return _slow_down(wait)
     try:
         body: Any = await request.json()
     except ValueError:
@@ -134,10 +146,17 @@ async def register_client(
 
 
 @router.get("/authorize")
-async def authorize(request: Request, db: DbSession, oauth: OAuth) -> RedirectResponse:
-    """Check the client's request; on to the consent page (or back with an error)."""
+async def authorize(
+    request: Request, db: DbSession, redis: RedisClient, oauth: OAuth
+) -> RedirectResponse:
+    """Check the client's request; on to the consent page (or there with the error)."""
     q = request.query_params
     consent = f"{oauth.issuer}/oauth/consent"
+    if await _too_many(redis, "authorize", AUTHORIZATIONS_PER_MINUTE) is not None:
+        query = urlencode(
+            {"error": "slow_down", "error_description": "Too many sign-in requests from here."}
+        )
+        return RedirectResponse(f"{consent}?{query}", status_code=302)
     try:
         handle, _ = await oauth.begin(
             db,
@@ -151,12 +170,9 @@ async def authorize(request: Request, db: DbSession, oauth: OAuth) -> RedirectRe
             resource=q.get("resource"),
         )
     except OAuthError as error:
-        redirect_uri = q.get("redirect_uri")
-        if error.redirect and redirect_uri:
-            return RedirectResponse(
-                oauth.error_redirect(redirect_uri, error, q.get("state")), status_code=302
-            )
-        # The client or its redirect URI can't be trusted: say so here, send nobody anywhere.
+        # Said here, never sent on to the client's redirect URI: anyone can register a client
+        # with any https redirect, and bouncing an error there would make this origin an open
+        # redirect (RFC 9700 §4.11.2). Only the user's own answer goes back to the client.
         query = urlencode({"error": error.error, "error_description": error.description})
         return RedirectResponse(f"{consent}?{query}", status_code=302)
     return RedirectResponse(f"{consent}?{urlencode({'request': handle})}", status_code=302)
@@ -166,6 +182,7 @@ async def authorize(request: Request, db: DbSession, oauth: OAuth) -> RedirectRe
 async def token(
     *,
     db: DbSession,
+    redis: RedisClient,
     oauth: OAuth,
     grant_type: Annotated[str, Form()],
     client_id: Annotated[str | None, Form()] = None,
@@ -177,6 +194,9 @@ async def token(
     scope: Annotated[str | None, Form()] = None,
     resource: Annotated[str | None, Form()] = None,
 ) -> JSONResponse:
+    wait = await _too_many(redis, "token", TOKENS_PER_MINUTE)
+    if wait is not None:
+        return _slow_down(wait)
     try:
         if grant_type == GRANT_CODE:
             issued = await oauth.exchange_code(
@@ -201,12 +221,17 @@ async def token(
 
 @router.post("/device/code")
 async def device_code(
+    *,
     db: DbSession,
+    redis: RedisClient,
     oauth: OAuth,
     client_id: Annotated[str, Form()] = CLI_CLIENT_ID,
     scope: Annotated[str | None, Form()] = None,
     resource: Annotated[str | None, Form()] = None,
 ) -> JSONResponse:
+    wait = await _too_many(redis, "device", DEVICE_CODES_PER_MINUTE)
+    if wait is not None:
+        return _slow_down(wait)
     try:
         found = await oauth.device_authorize(
             db, client_id=client_id, scope=scope, resource=resource

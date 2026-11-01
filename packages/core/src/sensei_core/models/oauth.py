@@ -14,7 +14,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import DateTime, Enum, ForeignKey, Integer, LargeBinary, String, Text, text
+from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Integer, LargeBinary, String, Text, text
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -68,6 +68,8 @@ class OAuthGrant(IdMixin, Base):
         ForeignKey("oauth_clients.id", ondelete="CASCADE"), index=True
     )
     redirect_uri: Mapped[str] = mapped_column(Text)
+    # Whether the request named its redirect URI (then the token request must too: OAuth 2.1).
+    redirect_given: Mapped[bool] = mapped_column(Boolean, server_default=text("true"))
     scopes: Mapped[list[str]] = mapped_column(ARRAY(Text))
     resource: Mapped[str] = mapped_column(Text)
     code_challenge: Mapped[str] = mapped_column(String(128))

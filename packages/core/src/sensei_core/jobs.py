@@ -55,6 +55,7 @@ class TaskName(enum.StrEnum):
     SWEEP_STALLED_JOBS = "sensei.maintenance.sweep_stalled_jobs"
     SWEEP_SNAPSHOTS = "sensei.maintenance.sweep_snapshots"
     DROP_REF = "sensei.maintenance.drop_ref"
+    PRUNE_OAUTH = "sensei.maintenance.prune_oauth"
 
 
 # Tasks go to the queue named by the second part of their name ("sensei.<queue>.<task>").

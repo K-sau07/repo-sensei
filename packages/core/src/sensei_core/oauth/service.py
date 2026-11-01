@@ -27,7 +27,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from urllib.parse import urlencode, urlsplit, urlunsplit
 
-from sqlalchemy import select, update
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from sensei_core.audit import AuditAction, audit
@@ -86,17 +86,13 @@ def _secret(prefix: str) -> str:
 
 
 class OAuthError(Exception):
-    """An RFC 6749 error. ``redirect``: whether it may go back to the client's redirect URI
-    (not when the client or its redirect URI is the problem)."""
+    """An RFC 6749 error: its code, a description, and the HTTP status to answer with."""
 
-    def __init__(
-        self, error: str, description: str, *, status: int = 400, redirect: bool = True
-    ) -> None:
+    def __init__(self, error: str, description: str, *, status: int = 400) -> None:
         super().__init__(description)
         self.error = error
         self.description = description
         self.status = status
-        self.redirect = redirect
 
 
 @dataclass(frozen=True, slots=True)
@@ -273,11 +269,11 @@ class OAuthService:
 
     async def client(self, db: AsyncSession, client_id: str | None) -> OAuthClient:
         if not client_id:
-            raise OAuthError("invalid_request", "client_id is missing.", redirect=False)
+            raise OAuthError("invalid_request", "client_id is missing.")
         try:
             return await self.registry.get(db, client_id, now=self._clock())
         except ClientError as error:
-            raise OAuthError(error.error, error.description, redirect=False) from None
+            raise OAuthError(error.error, error.description) from None
 
     async def begin(
         self,
@@ -293,15 +289,14 @@ class OAuthService:
         resource: str | None,
     ) -> tuple[str, Pending]:
         """Check an authorization request and keep it for the user to decide on: its handle
-        (for the consent page) and what it asks. :class:`OAuthError` with ``redirect`` False:
-        show the error here; True: send it to the redirect URI (:meth:`error_redirect`)."""
+        (for the consent page) and what it asks, or :class:`OAuthError` (shown to the user,
+        not sent to the client: see the API's ``/oauth/authorize``)."""
         client = await self.client(db, client_id)
+        given = redirect_uri is not None
         if redirect_uri is None and len(client.redirect_uris) == 1:
             redirect_uri = client.redirect_uris[0]
         if not redirect_uri or not redirect_allowed(client, redirect_uri):
-            raise OAuthError(
-                "invalid_request", "The redirect_uri isn't one of the client's.", redirect=False
-            )
+            raise OAuthError("invalid_request", "The redirect_uri isn't one of the client's.")
         if GRANT_CODE not in grant_types(client):
             raise OAuthError("unauthorized_client", "This client can't use authorization codes.")
         if response_type != "code":
@@ -320,6 +315,7 @@ class OAuthService:
             request_hash=_hash(handle),
             client_id=client.id,
             redirect_uri=redirect_uri,
+            redirect_given=given,
             scopes=scopes,
             resource=target,
             code_challenge=code_challenge,
@@ -348,7 +344,6 @@ class OAuthService:
             raise OAuthError(
                 "invalid_request",
                 "This sign-in request has expired. Start again from your editor.",
-                redirect=False,
             )
         return Pending(grant=grant, client=await self._client_of(db, grant.client_id))
 
@@ -406,7 +401,9 @@ class OAuthService:
             raise OAuthError("invalid_grant", "This code was already used.")
         if grant.status != GrantStatus.APPROVED or grant.expires_at <= self._clock():
             raise OAuthError("invalid_grant", "This code has expired.")
-        if redirect_uri is not None and redirect_uri != grant.redirect_uri:
+        if (redirect_uri is None and grant.redirect_given) or (
+            redirect_uri is not None and redirect_uri != grant.redirect_uri
+        ):
             raise OAuthError("invalid_grant", "The redirect_uri differs from the authorization's.")
         if not pkce_ok(code_verifier, grant.code_challenge):
             raise OAuthError("invalid_grant", "The code_verifier doesn't match.")
@@ -415,7 +412,18 @@ class OAuthService:
             and self.resources.canonical(resource, default=grant.resource) != grant.resource
         ):
             raise OAuthError("invalid_target", "The resource differs from the authorization's.")
-        grant.status = GrantStatus.USED
+        # Claimed in one statement: of two requests racing with the same code, one wins and
+        # the other is a replay (its row no longer approved once the winner's update is in).
+        claimed = await db.scalar(
+            update(OAuthGrant)
+            .where(OAuthGrant.id == grant.id, OAuthGrant.status == GrantStatus.APPROVED)
+            .values(status=GrantStatus.USED)
+            .returning(OAuthGrant.id)
+            .execution_options(synchronize_session=False)
+        )
+        if claimed is None:
+            await self._revoke_family(db, grant.id)
+            raise OAuthError("invalid_grant", "This code was already used.")
         user_id, org_id = _decided(grant.user_id, grant.org_id)
         return await self._issue(
             db, client=client, user_id=user_id, org_id=org_id, scopes=grant.scopes,
@@ -446,14 +454,7 @@ class OAuthService:
         if token is None or token.client_id != client.id or token.revoked_at is not None:
             raise OAuthError("invalid_grant", "Unknown or revoked refresh token.")
         if token.used_at is not None:
-            await self._revoke_family(db, token.family_id)
-            await set_org_context(db, token.org_id)
-            await audit(
-                db, AuditAction.OAUTH_REFRESH_REUSED, actor_user_id=token.user_id,
-                org_id=token.org_id, target_type="oauth_client", target_id=client.id,
-                meta={"client": client.client_name},
-            )  # fmt: skip
-            raise OAuthError("invalid_grant", "This refresh token was already used.")
+            await self._reused(db, token, client)
         if token.expires_at <= now:
             raise OAuthError("invalid_grant", "This refresh token has expired.")
         scopes = token.scopes if not scope else parse_scopes(scope)
@@ -464,11 +465,36 @@ class OAuthService:
             and self.resources.canonical(resource, default=token.resource) != token.resource
         ):
             raise OAuthError("invalid_target", "The resource differs from the token's.")
-        token.used_at = now
+        # Claimed in one statement (see exchange_code): a racing second use is a reuse.
+        claimed = await db.scalar(
+            update(IssuedToken)
+            .where(
+                IssuedToken.id == token.id,
+                IssuedToken.used_at.is_(None),
+                IssuedToken.revoked_at.is_(None),
+            )
+            .values(used_at=now)
+            .returning(IssuedToken.id)
+            .execution_options(synchronize_session=False)
+        )
+        if claimed is None:
+            await self._reused(db, token, client)
         return await self._issue(
             db, client=client, user_id=token.user_id, org_id=token.org_id, scopes=scopes,
             resource=token.resource, family=token.family_id,
         )  # fmt: skip
+
+    async def _reused(self, db: AsyncSession, token: IssuedToken, client: OAuthClient) -> None:
+        """A refresh token used again: stolen, so its whole family is revoked (and that is
+        audited). Raises ``invalid_grant``."""
+        await self._revoke_family(db, token.family_id)
+        await set_org_context(db, token.org_id)
+        await audit(
+            db, AuditAction.OAUTH_REFRESH_REUSED, actor_user_id=token.user_id,
+            org_id=token.org_id, target_type="oauth_client", target_id=client.id,
+            meta={"client": client.client_name},
+        )  # fmt: skip
+        raise OAuthError("invalid_grant", "This refresh token was already used.")
 
     # ---------------------------------------------------------------- device flow
 
@@ -524,9 +550,7 @@ class OAuthService:
             or found.status != GrantStatus.PENDING
             or found.expires_at <= self._clock()
         ):
-            raise OAuthError(
-                "invalid_request", "That code isn't valid or has expired.", redirect=False
-            )
+            raise OAuthError("invalid_request", "That code isn't valid or has expired.")
         return found, await self._client_of(db, found.client_id)
 
     async def device_decide(
@@ -573,7 +597,15 @@ class OAuthService:
         if found.status == GrantStatus.PENDING:
             await db.flush()
             raise OAuthError("authorization_pending", "Waiting for the user.")
-        found.status = GrantStatus.USED
+        claimed = await db.scalar(
+            update(OAuthDeviceCode)
+            .where(OAuthDeviceCode.id == found.id, OAuthDeviceCode.status == GrantStatus.APPROVED)
+            .values(status=GrantStatus.USED)
+            .returning(OAuthDeviceCode.id)
+            .execution_options(synchronize_session=False)
+        )
+        if claimed is None:  # another poll got there first
+            raise OAuthError("invalid_grant", "Unknown device code.")
         user_id, org_id = _decided(found.user_id, found.org_id)
         return await self._issue(
             db, client=client, user_id=user_id, org_id=org_id, scopes=found.scopes,
@@ -621,7 +653,7 @@ class OAuthService:
     async def _client_of(self, db: AsyncSession, id_: uuid.UUID) -> OAuthClient:
         client = await db.get(OAuthClient, id_)
         if client is None:  # deleted while the request waited
-            raise OAuthError("invalid_client", "Unknown client.", redirect=False)
+            raise OAuthError("invalid_client", "Unknown client.")
         return client
 
     async def _token_client(self, db: AsyncSession, client_id: str | None) -> OAuthClient:
@@ -674,3 +706,22 @@ class OAuthService:
             expires_in=int(self._access_ttl.total_seconds()),
             scopes=list(scopes),
         )
+
+
+KEEP_AFTER_EXPIRY = timedelta(days=1)  # a little longer, for the logs to be read against
+
+
+async def prune(db: AsyncSession, now: datetime) -> dict[str, int]:
+    """Delete what has expired: requests and codes, device codes, and tokens (a used refresh
+    token is kept until it expires, so a replay of it still revokes its family). Returns how
+    many of each went."""
+    before = now - KEEP_AFTER_EXPIRY
+    counts: dict[str, int] = {}
+    for name, model in (
+        ("grants", OAuthGrant),
+        ("device_codes", OAuthDeviceCode),
+        ("tokens", IssuedToken),
+    ):
+        gone = await db.scalars(delete(model).where(model.expires_at < before).returning(model.id))
+        counts[name] = len(gone.all())
+    return counts

@@ -15,4 +15,6 @@ BEAT_SCHEDULE: dict[str, dict[str, Any]] = {
     "sweep-stalled-jobs": {"task": TaskName.SWEEP_STALLED_JOBS.value, "schedule": 600.0},
     # Snapshots past their retention (5.2.5) go, with their archives and artifacts.
     "sweep-snapshots": {"task": TaskName.SWEEP_SNAPSHOTS.value, "schedule": 86400.0},
+    # Expired OAuth requests, device codes and tokens (7.2) don't pile up.
+    "prune-oauth": {"task": TaskName.PRUNE_OAUTH.value, "schedule": 86400.0},
 }

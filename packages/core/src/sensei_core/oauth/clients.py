@@ -5,7 +5,9 @@ Three kinds, as the MCP authorization spec (2026-07-28) has them:
 * **Metadata documents** (preferred): the ``client_id`` is an https URL whose JSON describes the
   client (``client_id`` equal to that URL, ``client_name``, ``redirect_uris``). It is fetched
   when first seen and again once its cache time is up; fetching guards against being turned on
-  the server's own network (no private addresses, no redirects, a size and time limit).
+  the server's own network (no private addresses, connecting to the address checked, no
+  redirects, a size and time limit), and a document that can't be had isn't fetched again for
+  a minute.
 * **Dynamic registration** (RFC 7591; deprecated by MCP but what editors still use): a client
   posts its metadata and is given a ``client_id``.
 * **The CLI**, known in advance as :data:`CLI_CLIENT_ID` (the device flow; no redirects).
@@ -47,6 +49,8 @@ MIN_FRESH = timedelta(minutes=1)
 MAX_FRESH = timedelta(hours=24)
 DEFAULT_FRESH = timedelta(hours=1)
 _MAX_AGE = re.compile(r"max-age=(\d+)")
+FAILURE_TTL = timedelta(minutes=1)
+MAX_FAILURES_KEPT = 1_000
 
 
 class ClientError(Exception):
@@ -156,6 +160,16 @@ class ClientRegistry:
     ) -> None:
         self._http = http  # the app's client, once it has one
         self._allow_private = allow_private
+        # Documents that couldn't be had, not asked for again for a while (anyone can name any
+        # URL as a client_id, signed in or not).
+        self._failed: dict[str, tuple[datetime, ClientError]] = {}
+
+    def _remember_failure(self, url: str, error: ClientError, now: datetime) -> None:
+        if len(self._failed) >= MAX_FAILURES_KEPT:
+            self._failed = {u: f for u, f in self._failed.items() if f[0] > now}
+            if len(self._failed) >= MAX_FAILURES_KEPT:
+                self._failed.pop(next(iter(self._failed)))
+        self._failed[url] = (now + FAILURE_TTL, error)
 
     async def get(self, db: AsyncSession, client_id: str, *, now: datetime) -> OAuthClient:
         if client_id == CLI_CLIENT_ID:
@@ -163,7 +177,14 @@ class ClientRegistry:
         found = await db.scalar(select(OAuthClient).where(OAuthClient.client_id == client_id))
         if client_id.startswith("https://"):
             if found is None or found.fresh_until is None or found.fresh_until <= now:
-                return await self._fetch(db, client_id, found, now=now)
+                failed = self._failed.get(client_id)
+                if failed is not None and failed[0] > now:
+                    raise failed[1]  # tried a moment ago: not fetched again yet
+                try:
+                    return await self._fetch(db, client_id, found, now=now)
+                except ClientError as error:
+                    self._remember_failure(client_id, error, now)
+                    raise
             return found
         if found is None:
             raise ClientError("invalid_client", "Unknown client.")
@@ -223,16 +244,29 @@ class ClientRegistry:
             raise ClientError(
                 "invalid_client", "A client_id URL is https, with a path, and nothing more."
             )
+        headers = {"Accept": "application/json"}
+        extensions: dict[str, Any] = {}
+        target = url
         if not self._allow_private:
-            await _public_address(parts.hostname, parts.port or 443)
+            # Connect to the very address that was checked: resolving the name again to
+            # connect could get another answer (DNS rebinding to a private address). TLS is
+            # still checked against the hostname (SNI), and Host still names it.
+            address = await _public_address(parts.hostname, parts.port or 443)
+            netloc = f"[{address}]" if ":" in address else address
+            if parts.port:
+                netloc = f"{netloc}:{parts.port}"
+            target = parts._replace(netloc=netloc).geturl()
+            headers["Host"] = parts.netloc
+            extensions["sni_hostname"] = parts.hostname
         http = self._http()
         if http is None:
             raise ClientError("invalid_client", "Client metadata documents can't be read here.")
         try:
             async with http.stream(
                 "GET",
-                url,
-                headers={"Accept": "application/json"},
+                target,
+                headers=headers,
+                extensions=extensions,
                 follow_redirects=False,
                 timeout=FETCH_TIMEOUT,
             ) as response:
@@ -272,9 +306,9 @@ def _freshness(cache_control: str) -> timedelta:
     return min(MAX_FRESH, max(MIN_FRESH, timedelta(seconds=int(found.group(1)))))
 
 
-async def _public_address(host: str, port: int) -> None:
-    """Refuse a host that resolves to any address that isn't public (the server's own network,
-    loopback, link-local...)."""
+async def _public_address(host: str, port: int) -> str:
+    """The address to connect to for ``host``: refused if it resolves to any address that isn't
+    public (the server's own network, loopback, link-local...)."""
     try:
         infos = await asyncio.get_running_loop().getaddrinfo(host, port, type=socket.SOCK_STREAM)
     except OSError:
@@ -286,3 +320,6 @@ async def _public_address(host: str, port: int) -> None:
             raise ClientError(
                 "invalid_client", "The client's metadata URL points at a private address."
             )
+    if not addresses:
+        raise ClientError("invalid_client", "The client's metadata host doesn't resolve.")
+    return addresses[0].split("%", 1)[0]
