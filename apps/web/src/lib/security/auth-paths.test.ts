@@ -4,12 +4,17 @@ import { isPublicPath, loginRedirect, safeNext } from "./auth-paths";
 import { contentSecurityPolicy, newNonce } from "./csp";
 
 describe("isPublicPath", () => {
-  it.each(["/", "/login", "/auth/callback", "/invite/abc", "/s/xyz", "/docs/getting-started"])(
-    "%s is public",
-    (path) => {
-      expect(isPublicPath(path)).toBe(true);
-    },
-  );
+  it.each([
+    "/",
+    "/login",
+    "/auth/callback",
+    "/invite/abc",
+    "/s/xyz",
+    "/d/xyz",
+    "/docs/getting-started",
+  ])("%s is public", (path) => {
+    expect(isPublicPath(path)).toBe(true);
+  });
 
   it.each(["/acme", "/acme/inbox", "/settings/profile", "/onboarding", "/internal", "/logins"])(
     "%s needs a session",

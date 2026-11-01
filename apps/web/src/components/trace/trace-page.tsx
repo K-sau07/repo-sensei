@@ -19,6 +19,7 @@ import {
   Rows3,
   SearchX,
 } from "lucide-react";
+import type { Route } from "next";
 import Link from "next/link";
 import { useEffect, useState, type ReactNode } from "react";
 
@@ -306,7 +307,17 @@ function TraceView({ entry }: { entry: string }) {
               Show on the constellation
             </Link>
           )}
-          <Soon icon={<Network aria-hidden />} label="Open as diagram" />
+          {path && (
+            <Link
+              href={
+                `${repoPath(org, repo, "diagrams")}?from=${encodeURIComponent(entry)}&path=${String(at + 1)}` as Route
+              }
+              className="inline-flex h-7 items-center gap-1.5 rounded-sm px-2 text-sm text-fg-muted hover:bg-surface-2 hover:text-fg [&_svg]:size-4"
+            >
+              <Network aria-hidden />
+              Open as diagram
+            </Link>
+          )}
           <Soon icon={<Radar aria-hidden />} label="Impact" />
           <Link
             href={traceHref(org, repo)}

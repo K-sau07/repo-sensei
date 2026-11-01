@@ -3,6 +3,7 @@
  * API. In the browser it persists in localStorage, so multi-step flows (invite, switch user,
  * accept) survive page loads; `resetMockDb()` restores the seed.
  */
+import type { Diagram } from "@/lib/api/diagrams";
 import type {
   AvailableRepo,
   Invitation,
@@ -51,6 +52,8 @@ export interface MockDb {
   available: Record<string, AvailableRepo[]>;
   /** Index jobs per repository id, oldest first (see mocks/jobs.ts). */
   jobs: Record<string, MockJob[]>;
+  /** Diagrams per repository id, newest last (see handlers/diagrams.ts). */
+  diagrams?: Record<string, Diagram[]>;
 }
 
 const STORAGE_KEY = "sensei.mock.db.v5";

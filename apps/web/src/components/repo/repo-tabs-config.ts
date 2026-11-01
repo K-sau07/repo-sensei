@@ -91,7 +91,6 @@ export const PRIMARY_TABS: RepoTab[] = [
     section: "diagrams",
     icon: Workflow,
     feature: "diagrams",
-    phase: 6,
     shortcut: "repo-diagrams",
   },
   {

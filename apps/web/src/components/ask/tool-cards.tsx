@@ -219,9 +219,18 @@ export function TraceStrip({
           <span>· {card.paths.length + card.more} paths, the surest shown</span>
         ) : null}
         {traceHref ? (
-          <Link href={traceHref} className="underline underline-offset-2 hover:text-fg">
-            Open in Trace
-          </Link>
+          <>
+            <Link href={traceHref} className="underline underline-offset-2 hover:text-fg">
+              Open in Trace
+            </Link>
+            {/* The same entry, drawn from the graph as a diagram (6.6). */}
+            <Link
+              href={traceHref.replace("/trace?", "/diagrams?") as Route}
+              className="underline underline-offset-2 hover:text-fg"
+            >
+              Open as diagram
+            </Link>
+          </>
         ) : null}
       </p>
     </div>

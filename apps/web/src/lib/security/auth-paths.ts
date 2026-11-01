@@ -24,6 +24,7 @@ export const PUBLIC_PREFIXES = [
   "/privacy",
   "/terms",
   "/s",
+  "/d",
   "/maintenance",
 ];
 

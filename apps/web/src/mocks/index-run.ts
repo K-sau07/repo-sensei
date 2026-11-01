@@ -49,13 +49,13 @@ const SEARCH_STAGES: { stage: Stage; unlocks: IndexJob["features"] }[] = [
 ];
 
 /**
- * It serves the code graph (3.14) and traces (3.15) too, so the graph and links stages are played
- * the same way, just before finalize (where the pipeline runs them), unlocking the trace: the other
- * pages they unlock (the graph, diagrams, fixes, changes) aren't built.
+ * It serves the code graph (3.14), traces (3.15) and diagrams (6.6) too, so the graph and links
+ * stages are played the same way, just before finalize (where the pipeline runs them), unlocking
+ * the trace and diagrams: the other pages they unlock (the graph, fixes, changes) aren't built.
  */
 const GRAPH_STAGES: { stage: Stage; unlocks: IndexJob["features"] }[] = [
   { stage: "graph", unlocks: [] },
-  { stage: "links", unlocks: ["trace"] },
+  { stage: "links", unlocks: ["trace", "diagrams"] },
 ];
 
 const played = (stages: typeof SEARCH_STAGES, atMs: number, progress: unknown): Recorded[] =>

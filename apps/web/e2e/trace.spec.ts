@@ -75,10 +75,10 @@ test.describe("trace", () => {
       .hover();
     await expect(page.locator("[data-slot=tooltip-content]")).toContainText("Verified, 90% sure");
     await page.mouse.move(0, 0);
-    // Later phases' actions are shown, disabled, with when.
-    await expect(view.getByRole("button", { name: /Open as diagram/ })).toHaveAttribute(
-      "aria-disabled",
-      "true",
+    // The path opens as a diagram; later phases' actions are shown, disabled, with when.
+    await expect(view.getByRole("link", { name: "Open as diagram" })).toHaveAttribute(
+      "href",
+      /\/acme\/api\/diagrams\?from=.+&path=1$/,
     );
     await expect(view.getByRole("button", { name: /Impact/ })).toHaveAttribute(
       "aria-disabled",

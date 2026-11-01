@@ -14,6 +14,7 @@ export const RESERVED_SLUGS = new Set([
   "benchmarks",
   "blog",
   "changelog",
+  "d",
   "dashboard",
   "device",
   "docs",
