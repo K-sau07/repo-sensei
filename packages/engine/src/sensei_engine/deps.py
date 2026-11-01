@@ -7,8 +7,8 @@ What a node of the code graph belongs to, at each level:
 - **module**: its file's folder (``.`` at the top);
 - **package**: the deepest folder above it holding a manifest (``pyproject.toml``,
   ``package.json``, ``go.mod``...), else its top folder;
-- **service**: the deepest folder a Compose service is built from; else (no Compose builds)
-  the deepest root of an app framework (FastAPI, Next.js, Express...); else the repository.
+- **service**: the deepest folder a Compose service is built from, or the root of an app
+  framework (FastAPI, Next.js, Express...) no Compose service builds; else the repository.
 
 A node with no file (an endpoint, a table, a topic) is grouped by its kind at every level but
 the symbol one: the API's endpoints, the tables. Third-party packages and what an import names
@@ -92,14 +92,18 @@ def grouping(paths: Iterable[str], frameworks: Sequence[Mapping[str, Any]]) -> G
             cast("dict[str, object]", details).get("builds") if isinstance(details, dict) else None
         )
         if isinstance(builds, dict):
-            for name, root in cast("dict[str, object]", builds).items():
-                if isinstance(root, str):
+            for name, root in sorted(cast("dict[str, object]", builds).items()):
+                # Two services built from one folder: the one named for it, else the first.
+                if isinstance(root, str) and (root not in services or name == _base(root)):
                     services[root] = str(name)
-    if not services:
-        for found in frameworks:
-            root = found.get("root")
-            if found.get("framework") in APP_FRAMEWORKS and isinstance(root, str):
-                services[root] = _base(root)
+    built = set(services)
+    for found in frameworks:
+        root = found.get("root")
+        if found.get("framework") not in APP_FRAMEWORKS or not isinstance(root, str):
+            continue
+        # An app no Compose service builds (deployed on its own): a service of its own.
+        if not any(b in (root, TOP) or root.startswith(f"{b}/") for b in built):
+            services.setdefault(root, _base(root))
     return Grouping(services or {TOP: "app"}, packages)
 
 

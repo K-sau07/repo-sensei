@@ -103,7 +103,6 @@ def graph() -> GraphSnapshot:
 
 def test_each_node_is_grouped_at_each_level(graph: GraphSnapshot) -> None:
     roots = grouping(FILES, FRAMEWORKS)
-    assert dict(roots.services) == {"backend": "api"}  # Compose's builds win
     assert dict(roots.packages) == {"backend": "backend", "frontend": "frontend"}
     route = graph.node(ROUTE)
     assert route is not None
@@ -113,7 +112,9 @@ def test_each_node_is_grouped_at_each_level(graph: GraphSnapshot) -> None:
     ]  # fmt: skip
     page = graph.node(PAGE)
     assert page is not None
-    assert group_of(page, "service", roots) == TOP  # not under a built service
+    # An app no Compose service builds is a service of its own.
+    assert dict(roots.services) == {"backend": "api", "frontend": "frontend"}
+    assert group_of(page, "service", roots) == "frontend"
     endpoint = graph.node(ENDPOINT)
     assert endpoint is not None
     assert group_of(endpoint, "module", roots) == "~API endpoints"
@@ -124,6 +125,14 @@ def test_each_node_is_grouped_at_each_level(graph: GraphSnapshot) -> None:
     without = grouping(FILES, FRAMEWORKS[1:])
     assert dict(without.services) == {"backend": "backend", "frontend": "frontend"}
     assert dict(grouping(["a.py"], []).services) == {TOP: "app"}
+    # Two services built from one folder: the one named for it, else the first by name.
+    both = [{"framework": "docker-compose", "root": ".", "details": {"builds": {
+        "z": "backend", "backend": "backend", "b": "web", "a": "web",
+    }}}]  # fmt: skip
+    assert dict(grouping(FILES, both).services) == {"backend": "backend", "web": "a"}
+    # One built from the repository's root holds every app in it.
+    whole = [{"framework": "docker-compose", "root": ".", "details": {"builds": {"app": "."}}}]
+    assert dict(grouping(FILES, whole + FRAMEWORKS[1:]).services) == {TOP: "app"}
 
 
 def test_edges_are_counted_by_type_between_groups(graph: GraphSnapshot) -> None:
@@ -152,7 +161,7 @@ def test_edges_are_counted_by_type_between_groups(graph: GraphSnapshot) -> None:
         "calls": 2
     }
     services = aggregate(graph, "service", roots)
-    assert set(services.nodes) == {"backend", TOP, "~API endpoints", "~Tables"}
+    assert set(services.nodes) == {"backend", "frontend", "~API endpoints", "~Tables"}
     assert services.nodes["backend"].label == "api"
     assert services.nodes["backend"].cluster is None
 

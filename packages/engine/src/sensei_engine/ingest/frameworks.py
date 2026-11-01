@@ -220,20 +220,32 @@ def _yaml(text: str) -> object:
         return None
 
 
+_VARIANT_DOCKERFILE = re.compile(r"^(Dockerfile\.[^/]+|[^/]+\.Dockerfile)$", re.IGNORECASE)
+
+
 def _compose_services(text: str) -> list[str]:
     services = _table(_table(_yaml(text)).get("services"))
     return sorted(str(name) for name in services)
 
 
 def _compose_builds(text: str, root: str) -> dict[str, str]:
-    """Each service built from the repository: the directory it is built from (its build
-    context, from the repository's root; one outside the repository, or a URL, is left out)."""
+    """Each service built from the repository: the directory its code is in, from the
+    repository's root (its Dockerfile's folder, in its build context: a context of "." with
+    ``backend/Dockerfile`` is ``backend``). One outside the repository, or a URL, is left out,
+    and so is a variant image (``Dockerfile.playwright``: tests or tooling built from a folder
+    whose service is another)."""
     builds: dict[str, str] = {}
     for name, service in _table(_table(_yaml(text)).get("services")).items():
         build = _table(service).get("build")
         context = build if isinstance(build, str) else _table(build).get("context")
         if not isinstance(context, str) or "://" in context or context.startswith("/"):
             continue
+        dockerfile = None if isinstance(build, str) else _table(build).get("dockerfile")
+        if isinstance(dockerfile, str) and not dockerfile.startswith("/"):
+            folder, _, file = dockerfile.rpartition("/")
+            if _VARIANT_DOCKERFILE.match(file):
+                continue
+            context = posixpath.join(context, folder)
         joined = posixpath.normpath(posixpath.join("" if root == ROOT else root, context))
         if joined == ".." or joined.startswith("../"):
             continue
