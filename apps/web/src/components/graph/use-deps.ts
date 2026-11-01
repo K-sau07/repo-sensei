@@ -40,7 +40,7 @@ export function useDeps(level: DepLevel | null) {
 }
 
 /** The groups a matrix is drawn for at most (the API's cap: past it, 422 `dsm_too_large`). */
-export const MAX_DSM = 1_500;
+export const MAX_DSM = 2_500;
 
 export function useDsm(level: DepLevel, enabled = true) {
   const { org, repo } = useRepoSlug();

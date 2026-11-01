@@ -23,6 +23,7 @@ level, drawn where the whole level puts it.
 
 from __future__ import annotations
 
+import heapq
 import math
 import posixpath
 from collections import Counter, defaultdict
@@ -393,11 +394,13 @@ LAYER_ORDER = ("ui", "state", "client", "route", "handler", "service", "db", "ot
 
 @dataclass(frozen=True, slots=True)
 class Cycle:
-    """Groups that depend on each other, round (a strongly connected component of 2+), and the
-    edges among them."""
+    """Groups that depend on each other, round (a strongly connected component of 2+), the
+    edges among them, and the few of those that **close** it: cut them and nothing among the
+    groups goes round any more (:func:`breaks`, the lightest such set it finds)."""
 
     nodes: tuple[str, ...]
     edges: tuple[tuple[str, str, int], ...]  # source, target, weight
+    breaks: tuple[tuple[str, str, int], ...] = ()
 
 
 def cycles(dep: DepGraph) -> list[Cycle]:
@@ -414,18 +417,157 @@ def cycles(dep: DepGraph) -> list[Cycle]:
             continue
         members = sorted(ids[i] for i in component)
         inside = set(members)
-        found.append(
-            Cycle(
-                tuple(members),
-                tuple(
-                    (src, dst, edge.weight)
-                    for (src, dst), edge in dep.edges.items()
-                    if src in inside and dst in inside
-                ),
-            )
+        among = tuple(
+            (src, dst, edge.weight)
+            for (src, dst), edge in dep.edges.items()
+            if src in inside and dst in inside
         )
+        found.append(Cycle(tuple(members), among, breaks(members, among)))
     found.sort(key=lambda c: (-len(c.nodes), c.nodes))
     return found
+
+
+EXACT_BREAKS = 12  # cycles of this many groups or fewer: the lightest set itself
+SIFT_BREAKS = 2_000  # cycles of this many or fewer: the greedy order improved by moving nodes
+SIFT_PASSES = 8
+
+
+def breaks(
+    nodes: Sequence[str], edges: Sequence[tuple[str, str, int]]
+) -> tuple[tuple[str, str, int], ...]:
+    """Edges whose cutting leaves ``nodes`` with no cycle, as light as it finds: an order of the
+    nodes, and the edges that point backwards in it (a feedback arc set). For a few nodes the
+    lightest order itself (a search over subsets); else Eades, Lin and Smyth's greedy order
+    (weighted: sinks to the end, sources to the front, else the node sending the most weight
+    more than it gets to the front), improved by moving one node at a time to where it closes
+    least. The lightest first."""
+    succ: dict[str, dict[str, int]] = {n: {} for n in nodes}
+    pred: dict[str, dict[str, int]] = {n: {} for n in nodes}
+    for src, dst, weight in edges:
+        if src != dst:
+            succ[src][dst] = weight
+            pred[dst][src] = weight
+    if len(nodes) <= EXACT_BREAKS:
+        order = _lightest_order(list(nodes), succ)
+    else:
+        order = _greedy_order(nodes, succ, pred)
+        if len(nodes) <= SIFT_BREAKS:
+            order = _sifted(order, succ, pred)
+    place = {n: i for i, n in enumerate(order)}
+    cut = [(s, d, w) for s, d, w in edges if s != d and place[s] > place[d]]
+    return tuple(sorted(cut, key=lambda e: (e[2], e[0], e[1])))
+
+
+def _lightest_order(nodes: list[str], succ: Mapping[str, Mapping[str, int]]) -> list[str]:
+    """The order with the least weight pointing backwards: over the sets placed first, each
+    next node costing its edges into them."""
+    n = len(nodes)
+    into = [
+        [succ[nodes[v]].get(nodes[u], 0) for u in range(n)] for v in range(n)
+    ]  # into[v][u]: v → u
+    best: list[float] = [math.inf] * (1 << n)
+    last = [-1] * (1 << n)
+    best[0] = 0
+    for placed in range(1 << n):
+        if best[placed] == math.inf:
+            continue
+        for v in range(n):
+            if placed >> v & 1:
+                continue
+            cost = best[placed] + sum(into[v][u] for u in range(n) if placed >> u & 1)
+            nxt = placed | 1 << v
+            if cost < best[nxt]:
+                best[nxt], last[nxt] = cost, v
+    order: list[str] = []
+    placed = (1 << n) - 1
+    while placed:
+        v = last[placed]
+        order.append(nodes[v])
+        placed &= ~(1 << v)
+    return order[::-1]
+
+
+def _greedy_order(
+    nodes: Sequence[str],
+    succ_in: Mapping[str, Mapping[str, int]],
+    pred_in: Mapping[str, Mapping[str, int]],
+) -> list[str]:
+    succ = {n: dict(succ_in[n]) for n in nodes}
+    pred = {n: dict(pred_in[n]) for n in nodes}
+    out_w = {n: sum(succ[n].values()) for n in nodes}
+    in_w = {n: sum(pred[n].values()) for n in nodes}
+    alive = set(nodes)
+    front: list[str] = []
+    back: list[str] = []  # the last placed first
+    stamp = dict.fromkeys(nodes, 0)
+    heap = [(in_w[n] - out_w[n], n, 0) for n in nodes]
+    heapq.heapify(heap)
+    ends = sorted(n for n in nodes if not succ[n] or not pred[n])
+
+    def touched(node: str) -> None:
+        stamp[node] += 1
+        heapq.heappush(heap, (in_w[node] - out_w[node], node, stamp[node]))
+        if not succ[node] or not pred[node]:
+            ends.append(node)
+
+    def remove(node: str) -> None:
+        alive.discard(node)
+        for other, weight in succ[node].items():
+            if other in alive:
+                in_w[other] -= weight
+                del pred[other][node]
+                touched(other)
+        for other, weight in pred[node].items():
+            if other in alive:
+                out_w[other] -= weight
+                del succ[other][node]
+                touched(other)
+
+    while alive:
+        while ends:
+            node = ends.pop()
+            if node in alive:
+                (back if not succ[node] else front).append(node)
+                remove(node)
+        if not alive:
+            break
+        _, node, at = heapq.heappop(heap)
+        if node in alive and at == stamp[node]:
+            front.append(node)
+            remove(node)
+    return [*front, *reversed(back)]
+
+
+def _sifted(
+    order: list[str],
+    succ: Mapping[str, Mapping[str, int]],
+    pred: Mapping[str, Mapping[str, int]],
+) -> list[str]:
+    """``order`` with each node moved, in turn, to the place where the fewest of its edges
+    point backwards, while that helps."""
+    for _ in range(SIFT_PASSES):
+        moved = False
+        for node in list(order):
+            rest = [n for n in order if n != node]
+            # At the front: every edge into it points backwards; each step past ``other``
+            # turns node → other backwards and other → node forwards.
+            cost = sum(w for u, w in pred[node].items() if u != node)
+            best_cost, best_at = cost, 0
+            for i, other in enumerate(rest):
+                cost += succ[node].get(other, 0) - pred[node].get(other, 0)
+                if cost < best_cost:
+                    best_cost, best_at = cost, i + 1
+            now = order.index(node)
+            here_cost = sum(succ[node].get(u, 0) for u in order[:now]) + sum(
+                pred[node].get(u, 0) for u in order[now + 1 :]
+            )
+            if best_cost < here_cost:
+                rest.insert(best_at, node)
+                order = rest
+                moved = True
+        if not moved:
+            break
+    return order
 
 
 @dataclass(frozen=True, slots=True)

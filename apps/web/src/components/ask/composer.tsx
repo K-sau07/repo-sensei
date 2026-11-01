@@ -247,7 +247,7 @@ export function Composer({
   const pathChip = pathLabel(scope);
   return (
     <form
-      className="bg-surface flex flex-col gap-2 rounded-lg border border-border p-2"
+      className="flex flex-col gap-2 rounded-lg border border-border bg-surface-1 p-2"
       onSubmit={(event) => {
         event.preventDefault();
         send();

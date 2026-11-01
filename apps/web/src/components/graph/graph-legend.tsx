@@ -27,7 +27,7 @@ export function GraphLegend({ className }: { className?: string }) {
     <ul
       aria-label="Legend"
       className={cn(
-        "bg-surface/90 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-sm border border-line px-2 py-1 text-xs text-fg-muted",
+        "flex flex-wrap items-center gap-x-3 gap-y-1 rounded-sm border border-line bg-surface-1/90 px-2 py-1 text-xs text-fg-muted",
         className,
       )}
     >
@@ -40,7 +40,7 @@ export function GraphLegend({ className }: { className?: string }) {
       ))}
       <li className="flex items-center gap-1">
         <span aria-hidden className="h-0.5 w-3 bg-danger" />
-        In a cycle
+        Closes a cycle
       </li>
       <li className="text-fg-faint">Size: depended on</li>
     </ul>

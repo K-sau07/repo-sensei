@@ -4,10 +4,12 @@ the same every time."""
 
 from __future__ import annotations
 
+import random
 from collections import Counter
 from collections.abc import Sequence
 
 import pytest
+import rustworkx as rx
 
 from sensei_core.models import EdgeType, NodeKind, Provenance
 from sensei_engine.deps import (
@@ -18,6 +20,7 @@ from sensei_engine.deps import (
     DepNode,
     Grouping,
     aggregate,
+    breaks,
     coupling,
     cycles,
     dsm,
@@ -243,7 +246,48 @@ def test_cycles_are_the_strongly_connected_groups() -> None:
     found = cycles(CYCLIC)
     assert [c.nodes for c in found] == [("a", "b", "c"), ("d", "e")]
     assert set(found[0].edges) == {("a", "b", 2), ("b", "c", 1), ("c", "a", 5)}
+    assert found[0].breaks == (("b", "c", 1),)  # the lightest that closes it
     assert cycles(_dep({"x": "other", "y": "other"}, {("x", "y"): 1})) == []
+
+
+def _acyclic_without(nodes: Sequence[str], edges: Sequence[tuple[str, str, int]]) -> bool:
+    cut = {(s, d) for s, d, _ in breaks(nodes, edges)}
+    graph: rx.PyDiGraph[str, None] = rx.PyDiGraph()
+    at = {n: graph.add_node(n) for n in nodes}
+    graph.add_edges_from_no_data([(at[s], at[d]) for s, d, _ in edges if (s, d) not in cut])
+    return rx.is_directed_acyclic_graph(graph)
+
+
+def test_what_closes_a_cycle_is_the_lightest_set_for_a_few_groups() -> None:
+    nodes = ["app", "app/api", "app/api/routes", "app/core"]
+    edges = [
+        ("app", "app/api", 2), ("app", "app/core", 46), ("app/api", "app", 10),
+        ("app/api", "app/api/routes", 10), ("app/api", "app/core", 9),
+        ("app/api/routes", "app", 182), ("app/api/routes", "app/api", 84),
+        ("app/api/routes", "app/core", 12), ("app/core", "app", 8),
+    ]  # fmt: skip
+    # Every order of the four tried: 20 is the least weight pointing backwards.
+    assert breaks(nodes, edges) == (
+        ("app", "app/api", 2), ("app/core", "app", 8), ("app/api", "app/api/routes", 10),
+    )  # fmt: skip
+    assert _acyclic_without(nodes, edges)
+
+
+def test_what_closes_a_tangle_of_hundreds_is_a_few_of_its_edges() -> None:
+    rng = random.Random(7)  # noqa: S311 - a fixed tangle, not a secret
+    nodes = [f"m{i}" for i in range(300)]
+    edges = list(
+        {
+            (nodes[a], nodes[b]): (nodes[a], nodes[b], rng.randint(1, 20))
+            for a in range(300)
+            for b in rng.sample(range(300), 5)
+            if a != b
+        }.values()
+    )
+    cut = breaks(nodes, edges)
+    assert _acyclic_without(nodes, edges)
+    assert sum(w for *_, w in cut) < 0.3 * sum(w for *_, w in edges)
+    assert [w for *_, w in cut] == sorted(w for *_, w in cut)  # the lightest first
 
 
 def test_the_dsm_is_ordered_by_layer_and_flags_cycle_cells() -> None:

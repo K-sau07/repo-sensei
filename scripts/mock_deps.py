@@ -124,6 +124,7 @@ def _level(graph: GraphSnapshot, level: Any, roots: Any) -> dict[str, Any]:
         {
             "nodes": list(c.nodes),
             "edges": [{"source": a, "target": b, "weight": w} for a, b, w in c.edges],
+            "breaks": [{"source": a, "target": b, "weight": w} for a, b, w in c.breaks],
         }
         for c in found
     ]

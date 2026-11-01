@@ -1967,6 +1967,8 @@ export interface components {
         };
         /** CycleOut */
         CycleOut: {
+            /** Breaks */
+            breaks: components["schemas"]["CycleEdgeOut"][];
             /** Edges */
             edges: components["schemas"]["CycleEdgeOut"][];
             /** Nodes */

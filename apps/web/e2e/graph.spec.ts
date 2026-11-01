@@ -12,7 +12,7 @@ test.describe("graph explorer", () => {
     await page.goto("/acme/api/graph");
     await expect(canvas(page)).toHaveAttribute("data-nodes", "13");
     await expect(canvas(page).locator("canvas").first()).toBeVisible();
-    await expect(page.getByRole("list", { name: "Legend" })).toContainText("In a cycle");
+    await expect(page.getByRole("list", { name: "Legend" })).toContainText("Closes a cycle");
     await expect(page.getByTestId("graph-minimap")).toBeVisible();
 
     // The same graph as tables; a node's name focuses it.
@@ -118,7 +118,13 @@ test.describe("graph explorer", () => {
     const cycle = page.getByTestId("cycle");
     await expect(cycle).toHaveCount(1);
     await expect(cycle).toContainText("4 modules depend on each other");
-    await expect(cycle).toContainText("lightest");
+    // What closes it first: the lightest edges whose cutting breaks it.
+    await expect(cycle.getByTestId("cycle-breaks")).toHaveText(
+      "Cut 3 of 9 edges (20 of 363 uses) to break it",
+    );
+    await expect(
+      cycle.getByRole("list", { name: "Edges that close it" }).getByRole("listitem"),
+    ).toHaveCount(3);
     await cycle.getByRole("button", { name: "Show in the graph" }).click();
     await expect(page).toHaveURL(/\/graph\?cycle=0$/); // the graph tab: the default
     await expect(page.getByRole("button", { name: "Show all" })).toBeVisible();

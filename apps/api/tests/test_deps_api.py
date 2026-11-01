@@ -206,6 +206,8 @@ async def test_the_dsm_shows_a_cycle_and_coupling(
     [cycle] = body["cycles"]
     assert cycle["nodes"] == [A, B]
     assert {(e["source"], e["target"]) for e in cycle["edges"]} == {(A, B), (B, A)}
+    [cut] = cycle["breaks"]  # one of the two closes it
+    assert (cut["source"], cut["target"]) in {(A, B), (B, A)}
     order = [n["id"] for n in body["order"]]
     cells = {(order[c["row"]], order[c["col"]]): c for c in body["cells"]}
     assert cells[(A, B)]["cycle"] is True

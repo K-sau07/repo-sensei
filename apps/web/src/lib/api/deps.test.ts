@@ -186,7 +186,7 @@ describe("the dependency graph", () => {
     expect(expand(MODULES, null, new Set(["app/api"])).nodes).toHaveLength(3);
   });
 
-  it("marks the edges that close a cycle, and says what an edge counts", () => {
+  it("marks the edges that close a cycle (not all in it), and says what an edge counts", () => {
     const found = cycleEdges([
       {
         nodes: ["a", "b"],
@@ -194,9 +194,10 @@ describe("the dependency graph", () => {
           { source: "a", target: "b", weight: 1 },
           { source: "b", target: "a", weight: 2 },
         ],
+        breaks: [{ source: "a", target: "b", weight: 1 }],
       },
     ]);
-    expect(found).toEqual(new Set([edgeKey("a", "b"), edgeKey("b", "a")]));
+    expect(found).toEqual(new Set([edgeKey("a", "b")]));
     expect(typesLabel({ imports: 12, calls: 182, uses_hook: 12 })).toBe(
       "182 calls, 12 imports, 12 uses hook",
     );

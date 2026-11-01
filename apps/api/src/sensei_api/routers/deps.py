@@ -12,8 +12,9 @@ travels small). ``edge-evidence`` is the exact import and call lines behind one 
 
 ``deps/dsm`` (6.3) is the level as a dependency structure matrix (rows and columns by layer,
 then name; a cell, the edges from its row to its column, flagged when both are in one cycle),
-with its cycles (Tarjan's strongly connected components) and each group's coupling (afferent,
-efferent, instability); ``deps/cycles`` is the cycles alone.
+with its cycles (Tarjan's strongly connected components, each with the few edges that close it)
+and each group's coupling (afferent, efferent, instability); ``deps/cycles`` is the cycles
+alone.
 
 ``deps/packages`` (6.5) is the third-party packages: each declared one (its versions, where it
 is declared, whether only for development) with how many files import it and which, and what
@@ -71,12 +72,12 @@ router = APIRouter(prefix="/orgs/{org}/repos/{repo}", tags=["deps"])
 
 MAX_NODES = 20_000  # sent at once (more: the largest, and ``truncated``)
 MSGPACK = "application/x-msgpack"
-CACHED = 32  # levels (whole and as filtered) and layouts kept in memory (per process)
+CACHED = 48  # levels (whole and as filtered), their cycles and layouts kept (per process)
 log = get_logger(__name__)
 
 MAX_LAYOUT_BYTES = 64 << 20
 LAYOUT_FORMAT = 2  # bump when the layout code changes
-MAX_DSM = 1_500  # groups a matrix is drawn for (n² cells)
+MAX_DSM = 2_500  # groups a matrix is drawn for (its cells are its edges; drawn 3 px each)
 _pack = cast("Callable[[object], bytes]", msgpack.packb)  # pyright: ignore[reportUnknownMemberType]
 _unpack = cast("Callable[..., object]", msgpack.unpackb)  # pyright: ignore[reportUnknownMemberType]
 
@@ -233,6 +234,19 @@ async def _level(
         )
         cache.put(shown_key, shown)
     return snapshot, graph, whole, shown
+
+
+async def _cycles(request: Request, snapshot: Snapshot, shown: DepGraph) -> list[Cycle]:
+    """The level's cycles, each with what closes it (seconds for a tangle of thousands): kept
+    beside the level they are of."""
+    cache = _cache(request)
+    key = ("cycles", snapshot.id, id(shown))
+    held: tuple[DepGraph, list[Cycle]] | None = cache.get(key)
+    if held is not None and held[0] is shown:  # the very level (not one at a reused id)
+        return held[1]
+    found = await asyncio.to_thread(cycles, shown)
+    cache.put(key, (shown, found))
+    return found
 
 
 async def _positions(
@@ -442,6 +456,8 @@ class CycleEdgeOut(BaseModel):
 class CycleOut(BaseModel):
     nodes: list[str]
     edges: list[CycleEdgeOut]
+    # The few edges that close it (cut them and it is gone), the lightest first.
+    breaks: list[CycleEdgeOut]
 
 
 class CyclesOut(BaseModel):
@@ -460,6 +476,7 @@ def _cycles_out(found: list[Cycle]) -> list[CycleOut]:
         CycleOut(
             nodes=list(c.nodes),
             edges=[CycleEdgeOut(source=a, target=b, weight=w) for a, b, w in c.edges],
+            breaks=[CycleEdgeOut(source=a, target=b, weight=w) for a, b, w in c.breaks],
         )
         for c in found
     ]
@@ -489,7 +506,7 @@ async def deps_dsm(
             f"Too many {level}s ({len(shown.nodes)}) to draw as a matrix: pick a coarser level.",
             code="dsm_too_large",
         )
-    found = await asyncio.to_thread(cycles, shown)
+    found = await _cycles(request, snapshot, shown)
     matrix = await asyncio.to_thread(dsm, shown, found)
     metrics = coupling(shown)
     response.headers[COMMIT_HEADER] = snapshot.commit_sha
@@ -532,7 +549,7 @@ async def deps_cycles(
     snapshot, _, _, shown = await _level(
         request, db, repo, level=level, types=types, min_conf=min_conf, ref=ref
     )
-    found = await asyncio.to_thread(cycles, shown)
+    found = await _cycles(request, snapshot, shown)
     response.headers[COMMIT_HEADER] = snapshot.commit_sha
     return CyclesOut(level=level, sha=snapshot.commit_sha, cycles=_cycles_out(found))
 

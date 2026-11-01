@@ -1145,6 +1145,13 @@
       },
       "CycleOut": {
         "properties": {
+          "breaks": {
+            "items": {
+              "$ref": "#/components/schemas/CycleEdgeOut"
+            },
+            "title": "Breaks",
+            "type": "array"
+          },
           "edges": {
             "items": {
               "$ref": "#/components/schemas/CycleEdgeOut"
@@ -1162,7 +1169,8 @@
         },
         "required": [
           "nodes",
-          "edges"
+          "edges",
+          "breaks"
         ],
         "title": "CycleOut",
         "type": "object"

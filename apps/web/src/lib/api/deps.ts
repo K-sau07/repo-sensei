@@ -273,11 +273,12 @@ export function expand(
   return { nodes, edges: [...merged.values()] };
 }
 
-/** The edges that close a cycle, by key. */
+/** The edges that close a cycle (cut them and it is gone), by key: a few of a tangle's, not all
+ * that are in it. */
 export function cycleEdges(cycles: readonly Cycle[]): Set<string> {
   const found = new Set<string>();
   for (const cycle of cycles) {
-    for (const edge of cycle.edges) found.add(edgeKey(edge.source, edge.target));
+    for (const edge of cycle.breaks) found.add(edgeKey(edge.source, edge.target));
   }
   return found;
 }

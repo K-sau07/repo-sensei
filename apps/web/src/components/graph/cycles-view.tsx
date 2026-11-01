@@ -1,8 +1,9 @@
 "use client";
 
 /**
- * The Cycles tab (6.7): the level's dependency cycles, the largest first. Each lists its groups
- * and the edges that close it, the lightest marked (the fewest lines to change to break it), and
+ * The Cycles tab (6.7): the level's dependency cycles, the largest first. Each leads with the
+ * few edges that close it (cut them and it is gone: the API's lightest such set it finds), then
+ * its groups and all its edges (folded away when there are many), and
  * shows it alone on the graph.
  */
 import { RefreshCcw } from "lucide-react";
@@ -17,12 +18,26 @@ import { GuessesSwitch } from "./guesses-switch";
 import { LevelSelect } from "./level-select";
 import { useCycles, useDsm } from "./use-deps";
 
-export function lightest(cycle: Cycle): Cycle["edges"][number] | null {
-  let found: Cycle["edges"][number] | null = null;
-  for (const edge of cycle.edges) {
-    if (found === null || edge.weight < found.weight) found = edge;
-  }
-  return found;
+/** Shown before "and N more". */
+const FIRST = 12;
+
+function Edge({ edge, name }: { edge: Cycle["edges"][number]; name: (id: string) => string }) {
+  return (
+    <li className="flex gap-2">
+      <span className="min-w-0 flex-1 truncate">
+        {name(edge.source)} <span aria-hidden>→</span>
+        <span className="sr-only">depends on</span> {name(edge.target)}
+      </span>
+      <span className="text-fg-muted tabular-nums">{edge.weight}</span>
+    </li>
+  );
+}
+
+/** What closes a cycle, as words: "Cut 3 of 9 edges (20 of 363 uses) to break it". */
+export function breaksLabel(cycle: Cycle): string {
+  const uses = (edges: Cycle["edges"]) => edges.reduce((sum, e) => sum + e.weight, 0);
+  const n = cycle.breaks.length;
+  return `Cut ${String(n)} of ${String(cycle.edges.length)} ${cycle.edges.length === 1 ? "edge" : "edges"} (${String(uses(cycle.breaks))} of ${String(uses(cycle.edges))} uses) to break it`;
 }
 
 export function CyclesView() {
@@ -53,7 +68,6 @@ export function CyclesView() {
       ) : (
         <ol className="flex flex-col gap-3" aria-label="Cycles">
           {dsm.data.cycles.map((cycle, i) => {
-            const weakest = lightest(cycle);
             return (
               <li
                 key={cycle.nodes.join("\u0000")}
@@ -73,23 +87,38 @@ export function CyclesView() {
                     Show in the graph
                   </Button>
                 </div>
-                <p className="text-xs break-all text-fg-muted">
-                  {cycle.nodes.map(name).join(", ")}
+                <p className="text-xs font-medium" data-testid="cycle-breaks">
+                  {breaksLabel(cycle)}
                 </p>
-                <ul className="flex flex-col gap-0.5 text-xs">
-                  {cycle.edges.map((edge) => (
-                    <li key={`${edge.source}\u0000${edge.target}`} className="flex gap-2">
-                      <span className="min-w-0 flex-1 truncate">
-                        {name(edge.source)} <span aria-hidden>→</span>
-                        <span className="sr-only">depends on</span> {name(edge.target)}
-                      </span>
-                      <span className="text-fg-muted tabular-nums">{edge.weight}</span>
-                      {edge === weakest ? (
-                        <span className="text-warn">lightest: the least to change</span>
-                      ) : null}
-                    </li>
+                <ul className="flex flex-col gap-0.5 text-xs" aria-label="Edges that close it">
+                  {cycle.breaks.slice(0, FIRST).map((edge) => (
+                    <Edge key={`${edge.source}\u0000${edge.target}`} edge={edge} name={name} />
                   ))}
                 </ul>
+                {cycle.breaks.length > FIRST ? (
+                  <details className="text-xs">
+                    <summary className="cursor-pointer text-fg-muted">
+                      and {cycle.breaks.length - FIRST} more
+                    </summary>
+                    <ul className="mt-1 flex flex-col gap-0.5">
+                      {cycle.breaks.slice(FIRST).map((edge) => (
+                        <Edge key={`${edge.source}\u0000${edge.target}`} edge={edge} name={name} />
+                      ))}
+                    </ul>
+                  </details>
+                ) : null}
+                <details className="text-xs">
+                  <summary className="cursor-pointer text-fg-muted">
+                    Its {cycle.nodes.length} {LEVEL_LABELS[level].toLowerCase()} and{" "}
+                    {cycle.edges.length} {cycle.edges.length === 1 ? "edge" : "edges"}
+                  </summary>
+                  <p className="mt-1 break-all text-fg-muted">{cycle.nodes.map(name).join(", ")}</p>
+                  <ul className="mt-1 flex flex-col gap-0.5">
+                    {cycle.edges.map((edge) => (
+                      <Edge key={`${edge.source}\u0000${edge.target}`} edge={edge} name={name} />
+                    ))}
+                  </ul>
+                </details>
               </li>
             );
           })}

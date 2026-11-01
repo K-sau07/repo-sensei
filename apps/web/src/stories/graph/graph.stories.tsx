@@ -93,7 +93,7 @@ export const Legend: StoryObj<typeof GraphLegend> = {
   render: () => <GraphLegend />,
   play: async ({ canvas }) => {
     const legend = canvas.getByRole("list", { name: "Legend" });
-    for (const label of ["UI", "API", "Service", "Data", "Other", "In a cycle"]) {
+    for (const label of ["UI", "API", "Service", "Data", "Other", "Closes a cycle"]) {
       await expect(legend).toHaveTextContent(label);
     }
   },
