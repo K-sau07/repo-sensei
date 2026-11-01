@@ -4,6 +4,7 @@ it, and resumed after an outage); and cancelling while the clone runs."""
 
 from __future__ import annotations
 
+import gzip
 import hashlib
 import json
 import re
@@ -15,12 +16,13 @@ from typing import Any, cast
 
 import httpx
 import httpx2
+import msgpack
 import orjson
 import pytest
 import respx
 from celery import chain
 from celery.signals import task_postrun
-from sqlalchemy import delete, func, select, text
+from sqlalchemy import delete, func, select, text, update
 from sqlalchemy import inspect as sa_inspect
 from uuid_utils.compat import uuid7
 
@@ -32,7 +34,7 @@ from sensei_core.indexing.events import JobOutbox, job_stream, org_stream
 from sensei_core.indexing.jobs import settle_repo
 from sensei_core.indexing.snapshots import point_ref, resolve_snapshot
 from sensei_core.indexing.state import IndexJobStateMachine
-from sensei_core.jobs import TaskName
+from sensei_core.jobs import TaskName, galaxy_key
 from sensei_core.models import (
     SYMBOL_KINDS,
     CodeChunk,
@@ -51,10 +53,12 @@ from sensei_core.models import (
     UsageEvent,
     UsageKind,
 )
+from sensei_core.models.chunks import EMBEDDING_DIMENSIONS
 from sensei_core.storage import Bucket, artifact_key, repo_prefix
 from sensei_engine.chunk.store import ChunkWriter, FileChunks, make_live, new_generation
 from sensei_engine.embed.provider import EmbeddingUsage, InputType, UsageSink
 from sensei_engine.embed.voyage import VoyageError
+from sensei_engine.galaxy import Galaxy
 from sensei_engine.graph import stage as graph_stage
 from sensei_engine.graph.snapshot import ARTIFACT_NAME, GraphSnapshot
 from sensei_engine.graph.trace import trace_feature
@@ -69,6 +73,7 @@ from sensei_workers.ingest.git import GitRunner
 from sensei_workers.runtime import Runtime, set_runtime
 from sensei_workers.tasks import chunk as chunk_task
 from sensei_workers.tasks import embed as embed_task
+from sensei_workers.tasks import galaxy as galaxy_task
 from sensei_workers.tasks import graph as graph_task
 from sensei_workers.tasks import links as links_task
 from sensei_workers.tasks import maintenance, orchestrate
@@ -2218,3 +2223,56 @@ def test_a_push_of_a_commit_already_indexed_runs_nothing_and_its_branch_reads_it
     assert [(e["job_id"], e["sha"], e["changed_files"]) for e in updated] == [
         (None, bare_repo.second, None)
     ]
+
+
+def test_a_snapshots_semantic_galaxy_is_laid_out_and_kept(
+    runtime: Runtime,
+    ids: tuple[uuid.UUID, uuid.UUID, uuid.UUID],
+    github: respx.MockRouter,
+    bare_repo: Any,
+) -> None:
+    """6.9: the files with embedded summaries placed by meaning, kept as an artifact; the request
+    marker cleared once done."""
+    org_id, repo_id, job_id = ids
+    database = runtime.system_database
+    _run(org_id, repo_id, job_id)
+    snapshot = runtime.run(_read(database, repo_id, None))[0]
+
+    async def embed_summaries() -> set[str]:
+        async with database.session() as db:
+            rows = (
+                await db.execute(
+                    select(CodeChunk.id, CodeChunk.path).where(CodeChunk.snapshot_id == snapshot.id)
+                )
+            ).all()
+            for i, row in enumerate(rows):
+                vector = [0.0] * EMBEDDING_DIMENSIONS
+                vector[i % 7] = 1.0
+                await db.execute(
+                    update(CodeChunk)
+                    .where(CodeChunk.id == row.id)
+                    .values(view="summary", embedding=vector)
+                )
+            return {row.path for row in rows}
+
+    paths = runtime.run(embed_summaries())
+    assert paths
+    made = galaxy_task.layout_galaxy_task.apply(
+        kwargs={"org_id": str(org_id), "repo_id": str(repo_id), "snapshot_id": str(snapshot.id)}
+    ).get()
+    assert made == len(paths)
+
+    async def kept() -> Galaxy | None:
+        storage = await runtime.storage()
+        data = await storage.get_bytes(
+            Bucket.ARTIFACTS, galaxy_task.galaxy_artifact(snapshot), max_bytes=1 << 20
+        )
+        assert data is not None
+        unpack = cast("Callable[[bytes], object]", msgpack.unpackb)  # pyright: ignore[reportUnknownMemberType]
+        return Galaxy.from_json(cast("dict[str, Any]", unpack(gzip.decompress(data))))
+
+    found = runtime.run(kept())
+    assert found is not None
+    assert {s.path for s in found.stars} == paths
+    assert sum(c.files for c in found.clusters) == len(paths)
+    assert runtime.sync_redis.get(galaxy_key(snapshot.id)) is None

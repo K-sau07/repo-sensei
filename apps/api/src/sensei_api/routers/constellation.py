@@ -191,7 +191,9 @@ def stored_generation(snapshot: Snapshot) -> str | None:
     return generation if isinstance(generation, str) else None
 
 
-async def _stored(request: Request, db: AsyncSession, snapshot: Snapshot) -> Constellation:
+async def stored_constellation(
+    request: Request, db: AsyncSession, snapshot: Snapshot
+) -> Constellation:
     """The snapshot's constellation: the stored one its file rows name, else (missing,
     unreadable, or a snapshot from before constellations were stored) laid out from the rows."""
     generation = stored_generation(snapshot)
@@ -239,7 +241,7 @@ async def constellation(
         raise InvalidError("Ask for a run or a ref, not both.", code="job_and_ref")
     if job is None:
         snapshot = await resolve_snapshot(db, repo, ref)
-        found = await _stored(request, db, snapshot)
+        found = await stored_constellation(request, db, snapshot)
         return _page(
             found, commit_sha=snapshot.commit_sha, status="complete", since=since, limit=limit
         )
@@ -251,7 +253,7 @@ async def constellation(
     if discovered:
         if snapshot is None:
             raise NotFoundError("This run's snapshot is gone.", code="snapshot_not_found")
-        found = await _stored(request, db, snapshot)
+        found = await stored_constellation(request, db, snapshot)
         return _page(
             found, commit_sha=snapshot.commit_sha, status="complete", since=since, limit=limit
         )

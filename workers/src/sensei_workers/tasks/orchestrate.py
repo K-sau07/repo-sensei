@@ -22,7 +22,7 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
-from typing import Any
+from typing import Any, cast
 
 from celery import chain
 from sqlalchemy import select
@@ -53,6 +53,7 @@ from sensei_workers.runtime import get_runtime
 from sensei_workers.tasks.chunk import chunk_snapshot
 from sensei_workers.tasks.discover import discover_files
 from sensei_workers.tasks.embed import embed_snapshot
+from sensei_workers.tasks.galaxy import request_galaxy
 from sensei_workers.tasks.graph import build_graph, previous_done
 from sensei_workers.tasks.ingest import IngestTask, clone_snapshot
 from sensei_workers.tasks.links import build_links, graph_over
@@ -121,7 +122,7 @@ async def _settle_ref(db: AsyncSession, job: IndexJob, repo: Repo, snapshot: Sna
 def finalize_index(self: IngestTask, *, job_id: str, org_id: str, repo_id: str) -> str | None:
     """Finish the job: the repository is ready at the snapshot's commit. Returns the commit."""
 
-    async def _finalize() -> tuple[str, int] | None:
+    async def _finalize() -> tuple[str, int, str | None] | None:
         async with job_scope(self, org_id, uuid.UUID(job_id)) as scope:
             job = scope.job
             if job is None or job.status not in ACTIVE_JOB_STATUSES:
@@ -162,7 +163,12 @@ def finalize_index(self: IngestTask, *, job_id: str, org_id: str, repo_id: str) 
                 "The code browser is ready." + _cost_line(job.cost_usd)
             )
             machine.finish()
-            return snapshot.commit_sha, pruned
+            stages = cast("dict[str, dict[str, Any]]", job.stages or {})
+            # Its summaries embedded: the semantic galaxy can be laid out (6.9).
+            galaxy = all(
+                stages.get(name, {}).get("status") == "done" for name in ("summaries", "embeddings")
+            )
+            return snapshot.commit_sha, pruned, str(snapshot.id) if galaxy else None
 
     runtime = get_runtime()
     try:
@@ -183,9 +189,11 @@ def finalize_index(self: IngestTask, *, job_id: str, org_id: str, repo_id: str) 
             raise NotYetError(f"the {missing.what} stage hasn't run") from None
     if finished is None:
         return None
-    sha, pruned = finished
+    sha, pruned, galaxy = finished
     if pruned:
         request_vacuum(uuid.UUID(repo_id), eager=bool(self.request.is_eager))
+    if galaxy is not None:
+        request_galaxy(org_id, repo_id, galaxy, eager=bool(self.request.is_eager))
     log.info("index job succeeded", commit_sha=sha, pruned_chunks=pruned)
     return sha
 

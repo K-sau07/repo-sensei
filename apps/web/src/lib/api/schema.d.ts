@@ -1076,6 +1076,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/orgs/{org}/repos/{repo}/galaxy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Galaxy
+         * @description Every file a star, in clusters (see the module).
+         */
+        get: operations["galaxy_api_v1_orgs__org__repos__repo__galaxy_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/orgs/{org}/repos/{repo}/graph/neighbors": {
         parameters: {
             query?: never;
@@ -2523,6 +2543,52 @@ export interface components {
             path: number;
             /** To */
             to?: string | null;
+        };
+        /** GalaxyCluster */
+        GalaxyCluster: {
+            /** Files */
+            files: number;
+            /** Id */
+            id: number;
+            /** Label */
+            label: string;
+            /** X */
+            x: number;
+            /** Y */
+            y: number;
+            /** Z */
+            z: number;
+        };
+        /** GalaxyOut */
+        GalaxyOut: {
+            /** Clusters */
+            clusters: components["schemas"]["GalaxyCluster"][];
+            /**
+             * Layout
+             * @enum {string}
+             */
+            layout: "semantic" | "structural";
+            /** Sha */
+            sha: string;
+            /** Stars */
+            stars: components["schemas"]["GalaxyStar"][];
+        };
+        /** GalaxyStar */
+        GalaxyStar: {
+            /** Cluster */
+            cluster: number;
+            /** Language */
+            language: string | null;
+            /** Layer */
+            layer: string;
+            /** Path */
+            path: string;
+            /** X */
+            x: number;
+            /** Y */
+            y: number;
+            /** Z */
+            z: number;
         };
         /** GraphEdgeOut */
         GraphEdgeOut: {
@@ -6404,6 +6470,44 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SearchOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    galaxy_api_v1_orgs__org__repos__repo__galaxy_get: {
+        parameters: {
+            query?: {
+                layout?: "semantic" | "structural";
+                /** @description Branch or commit (or its first 7+ characters). */
+                ref?: string | null;
+            };
+            header?: never;
+            path: {
+                /** @description Organization slug */
+                org: string;
+                /** @description Repository slug */
+                repo: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GalaxyOut"];
                 };
             };
             /** @description Validation Error */

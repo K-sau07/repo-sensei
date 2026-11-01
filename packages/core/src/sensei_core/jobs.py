@@ -46,6 +46,7 @@ class TaskName(enum.StrEnum):
     SUMMARIZE_FILES = "sensei.llm.summarize_files"
     BUILD_GRAPH = "sensei.graph.build_graph"
     BUILD_LINKS = "sensei.graph.build_links"
+    LAYOUT_GALAXY = "sensei.graph.layout_galaxy"
     FINALIZE_INDEX = "sensei.ingest.finalize_index"
     RUN_INDEX_JOB = "sensei.ingest.run_index_job"
     START_PUSH_INDEX = "sensei.ingest.start_push_index"
@@ -195,6 +196,34 @@ class CeleryPushTimers:
             kwargs={"org_id": str(org_id), "repo_id": str(repo_id), "ref": ref},
             queue=Queue.MAINTENANCE.value,
         )
+
+
+def galaxy_key(snapshot_id: uuid.UUID | str) -> str:
+    """Set while a snapshot's galaxy is on its way (by whoever sent it; the task clears it)."""
+    return f"galaxy:{snapshot_id}"
+
+
+class CeleryGalaxyJobs:
+    """A snapshot's semantic galaxy (6.9), made in a worker when the API asks for one not kept.
+    Best effort: it is asked for again on the next request."""
+
+    def __init__(self, app: Celery) -> None:
+        self._app = app
+
+    async def layout(self, org_id: uuid.UUID, repo_id: uuid.UUID, snapshot_id: uuid.UUID) -> None:
+        try:
+            await asyncio.to_thread(
+                self._app.send_task,
+                TaskName.LAYOUT_GALAXY.value,
+                kwargs={
+                    "org_id": str(org_id),
+                    "repo_id": str(repo_id),
+                    "snapshot_id": str(snapshot_id),
+                },
+                queue=Queue.GRAPH.value,
+            )
+        except Exception:
+            log.warning("could not queue a galaxy layout", snapshot=str(snapshot_id), exc_info=True)
 
 
 class CeleryDispatcher:

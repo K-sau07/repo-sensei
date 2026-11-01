@@ -1,14 +1,14 @@
 import type { Metadata } from "next";
 import { Suspense } from "react";
 
-import { TabPlaceholder } from "@/components/repo/tab-placeholder";
+import { GalaxyPage } from "@/components/galaxy/galaxy-page";
 
 export const metadata: Metadata = { title: "Map" };
 
-export default function MapPage() {
+export default function Page() {
   return (
     <Suspense>
-      <TabPlaceholder tab="map" />
+      <GalaxyPage />
     </Suspense>
   );
 }

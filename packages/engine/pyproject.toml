@@ -33,6 +33,7 @@ dependencies = [
     "tree-sitter-ruby==0.23.1",
     "tree-sitter-rust==0.24.2",
     "tree-sitter-typescript==0.23.2",
+    "umap-learn>=0.5.12",
     "uuid-utils>=0.11",
     "xxhash>=3.5",
     "zstandard>=0.25",

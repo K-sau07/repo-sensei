@@ -2627,6 +2627,132 @@
         "title": "FromTrace",
         "type": "object"
       },
+      "GalaxyCluster": {
+        "properties": {
+          "files": {
+            "title": "Files",
+            "type": "integer"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "x": {
+            "title": "X",
+            "type": "number"
+          },
+          "y": {
+            "title": "Y",
+            "type": "number"
+          },
+          "z": {
+            "title": "Z",
+            "type": "number"
+          }
+        },
+        "required": [
+          "id",
+          "label",
+          "x",
+          "y",
+          "z",
+          "files"
+        ],
+        "title": "GalaxyCluster",
+        "type": "object"
+      },
+      "GalaxyOut": {
+        "properties": {
+          "clusters": {
+            "items": {
+              "$ref": "#/components/schemas/GalaxyCluster"
+            },
+            "title": "Clusters",
+            "type": "array"
+          },
+          "layout": {
+            "enum": [
+              "semantic",
+              "structural"
+            ],
+            "title": "Layout",
+            "type": "string"
+          },
+          "sha": {
+            "title": "Sha",
+            "type": "string"
+          },
+          "stars": {
+            "items": {
+              "$ref": "#/components/schemas/GalaxyStar"
+            },
+            "title": "Stars",
+            "type": "array"
+          }
+        },
+        "required": [
+          "layout",
+          "sha",
+          "stars",
+          "clusters"
+        ],
+        "title": "GalaxyOut",
+        "type": "object"
+      },
+      "GalaxyStar": {
+        "properties": {
+          "cluster": {
+            "title": "Cluster",
+            "type": "integer"
+          },
+          "language": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Language"
+          },
+          "layer": {
+            "title": "Layer",
+            "type": "string"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "x": {
+            "title": "X",
+            "type": "number"
+          },
+          "y": {
+            "title": "Y",
+            "type": "number"
+          },
+          "z": {
+            "title": "Z",
+            "type": "number"
+          }
+        },
+        "required": [
+          "path",
+          "x",
+          "y",
+          "z",
+          "cluster",
+          "layer",
+          "language"
+        ],
+        "title": "GalaxyStar",
+        "type": "object"
+      },
       "GraphEdgeOut": {
         "properties": {
           "confidence": {
@@ -11215,6 +11341,96 @@
         "summary": "Search Files",
         "tags": [
           "browse"
+        ]
+      }
+    },
+    "/api/v1/orgs/{org}/repos/{repo}/galaxy": {
+      "get": {
+        "description": "Every file a star, in clusters (see the module).",
+        "operationId": "galaxy_api_v1_orgs__org__repos__repo__galaxy_get",
+        "parameters": [
+          {
+            "description": "Organization slug",
+            "in": "path",
+            "name": "org",
+            "required": true,
+            "schema": {
+              "description": "Organization slug",
+              "title": "Org",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Repository slug",
+            "in": "path",
+            "name": "repo",
+            "required": true,
+            "schema": {
+              "description": "Repository slug",
+              "maxLength": 201,
+              "title": "Repo",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "layout",
+            "required": false,
+            "schema": {
+              "default": "semantic",
+              "enum": [
+                "semantic",
+                "structural"
+              ],
+              "title": "Layout",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Branch or commit (or its first 7+ characters).",
+            "in": "query",
+            "name": "ref",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 255,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Branch or commit (or its first 7+ characters).",
+              "title": "Ref"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GalaxyOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Galaxy",
+        "tags": [
+          "galaxy"
         ]
       }
     },
