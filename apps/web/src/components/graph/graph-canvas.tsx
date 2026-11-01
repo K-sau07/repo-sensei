@@ -247,6 +247,11 @@ function Controller({
     sigma.refresh();
   }, [sigma, view.nodes, view.edges, view.sizes, view.colors, view.paint]);
 
+  // Edges are picked (clicked) on a level small enough: this one's, not the first one's.
+  useEffect(() => {
+    sigma.setSetting("enableEdgeEvents", view.edges.length <= MAX_PICKED_EDGES);
+  }, [sigma, view.edges.length]);
+
   // How it looks: read by the reducers.
   useEffect(() => {
     const onPath = new Set(view.path ?? []);

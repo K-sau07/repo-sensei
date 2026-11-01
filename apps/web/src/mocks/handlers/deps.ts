@@ -188,6 +188,13 @@ export const depsHandlers = [
   http.get<Params>("*/api/v1/orgs/:org/repos/:repo/deps/dsm", async ({ params, request }) => {
     const found = await levelFor(params, request);
     if (found instanceof Response) return found;
+    if (big()) {
+      return apiError(
+        422,
+        "dsm_too_large",
+        `Too many ${found.level}s (${String(BIG_NODES)}) to draw as a matrix: pick a coarser level.`,
+      );
+    }
     return HttpResponse.json<Dsm>({ ...found.at.dsm, sha: found.commit });
   }),
 

@@ -12,6 +12,7 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { parseAsString, useQueryState } from "nuqs";
 import { useState } from "react";
+import { toast } from "sonner";
 
 import { useStaleness } from "@/components/ask/use-staleness";
 import { StaleBadge } from "@/components/feedback/banners";
@@ -87,22 +88,34 @@ function Loaded({ diagram }: { diagram: Diagram }) {
   const edges = shownEdges(spec, hide);
   const verified = spec.edges.filter((e) => e.verified).length;
 
+  // Drawing again can find nothing now, or be rate limited: said, not swallowed.
+  const failed = (caught: unknown) => {
+    toast.error(caught instanceof ApiError ? caught.message : "The diagram couldn't be drawn.");
+  };
   const redraw = async () => {
     const input = redrawInput(diagram);
     if (!input) return;
-    const made = await create.draw(input);
-    router.push(
-      `${repoPath(org, repo, `diagrams/${made.id}`)}?since=${diagram.id}` as Parameters<
-        typeof router.push
-      >[0],
-    );
+    try {
+      const made = await create.draw(input);
+      router.push(
+        `${repoPath(org, repo, `diagrams/${made.id}`)}?since=${diagram.id}` as Parameters<
+          typeof router.push
+        >[0],
+      );
+    } catch (caught) {
+      failed(caught);
+    }
   };
   const expand = async (node: SpecNode) => {
-    const made = await create.draw({
-      from_trace: { from: node.id, direction: "down", kind: "auto", path: 1 },
-      kind: diagram.kind,
-    });
-    router.push(repoPath(org, repo, `diagrams/${made.id}`));
+    try {
+      const made = await create.draw({
+        from_trace: { from: node.id, direction: "down", kind: "auto", path: 1 },
+        kind: diagram.kind,
+      });
+      router.push(repoPath(org, repo, `diagrams/${made.id}`));
+    } catch (caught) {
+      failed(caught);
+    }
   };
 
   return (

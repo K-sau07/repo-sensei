@@ -170,6 +170,17 @@ describe("the dependency graph", () => {
     ]);
   });
 
+  it("leaves a node with no children below as it is, with its edges", () => {
+    const fine = level(
+      "file",
+      FILES.nodes.filter((n) => n.cluster !== "app/db"),
+      [],
+    );
+    const { nodes, edges } = expand(MODULES, fine, new Set(["app/db"]));
+    expect(nodes.map((n) => `${n.level}:${n.id}`)).toContain("module:app/db");
+    expect(edges.filter((e) => e.target === "app/db")).toHaveLength(2);
+  });
+
   it("is the level itself with nothing opened or no level below", () => {
     expect(expand(MODULES, FILES, new Set()).edges).toBe(MODULES.edges);
     expect(expand(MODULES, null, new Set(["app/api"])).nodes).toHaveLength(3);

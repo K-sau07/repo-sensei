@@ -14,7 +14,7 @@ import { LEVEL_LABELS, type Cycle, type DsmNode } from "@/lib/api/deps";
 
 import { useGraphState } from "./graph-state";
 import { LevelSelect } from "./level-select";
-import { useDsm } from "./use-deps";
+import { useCycles, useDsm } from "./use-deps";
 
 export function lightest(cycle: Cycle): Cycle["edges"][number] | null {
   let found: Cycle["edges"][number] | null = null;
@@ -27,8 +27,10 @@ export function lightest(cycle: Cycle): Cycle["edges"][number] | null {
 export function CyclesView() {
   const [state, setState] = useGraphState();
   const level = state.level;
-  const dsm = useDsm(level);
-  const labels = new Map((dsm.data?.order ?? []).map((n: DsmNode) => [n.id, n.label]));
+  const dsm = useCycles(level);
+  // Names, when the level is small enough for a matrix (else its ids).
+  const matrix = useDsm(level, level !== "symbol");
+  const labels = new Map((matrix.data?.order ?? []).map((n: DsmNode) => [n.id, n.label]));
   const name = (id: string) => labels.get(id) ?? id;
   return (
     <div className="flex max-w-3xl flex-col gap-4 p-4">

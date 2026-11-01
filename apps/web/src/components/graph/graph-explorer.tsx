@@ -43,7 +43,7 @@ import { EdgePanel, NodePanel } from "./graph-panels";
 import { MAX_DEGREE, useGraphState } from "./graph-state";
 import { GraphTable } from "./graph-table";
 import { LevelSelect } from "./level-select";
-import { useDeps, useDsm, useGraphSearch } from "./use-deps";
+import { MAX_DSM, useCycles, useDeps, useDsm, useGraphSearch } from "./use-deps";
 
 const GraphCanvas = dynamic(() => import("./graph-canvas"), {
   ssr: false,
@@ -76,7 +76,7 @@ export function GraphExplorer() {
   const [pinned, setPinned] = useState<ReadonlySet<string>>(new Set());
   const open = useMemo(() => new Set([...zoomOpen, ...pinned]), [zoomOpen, pinned]);
   const fine = useDeps(open.size > 0 ? below : null);
-  const dsm = useDsm(level);
+  const cyclesOf = useCycles(level);
   const colors = useGraphColors();
   const still = useReducedMotionConfig() ?? false;
   const [edge, setEdge] = useState<SelectedEdge | null>(null);
@@ -105,7 +105,9 @@ export function GraphExplorer() {
     const scale = shown.nodes.length > 5_000 ? 0.3 : shown.nodes.length > 500 ? 0.6 : 1;
     return new Map(shown.nodes.map((n) => [n.id, sizeOf(fan.get(n.id) ?? 0, most) * scale]));
   }, [shown]);
-  const cycles = useMemo(() => cycleEdges(dsm.data?.cycles ?? []), [dsm.data]);
+  const cycles = useMemo(() => cycleEdges(cyclesOf.data?.cycles ?? []), [cyclesOf.data]);
+  // Coupling (for a node's panel) comes with the matrix: only for a level small enough for one.
+  const dsm = useDsm(level, coarse.data !== undefined && coarse.data.total <= MAX_DSM);
 
   // Search: by name; a phrase, or a name nothing is called, by the search's hits.
   const byName = useMemo(() => matching(shown.nodes, state.q), [shown.nodes, state.q]);
@@ -126,7 +128,7 @@ export function GraphExplorer() {
     return lit;
   }, [byName, phrase, search.data, ids, level, below]);
 
-  const cycle = state.cycle !== null ? dsm.data?.cycles[state.cycle] : undefined;
+  const cycle = state.cycle !== null ? cyclesOf.data?.cycles[state.cycle] : undefined;
   const focus = useMemo(() => {
     if (cycle) return new Set(cycle.nodes);
     if (state.node === null || !ids.has(state.node)) return null;
@@ -152,8 +154,9 @@ export function GraphExplorer() {
       let inView = visible.filter((id) => parents.has(id));
       if (inView.length === 0 && nearest !== null && parents.has(nearest)) inView = [nearest];
       if (inView.length === 0 || inView.length > MAX_OPEN) return;
+      // The nodes in view open (those panned away close): never more than MAX_OPEN at once.
       setZoomOpen((held) => {
-        const next = new Set([...held, ...inView]);
+        const next = new Set(inView);
         return same(next, held) ? held : next;
       });
     },

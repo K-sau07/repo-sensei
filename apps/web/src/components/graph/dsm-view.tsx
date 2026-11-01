@@ -21,6 +21,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { LEVEL_LABELS, type DepLevel, type Dsm, type DsmCell } from "@/lib/api/deps";
+import { ApiError } from "@/lib/api/errors";
 
 import { useGraphColors, type GraphColors } from "./graph-colors";
 import { EdgePanel } from "./graph-panels";
@@ -33,6 +34,13 @@ const MIN_CELL = 3;
 const MAX_CELL = 28;
 const LABELLED = 60; // groups up to which the rows are named beside the matrix
 const LISTED = 500;
+const MAX_CANVAS = 4_096;
+
+/** The canvas's pixels per CSS pixel: the screen's, within what browsers draw (4096² is safe). */
+function pixelRatio(side: number): number {
+  const screen = typeof window === "undefined" ? 1 : window.devicePixelRatio || 1;
+  return Math.max(0.25, Math.min(screen, MAX_CANVAS / Math.max(1, side)));
+}
 
 export function cellSize(groups: number): number {
   return Math.max(MIN_CELL, Math.min(MAX_CELL, Math.floor(SIDE / Math.max(1, groups))));
@@ -67,7 +75,13 @@ export function DsmView() {
       {dsm.isPending || colors === null ? (
         <Skeleton className="h-96 w-full max-w-xl" />
       ) : dsm.isError ? (
-        <ErrorState title="Couldn't load the matrix" onRetry={() => void dsm.refetch()} />
+        dsm.error instanceof ApiError && dsm.error.code === "dsm_too_large" ? (
+          <p className="text-sm text-fg-muted" data-testid="dsm-too-large">
+            Too many {LEVEL_LABELS[level].toLowerCase()} to draw as a matrix: pick a coarser level.
+          </p>
+        ) : (
+          <ErrorState title="Couldn't load the matrix" onRetry={() => void dsm.refetch()} />
+        )
       ) : dsm.data.order.length === 0 ? (
         <p className="text-sm text-fg-muted">Nothing at this level depends on anything.</p>
       ) : (
@@ -146,7 +160,7 @@ function Matrix({
   useEffect(() => {
     const context = canvas.current?.getContext("2d");
     if (!context) return;
-    const ratio = window.devicePixelRatio || 1;
+    const ratio = pixelRatio(side);
     context.setTransform(ratio, 0, 0, ratio, 0, 0);
     context.clearRect(0, 0, side, side);
     context.fillStyle = colors.edge;
@@ -185,7 +199,7 @@ function Matrix({
     const row = Math.floor((event.clientY - box.top) / cell);
     return at.get(row * n + col) ?? null;
   };
-  const ratio = typeof window === "undefined" ? 1 : window.devicePixelRatio || 1;
+  const ratio = pixelRatio(side);
   const named = (c: DsmCell) =>
     `${dsm.order[c.row]?.label ?? ""} depends on ${dsm.order[c.col]?.label ?? ""}: ${String(c.count)}${c.cycle ? ", in a cycle" : ""}`;
   return (

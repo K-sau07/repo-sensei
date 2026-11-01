@@ -203,14 +203,17 @@ export function expand(
     return { nodes: coarse.nodes.map((n) => ({ ...n, level: coarse.level })), edges: coarse.edges };
   }
   const parents = new Map(coarse.nodes.map((n) => [n.id, n]));
-  const opened = new Set([...open].filter((id) => parents.has(id)));
+  const asked = new Set([...open].filter((id) => parents.has(id)));
   const children = new Map<string, DepNode[]>();
   for (const node of fine.nodes) {
-    if (node.cluster === null || !opened.has(node.cluster)) continue;
+    if (node.cluster === null || !asked.has(node.cluster)) continue;
     const listed = children.get(node.cluster);
     if (listed) listed.push(node);
     else children.set(node.cluster, [node]);
   }
+  // Opened: those with children below (one without, or whose children the level below left out,
+  // stays as it is, with its edges).
+  const opened = new Set(children.keys());
   const nodes: ShownNode[] = [];
   const shown = new Set<string>(); // the fine nodes drawn as themselves
   const shownAs = new Map<string, string>(); // a fine node → what stands for it

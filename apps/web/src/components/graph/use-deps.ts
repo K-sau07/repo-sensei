@@ -26,12 +26,26 @@ export function useDeps(level: DepLevel | null) {
   );
 }
 
-export function useDsm(level: DepLevel) {
+/** The groups a matrix is drawn for at most (the API's cap: past it, 422 `dsm_too_large`). */
+export const MAX_DSM = 1_500;
+
+export function useDsm(level: DepLevel, enabled = true) {
   const { org, repo } = useRepoSlug();
   const [ref] = useViewRef();
   return $api.useQuery(
     "get",
     "/api/v1/orgs/{org}/repos/{repo}/deps/dsm",
+    { params: { path: { org, repo }, query: { level, ref } } },
+    { staleTime: STALE_MS, enabled, retry: false },
+  );
+}
+
+export function useCycles(level: DepLevel) {
+  const { org, repo } = useRepoSlug();
+  const [ref] = useViewRef();
+  return $api.useQuery(
+    "get",
+    "/api/v1/orgs/{org}/repos/{repo}/deps/cycles",
     { params: { path: { org, repo }, query: { level, ref } } },
     { staleTime: STALE_MS },
   );
