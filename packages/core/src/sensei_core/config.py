@@ -204,6 +204,21 @@ class AuthSettings(BaseSettings):
     cookie_secure: bool | None = None  # None means: secure everywhere except dev
 
 
+class OAuthSettings(BaseSettings):
+    """The OAuth 2.1 authorization server (7.2) MCP clients and the CLI sign in through."""
+
+    model_config = _config("SENSEI_OAUTH_")
+
+    # The issuer and the base of the resources tokens are for; None: the web app's origin (the
+    # API is served under it, at /api).
+    issuer: str | None = None
+    access_token_minutes: int = Field(default=60, ge=5, le=24 * 60)
+    refresh_token_days: int = Field(default=30, ge=1, le=90)
+    # Clients known by a metadata document URL: fetch ones that resolve to private addresses
+    # (only for local development and tests).
+    allow_private_client_urls: bool = False
+
+
 class GitHubSettings(BaseSettings):
     """A GitHub App provides both sign-in (user authorization) and repository access."""
 
@@ -428,6 +443,7 @@ class Settings(BaseSettings):
     web: WebSettings = Field(default_factory=WebSettings)
     api: ApiSettings = Field(default_factory=ApiSettings)
     auth: AuthSettings = Field(default_factory=AuthSettings)
+    oauth: OAuthSettings = Field(default_factory=OAuthSettings)
     github: GitHubSettings = Field(default_factory=GitHubSettings)
     voyage: VoyageSettings = Field(default_factory=VoyageSettings)
     anthropic: AnthropicSettings = Field(default_factory=AnthropicSettings)

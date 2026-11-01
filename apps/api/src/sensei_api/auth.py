@@ -9,8 +9,9 @@ For unsafe methods (POST/PUT/PATCH/DELETE) on a cookie-authenticated request we 
   2. ``X-CSRF-Token`` to equal the csrf cookie *and* to match the hash stored on the session,
      so a token cannot be replayed across sessions.
 
-An API key (7.1) comes as ``Authorization: Bearer rs_…`` and then cookies are ignored: no CSRF
-(a browser never sends it by itself). It acts as its user, only in its own org
+An API key (7.1) comes as ``Authorization: Bearer rs_…``, an OAuth access token (7.2) as
+``Bearer rsat_…`` (for the API resource only); then cookies are ignored: no CSRF (a browser never
+sends it by itself). It acts as its user, only in its own org
 (:func:`sensei_api.orgs.get_org_access`) and only where a router lets keys in, within the key's
 scopes (:func:`key_access`; routers not let in refuse keys, and so does anything without a
 rule).
@@ -31,7 +32,9 @@ from sensei_api.errors import AppError, Forbidden, Unauthorized
 from sensei_core.auth.api_keys import ApiKeyService, KeyPrincipal, KeyRejected, Scope
 from sensei_core.auth.sessions import ActiveSession, IssuedSession, SessionService
 from sensei_core.config import Settings
+from sensei_core.errors import DomainError
 from sensei_core.models import ActorType, User
+from sensei_core.oauth.service import ACCESS_PREFIX, OAuthService, TokenPrincipal, TokenRejected
 
 UNSAFE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 CSRF_HEADER = "x-csrf-token"
@@ -40,6 +43,12 @@ REJECTED = {
     "invalid": "This API key isn't valid.",
     "revoked": "This API key was revoked.",
     "expired": "This API key has expired.",
+}
+TOKEN_REJECTED = {
+    "invalid": "This access token isn't valid.",
+    "revoked": "This access token was revoked.",
+    "expired": "This access token has expired.",
+    "audience": "This access token is for another resource.",
 }
 
 
@@ -88,10 +97,12 @@ Sessions = Annotated[SessionService, Depends(get_session_service)]
 
 
 def _bearer_key(request: Request) -> str | None:
-    """The API key the request carries, if it carries one."""
+    """The API key or OAuth access token the request carries, if it carries one of ours."""
     scheme, _, token = request.headers.get("authorization", "").partition(" ")
     token = token.strip()
-    return token if scheme.lower() == "bearer" and token.startswith(KEY_PREFIX) else None
+    if scheme.lower() != "bearer" or not token.startswith((KEY_PREFIX, ACCESS_PREFIX)):
+        return None
+    return token
 
 
 def get_api_key_service(request: Request) -> ApiKeyService:
@@ -99,38 +110,87 @@ def get_api_key_service(request: Request) -> ApiKeyService:
     return service
 
 
-async def get_api_key(
+def get_oauth_service(request: Request) -> OAuthService:
+    service: OAuthService = request.app.state.oauth_service
+    return service
+
+
+class TokenUnauthorized(DomainError):
+    status_code = 401
+    code = "invalid_token"
+
+
+class TokenForbidden(DomainError):
+    status_code = 403
+    code = "insufficient_scope"
+
+
+Principal = KeyPrincipal | TokenPrincipal
+
+
+def _challenge(oauth: OAuthService, error: str, **extra: str) -> dict[str, str]:
+    """RFC 6750's challenge, pointing at the API's protected resource metadata (RFC 9728)."""
+    params = {
+        "error": error,
+        **extra,
+        "resource_metadata": f"{oauth.issuer}/.well-known/oauth-protected-resource/api",
+    }
+    return {"WWW-Authenticate": "Bearer " + ", ".join(f'{k}="{v}"' for k, v in params.items())}
+
+
+async def get_bearer(
     request: Request,
     db: DbSession,
     keys: Annotated[ApiKeyService, Depends(get_api_key_service)],
-) -> KeyPrincipal | None:
-    """Resolve a bearer API key (once per request): its principal, or 401 for a bad key."""
+    oauth: Annotated[OAuthService, Depends(get_oauth_service)],
+) -> Principal | None:
+    """Resolve a bearer API key or OAuth access token (once per request): its principal, or
+    401 for a bad one. An OAuth token must be for the API (RFC 8707: one for the MCP server is
+    refused here)."""
     token = _bearer_key(request)
     if token is None:
         return None
-    try:
-        found = await keys.authenticate(db, token)
-    except KeyRejected as rejected:
-        raise Unauthorized(REJECTED[rejected.reason], code=f"api_key_{rejected.reason}") from None
-    # The router's rule (``key_access``) said with which scope keys come in; none: not at all.
+    found: Principal
+    if token.startswith(ACCESS_PREFIX):
+        try:
+            found = await oauth.authenticate(db, token, resource=oauth.resources.api)
+        except TokenRejected as rejected:
+            raise TokenUnauthorized(
+                TOKEN_REJECTED[rejected.reason],
+                headers=_challenge(oauth, "invalid_token"),
+            ) from None
+        actor = {"actor_type": ActorType.OAUTH.value, "oauth_token_id": str(found.id)}
+    else:
+        try:
+            found = await keys.authenticate(db, token)
+        except KeyRejected as rejected:
+            raise Unauthorized(
+                REJECTED[rejected.reason], code=f"api_key_{rejected.reason}"
+            ) from None
+        actor = {"actor_type": ActorType.API_KEY.value, "api_key_id": str(found.id)}
+    # The router's rule (``key_access``) said with which scope bearers come in; none: not at all.
     scope: Scope | None = getattr(request.state, "key_scope", None)
     if scope is None:
         raise Forbidden("API keys can't be used for this.", code="api_key_not_allowed")
     if not found.allows(scope):
+        if isinstance(found, TokenPrincipal):
+            raise TokenForbidden(
+                f"This token doesn't have the {scope.value} scope.",
+                details={"required_scope": scope.value},
+                headers=_challenge(oauth, "insufficient_scope", scope=scope.value),
+            )
         raise Forbidden(
             f"This API key doesn't have the {scope.value} scope.",
             code="api_key_scope",
             details={"required_scope": scope.value},
         )
-    request.state.api_key = found.key
+    request.state.principal = found
     request.state.user_id = found.user.id
-    structlog.contextvars.bind_contextvars(
-        actor_type=ActorType.API_KEY.value, api_key_id=str(found.key.id)
-    )
+    structlog.contextvars.bind_contextvars(**actor)
     return found
 
 
-OptionalApiKey = Annotated[KeyPrincipal | None, Depends(get_api_key)]
+OptionalBearer = Annotated[Principal | None, Depends(get_bearer)]
 
 
 async def get_active_session(
@@ -171,7 +231,7 @@ async def get_active_session(
 OptionalSession = Annotated[ActiveSession | None, Depends(get_active_session)]
 
 
-async def require_session(active: OptionalSession, key: OptionalApiKey) -> ActiveSession:
+async def require_session(active: OptionalSession, key: OptionalBearer) -> ActiveSession:
     """A browser session: what an API key can't stand in for (sessions, signing out...)."""
     if active is None:
         if key is not None:
@@ -183,7 +243,7 @@ async def require_session(active: OptionalSession, key: OptionalApiKey) -> Activ
 RequiredSession = Annotated[ActiveSession, Depends(require_session)]
 
 
-async def require_user(active: OptionalSession, key: OptionalApiKey) -> User:
+async def require_user(active: OptionalSession, key: OptionalBearer) -> User:
     """The signed-in user: a browser's, or the one an API key acts as."""
     if key is not None:
         return key.user
@@ -220,7 +280,7 @@ def key_access(
     """A router's rule for API keys: refused (``scope`` None), or let in with ``scope`` to read,
     and to call the unsafe endpoints in ``writes`` (the handler functions). Checked from the
     header alone (no database: public routes stay public); the key and its scope are checked
-    where an endpoint needs its user (:func:`get_api_key`). Requests without a key pass."""
+    where an endpoint needs its user (:func:`get_bearer`). Requests without a key pass."""
     if scope is None:
         return refuse_keys
 

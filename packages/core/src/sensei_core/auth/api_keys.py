@@ -89,6 +89,14 @@ class KeyPrincipal:
     key: ApiKey
     user: User
 
+    @property
+    def org_id(self) -> uuid.UUID:
+        return self.key.org_id
+
+    @property
+    def id(self) -> uuid.UUID:
+        return self.key.id
+
     def allows(self, scope: Scope) -> bool:
         return scope.value in self.key.scopes
 

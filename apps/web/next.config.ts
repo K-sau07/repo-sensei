@@ -67,7 +67,18 @@ const nextConfig: NextConfig = {
   rewrites: () =>
     Promise.resolve(
       apiProxyOrigin
-        ? [{ source: "/api/:path*", destination: `${apiProxyOrigin}/api/:path*` }]
+        ? [
+            { source: "/api/:path*", destination: `${apiProxyOrigin}/api/:path*` },
+            // OAuth discovery at the origin's root (the issuer is this origin: RFC 8414, 9728).
+            {
+              source: "/.well-known/oauth-authorization-server",
+              destination: `${apiProxyOrigin}/.well-known/oauth-authorization-server`,
+            },
+            {
+              source: "/.well-known/oauth-protected-resource/:path*",
+              destination: `${apiProxyOrigin}/.well-known/oauth-protected-resource/:path*`,
+            },
+          ]
         : [],
     ),
 };

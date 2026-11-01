@@ -54,6 +54,8 @@ class AuditAction(enum.StrEnum):
     DIAGRAM_UNSHARED = "diagram.unshared"
     API_KEY_CREATE = "api_key.create"
     API_KEY_REVOKE = "api_key.revoke"
+    OAUTH_AUTHORIZE = "oauth.authorize"
+    OAUTH_REFRESH_REUSED = "oauth.refresh_reused"
 
 
 def _clean_meta(meta: dict[str, Any] | None) -> dict[str, Any]:
@@ -65,11 +67,13 @@ def _clean_meta(meta: dict[str, Any] | None) -> dict[str, Any]:
 
 
 def _actor_type(actor_user_id: uuid.UUID | None) -> ActorType:
-    """A user's action through an API key (the request bound ``actor_type``) is the key's."""
+    """A user's action through an API key or an OAuth client (the request bound
+    ``actor_type``) is the key's, or the client's."""
     if actor_user_id is None:
         return ActorType.SYSTEM
-    if current_context().get("actor_type") == ActorType.API_KEY.value:
-        return ActorType.API_KEY
+    bound = current_context().get("actor_type")
+    if bound in (ActorType.API_KEY.value, ActorType.OAUTH.value):
+        return ActorType(bound)
     return ActorType.USER
 
 

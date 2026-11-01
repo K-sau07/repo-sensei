@@ -30,6 +30,7 @@ class ActorType(enum.StrEnum):
     USER = "user"
     SYSTEM = "system"
     API_KEY = "api_key"
+    OAUTH = "oauth"  # a user's action through an OAuth client (an editor, the CLI)
 
 
 class UsageKind(enum.StrEnum):

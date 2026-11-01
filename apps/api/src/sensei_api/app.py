@@ -42,6 +42,7 @@ from sensei_api.routers import (
     internal,
     invitations,
     me,
+    oauth,
     orgs,
     overview,
     refs,
@@ -62,6 +63,8 @@ from sensei_core.db import make_database
 from sensei_core.jobs import CeleryDispatcher, CeleryGalaxyJobs, CeleryRepoJobs, make_celery
 from sensei_core.logging import configure_logging, get_logger
 from sensei_core.mail import ConsoleMailer
+from sensei_core.oauth.clients import ClientRegistry
+from sensei_core.oauth.service import OAuthService
 from sensei_core.orgs.service import OrgService
 from sensei_core.redis import make_redis, ping_redis
 from sensei_core.security.crypto import TokenCipher
@@ -94,6 +97,13 @@ def _install_services(app: FastAPI, settings: Settings) -> None:
     app.state.settings = settings
     app.state.session_service = SessionService(settings.auth)
     app.state.api_key_service = ApiKeyService()
+    app.state.oauth_service = OAuthService(
+        settings,
+        ClientRegistry(
+            lambda: getattr(app.state, "http", None),
+            allow_private=settings.oauth.allow_private_client_urls,
+        ),
+    )
     app.state.token_cipher = TokenCipher.from_settings(settings.auth)
     app.state.org_service = OrgService(ConsoleMailer(), settings.web.origin)
     # Sends tasks by name; the workers package defines them.
@@ -206,6 +216,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         home,
         shared,
         api_keys,
+        oauth,
     ):  # the order routes are matched in
         name = module.__name__.rsplit(".", 1)[-1]
         scope, writes = KEY_ACCESS.get(name, (None, frozenset[Callable[..., object]]()))
@@ -214,6 +225,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             prefix=API_PREFIX,
             dependencies=[Depends(key_access(scope, writes))],
         )
+    # OAuth discovery, at the origin's root (RFC 8414, RFC 9728; the web app forwards it).
+    app.include_router(oauth.well_known, dependencies=[Depends(key_access(None))])
     # Wraps the whole middleware stack; RequestIdMiddleware tags the server span it creates.
     FastAPIInstrumentor.instrument_app(app, server_request_hook=scrub_server_span)
     return app

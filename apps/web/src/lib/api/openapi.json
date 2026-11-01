@@ -70,7 +70,8 @@
         "enum": [
           "user",
           "system",
-          "api_key"
+          "api_key",
+          "oauth"
         ],
         "title": "ActorType",
         "type": "string"
@@ -617,7 +618,9 @@
           "diagram.shared",
           "diagram.unshared",
           "api_key.create",
-          "api_key.revoke"
+          "api_key.revoke",
+          "oauth.authorize",
+          "oauth.refresh_reused"
         ],
         "title": "AuditAction",
         "type": "string"
@@ -854,6 +857,157 @@
         "title": "AvailableRepoOut",
         "type": "object"
       },
+      "Body_device_code_api_v1_oauth_device_code_post": {
+        "properties": {
+          "client_id": {
+            "default": "sensei-cli",
+            "title": "Client Id",
+            "type": "string"
+          },
+          "resource": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resource"
+          },
+          "scope": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scope"
+          }
+        },
+        "title": "Body_device_code_api_v1_oauth_device_code_post",
+        "type": "object"
+      },
+      "Body_revoke_api_v1_oauth_revoke_post": {
+        "properties": {
+          "token": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Token"
+          }
+        },
+        "title": "Body_revoke_api_v1_oauth_revoke_post",
+        "type": "object"
+      },
+      "Body_token_api_v1_oauth_token_post": {
+        "properties": {
+          "client_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Client Id"
+          },
+          "code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Code"
+          },
+          "code_verifier": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Code Verifier"
+          },
+          "device_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Device Code"
+          },
+          "grant_type": {
+            "title": "Grant Type",
+            "type": "string"
+          },
+          "redirect_uri": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Redirect Uri"
+          },
+          "refresh_token": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Refresh Token"
+          },
+          "resource": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resource"
+          },
+          "scope": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scope"
+          }
+        },
+        "required": [
+          "grant_type"
+        ],
+        "title": "Body_token_api_v1_oauth_token_post",
+        "type": "object"
+      },
       "Case": {
         "enum": [
           "sensitive",
@@ -989,6 +1143,66 @@
           "github_repo_id"
         ],
         "title": "ConnectRepo",
+        "type": "object"
+      },
+      "ConsentOut": {
+        "properties": {
+          "client_host": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Client Host"
+          },
+          "client_name": {
+            "title": "Client Name",
+            "type": "string"
+          },
+          "client_uri": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Client Uri"
+          },
+          "redirect_host": {
+            "title": "Redirect Host",
+            "type": "string"
+          },
+          "redirect_is_local": {
+            "title": "Redirect Is Local",
+            "type": "boolean"
+          },
+          "resource": {
+            "title": "Resource",
+            "type": "string"
+          },
+          "scopes": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Scopes",
+            "type": "array"
+          }
+        },
+        "required": [
+          "client_name",
+          "client_uri",
+          "redirect_host",
+          "redirect_is_local",
+          "client_host",
+          "scopes",
+          "resource"
+        ],
+        "title": "ConsentOut",
         "type": "object"
       },
       "ConstellationDir": {
@@ -1455,6 +1669,39 @@
         "title": "CyclesOut",
         "type": "object"
       },
+      "DecisionIn": {
+        "properties": {
+          "approve": {
+            "title": "Approve",
+            "type": "boolean"
+          },
+          "org": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Org",
+            "type": "string"
+          }
+        },
+        "required": [
+          "org",
+          "approve"
+        ],
+        "title": "DecisionIn",
+        "type": "object"
+      },
+      "DecisionOut": {
+        "properties": {
+          "redirect_to": {
+            "title": "Redirect To",
+            "type": "string"
+          }
+        },
+        "required": [
+          "redirect_to"
+        ],
+        "title": "DecisionOut",
+        "type": "object"
+      },
       "DeclaredOut": {
         "properties": {
           "dev": {
@@ -1658,6 +1905,64 @@
           "clusters"
         ],
         "title": "DepsOut",
+        "type": "object"
+      },
+      "DeviceDecisionIn": {
+        "properties": {
+          "approve": {
+            "title": "Approve",
+            "type": "boolean"
+          },
+          "org": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Org",
+            "type": "string"
+          },
+          "user_code": {
+            "maxLength": 16,
+            "minLength": 4,
+            "title": "User Code",
+            "type": "string"
+          }
+        },
+        "required": [
+          "org",
+          "approve",
+          "user_code"
+        ],
+        "title": "DeviceDecisionIn",
+        "type": "object"
+      },
+      "DeviceOut": {
+        "properties": {
+          "client_name": {
+            "title": "Client Name",
+            "type": "string"
+          },
+          "resource": {
+            "title": "Resource",
+            "type": "string"
+          },
+          "scopes": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Scopes",
+            "type": "array"
+          },
+          "user_code": {
+            "title": "User Code",
+            "type": "string"
+          }
+        },
+        "required": [
+          "client_name",
+          "user_code",
+          "scopes",
+          "resource"
+        ],
+        "title": "DeviceOut",
         "type": "object"
       },
       "DiagramIn": {
@@ -8118,6 +8423,335 @@
         "summary": "Revoke Session",
         "tags": [
           "me"
+        ]
+      }
+    },
+    "/api/v1/oauth/authorize": {
+      "get": {
+        "description": "Check the client's request; on to the consent page (or back with an error).",
+        "operationId": "authorize_api_v1_oauth_authorize_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Authorize",
+        "tags": [
+          "oauth"
+        ]
+      }
+    },
+    "/api/v1/oauth/device/code": {
+      "post": {
+        "operationId": "device_code_api_v1_oauth_device_code_post",
+        "requestBody": {
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_device_code_api_v1_oauth_device_code_post"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Device Code",
+        "tags": [
+          "oauth"
+        ]
+      }
+    },
+    "/api/v1/oauth/device/decision": {
+      "post": {
+        "operationId": "device_decision_api_v1_oauth_device_decision_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeviceDecisionIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Device Decision",
+        "tags": [
+          "oauth"
+        ]
+      }
+    },
+    "/api/v1/oauth/device/{user_code}": {
+      "get": {
+        "description": "What a device asks, for the ``/device`` page.",
+        "operationId": "device_request_api_v1_oauth_device__user_code__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "user_code",
+            "required": true,
+            "schema": {
+              "title": "User Code",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeviceOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Device Request",
+        "tags": [
+          "oauth"
+        ]
+      }
+    },
+    "/api/v1/oauth/register": {
+      "post": {
+        "description": "Dynamic client registration (RFC 7591): public clients only.",
+        "operationId": "register_client_api_v1_oauth_register_post",
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Register Client",
+        "tags": [
+          "oauth"
+        ]
+      }
+    },
+    "/api/v1/oauth/requests/{handle}": {
+      "get": {
+        "description": "What a client asks, for the consent page.",
+        "operationId": "consent_request_api_v1_oauth_requests__handle__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "handle",
+            "required": true,
+            "schema": {
+              "title": "Handle",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConsentOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Consent Request",
+        "tags": [
+          "oauth"
+        ]
+      }
+    },
+    "/api/v1/oauth/requests/{handle}/decision": {
+      "post": {
+        "description": "The user's answer, for one of their orgs: where to send the browser next.",
+        "operationId": "consent_decision_api_v1_oauth_requests__handle__decision_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "handle",
+            "required": true,
+            "schema": {
+              "title": "Handle",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DecisionIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DecisionOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Consent Decision",
+        "tags": [
+          "oauth"
+        ]
+      }
+    },
+    "/api/v1/oauth/revoke": {
+      "post": {
+        "description": "RFC 7009: always 200 (whether there was such a token isn't said).",
+        "operationId": "revoke_api_v1_oauth_revoke_post",
+        "requestBody": {
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_revoke_api_v1_oauth_revoke_post"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Revoke",
+        "tags": [
+          "oauth"
+        ]
+      }
+    },
+    "/api/v1/oauth/token": {
+      "post": {
+        "operationId": "token_api_v1_oauth_token_post",
+        "requestBody": {
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_token_api_v1_oauth_token_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Token",
+        "tags": [
+          "oauth"
         ]
       }
     },

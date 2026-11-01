@@ -41,6 +41,15 @@ from sensei_core.models.indexing import (
 )
 from sensei_core.models.jobs import JobFailure
 from sensei_core.models.llm import LLMBatch, LLMBatchStatus
+from sensei_core.models.oauth import (
+    ClientKind,
+    GrantStatus,
+    IssuedToken,
+    OAuthClient,
+    OAuthDeviceCode,
+    OAuthGrant,
+    TokenKind,
+)
 from sensei_core.models.org import Invitation, Membership, Org, Role
 from sensei_core.models.repo import Repo, RepoSource, RepoStatus
 from sensei_core.models.symbols import CodeNode
@@ -58,6 +67,7 @@ __all__ = [
     "ApiKey",
     "AuditEvent",
     "Base",
+    "ClientKind",
     "CodeChunk",
     "CodeEdge",
     "CodeNode",
@@ -73,8 +83,10 @@ __all__ = [
     "FeatureMap",
     "GitHubInstallation",
     "GlossaryTerm",
+    "GrantStatus",
     "IndexJob",
     "Invitation",
+    "IssuedToken",
     "JobFailure",
     "JobKind",
     "JobStatus",
@@ -84,6 +96,9 @@ __all__ = [
     "MessageCitation",
     "MessageFeedback",
     "NodeKind",
+    "OAuthClient",
+    "OAuthDeviceCode",
+    "OAuthGrant",
     "OAuthToken",
     "Org",
     "Provenance",
@@ -96,6 +111,7 @@ __all__ = [
     "Snapshot",
     "SnapshotStatus",
     "Stage",
+    "TokenKind",
     "UsageEvent",
     "UsageKind",
     "User",
