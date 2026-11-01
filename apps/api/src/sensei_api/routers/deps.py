@@ -13,6 +13,11 @@ travels small). ``edge-evidence`` is the exact import and call lines behind one 
 then name; a cell, the edges from its row to its column, flagged when both are in one cycle),
 with its cycles (Tarjan's strongly connected components) and each group's coupling (afferent,
 efferent, instability); ``deps/cycles`` is the cycles alone.
+
+``deps/packages`` (6.5) is the third-party packages: each declared one (its versions, where it
+is declared, whether only for development) with how many files import it and which, and what
+the code imports that is declared nowhere. A snapshot indexed before packages were inventoried
+says so (``inventoried`` false): its declared list is empty until it is indexed again.
 """
 
 from __future__ import annotations
@@ -56,6 +61,7 @@ from sensei_engine.deps import (
     layout,
 )
 from sensei_engine.graph.snapshot import GraphSnapshot
+from sensei_engine.third_party import USED_IN, PackageInUse, packages_in_use, usage
 
 router = APIRouter(prefix="/orgs/{org}/repos/{repo}", tags=["deps"])
 
@@ -493,3 +499,87 @@ async def deps_cycles(
     found = await asyncio.to_thread(cycles, shown)
     response.headers[COMMIT_HEADER] = snapshot.commit_sha
     return CyclesOut(level=level, sha=snapshot.commit_sha, cycles=_cycles_out(found))
+
+
+class DeclaredOut(BaseModel):
+    manifest: str
+    root: str
+    spec: str | None
+    version: str | None
+    dev: bool
+
+
+class UsedInOut(BaseModel):
+    path: str
+    imports: int
+
+
+class PackageOut(BaseModel):
+    ecosystem: str  # "pypi" or "npm"
+    name: str
+    versions: list[str]  # locked
+    dev: bool  # declared for development only
+    declared: list[DeclaredOut]
+    files: int  # the files importing it
+    imports: int
+    used_in: list[UsedInOut]  # the files importing it most
+
+
+class PackagesOut(BaseModel):
+    sha: str
+    inventoried: bool
+    packages: list[PackageOut]
+    undeclared: list[PackageOut]  # imported, declared nowhere
+
+
+def _package_out(found: PackageInUse) -> PackageOut:
+    return PackageOut(
+        ecosystem=found.ecosystem,
+        name=found.name,
+        versions=found.versions,
+        dev=found.dev,
+        declared=[
+            DeclaredOut(
+                manifest=str(d.get("manifest", "")),
+                root=str(d.get("root", ".")),
+                spec=cast("str | None", d.get("spec")),
+                version=cast("str | None", d.get("version")),
+                dev=bool(d.get("dev")),
+            )
+            for d in found.declared
+        ],
+        files=len(found.usage.files),
+        imports=found.usage.imports,
+        used_in=[
+            UsedInOut(path=path, imports=n)
+            for path, n in sorted(found.usage.files.items(), key=lambda x: (-x[1], x[0]))[:USED_IN]
+        ],
+    )
+
+
+@router.get("/deps/packages", response_model=PackagesOut)
+async def deps_packages(
+    *,
+    request: Request,
+    response: Response,
+    access: OrgAccessDep,
+    repo: RepoDep,
+    db: DbSession,
+    redis: RedisClient,
+    ref: RefParam = None,
+) -> PackagesOut:
+    """The third-party packages: declared (with versions) and used (by which files)."""
+    await limit_graph(request, redis, access)
+    snapshot, graph = await _graph(request, db, repo, ref)
+    summary = snapshot.summary or {}
+    listed = cast("list[object]", summary.get("packages") or [])
+    declared = [cast("dict[str, Any]", d) for d in listed if isinstance(d, dict)]
+    used = await asyncio.to_thread(usage, graph)
+    found, undeclared = packages_in_use(declared, used)
+    response.headers[COMMIT_HEADER] = snapshot.commit_sha
+    return PackagesOut(
+        sha=snapshot.commit_sha,
+        inventoried="packages" in summary,
+        packages=[_package_out(p) for p in found],
+        undeclared=[_package_out(p) for p in undeclared],
+    )

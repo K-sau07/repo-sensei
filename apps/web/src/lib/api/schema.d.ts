@@ -927,6 +927,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/orgs/{org}/repos/{repo}/deps/packages": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Deps Packages
+         * @description The third-party packages: declared (with versions) and used (by which files).
+         */
+        get: operations["deps_packages_api_v1_orgs__org__repos__repo__deps_packages_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/orgs/{org}/repos/{repo}/diagrams": {
         parameters: {
             query?: never;
@@ -1943,6 +1963,19 @@ export interface components {
             level: "service" | "package" | "module" | "file" | "symbol";
             /** Sha */
             sha: string;
+        };
+        /** DeclaredOut */
+        DeclaredOut: {
+            /** Dev */
+            dev: boolean;
+            /** Manifest */
+            manifest: string;
+            /** Root */
+            root: string;
+            /** Spec */
+            spec: string | null;
+            /** Version */
+            version: string | null;
         };
         /** DepEdgeOut */
         DepEdgeOut: {
@@ -3114,6 +3147,36 @@ export interface components {
             sha: string;
             summary: components["schemas"]["SummaryOut"] | null;
         };
+        /** PackageOut */
+        PackageOut: {
+            /** Declared */
+            declared: components["schemas"]["DeclaredOut"][];
+            /** Dev */
+            dev: boolean;
+            /** Ecosystem */
+            ecosystem: string;
+            /** Files */
+            files: number;
+            /** Imports */
+            imports: number;
+            /** Name */
+            name: string;
+            /** Used In */
+            used_in: components["schemas"]["UsedInOut"][];
+            /** Versions */
+            versions: string[];
+        };
+        /** PackagesOut */
+        PackagesOut: {
+            /** Inventoried */
+            inventoried: boolean;
+            /** Packages */
+            packages: components["schemas"]["PackageOut"][];
+            /** Sha */
+            sha: string;
+            /** Undeclared */
+            undeclared: components["schemas"]["PackageOut"][];
+        };
         /**
          * PartialOut
          * @description What a stage done with work left for the next index cut short.
@@ -3992,6 +4055,13 @@ export interface components {
         TreeOut: {
             /** Entries */
             entries: components["schemas"]["TreeEntry"][];
+            /** Path */
+            path: string;
+        };
+        /** UsedInOut */
+        UsedInOut: {
+            /** Imports */
+            imports: number;
             /** Path */
             path: string;
         };
@@ -5905,6 +5975,43 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["EdgeEvidenceOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    deps_packages_api_v1_orgs__org__repos__repo__deps_packages_get: {
+        parameters: {
+            query?: {
+                /** @description Branch or commit (or its first 7+ characters). */
+                ref?: string | null;
+            };
+            header?: never;
+            path: {
+                /** @description Organization slug */
+                org: string;
+                /** @description Repository slug */
+                repo: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PackagesOut"];
                 };
             };
             /** @description Validation Error */

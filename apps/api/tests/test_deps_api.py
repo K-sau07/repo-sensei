@@ -60,10 +60,25 @@ CYCLE = {
 }
 
 
+THIRD_PARTY = {
+    "backend/pyproject.toml": (
+        '[project]\nname = "app"\ndependencies = ["fastapi>=0.115", "PyYAML"]\n'
+        '[dependency-groups]\ndev = ["pytest"]\n'
+    ),
+    "backend/uv.lock": (
+        'version = 1\n[[package]]\nname = "fastapi"\nversion = "0.115.6"\n'
+        '[[package]]\nname = "pyyaml"\nversion = "6.0.2"\n'
+    ),
+    "backend/app/main.py": (
+        "import os\n\nimport requests\nimport yaml\nfrom fastapi import FastAPI\n"
+    ),
+}
+
+
 async def _indexed(
     api_app: FastAPI, client: httpx.AsyncClient, db: AsyncSession, tmp_path: Path
 ) -> str:
-    snapshot, _ = await index_repo(db, tmp_path, {**ITEMS, **CYCLE})
+    snapshot, _ = await index_repo(db, tmp_path, {**ITEMS, **CYCLE, **THIRD_PARTY})
     snapshot.status, snapshot.merkle_root, snapshot.ready_at = SnapshotStatus.READY, "00" * 32, NOW
     repo = await db.get(Repo, snapshot.repo_id)
     assert repo is not None
@@ -146,7 +161,8 @@ async def test_a_focus_and_the_evidence_behind_an_edge(
     symbols = (await client.get(f"{url}/deps", params={"level": "symbol"})).json()
     assert "py backend/app/services/items.py/create_item()." in {n["id"] for n in symbols["nodes"]}
     services = (await client.get(f"{url}/deps", params={"level": "service"})).json()
-    assert [n["label"] for n in services["nodes"]] == ["app"]  # no Compose, no app framework
+    # No Compose: the app framework's root (FastAPI's, declared in backend/).
+    assert [n["label"] for n in services["nodes"]] == ["backend"]
 
 
 @pytest.mark.integration
@@ -199,3 +215,25 @@ async def test_the_impact_of_a_change(
     assert (neither.status_code, neither.json()["error"]["code"]) == (422, "impact_change")
     nothing = await client.get(f"{url}/impact", params={"symbol": "no_such_thing"})
     assert (nothing.status_code, nothing.json()["error"]["code"]) == (404, "impact_not_found")
+
+
+@pytest.mark.integration
+async def test_third_party_packages_declared_and_used(
+    api_app: FastAPI, client: httpx.AsyncClient, db_session: AsyncSession, tmp_path: Path
+) -> None:
+    url = await _indexed(api_app, client, db_session, tmp_path)
+    got = await client.get(f"{url}/deps/packages")
+    assert got.status_code == 200, got.text
+    body = got.json()
+    assert body["inventoried"] is True
+    by_name = {p["name"]: p for p in body["packages"]}
+    fastapi = by_name["fastapi"]
+    assert (fastapi["versions"], fastapi["dev"], fastapi["files"]) == (["0.115.6"], False, 1)
+    assert fastapi["declared"] == [
+        {"manifest": "backend/pyproject.toml", "root": "backend", "spec": ">=0.115",
+         "version": "0.115.6", "dev": False},
+    ]  # fmt: skip
+    assert fastapi["used_in"] == [{"path": "backend/app/main.py", "imports": 1}]
+    assert by_name["pyyaml"]["files"] == 1  # imported as yaml
+    assert (by_name["pytest"]["dev"], by_name["pytest"]["files"]) == (True, 0)
+    assert [p["name"] for p in body["undeclared"]] == ["requests"]  # os is the standard library

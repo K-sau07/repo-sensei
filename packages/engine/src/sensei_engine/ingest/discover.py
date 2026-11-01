@@ -27,6 +27,7 @@ from sensei_engine.ingest.frameworks import (
 )
 from sensei_engine.ingest.ignore import IgnoreRules
 from sensei_engine.ingest.languages import DISPLAY_NAMES
+from sensei_engine.ingest.packages import Package, find_lockfiles, inventory, read_lockfiles
 from sensei_engine.ingest.roles import UI_FRAMEWORKS, Role, assign_role
 from sensei_engine.ingest.walk import WalkStats, walk
 
@@ -56,6 +57,7 @@ class Discovery:
     files: list[DiscoveredFile]
     frameworks: list[Framework]
     stats: WalkStats
+    packages: list[Package] = field(default_factory=list[Package])  # third-party (6.5)
 
     @property
     def loc(self) -> int:
@@ -91,6 +93,7 @@ class Discovery:
             "roles": {k: dict(v) for k, v in sorted(roles.items())},
             "flags": dict(sorted(flags.items())),
             "frameworks": [framework.as_json() for framework in self.frameworks],
+            "packages": [package.as_json() for package in self.packages],
             "skipped": {
                 "ignored_files": stats.ignored_files,
                 "ignored_dirs": stats.ignored_dirs,
@@ -123,9 +126,10 @@ def discover(
     manifests: dict[str, FileFacts] = {
         entry.path: classify(entry) for entry in listed if is_manifest(entry.path)
     }
-    frameworks = detect_frameworks(
-        {path: facts.text for path, facts in manifests.items() if facts.text is not None}
-    )
+    texts = {path: facts.text for path, facts in manifests.items() if facts.text is not None}
+    frameworks = detect_frameworks(texts)
+    locks = read_lockfiles(root, find_lockfiles(root, texts))
+    packages = inventory(texts, locks)
     roots = sorted({framework.root for framework in frameworks})
     ui_roots = {f.root for f in frameworks if f.name in UI_FRAMEWORKS}
 
@@ -154,4 +158,4 @@ def discover(
         if progress is not None and (done % PROGRESS_EVERY == 0 or done == total):
             progress(done, total, files[reported:done])
             reported = done
-    return Discovery(files=files, frameworks=frameworks, stats=stats)
+    return Discovery(files=files, frameworks=frameworks, stats=stats, packages=packages)

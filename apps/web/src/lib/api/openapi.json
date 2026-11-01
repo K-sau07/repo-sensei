@@ -1200,6 +1200,53 @@
         "title": "CyclesOut",
         "type": "object"
       },
+      "DeclaredOut": {
+        "properties": {
+          "dev": {
+            "title": "Dev",
+            "type": "boolean"
+          },
+          "manifest": {
+            "title": "Manifest",
+            "type": "string"
+          },
+          "root": {
+            "title": "Root",
+            "type": "string"
+          },
+          "spec": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Spec"
+          },
+          "version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Version"
+          }
+        },
+        "required": [
+          "manifest",
+          "root",
+          "spec",
+          "version",
+          "dev"
+        ],
+        "title": "DeclaredOut",
+        "type": "object"
+      },
       "DepEdgeOut": {
         "properties": {
           "confidence": {
@@ -4190,6 +4237,97 @@
         "title": "OverviewOut",
         "type": "object"
       },
+      "PackageOut": {
+        "properties": {
+          "declared": {
+            "items": {
+              "$ref": "#/components/schemas/DeclaredOut"
+            },
+            "title": "Declared",
+            "type": "array"
+          },
+          "dev": {
+            "title": "Dev",
+            "type": "boolean"
+          },
+          "ecosystem": {
+            "title": "Ecosystem",
+            "type": "string"
+          },
+          "files": {
+            "title": "Files",
+            "type": "integer"
+          },
+          "imports": {
+            "title": "Imports",
+            "type": "integer"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "used_in": {
+            "items": {
+              "$ref": "#/components/schemas/UsedInOut"
+            },
+            "title": "Used In",
+            "type": "array"
+          },
+          "versions": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Versions",
+            "type": "array"
+          }
+        },
+        "required": [
+          "ecosystem",
+          "name",
+          "versions",
+          "dev",
+          "declared",
+          "files",
+          "imports",
+          "used_in"
+        ],
+        "title": "PackageOut",
+        "type": "object"
+      },
+      "PackagesOut": {
+        "properties": {
+          "inventoried": {
+            "title": "Inventoried",
+            "type": "boolean"
+          },
+          "packages": {
+            "items": {
+              "$ref": "#/components/schemas/PackageOut"
+            },
+            "title": "Packages",
+            "type": "array"
+          },
+          "sha": {
+            "title": "Sha",
+            "type": "string"
+          },
+          "undeclared": {
+            "items": {
+              "$ref": "#/components/schemas/PackageOut"
+            },
+            "title": "Undeclared",
+            "type": "array"
+          }
+        },
+        "required": [
+          "sha",
+          "inventoried",
+          "packages",
+          "undeclared"
+        ],
+        "title": "PackagesOut",
+        "type": "object"
+      },
       "PartialOut": {
         "description": "What a stage done with work left for the next index cut short.",
         "properties": {
@@ -6814,6 +6952,24 @@
           "entries"
         ],
         "title": "TreeOut",
+        "type": "object"
+      },
+      "UsedInOut": {
+        "properties": {
+          "imports": {
+            "title": "Imports",
+            "type": "integer"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "imports"
+        ],
+        "title": "UsedInOut",
         "type": "object"
       },
       "ValidationError": {
@@ -10218,6 +10374,82 @@
           }
         },
         "summary": "Edge Evidence",
+        "tags": [
+          "deps"
+        ]
+      }
+    },
+    "/api/v1/orgs/{org}/repos/{repo}/deps/packages": {
+      "get": {
+        "description": "The third-party packages: declared (with versions) and used (by which files).",
+        "operationId": "deps_packages_api_v1_orgs__org__repos__repo__deps_packages_get",
+        "parameters": [
+          {
+            "description": "Organization slug",
+            "in": "path",
+            "name": "org",
+            "required": true,
+            "schema": {
+              "description": "Organization slug",
+              "title": "Org",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Repository slug",
+            "in": "path",
+            "name": "repo",
+            "required": true,
+            "schema": {
+              "description": "Repository slug",
+              "maxLength": 201,
+              "title": "Repo",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Branch or commit (or its first 7+ characters).",
+            "in": "query",
+            "name": "ref",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 255,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Branch or commit (or its first 7+ characters).",
+              "title": "Ref"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PackagesOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Deps Packages",
         "tags": [
           "deps"
         ]
