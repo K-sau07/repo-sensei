@@ -27,6 +27,9 @@ const nextConfig: NextConfig = {
   // Always defined, so Next inlines it and dead-code elimination drops mock mode from real builds.
   env: { NEXT_PUBLIC_MOCKS: process.env.NEXT_PUBLIC_MOCKS === "1" ? "1" : "0" },
   poweredByHeader: false,
+  // The e2e server builds apart (`.next-e2e`), so it runs beside `make dev`'s: Next allows one
+  // dev server per build directory.
+  ...(process.env.NEXT_DIST_DIR ? { distDir: process.env.NEXT_DIST_DIR } : {}),
   // Keep the dev badge clear of the sidebar's account menu (bottom-left).
   devIndicators: { position: "bottom-right" },
   agentRules: false,

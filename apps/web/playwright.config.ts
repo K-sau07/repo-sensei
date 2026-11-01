@@ -31,7 +31,7 @@ export default defineConfig({
   webServer: {
     command: `pnpm exec next dev --port ${port}`,
     url: `${baseURL}/login`,
-    env: { NEXT_PUBLIC_MOCKS: "1" },
+    env: { NEXT_PUBLIC_MOCKS: "1", NEXT_DIST_DIR: ".next-e2e" },
     reuseExistingServer: !process.env.CI,
     timeout: 120_000,
   },

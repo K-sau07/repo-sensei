@@ -82,7 +82,6 @@ export const PRIMARY_TABS: RepoTab[] = [
     section: "graph",
     icon: Network,
     feature: "graph_view",
-    phase: 6,
     shortcut: "repo-graph",
   },
   {
