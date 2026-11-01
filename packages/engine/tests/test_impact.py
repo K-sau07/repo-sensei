@@ -219,3 +219,29 @@ def test_a_lower_bar_follows_unsure_edges_but_never_inferred_ones(graph: GraphSn
     capped = impact(graph, changed_nodes(graph, files=[CRUD]), limit=3)
     assert capped.truncated
     assert sum(len(v) for v in capped.affected.values()) == 3
+
+
+def test_a_node_reached_surest_far_off_is_walked_on_from_where_it_is_reached_nearer() -> None:
+    """S ← a1 ← … ← a7 ← X, every edge sure; S ← b1 ← X, a less sure way; Y → X. The surest
+    way reaches X at the depth limit (8): from there nothing more. The other reaches it in 2,
+    so Y, a hop on, is 3 from the change and must be found."""
+    keys = ["S", *(f"a{i}" for i in range(1, 8)), "b1", "X", "Y"]
+    nodes = [Node(k, NodeKind.FUNCTION.value, k, k, f"src/{k}.py", 1, 2, "python") for k in keys]
+    at = {k: i for i, k in enumerate(keys)}
+
+    def calls(src: str, dst: str, confidence: float) -> tuple[int, int, Edge]:
+        return (
+            at[src],
+            at[dst],
+            Edge(EdgeType.CALLS, confidence, Provenance.IMPORT_RESOLVED, None, None),
+        )
+
+    chain = ["S", *(f"a{i}" for i in range(1, 8)), "X"]
+    edges = [calls(chain[i + 1], chain[i], 1.0) for i in range(len(chain) - 1)]
+    edges += [calls("b1", "S", 0.55), calls("X", "b1", 0.55), calls("Y", "X", 1.0)]
+    graph = GraphSnapshot(nodes, edges)
+    found = impact(graph, changed_nodes(graph, symbols=["S"]))
+    by_key = {a.node.symbol_key: a for items in found.affected.values() for a in items}
+    assert by_key["X"].distance == 8  # its surest way, the one it is ranked by
+    assert by_key["Y"].distance == 3  # through X's nearer way
+    assert by_key["Y"].via == "X"

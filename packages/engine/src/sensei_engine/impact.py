@@ -128,23 +128,29 @@ def impact(
     best: Best = dict.fromkeys(starts, (1.0, 0, None, None))
     started = set(starts)
     queue: list[tuple[float, int, int]] = [(-1.0, 0, i) for i in starts]
-    done: set[int] = set()
+    # The fewest hops each node was walked from: a node first reached the surest way, far off,
+    # is walked again when a less sure way reaches it nearer (more of the depth left to go on).
+    walked: dict[int, int] = {}
+    queued: dict[int, int] = dict.fromkeys(starts, 0)
     while queue:
         negative, depth, here = heapq.heappop(queue)
-        if here in done:
+        if walked.get(here, max_depth + 1) <= depth:
             continue
-        done.add(here)
+        walked[here] = depth
         if depth >= max_depth:
             continue
         for there, _, edge_index in graph.graph.in_edges(here):
             edge = graph.edges[edge_index]
-            if not _follows(edge, min_conf) or there in done:
+            if not _follows(edge, min_conf) or walked.get(there, max_depth + 1) <= depth + 1:
                 continue
             score = -negative * edge.confidence * DECAY
             held = best.get(there)
             if held is None or score > held[0]:
                 best[there] = (score, depth + 1, here, edge.type)
-                heapq.heappush(queue, (-score, depth + 1, there))
+            elif queued.get(there, max_depth + 1) <= depth + 1:
+                continue  # neither surer nor nearer than a way already on its way
+            queued[there] = min(queued.get(there, max_depth + 1), depth + 1)
+            heapq.heappush(queue, (-score, depth + 1, there))
     _touched_tables(graph, starts, best, min_conf)
     items = [
         Affected(

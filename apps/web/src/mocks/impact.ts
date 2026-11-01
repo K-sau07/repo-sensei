@@ -137,7 +137,11 @@ export function impactOf(
   const started = new Set(starts);
   const best: Best = new Map(starts.map((k) => [k, { score: 1, depth: 0, via: null, edge: null }]));
   let queue: [number, number, string][] = starts.map((k) => [1, 0, k]);
-  const done = new Set<string>();
+  // The fewest hops each node was walked from (as the engine: a node reached surest far off is
+  // walked again when a less sure way reaches it nearer).
+  const walked = new Map<string, number>();
+  const queued = new Map<string, number>(starts.map((k) => [k, 0]));
+  const beyond = MAX_DEPTH + 1;
   while (queue.length > 0) {
     // The surest left (a small graph: a scan, not a heap).
     let at = 0;
@@ -149,19 +153,22 @@ export function impactOf(
     queue = queue.filter((_, i) => i !== at);
     if (!popped) break;
     const [score, depth, here] = popped;
-    if (done.has(here)) continue;
-    done.add(here);
+    if ((walked.get(here) ?? beyond) <= depth) continue;
+    walked.set(here, depth);
     if (depth >= MAX_DEPTH) continue;
     // Newest first, as the engine's graph (rustworkx) lists a node's edges: ties go the same way.
     for (const edge of [...graph.in(here)].reverse()) {
       const there = edge.src;
-      if (!follows(edge, minConf) || done.has(there)) continue;
+      if (!follows(edge, minConf) || (walked.get(there) ?? beyond) <= depth + 1) continue;
       const next = score * edge.confidence * DECAY;
       const held = best.get(there);
       if (held === undefined || next > held.score) {
         best.set(there, { score: next, depth: depth + 1, via: here, edge: edge.type });
-        queue.push([next, depth + 1, there]);
+      } else if ((queued.get(there) ?? beyond) <= depth + 1) {
+        continue;
       }
+      queued.set(there, Math.min(queued.get(there) ?? beyond, depth + 1));
+      queue.push([next, depth + 1, there]);
     }
   }
   touchedTables(graph, starts, best, minConf);
