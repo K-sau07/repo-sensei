@@ -3,10 +3,11 @@ and read back the same), a focus, the evidence behind an edge, MessagePack for b
 
 from __future__ import annotations
 
+import gzip
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import httpx
 import msgpack
@@ -16,6 +17,7 @@ from fastapi import FastAPI
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from sensei_api.routers import deps as deps_router
 from sensei_core.mail import MemoryMailer
 from sensei_core.models import IndexJob, JobKind, JobStatus, Membership, Org, Repo, User
 from sensei_core.models.indexing import SnapshotStatus
@@ -124,6 +126,16 @@ async def test_a_level_comes_with_its_layout_kept_and_read_back_the_same(
     api_app.state.deps_cache = None
     again = (await client.get(f"{url}/deps", params={"level": "file"})).json()
     assert again == body
+    # One kept by other layout code (or other groups), or unreadable: laid out again.
+    [kept] = [key for key in storage.kept if key.endswith("layout-file.msgpack")]
+    old = {"version": "g1", "format": 1, "at": {n: [0.0, 0.0] for n in files}}
+    packed_old = cast("bytes", msgpack.packb(old))  # pyright: ignore[reportUnknownMemberType]
+    for stale in (gzip.compress(packed_old), b"not a layout"):
+        storage.kept[kept] = stale
+        api_app.state.deps_cache = None
+        redrawn = await client.get(f"{url}/deps", params={"level": "file"})
+        assert redrawn.status_code == 200, redrawn.text
+        assert redrawn.json() == body
     # MessagePack, gzipped: the same answer.
     packed = await client.get(
         f"{url}/deps", params={"level": "file"}, headers={"Accept": "application/x-msgpack"}
@@ -167,7 +179,11 @@ async def test_a_focus_and_the_evidence_behind_an_edge(
 
 @pytest.mark.integration
 async def test_the_dsm_shows_a_cycle_and_coupling(
-    api_app: FastAPI, client: httpx.AsyncClient, db_session: AsyncSession, tmp_path: Path
+    api_app: FastAPI,
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     url = await _indexed(api_app, client, db_session, tmp_path)
     got = await client.get(f"{url}/deps/dsm", params={"level": "file"})
@@ -189,6 +205,10 @@ async def test_the_dsm_shows_a_cycle_and_coupling(
     # A module holding both: no cycle at that level.
     modules = await client.get(f"{url}/deps/cycles", params={"level": "module"})
     assert modules.json()["cycles"] == []
+    # Too many groups for a matrix: a coarser level, it says.
+    monkeypatch.setattr(deps_router, "MAX_DSM", 2)
+    big = await client.get(f"{url}/deps/dsm", params={"level": "file"})
+    assert (big.status_code, big.json()["error"]["code"]) == (422, "dsm_too_large")
 
 
 @pytest.mark.integration

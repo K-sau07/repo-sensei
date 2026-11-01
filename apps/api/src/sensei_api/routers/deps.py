@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import asyncio
 import gzip
+import hashlib
 from collections import OrderedDict
 from collections.abc import Callable
 from typing import Annotated, Any, cast
@@ -40,8 +41,9 @@ from sensei_api.orgs import OrgAccessDep
 from sensei_api.repos import RepoDep
 from sensei_api.routers.browse import COMMIT_HEADER, RefParam
 from sensei_api.routers.graph import limit_graph
-from sensei_core.errors import NotFoundError
+from sensei_core.errors import InvalidError, NotFoundError
 from sensei_core.indexing.snapshots import resolve_snapshot
+from sensei_core.logging import get_logger
 from sensei_core.models import RepoFile, Snapshot
 from sensei_core.storage import Bucket, ObjectStorage, artifact_key
 from sensei_engine.deps import (
@@ -68,7 +70,11 @@ router = APIRouter(prefix="/orgs/{org}/repos/{repo}", tags=["deps"])
 MAX_NODES = 20_000  # sent at once (more: the largest, and ``truncated``)
 MSGPACK = "application/x-msgpack"
 CACHED = 16  # levels kept in memory (per process)
+log = get_logger(__name__)
+
 MAX_LAYOUT_BYTES = 64 << 20
+LAYOUT_FORMAT = 2  # bump when the layout code changes
+MAX_DSM = 1_500  # groups a matrix is drawn for (n² cells)
 _pack = cast("Callable[[object], bytes]", msgpack.packb)  # pyright: ignore[reportUnknownMemberType]
 _unpack = cast("Callable[..., object]", msgpack.unpackb)  # pyright: ignore[reportUnknownMemberType]
 
@@ -235,21 +241,38 @@ async def _positions(
     name = artifact_key(
         snapshot.org_id, snapshot.repo_id, snapshot.commit_sha, f"layout-{whole.level}.msgpack"
     )
+    # The artifact is this layout only for the same graph, layout code and groups: the groups'
+    # ids come from the grouping, which can change while the graph doesn't.
+    stamp = {"version": graph.version, "format": LAYOUT_FORMAT, "ids": _ids_digest(whole)}
     placed: dict[str, tuple[float, float]] | None = None
     if storage is not None:
         data = await storage.get_bytes(Bucket.ARTIFACTS, name, max_bytes=MAX_LAYOUT_BYTES)
-        if data:
-            stored = cast("dict[str, Any]", _unpack(gzip.decompress(data)))
-            if stored.get("version") == graph.version:
-                at = cast("dict[str, list[float]]", stored["at"])
-                placed = {k: (float(v[0]), float(v[1])) for k, v in at.items()}
+        placed = _stored_layout(data, stamp) if data else None
     if placed is None:
         placed = await asyncio.to_thread(layout, whole)
         if storage is not None:
-            blob = _pack({"version": graph.version, "at": placed})
+            blob = _pack({**stamp, "at": placed})
             await storage.put_bytes(Bucket.ARTIFACTS, name, gzip.compress(blob))
     cache.put(key, placed)
     return placed
+
+
+def _ids_digest(whole: DepGraph) -> str:
+    return hashlib.sha256("\0".join(sorted(whole.nodes)).encode()).hexdigest()[:32]
+
+
+def _stored_layout(data: bytes, stamp: dict[str, Any]) -> dict[str, tuple[float, float]] | None:
+    """The kept layout, if it is this one (see :func:`_positions`); an unreadable one is
+    worked out again."""
+    try:
+        stored = cast("dict[str, Any]", _unpack(gzip.decompress(data)))
+        if any(stored.get(k) != v for k, v in stamp.items()):
+            return None
+        at = cast("dict[str, list[float]]", stored["at"])
+        return {k: (float(v[0]), float(v[1])) for k, v in at.items()}
+    except Exception:  # a corrupt artifact (any decoding error): laid out again
+        log.warning("deps.layout_unreadable", exc_info=True)
+        return None
 
 
 @router.get("/deps", response_model=DepsOut, responses={200: {"content": {MSGPACK: {}}}})
@@ -453,6 +476,11 @@ async def deps_dsm(
     snapshot, _, _, shown = await _level(
         request, db, repo, level=level, types=types, min_conf=min_conf, ref=ref
     )
+    if len(shown.nodes) > MAX_DSM:
+        raise InvalidError(
+            f"Too many {level}s ({len(shown.nodes)}) to draw as a matrix: pick a coarser level.",
+            code="dsm_too_large",
+        )
     found = await asyncio.to_thread(cycles, shown)
     matrix = await asyncio.to_thread(dsm, shown, found)
     metrics = coupling(shown)
