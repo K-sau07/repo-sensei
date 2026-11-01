@@ -201,9 +201,15 @@ def test_scores_rank_the_near_and_the_sure_first(graph: GraphSnapshot) -> None:
     heat = result.heat
     assert heat["create_item"] == 1.0
     assert heat["create_item_route"] == pytest.approx(0.95 * DECAY, abs=1e-4)
-    assert heat["create_item_route"] > heat["POST /items"] > heat["ItemsPage"]
+    # An endpoint is its handler seen from outside: no hop on (as near, as sure).
+    assert heat["create_item_route"] == heat["POST /items"] > heat["ItemsPage"]
     route = result.affected["routes"][0]
-    assert (route.via, route.edge, route.distance) == ("create_item_route", T.HANDLED_BY, 2)
+    assert (route.via, route.edge, route.distance) == ("create_item_route", T.HANDLED_BY, 1)
+    # The client call is the endpoint seen from the page: the page's code is one hop past it,
+    # only the URL's match (0.9) between.
+    by_key = {a.node.symbol_key: a for items in result.affected.values() for a in items}
+    assert by_key["createItem"].distance == 2
+    assert heat["createItem"] == pytest.approx(heat["POST /items"] * 0.9 * DECAY, abs=1e-4)
     assert set(result.affected) == set(CATEGORIES)
     symbols = [a.node.symbol_key for a in result.affected["symbols"]]
     assert symbols[0] == "create_item_route"
@@ -245,3 +251,24 @@ def test_a_node_reached_surest_far_off_is_walked_on_from_where_it_is_reached_nea
     assert by_key["X"].distance == 8  # its surest way, the one it is ranked by
     assert by_key["Y"].distance == 3  # through X's nearer way
     assert by_key["Y"].via == "X"
+
+
+def test_a_route_is_as_near_as_its_handler_at_the_depth_limit() -> None:
+    """S ← a1 ← … ← a7 ← H (the handler, 8 hops off), and the endpoint E handled by H. E is
+    found: an endpoint is its handler's other face, no hop past it."""
+    keys = ["S", *(f"a{i}" for i in range(1, 8)), "H"]
+    nodes = [Node(k, NodeKind.FUNCTION.value, k, k, f"src/{k}.py", 1, 2, "python") for k in keys]
+    nodes.append(Node("E", NodeKind.API_ENDPOINT.value, "POST /e", "E", "src/H.py", 1, 2, "python"))
+    at = {n.symbol_key: i for i, n in enumerate(nodes)}
+
+    def edge(src: str, dst: str, kind: EdgeType) -> tuple[int, int, Edge]:
+        return at[src], at[dst], Edge(kind, 1.0, Provenance.IMPORT_RESOLVED, None, None)
+
+    chain = [*keys]
+    edges = [edge(chain[i + 1], chain[i], EdgeType.CALLS) for i in range(len(chain) - 1)]
+    edges.append(edge("E", "H", EdgeType.HANDLED_BY))
+    graph = GraphSnapshot(nodes, edges)
+    found = impact(graph, changed_nodes(graph, symbols=["S"]))
+    [route] = found.affected["routes"]
+    assert (route.node.symbol_key, route.distance, route.via) == ("E", 8, "H")
+    assert found.heat["E"] == found.heat["H"]

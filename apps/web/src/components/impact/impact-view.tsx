@@ -241,6 +241,8 @@ export function ImpactView({ symbol, files }: { symbol: string | null; files: st
                 label={`The impact of ${names}: ${String(total)} affected, the surest nearest the center`}
                 still={still}
                 onSelectNode={setSelected}
+                // Rings of long test names: fewer labels, apart (the rest named on hover).
+                labelSpacing={220}
               />
               {!still ? (
                 <m.div
@@ -288,7 +290,7 @@ function HeatLegend() {
   return (
     <div
       aria-hidden
-      className="bg-surface/90 absolute bottom-2 left-2 flex items-center gap-2 rounded-sm border border-line px-2 py-1 text-xs text-fg-muted"
+      className="absolute bottom-2 left-2 flex items-center gap-2 rounded-sm border border-line bg-surface-1/90 px-2 py-1 text-xs text-fg-muted"
     >
       Less sure, further
       <span className="h-2 w-24 rounded-full bg-gradient-to-r from-signal via-warn to-danger" />

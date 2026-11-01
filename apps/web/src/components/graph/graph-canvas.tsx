@@ -51,6 +51,9 @@ export interface GraphCanvasProps {
   /** The camera's zoom ratio (1: the whole level), the nodes in view and the one nearest the
    * view's center, as it settles. */
   onZoom?: (ratio: number, visible: string[], nearest: string | null) => void;
+  /** The side (px) of the squares labels are shared out by, one each, the biggest node's: more
+   * for long names close together (Sigma's 100 by default). */
+  labelSpacing?: number;
 }
 
 const BOX = 1.15; // the layouts are within [-1, 1]: a fixed frame keeps the camera still
@@ -111,6 +114,7 @@ export default function GraphCanvas(props: GraphCanvasProps) {
         enableNodeDrag: false,
         renderEdgeLabels: false,
         labelRenderedSizeThreshold: 7,
+        labelGridCellSize: props.labelSpacing ?? 100,
         minCameraRatio: 0.01,
         maxCameraRatio: 3,
         stagePadding: 24,
@@ -473,7 +477,7 @@ function Minimap({
       width={MINIMAP.width * ratio}
       height={MINIMAP.height * ratio}
       style={{ width: MINIMAP.width, height: MINIMAP.height }}
-      className="bg-surface/90 absolute right-2 bottom-2 cursor-pointer rounded-sm border border-line"
+      className="absolute right-2 bottom-2 cursor-pointer rounded-sm border border-line bg-surface-1/90"
       onClick={(event) => {
         moveTo(event.clientX, event.clientY, event.currentTarget.getBoundingClientRect());
       }}

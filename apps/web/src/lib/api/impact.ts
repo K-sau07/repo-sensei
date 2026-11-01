@@ -55,7 +55,7 @@ export interface Placed {
 
 /** Where each node is drawn, within [-1, 1]: the changed ones at the center, each affected one
  * on the ring of its distance, a ring's nodes in their way's order (so a branch stays together:
- * a node beside the one it is reached through), evenly around. */
+ * a node beside the one it is reached through, on its ring or the one inside), evenly around. */
 export function blastLayout(
   changed: readonly ImpactNode[],
   affected: readonly Affected[],
@@ -77,14 +77,26 @@ export function blastLayout(
     else rings.set(item.distance, [item]);
   }
   for (const distance of [...rings.keys()].sort((a, b) => a - b)) {
-    const ring = rings.get(distance) ?? [];
+    const found = rings.get(distance) ?? [];
     const angleOf = (item: Affected) => (item.via !== null ? (angles.get(item.via) ?? 0) : 0);
-    ring.sort(
-      (a, b) =>
-        angleOf(a) - angleOf(b) ||
-        b.score - a.score ||
-        (a.key < b.key ? -1 : a.key > b.key ? 1 : 0),
-    );
+    const order = (a: Affected, b: Affected) =>
+      angleOf(a) - angleOf(b) || b.score - a.score || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0);
+    // Reached through one on this ring (an endpoint through its handler: no hop): right after it.
+    const here = new Set(found.map((a) => a.key));
+    const after = new Map<string, Affected[]>();
+    for (const item of found) {
+      if (item.via !== null && here.has(item.via)) {
+        after.set(item.via, [...(after.get(item.via) ?? []), item]);
+      }
+    }
+    const ring: Affected[] = [];
+    const visit = (item: Affected) => {
+      ring.push(item);
+      for (const next of (after.get(item.key) ?? []).sort(order)) visit(next);
+    };
+    for (const item of found.filter((a) => a.via === null || !here.has(a.via)).sort(order)) {
+      visit(item);
+    }
     const radius = (distance / deepest) * 0.95;
     ring.forEach((item, i) => {
       // Offset by the first one's way, so a lone node sits beside what it is reached through.

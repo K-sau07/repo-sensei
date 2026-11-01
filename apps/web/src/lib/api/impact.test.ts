@@ -35,8 +35,9 @@ function affected(key: string, distance: number, via: string, score: number): Af
   };
 }
 
+// The endpoint its handler serves: no hop past it (as near, as sure).
 const ROUTE = {
-  ...affected("api_endpoint POST /users", 2, "handler", 0.68),
+  ...affected("api_endpoint POST /users", 1, "handler", 0.81),
   name: "POST /users",
   kind: "api_endpoint",
   path: null,
@@ -70,12 +71,17 @@ describe("impact", () => {
       const at = placed.get(key);
       return at ? Math.hypot(at.x, at.y) : NaN;
     };
-    expect(radius(HANDLER.key)).toBeCloseTo(0.475);
-    expect(radius(TABLE.key)).toBeCloseTo(0.475);
+    expect(radius(HANDLER.key)).toBeCloseTo(0.95);
+    expect(radius(TABLE.key)).toBeCloseTo(0.95);
     expect(radius(ROUTE.key)).toBeCloseTo(0.95);
-    // The route, alone on its ring, sits beside the handler it is reached through.
-    const [h, r] = [placed.get(HANDLER.key), placed.get(ROUTE.key)];
-    expect(Math.atan2(r?.y ?? 0, r?.x ?? 0)).toBeCloseTo(Math.atan2(h?.y ?? 0, h?.x ?? 0));
+    // The route, on its handler's ring, sits right after it: the next of the ring's 3 places.
+    const angle = (key: string) => {
+      const at = placed.get(key);
+      return Math.atan2(at?.y ?? 0, at?.x ?? 0);
+    };
+    const step = (2 * Math.PI) / 3;
+    const turn = (angle(ROUTE.key) - angle(HANDLER.key) + 2 * Math.PI) % (2 * Math.PI);
+    expect(turn).toBeCloseTo(step);
   });
 
   it("colors by score from the signal color through warn to danger", () => {
@@ -90,7 +96,7 @@ describe("impact", () => {
   it("writes a PR note: by category, ranked, with how sure and how far", () => {
     const note = prNote(IMPACT);
     expect(note).toContain("### Impact of changing `create_user`");
-    expect(note).toContain("**Routes** (1)\n\n- `POST /users` (68% sure, 2 hops)");
+    expect(note).toContain("**Routes** (1)\n\n- `POST /users` (81% sure, 1 hop)");
     expect(note).toContain("**Tables** (1)");
     expect(note).toContain("- `handler` — `app/x.py:1` (81% sure, 1 hop)");
     expect(note.indexOf("**Routes**")).toBeLessThan(note.indexOf("**Other code**"));

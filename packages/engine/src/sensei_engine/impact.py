@@ -4,9 +4,11 @@ Everything that depends on the changed code, transitively (the graph's edges wal
 a caller, an importer, a subclass, the endpoint a handler serves, the client call that targets
 that endpoint, the page that makes it, the test that tests it), each with a **score**: the
 surest way back to the change, the product of its edges' confidences, times
-:data:`DECAY` for each hop, so the near and the sure come first. Edges under ``min_conf``
-(0.5 by default) and edges a model inferred aren't followed. The tables the changed code
-reads, writes or maps to are affected too (at its score).
+:data:`DECAY` for each hop, so the near and the sure come first. An endpoint and its handler, and
+a client call and the endpoint it targets, are one step of the code seen from two sides
+(:data:`SAME_STEP`): reaching one from the other is no hop (no decay, none of the depth).
+Edges under ``min_conf`` (0.5 by default) and edges a model inferred aren't followed. The tables
+the changed code reads, writes or maps to are affected too (at its score).
 
 What is affected is sorted into **routes** (endpoints, GraphQL, RPC), **screens** (pages: the
 components no other code renders, and Next.js page files), **tests**, **tables**, and the
@@ -37,6 +39,10 @@ DEPENDS_ON = frozenset(
         EdgeType.TESTS, EdgeType.READS, EdgeType.WRITES, EdgeType.MAPS_TO, EdgeType.CONSUMES,
     }
 )  # fmt: skip
+# Edges between two faces of one step (handler → endpoint, endpoint → client call): free hops, else
+# a route would sit a hop past its own handler and a page's request two past it, and the depth
+# would cut off routes as near as their handlers.
+SAME_STEP = frozenset({EdgeType.HANDLED_BY, EdgeType.TARGETS})
 DATA = frozenset({EdgeType.READS, EdgeType.WRITES, EdgeType.MAPS_TO})
 ROUTE_KINDS = frozenset(
     {
@@ -137,20 +143,22 @@ def impact(
         if walked.get(here, max_depth + 1) <= depth:
             continue
         walked[here] = depth
-        if depth >= max_depth:
-            continue
         for there, _, edge_index in graph.graph.in_edges(here):
             edge = graph.edges[edge_index]
-            if not _follows(edge, min_conf) or walked.get(there, max_depth + 1) <= depth + 1:
+            same = edge.type in SAME_STEP
+            on = depth if same else depth + 1  # at the depth limit, only the free hops
+            if on > max_depth or not _follows(edge, min_conf):
                 continue
-            score = -negative * edge.confidence * DECAY
+            if walked.get(there, max_depth + 1) <= on:
+                continue
+            score = -negative * edge.confidence * (1.0 if same else DECAY)
             held = best.get(there)
             if held is None or score > held[0]:
-                best[there] = (score, depth + 1, here, edge.type)
-            elif queued.get(there, max_depth + 1) <= depth + 1:
+                best[there] = (score, on, here, edge.type)
+            elif queued.get(there, max_depth + 1) <= on:
                 continue  # neither surer nor nearer than a way already on its way
-            queued[there] = min(queued.get(there, max_depth + 1), depth + 1)
-            heapq.heappush(queue, (-score, depth + 1, there))
+            queued[there] = min(queued.get(there, max_depth + 1), on)
+            heapq.heappush(queue, (-score, on, there))
     _touched_tables(graph, starts, best, min_conf)
     items = [
         Affected(

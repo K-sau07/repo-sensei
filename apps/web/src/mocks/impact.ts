@@ -2,8 +2,9 @@
  * The mock impact (6.8): what a change to a symbol, or to some files, may break in the mock
  * snapshot's graph, worked out as the engine does (6.4, `sensei_engine.impact`). Everything that
  * depends on the change, walked backwards along the graph's dependency edges, surest first: a
- * node's score is the product of its way's confidences, times 0.85 a hop; edges under `minConf`
- * and edges a model inferred aren't followed. The tables the changed code reads, writes or maps
+ * node's score is the product of its way's confidences, times 0.85 a hop (an endpoint and its
+ * handler, a client call and its endpoint, are one step: no hop); edges under `minConf` and edges
+ * a model inferred aren't followed. The tables the changed code reads, writes or maps
  * to (directly, or through its ORM models) are affected too. The graph's pages come from
  * fixtures/impact.json (scripts/mock_impact.py, the engine's trace index), which also holds the
  * engine's answer for a few changes: a test checks this walk gives the same.
@@ -14,6 +15,9 @@ export const DECAY = 0.85;
 export const MIN_CONF = 0.5;
 export const MAX_DEPTH = 8;
 export const MAX_AFFECTED = 2_000;
+
+/** One step of the code seen from two sides: reaching one from the other is no hop. */
+const SAME_STEP: ReadonlySet<string> = new Set(["handled_by", "targets"]);
 
 const DEPENDS_ON: ReadonlySet<string> = new Set([
   "calls",
@@ -155,20 +159,23 @@ export function impactOf(
     const [score, depth, here] = popped;
     if ((walked.get(here) ?? beyond) <= depth) continue;
     walked.set(here, depth);
-    if (depth >= MAX_DEPTH) continue;
     // Newest first, as the engine's graph (rustworkx) lists a node's edges: ties go the same way.
     for (const edge of [...graph.in(here)].reverse()) {
       const there = edge.src;
-      if (!follows(edge, minConf) || (walked.get(there) ?? beyond) <= depth + 1) continue;
-      const next = score * edge.confidence * DECAY;
-      const held = best.get(there);
-      if (held === undefined || next > held.score) {
-        best.set(there, { score: next, depth: depth + 1, via: here, edge: edge.type });
-      } else if ((queued.get(there) ?? beyond) <= depth + 1) {
+      const same = SAME_STEP.has(edge.type);
+      const on = same ? depth : depth + 1; // at the depth limit, only the free hops
+      if (on > MAX_DEPTH || !follows(edge, minConf) || (walked.get(there) ?? beyond) <= on) {
         continue;
       }
-      queued.set(there, Math.min(queued.get(there) ?? beyond, depth + 1));
-      queue.push([next, depth + 1, there]);
+      const next = score * edge.confidence * (same ? 1 : DECAY);
+      const held = best.get(there);
+      if (held === undefined || next > held.score) {
+        best.set(there, { score: next, depth: on, via: here, edge: edge.type });
+      } else if ((queued.get(there) ?? beyond) <= on) {
+        continue;
+      }
+      queued.set(there, Math.min(queued.get(there) ?? beyond, on));
+      queue.push([next, on, there]);
     }
   }
   touchedTables(graph, starts, best, minConf);

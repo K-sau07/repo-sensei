@@ -33,15 +33,15 @@
       "routes": [
         {
           "key": "api_endpoint POST /api/v1/users",
-          "score": 0.5852,
-          "distance": 2,
+          "score": 0.6885,
+          "distance": 1,
           "via": "py backend/app/api/routes/users.py/create_user().",
           "edge": "handled_by"
         },
         {
           "key": "api_endpoint POST /api/v1/users/signup",
-          "score": 0.5852,
-          "distance": 2,
+          "score": 0.6885,
+          "distance": 1,
           "via": "py backend/app/api/routes/users.py/register_user().",
           "edge": "handled_by"
         }
@@ -106,155 +106,155 @@
       "routes": [
         {
           "key": "api_endpoint DELETE /api/v1/users/{}",
-          "score": 0.5852,
-          "distance": 2,
+          "score": 0.6885,
+          "distance": 1,
           "via": "py backend/app/api/routes/users.py/delete_user().",
           "edge": "handled_by"
         },
         {
           "key": "api_endpoint GET /api/v1/users",
-          "score": 0.5852,
-          "distance": 2,
+          "score": 0.6885,
+          "distance": 1,
           "via": "py backend/app/api/routes/users.py/read_users().",
           "edge": "handled_by"
         },
         {
           "key": "api_endpoint GET /api/v1/users/{}",
-          "score": 0.5852,
-          "distance": 2,
+          "score": 0.6885,
+          "distance": 1,
           "via": "py backend/app/api/routes/users.py/read_user_by_id().",
           "edge": "handled_by"
         },
         {
           "key": "api_endpoint PATCH /api/v1/users/{}",
-          "score": 0.5852,
-          "distance": 2,
+          "score": 0.6885,
+          "distance": 1,
           "via": "py backend/app/api/routes/users.py/update_user().",
           "edge": "handled_by"
         },
         {
           "key": "api_endpoint POST /api/v1/private/users",
-          "score": 0.5852,
-          "distance": 2,
+          "score": 0.6885,
+          "distance": 1,
           "via": "py backend/app/api/routes/private.py/create_user().",
           "edge": "handled_by"
         },
         {
           "key": "api_endpoint DELETE /api/v1/items/{}",
-          "score": 0.4477,
-          "distance": 3,
+          "score": 0.5267,
+          "distance": 2,
           "via": "py backend/app/api/routes/items.py/delete_item().",
           "edge": "handled_by"
         },
         {
           "key": "api_endpoint DELETE /api/v1/users/me",
-          "score": 0.4477,
-          "distance": 3,
+          "score": 0.5267,
+          "distance": 2,
           "via": "py backend/app/api/routes/users.py/delete_user_me().",
           "edge": "handled_by"
         },
         {
           "key": "api_endpoint GET /api/v1/items",
-          "score": 0.4477,
-          "distance": 3,
+          "score": 0.5267,
+          "distance": 2,
           "via": "py backend/app/api/routes/items.py/read_items().",
           "edge": "handled_by"
         },
         {
           "key": "api_endpoint GET /api/v1/items/{}",
-          "score": 0.4477,
-          "distance": 3,
+          "score": 0.5267,
+          "distance": 2,
           "via": "py backend/app/api/routes/items.py/read_item().",
           "edge": "handled_by"
         },
         {
           "key": "api_endpoint GET /api/v1/users/me",
-          "score": 0.4477,
-          "distance": 3,
+          "score": 0.5267,
+          "distance": 2,
           "via": "py backend/app/api/routes/users.py/read_user_me().",
           "edge": "handled_by"
         },
         {
           "key": "api_endpoint PATCH /api/v1/users/me",
-          "score": 0.4477,
-          "distance": 3,
+          "score": 0.5267,
+          "distance": 2,
           "via": "py backend/app/api/routes/users.py/update_user_me().",
           "edge": "handled_by"
         },
         {
           "key": "api_endpoint PATCH /api/v1/users/me/password",
-          "score": 0.4477,
-          "distance": 3,
+          "score": 0.5267,
+          "distance": 2,
           "via": "py backend/app/api/routes/users.py/update_password_me().",
           "edge": "handled_by"
         },
         {
           "key": "api_endpoint POST /api/v1/items",
-          "score": 0.4477,
-          "distance": 3,
+          "score": 0.5267,
+          "distance": 2,
           "via": "py backend/app/api/routes/items.py/create_item().",
           "edge": "handled_by"
         },
         {
           "key": "api_endpoint POST /api/v1/login/access-token",
-          "score": 0.4477,
-          "distance": 3,
+          "score": 0.5267,
+          "distance": 2,
           "via": "py backend/app/api/routes/login.py/login_access_token().",
           "edge": "handled_by"
         },
         {
           "key": "api_endpoint POST /api/v1/login/test-token",
-          "score": 0.4477,
-          "distance": 3,
+          "score": 0.5267,
+          "distance": 2,
           "via": "py backend/app/api/routes/login.py/test_token().",
           "edge": "handled_by"
         },
         {
           "key": "api_endpoint POST /api/v1/password-recovery-html-content/{}",
-          "score": 0.4477,
-          "distance": 3,
+          "score": 0.5267,
+          "distance": 2,
           "via": "py backend/app/api/routes/login.py/recover_password_html_content().",
           "edge": "handled_by"
         },
         {
           "key": "api_endpoint POST /api/v1/password-recovery/{}",
-          "score": 0.4477,
-          "distance": 3,
+          "score": 0.5267,
+          "distance": 2,
           "via": "py backend/app/api/routes/login.py/recover_password().",
           "edge": "handled_by"
         },
         {
           "key": "api_endpoint POST /api/v1/reset-password",
-          "score": 0.4477,
-          "distance": 3,
+          "score": 0.5267,
+          "distance": 2,
           "via": "py backend/app/api/routes/login.py/reset_password().",
           "edge": "handled_by"
         },
         {
           "key": "api_endpoint POST /api/v1/users",
-          "score": 0.4477,
-          "distance": 3,
+          "score": 0.5267,
+          "distance": 2,
           "via": "py backend/app/api/routes/users.py/create_user().",
           "edge": "handled_by"
         },
         {
           "key": "api_endpoint POST /api/v1/users/signup",
-          "score": 0.4477,
-          "distance": 3,
+          "score": 0.5267,
+          "distance": 2,
           "via": "py backend/app/api/routes/users.py/register_user().",
           "edge": "handled_by"
         },
         {
           "key": "api_endpoint POST /api/v1/utils/test-email",
-          "score": 0.4477,
-          "distance": 3,
+          "score": 0.5267,
+          "distance": 2,
           "via": "py backend/app/api/routes/utils.py/test_email().",
           "edge": "handled_by"
         },
         {
           "key": "api_endpoint PUT /api/v1/items/{}",
-          "score": 0.4477,
-          "distance": 3,
+          "score": 0.5267,
+          "distance": 2,
           "via": "py backend/app/api/routes/items.py/update_item().",
           "edge": "handled_by"
         }
@@ -578,120 +578,120 @@
       "routes": [
         {
           "key": "api_endpoint DELETE /api/v1/items/{}",
-          "score": 0.5852,
-          "distance": 2,
+          "score": 0.6885,
+          "distance": 1,
           "via": "py backend/app/api/routes/items.py/delete_item().",
           "edge": "handled_by"
         },
         {
           "key": "api_endpoint DELETE /api/v1/users/me",
-          "score": 0.5852,
-          "distance": 2,
+          "score": 0.6885,
+          "distance": 1,
           "via": "py backend/app/api/routes/users.py/delete_user_me().",
           "edge": "handled_by"
         },
         {
           "key": "api_endpoint DELETE /api/v1/users/{}",
-          "score": 0.5852,
-          "distance": 2,
+          "score": 0.6885,
+          "distance": 1,
           "via": "py backend/app/api/routes/users.py/delete_user().",
           "edge": "handled_by"
         },
         {
           "key": "api_endpoint GET /api/v1/items",
-          "score": 0.5852,
-          "distance": 2,
+          "score": 0.6885,
+          "distance": 1,
           "via": "py backend/app/api/routes/items.py/read_items().",
           "edge": "handled_by"
         },
         {
           "key": "api_endpoint GET /api/v1/items/{}",
-          "score": 0.5852,
-          "distance": 2,
+          "score": 0.6885,
+          "distance": 1,
           "via": "py backend/app/api/routes/items.py/read_item().",
           "edge": "handled_by"
         },
         {
           "key": "api_endpoint GET /api/v1/users/me",
-          "score": 0.5852,
-          "distance": 2,
+          "score": 0.6885,
+          "distance": 1,
           "via": "py backend/app/api/routes/users.py/read_user_me().",
           "edge": "handled_by"
         },
         {
           "key": "api_endpoint GET /api/v1/users/{}",
-          "score": 0.5852,
-          "distance": 2,
+          "score": 0.6885,
+          "distance": 1,
           "via": "py backend/app/api/routes/users.py/read_user_by_id().",
           "edge": "handled_by"
         },
         {
           "key": "api_endpoint PATCH /api/v1/users/me",
-          "score": 0.5852,
-          "distance": 2,
+          "score": 0.6885,
+          "distance": 1,
           "via": "py backend/app/api/routes/users.py/update_user_me().",
           "edge": "handled_by"
         },
         {
           "key": "api_endpoint PATCH /api/v1/users/me/password",
-          "score": 0.5852,
-          "distance": 2,
+          "score": 0.6885,
+          "distance": 1,
           "via": "py backend/app/api/routes/users.py/update_password_me().",
           "edge": "handled_by"
         },
         {
           "key": "api_endpoint POST /api/v1/items",
-          "score": 0.5852,
-          "distance": 2,
+          "score": 0.6885,
+          "distance": 1,
           "via": "py backend/app/api/routes/items.py/create_item().",
           "edge": "handled_by"
         },
         {
           "key": "api_endpoint POST /api/v1/login/test-token",
-          "score": 0.5852,
-          "distance": 2,
+          "score": 0.6885,
+          "distance": 1,
           "via": "py backend/app/api/routes/login.py/test_token().",
           "edge": "handled_by"
         },
         {
           "key": "api_endpoint PUT /api/v1/items/{}",
-          "score": 0.5852,
-          "distance": 2,
+          "score": 0.6885,
+          "distance": 1,
           "via": "py backend/app/api/routes/items.py/update_item().",
           "edge": "handled_by"
         },
         {
           "key": "api_endpoint GET /api/v1/users",
-          "score": 0.4477,
-          "distance": 3,
+          "score": 0.5267,
+          "distance": 2,
           "via": "py backend/app/api/routes/users.py/read_users().",
           "edge": "handled_by"
         },
         {
           "key": "api_endpoint PATCH /api/v1/users/{}",
-          "score": 0.4477,
-          "distance": 3,
+          "score": 0.5267,
+          "distance": 2,
           "via": "py backend/app/api/routes/users.py/update_user().",
           "edge": "handled_by"
         },
         {
           "key": "api_endpoint POST /api/v1/password-recovery-html-content/{}",
-          "score": 0.4477,
-          "distance": 3,
+          "score": 0.5267,
+          "distance": 2,
           "via": "py backend/app/api/routes/login.py/recover_password_html_content().",
           "edge": "handled_by"
         },
         {
           "key": "api_endpoint POST /api/v1/users",
-          "score": 0.4477,
-          "distance": 3,
+          "score": 0.5267,
+          "distance": 2,
           "via": "py backend/app/api/routes/users.py/create_user().",
           "edge": "handled_by"
         },
         {
           "key": "api_endpoint POST /api/v1/utils/test-email",
-          "score": 0.4477,
-          "distance": 3,
+          "score": 0.5267,
+          "distance": 2,
           "via": "py backend/app/api/routes/utils.py/test_email().",
           "edge": "handled_by"
         }
@@ -898,15 +898,15 @@
       "routes": [
         {
           "key": "api_endpoint PATCH /api/v1/users/me/password",
-          "score": 0.5852,
-          "distance": 2,
+          "score": 0.6885,
+          "distance": 1,
           "via": "py backend/app/api/routes/users.py/update_password_me().",
           "edge": "handled_by"
         },
         {
           "key": "api_endpoint POST /api/v1/login/access-token",
-          "score": 0.4477,
-          "distance": 3,
+          "score": 0.5267,
+          "distance": 2,
           "via": "py backend/app/api/routes/login.py/login_access_token().",
           "edge": "handled_by"
         }
@@ -977,155 +977,155 @@
       "routes": [
         {
           "key": "api_endpoint DELETE /api/v1/users/{}",
-          "score": 0.5852,
-          "distance": 2,
+          "score": 0.6885,
+          "distance": 1,
           "via": "py backend/app/api/routes/users.py/delete_user().",
           "edge": "handled_by"
         },
         {
           "key": "api_endpoint GET /api/v1/users",
-          "score": 0.5852,
-          "distance": 2,
+          "score": 0.6885,
+          "distance": 1,
           "via": "py backend/app/api/routes/users.py/read_users().",
           "edge": "handled_by"
         },
         {
           "key": "api_endpoint GET /api/v1/users/{}",
-          "score": 0.5852,
-          "distance": 2,
+          "score": 0.6885,
+          "distance": 1,
           "via": "py backend/app/api/routes/users.py/read_user_by_id().",
           "edge": "handled_by"
         },
         {
           "key": "api_endpoint PATCH /api/v1/users/{}",
-          "score": 0.5852,
-          "distance": 2,
+          "score": 0.6885,
+          "distance": 1,
           "via": "py backend/app/api/routes/users.py/update_user().",
           "edge": "handled_by"
         },
         {
           "key": "api_endpoint DELETE /api/v1/users/me",
-          "score": 0.4552,
-          "distance": 2,
+          "score": 0.5355,
+          "distance": 1,
           "via": "py backend/app/api/routes/users.py/delete_user_me().",
           "edge": "handled_by"
         },
         {
           "key": "api_endpoint PATCH /api/v1/users/me",
-          "score": 0.4552,
-          "distance": 2,
+          "score": 0.5355,
+          "distance": 1,
           "via": "py backend/app/api/routes/users.py/update_user_me().",
           "edge": "handled_by"
         },
         {
           "key": "api_endpoint PATCH /api/v1/users/me/password",
-          "score": 0.4552,
-          "distance": 2,
+          "score": 0.5355,
+          "distance": 1,
           "via": "py backend/app/api/routes/users.py/update_password_me().",
           "edge": "handled_by"
         },
         {
           "key": "api_endpoint POST /api/v1/private/users",
-          "score": 0.4552,
-          "distance": 2,
+          "score": 0.5355,
+          "distance": 1,
           "via": "py backend/app/api/routes/private.py/create_user().",
           "edge": "handled_by"
         },
         {
           "key": "api_endpoint DELETE /api/v1/items/{}",
-          "score": 0.4477,
-          "distance": 3,
+          "score": 0.5267,
+          "distance": 2,
           "via": "py backend/app/api/routes/items.py/delete_item().",
           "edge": "handled_by"
         },
         {
           "key": "api_endpoint GET /api/v1/items",
-          "score": 0.4477,
-          "distance": 3,
+          "score": 0.5267,
+          "distance": 2,
           "via": "py backend/app/api/routes/items.py/read_items().",
           "edge": "handled_by"
         },
         {
           "key": "api_endpoint GET /api/v1/items/{}",
-          "score": 0.4477,
-          "distance": 3,
+          "score": 0.5267,
+          "distance": 2,
           "via": "py backend/app/api/routes/items.py/read_item().",
           "edge": "handled_by"
         },
         {
           "key": "api_endpoint GET /api/v1/users/me",
-          "score": 0.4477,
-          "distance": 3,
+          "score": 0.5267,
+          "distance": 2,
           "via": "py backend/app/api/routes/users.py/read_user_me().",
           "edge": "handled_by"
         },
         {
           "key": "api_endpoint POST /api/v1/items",
-          "score": 0.4477,
-          "distance": 3,
+          "score": 0.5267,
+          "distance": 2,
           "via": "py backend/app/api/routes/items.py/create_item().",
           "edge": "handled_by"
         },
         {
           "key": "api_endpoint POST /api/v1/login/test-token",
-          "score": 0.4477,
-          "distance": 3,
+          "score": 0.5267,
+          "distance": 2,
           "via": "py backend/app/api/routes/login.py/test_token().",
           "edge": "handled_by"
         },
         {
           "key": "api_endpoint POST /api/v1/password-recovery-html-content/{}",
-          "score": 0.4477,
-          "distance": 3,
+          "score": 0.5267,
+          "distance": 2,
           "via": "py backend/app/api/routes/login.py/recover_password_html_content().",
           "edge": "handled_by"
         },
         {
           "key": "api_endpoint POST /api/v1/password-recovery/{}",
-          "score": 0.4477,
-          "distance": 3,
+          "score": 0.5267,
+          "distance": 2,
           "via": "py backend/app/api/routes/login.py/recover_password().",
           "edge": "handled_by"
         },
         {
           "key": "api_endpoint POST /api/v1/reset-password",
-          "score": 0.4477,
-          "distance": 3,
+          "score": 0.5267,
+          "distance": 2,
           "via": "py backend/app/api/routes/login.py/reset_password().",
           "edge": "handled_by"
         },
         {
           "key": "api_endpoint POST /api/v1/users",
-          "score": 0.4477,
-          "distance": 3,
+          "score": 0.5267,
+          "distance": 2,
           "via": "py backend/app/api/routes/users.py/create_user().",
           "edge": "handled_by"
         },
         {
           "key": "api_endpoint POST /api/v1/users/signup",
-          "score": 0.4477,
-          "distance": 3,
+          "score": 0.5267,
+          "distance": 2,
           "via": "py backend/app/api/routes/users.py/register_user().",
           "edge": "handled_by"
         },
         {
           "key": "api_endpoint PUT /api/v1/items/{}",
-          "score": 0.4477,
-          "distance": 3,
+          "score": 0.5267,
+          "distance": 2,
           "via": "py backend/app/api/routes/items.py/update_item().",
           "edge": "handled_by"
         },
         {
           "key": "api_endpoint POST /api/v1/login/access-token",
-          "score": 0.3482,
-          "distance": 3,
+          "score": 0.4097,
+          "distance": 2,
           "via": "py backend/app/api/routes/login.py/login_access_token().",
           "edge": "handled_by"
         },
         {
           "key": "api_endpoint POST /api/v1/utils/test-email",
-          "score": 0.3425,
-          "distance": 4,
+          "score": 0.4029,
+          "distance": 3,
           "via": "py backend/app/api/routes/utils.py/test_email().",
           "edge": "handled_by"
         }

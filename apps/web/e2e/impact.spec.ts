@@ -25,7 +25,8 @@ test.describe("impact", () => {
     // The routes and the table it reaches, ranked, each with how sure and how far.
     const routes = page.getByTestId("impact-routes");
     await expect(routes.getByRole("heading")).toHaveText("Routes (2)");
-    await expect(routes.getByRole("listitem").first()).toContainText(/\d+%\s*2 hops/);
+    // As near as its handler: an endpoint is no hop past the function that serves it.
+    await expect(routes.getByRole("listitem").first()).toContainText(/\d+%\s*1 hop/);
     await expect(page.getByTestId("impact-tables")).toContainText("user");
     await expect(page.getByTestId("impact-symbols")).toContainText("Other code (6)");
 
