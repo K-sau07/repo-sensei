@@ -1120,6 +1120,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/orgs/{org}/repos/{repo}/impact": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Impact Of
+         * @description What the change may break, by category, ranked.
+         */
+        get: operations["impact_of_api_v1_orgs__org__repos__repo__impact_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/orgs/{org}/repos/{repo}/index-jobs": {
         parameters: {
             query?: never;
@@ -1521,6 +1541,42 @@ export interface components {
          * @enum {string}
          */
         ActorType: "user" | "system" | "api_key";
+        /** AffectedByCategory */
+        AffectedByCategory: {
+            /** Routes */
+            routes: components["schemas"]["AffectedOut"][];
+            /** Screens */
+            screens: components["schemas"]["AffectedOut"][];
+            /** Symbols */
+            symbols: components["schemas"]["AffectedOut"][];
+            /** Tables */
+            tables: components["schemas"]["AffectedOut"][];
+            /** Tests */
+            tests: components["schemas"]["AffectedOut"][];
+        };
+        /** AffectedOut */
+        AffectedOut: {
+            /** Distance */
+            distance: number;
+            /** Edge */
+            edge: string | null;
+            /** End Line */
+            end_line: number;
+            /** Key */
+            key: string;
+            /** Kind */
+            kind: string;
+            /** Name */
+            name: string;
+            /** Path */
+            path: string | null;
+            /** Score */
+            score: number;
+            /** Start Line */
+            start_line: number;
+            /** Via */
+            via: string | null;
+        };
         /** ArchitectureOut */
         ArchitectureOut: {
             /** Links */
@@ -2631,6 +2687,35 @@ export interface components {
             recent: components["schemas"]["ConversationOut"][];
             /** Repos */
             repos: components["schemas"]["RepoOut"][];
+        };
+        /** ImpactNodeOut */
+        ImpactNodeOut: {
+            /** End Line */
+            end_line: number;
+            /** Key */
+            key: string;
+            /** Kind */
+            kind: string;
+            /** Name */
+            name: string;
+            /** Path */
+            path: string | null;
+            /** Start Line */
+            start_line: number;
+        };
+        /** ImpactOut */
+        ImpactOut: {
+            affected: components["schemas"]["AffectedByCategory"];
+            /** Changed */
+            changed: components["schemas"]["ImpactNodeOut"][];
+            /** Heat */
+            heat: {
+                [key: string]: number;
+            };
+            /** Sha */
+            sha: string;
+            /** Truncated */
+            truncated: boolean;
         };
         /** ImportRepo */
         ImportRepo: {
@@ -6393,6 +6478,46 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+        };
+    };
+    impact_of_api_v1_orgs__org__repos__repo__impact_get: {
+        parameters: {
+            query?: {
+                symbol?: string | null;
+                files?: string[] | null;
+                min_conf?: number;
+                /** @description Branch or commit (or its first 7+ characters). */
+                ref?: string | null;
+            };
+            header?: never;
+            path: {
+                /** @description Organization slug */
+                org: string;
+                /** @description Repository slug */
+                repo: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImpactOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
             };
         };
     };

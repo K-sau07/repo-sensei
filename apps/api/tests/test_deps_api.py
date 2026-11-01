@@ -173,3 +173,29 @@ async def test_the_dsm_shows_a_cycle_and_coupling(
     # A module holding both: no cycle at that level.
     modules = await client.get(f"{url}/deps/cycles", params={"level": "module"})
     assert modules.json()["cycles"] == []
+
+
+@pytest.mark.integration
+async def test_the_impact_of_a_change(
+    api_app: FastAPI, client: httpx.AsyncClient, db_session: AsyncSession, tmp_path: Path
+) -> None:
+    url = await _indexed(api_app, client, db_session, tmp_path)
+    service_fn = "py backend/app/services/items.py/create_item()."
+    route_fn = "py backend/app/api/routes/items.py/create_item_route()."
+    by_name = await client.get(f"{url}/impact", params={"symbol": "create_item"})
+    assert by_name.status_code == 200, by_name.text
+    body = by_name.json()
+    assert [n["key"] for n in body["changed"]] == [service_fn]
+    callers = {a["key"]: a for a in body["affected"]["symbols"]}
+    caller = callers[route_fn]
+    assert (caller["key"], caller["via"], caller["edge"], caller["distance"]) == (
+        route_fn, service_fn, "calls", 1,
+    )  # fmt: skip
+    assert body["heat"][service_fn] == 1.0
+    assert 0 < body["heat"][route_fn] < 1
+    by_file = await client.get(f"{url}/impact", params={"files": [SERVICE]})
+    assert by_file.json()["affected"] == body["affected"]
+    neither = await client.get(f"{url}/impact")
+    assert (neither.status_code, neither.json()["error"]["code"]) == (422, "impact_change")
+    nothing = await client.get(f"{url}/impact", params={"symbol": "no_such_thing"})
+    assert (nothing.status_code, nothing.json()["error"]["code"]) == (404, "impact_not_found")

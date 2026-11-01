@@ -266,6 +266,11 @@ def _index(graph: GraphSnapshot) -> _Index:
     return held
 
 
+def pages(graph: GraphSnapshot) -> frozenset[str]:
+    """The keys of where users' journeys start (see :attr:`_Index.ui_roots`): the pages."""
+    return frozenset(graph.nodes[i].symbol_key for i in _index(graph).ui_roots)
+
+
 # A boundary node's layer is its kind's; a definition's its kind's, else its file's lane.
 KIND_LAYERS: dict[str, Layer] = {
     NodeKind.API_ENDPOINT.value: "route",

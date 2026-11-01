@@ -33,6 +33,7 @@ from sensei_api.routers import (
     graph,
     health,
     home,
+    impact,
     index_jobs,
     indexing,
     internal,
@@ -181,6 +182,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         staleness,
         diagrams,
         deps,
+        impact,
         home,
         shared,
     ):  # the order routes are matched in

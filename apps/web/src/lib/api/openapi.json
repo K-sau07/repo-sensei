@@ -75,6 +75,133 @@
         "title": "ActorType",
         "type": "string"
       },
+      "AffectedByCategory": {
+        "properties": {
+          "routes": {
+            "items": {
+              "$ref": "#/components/schemas/AffectedOut"
+            },
+            "title": "Routes",
+            "type": "array"
+          },
+          "screens": {
+            "items": {
+              "$ref": "#/components/schemas/AffectedOut"
+            },
+            "title": "Screens",
+            "type": "array"
+          },
+          "symbols": {
+            "items": {
+              "$ref": "#/components/schemas/AffectedOut"
+            },
+            "title": "Symbols",
+            "type": "array"
+          },
+          "tables": {
+            "items": {
+              "$ref": "#/components/schemas/AffectedOut"
+            },
+            "title": "Tables",
+            "type": "array"
+          },
+          "tests": {
+            "items": {
+              "$ref": "#/components/schemas/AffectedOut"
+            },
+            "title": "Tests",
+            "type": "array"
+          }
+        },
+        "required": [
+          "routes",
+          "screens",
+          "tests",
+          "tables",
+          "symbols"
+        ],
+        "title": "AffectedByCategory",
+        "type": "object"
+      },
+      "AffectedOut": {
+        "properties": {
+          "distance": {
+            "title": "Distance",
+            "type": "integer"
+          },
+          "edge": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Edge"
+          },
+          "end_line": {
+            "title": "End Line",
+            "type": "integer"
+          },
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Path"
+          },
+          "score": {
+            "title": "Score",
+            "type": "number"
+          },
+          "start_line": {
+            "title": "Start Line",
+            "type": "integer"
+          },
+          "via": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Via"
+          }
+        },
+        "required": [
+          "key",
+          "name",
+          "kind",
+          "path",
+          "start_line",
+          "end_line",
+          "score",
+          "distance",
+          "via",
+          "edge"
+        ],
+        "title": "AffectedOut",
+        "type": "object"
+      },
       "ArchitectureOut": {
         "properties": {
           "links": {
@@ -2922,6 +3049,89 @@
           "recent"
         ],
         "title": "HomeOut",
+        "type": "object"
+      },
+      "ImpactNodeOut": {
+        "properties": {
+          "end_line": {
+            "title": "End Line",
+            "type": "integer"
+          },
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Path"
+          },
+          "start_line": {
+            "title": "Start Line",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "key",
+          "name",
+          "kind",
+          "path",
+          "start_line",
+          "end_line"
+        ],
+        "title": "ImpactNodeOut",
+        "type": "object"
+      },
+      "ImpactOut": {
+        "properties": {
+          "affected": {
+            "$ref": "#/components/schemas/AffectedByCategory"
+          },
+          "changed": {
+            "items": {
+              "$ref": "#/components/schemas/ImpactNodeOut"
+            },
+            "title": "Changed",
+            "type": "array"
+          },
+          "heat": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "title": "Heat",
+            "type": "object"
+          },
+          "sha": {
+            "title": "Sha",
+            "type": "string"
+          },
+          "truncated": {
+            "title": "Truncated",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "sha",
+          "changed",
+          "affected",
+          "heat",
+          "truncated"
+        ],
+        "title": "ImpactOut",
         "type": "object"
       },
       "ImportRepo": {
@@ -11142,6 +11352,132 @@
         "summary": "Grep",
         "tags": [
           "browse"
+        ]
+      }
+    },
+    "/api/v1/orgs/{org}/repos/{repo}/impact": {
+      "get": {
+        "description": "What the change may break, by category, ranked.",
+        "operationId": "impact_of_api_v1_orgs__org__repos__repo__impact_get",
+        "parameters": [
+          {
+            "description": "Organization slug",
+            "in": "path",
+            "name": "org",
+            "required": true,
+            "schema": {
+              "description": "Organization slug",
+              "title": "Org",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Repository slug",
+            "in": "path",
+            "name": "repo",
+            "required": true,
+            "schema": {
+              "description": "Repository slug",
+              "maxLength": 201,
+              "title": "Repo",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "symbol",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 2000,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Symbol"
+            }
+          },
+          {
+            "in": "query",
+            "name": "files",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "maxItems": 200,
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Files"
+            }
+          },
+          {
+            "in": "query",
+            "name": "min_conf",
+            "required": false,
+            "schema": {
+              "default": 0.5,
+              "maximum": 1,
+              "minimum": 0,
+              "title": "Min Conf",
+              "type": "number"
+            }
+          },
+          {
+            "description": "Branch or commit (or its first 7+ characters).",
+            "in": "query",
+            "name": "ref",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 255,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Branch or commit (or its first 7+ characters).",
+              "title": "Ref"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImpactOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Impact Of",
+        "tags": [
+          "impact"
         ]
       }
     },
