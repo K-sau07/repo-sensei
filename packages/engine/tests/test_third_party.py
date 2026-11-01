@@ -53,11 +53,12 @@ DECLARED = [
 
 def test_declared_packages_are_joined_with_the_imports() -> None:
     used = usage(_graph())
-    assert used[("pypi", "fastapi")].files == {"app/main.py": 2, "app/config.py": 1}
+    assert used[("pypi", "fastapi.routing")].files == {"app/main.py": 1}
     declared, undeclared = packages_in_use(DECLARED, used)
     by_name = {p.name: p for p in declared}
     assert declared[0].name == "fastapi"  # the most used first
     assert by_name["fastapi"].versions == ["0.115.6"]
+    assert by_name["fastapi"].usage.files == {"app/main.py": 2, "app/config.py": 1}
     assert by_name["fastapi"].usage.imports == 3
     assert set(by_name["pyyaml"].usage.files) == {"app/config.py"}  # "yaml" is PyYAML
     assert set(by_name["@tanstack/react-query"].usage.files) == {"web/page.tsx"}
@@ -65,3 +66,41 @@ def test_declared_packages_are_joined_with_the_imports() -> None:
     assert by_name["pytest"].dev
     # Imported, declared nowhere: requests (os and node:fs are built in).
     assert [(p.ecosystem, p.name) for p in undeclared] == [("pypi", "requests")]
+
+
+def test_only_imports_count_node_builtins_are_built_in_and_the_surest_name_wins() -> None:
+    nodes = [
+        _node("py app/a.py", NodeKind.MODULE, "app/a.py"),
+        _node("ts web/b.ts", NodeKind.MODULE, "web/b.ts"),
+        _node("external_symbol py:requests/get", NodeKind.EXTERNAL_SYMBOL, None),
+        _node("external_symbol py:google.cloud.storage/Client", NodeKind.EXTERNAL_SYMBOL, None),
+        _node("external_symbol py:google.protobuf.message/Message", NodeKind.EXTERNAL_SYMBOL, None),
+        _node("package npm:node:perf_hooks", NodeKind.PACKAGE, None),
+        _node("package npm:node:async_hooks", NodeKind.PACKAGE, None),
+    ]
+    at = {n.symbol_key: i for i, n in enumerate(nodes)}
+
+    def edge(kind: EdgeType) -> Edge:
+        return Edge(kind, 1.0, Provenance.IMPORT_RESOLVED, None, 1)
+
+    edges = [
+        (at["py app/a.py"], at["external_symbol py:requests/get"], edge(EdgeType.IMPORTS)),
+        *[(at["py app/a.py"], at["external_symbol py:requests/get"], edge(EdgeType.CALLS))] * 5,
+        (at["py app/a.py"], at["external_symbol py:google.cloud.storage/Client"],
+         edge(EdgeType.IMPORTS)),
+        (at["py app/a.py"], at["external_symbol py:google.protobuf.message/Message"],
+         edge(EdgeType.IMPORTS)),
+        (at["ts web/b.ts"], at["package npm:node:perf_hooks"], edge(EdgeType.IMPORTS)),
+        (at["ts web/b.ts"], at["package npm:node:async_hooks"], edge(EdgeType.IMPORTS)),
+    ]  # fmt: skip
+    declared = [
+        {"ecosystem": "pypi", "name": "requests", "version": "2.32.3", "dev": False},
+        {"ecosystem": "pypi", "name": "protobuf", "version": "5.29.0", "dev": False},
+        {"ecosystem": "pypi", "name": "google-cloud-storage", "version": "2.19.0", "dev": False},
+    ]
+    found, undeclared = packages_in_use(declared, usage(GraphSnapshot(nodes, edges)))
+    by_name = {p.name: p for p in found}
+    assert by_name["requests"].usage.imports == 1  # one import; its five calls aren't imports
+    assert by_name["google-cloud-storage"].usage.files == {"app/a.py": 1}
+    assert by_name["protobuf"].usage.files == {"app/a.py": 1}  # google.protobuf: no google-protobuf
+    assert undeclared == []  # Node's own modules are built in

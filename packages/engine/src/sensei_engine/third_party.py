@@ -18,8 +18,9 @@ from typing import Any
 
 from packaging.utils import canonicalize_name
 
-from sensei_core.models import NodeKind
+from sensei_core.models import EdgeType, NodeKind
 from sensei_engine.graph.snapshot import GraphSnapshot
+from sensei_engine.imports.ecma.resolve import NODE_BUILTINS
 
 IMPORT_NAMES: Mapping[str, tuple[str, ...]] = {
     "yaml": ("pyyaml",),
@@ -38,13 +39,6 @@ IMPORT_NAMES: Mapping[str, tuple[str, ...]] = {
     "socketio": ("python-socketio",),
     "google": ("protobuf", "google-cloud-storage", "google-api-python-client"),
 }
-NODE_BUILTINS = frozenset(
-    {
-        "assert", "buffer", "child_process", "cluster", "crypto", "dns", "events", "fs", "http",
-        "http2", "https", "net", "os", "path", "process", "querystring", "readline", "stream",
-        "string_decoder", "timers", "tls", "url", "util", "v8", "vm", "worker_threads", "zlib",
-    }
-)  # fmt: skip
 USED_IN = 20  # files listed per package
 
 
@@ -58,7 +52,8 @@ class Usage:
 
 
 def _imported(key: str) -> tuple[str, str] | None:
-    """A package or external-symbol node's ecosystem and package (or top module) name."""
+    """A package or external-symbol node's ecosystem and what it names: a Python module
+    (dotted: ``google.cloud.storage``), or an npm package (``node:fs`` for Node's own)."""
     kind, _, rest = key.partition(" ")
     prefix, _, name = rest.partition(":")
     if prefix not in ("py", "npm") or not name:
@@ -70,17 +65,18 @@ def _imported(key: str) -> tuple[str, str] | None:
             parts = name.split("/")
             name = "/".join(parts[:2]) if name.startswith("@") else parts[0]
     if prefix == "py":
-        return "pypi", name.split(".", 1)[0]
-    return "npm", name.removeprefix("node:")
+        return "pypi", name
+    return "npm", name
 
 
 def usage(graph: GraphSnapshot) -> dict[tuple[str, str], Usage]:
-    """What the code imports from outside, by (ecosystem, import name): the importing files."""
+    """What the code imports from outside, by (ecosystem, import name): the importing files and
+    how many imports each makes (its imports only: not its calls or references)."""
     found: defaultdict[tuple[str, str], Usage] = defaultdict(Usage)
     outside = {NodeKind.PACKAGE.value, NodeKind.EXTERNAL_SYMBOL.value}
-    for a, b, _ in graph.graph.weighted_edge_list():
+    for a, b, index in graph.graph.weighted_edge_list():
         target = graph.nodes[b]
-        if target.kind not in outside:
+        if target.kind not in outside or graph.edges[index].type is not EdgeType.IMPORTS:
             continue
         named = _imported(target.symbol_key)
         source = graph.nodes[a]
@@ -105,16 +101,28 @@ class PackageInUse:
         return bool(self.declared) and all(bool(d.get("dev")) for d in self.declared)
 
 
+def _top(ecosystem: str, imported: str) -> str:
+    """What an import is listed as when nothing declares it: a module's top package."""
+    return imported.split(".", 1)[0] if ecosystem == "pypi" else imported
+
+
 def _candidates(ecosystem: str, imported: str) -> list[str]:
+    """The distributions an import may be, most specific first: ``google.cloud.storage`` is
+    ``google-cloud-storage`` before it is any ``google``."""
     if ecosystem == "npm":
         return [imported]
-    return [canonicalize_name(imported), *IMPORT_NAMES.get(imported.lower(), ())]
+    parts = imported.split(".")
+    dotted = [canonicalize_name("-".join(parts[:n])) for n in range(len(parts), 1, -1)]
+    top = parts[0]
+    return [*dotted, canonicalize_name(top), *IMPORT_NAMES.get(top.lower(), ())]
 
 
 def _builtin(ecosystem: str, imported: str) -> bool:
     if ecosystem == "pypi":
-        return imported in sys.stdlib_module_names or imported.startswith("_")
-    return imported in NODE_BUILTINS
+        top = _top(ecosystem, imported)
+        return top in sys.stdlib_module_names or top.startswith("_")
+    # The resolver names Node's own modules "node:<name>" (and some code imports them so).
+    return imported.startswith("node:") or imported in NODE_BUILTINS
 
 
 def packages_in_use(
@@ -129,7 +137,7 @@ def packages_in_use(
         if held is None:
             held = by_name[key] = PackageInUse(key[0], key[1], [], Usage())
         held.declared.append(entry)
-    undeclared: list[PackageInUse] = []
+    undeclared: dict[tuple[str, str], PackageInUse] = {}
     for (ecosystem, imported), counts in sorted(used.items()):
         match = next(
             (
@@ -142,9 +150,13 @@ def packages_in_use(
         if match is not None:
             match.usage.files.update(counts.files)
         elif not _builtin(ecosystem, imported):
-            undeclared.append(PackageInUse(ecosystem, imported, [], counts))
+            top = (ecosystem, _top(ecosystem, imported))
+            held = undeclared.get(top)
+            if held is None:
+                held = undeclared[top] = PackageInUse(top[0], top[1], [], Usage())
+            held.usage.files.update(counts.files)
 
     def rank(p: PackageInUse) -> tuple[int, int, str, str]:
         return (-len(p.usage.files), -p.usage.imports, p.ecosystem, p.name)
 
-    return sorted(by_name.values(), key=rank), sorted(undeclared, key=rank)
+    return sorted(by_name.values(), key=rank), sorted(undeclared.values(), key=rank)

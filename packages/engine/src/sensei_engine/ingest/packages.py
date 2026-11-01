@@ -30,6 +30,8 @@ log = get_logger(__name__)
 Ecosystem = Literal["pypi", "npm"]
 LOCKFILES = frozenset({"uv.lock", "poetry.lock", "package-lock.json", "pnpm-lock.yaml"})
 MAX_LOCK_BYTES = 32 << 20  # a lockfile read for its versions
+MAX_YAML_LOCK_BYTES = 8 << 20  # a YAML one (parsed slower, into more memory)
+_YAML_LOADER: type[yaml.SafeLoader] = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
 TOP = "."
 _REQUIREMENTS = re.compile(r"^requirements[\w.-]*\.(?:txt|in)$")
 _DEV_WORDS = re.compile(r"(^|[^a-z])(dev|test|tests|lint|docs?|typing)([^a-z]|$)")
@@ -210,7 +212,8 @@ def _npm_lock(text: str, held: dict[str, str]) -> None:
 
 
 def _pnpm_lock(text: str, folder: str, into: Locked) -> None:
-    data = _table(yaml.safe_load(text))
+    # The C loader where there is one: the pure-Python one reads about 1 MB a second.
+    data = _table(yaml.load(text, Loader=_YAML_LOADER))  # noqa: S506 - a safe loader
     importers = _table(data.get("importers")) or {TOP: data}
     for importer, entry in importers.items():
         at = str(posixpath.normpath(posixpath.join("" if folder == TOP else folder, importer)))
@@ -290,12 +293,14 @@ def find_lockfiles(root: Any, manifests: Iterable[str]) -> list[str]:
 
 def read_lockfiles(root: Any, paths: Iterable[str]) -> dict[str, str]:
     """The lockfiles' text (``root`` a :class:`~pathlib.Path`), each up to
-    :data:`MAX_LOCK_BYTES` (a bigger one is left out: its versions unknown)."""
+    :data:`MAX_LOCK_BYTES` (a YAML one :data:`MAX_YAML_LOCK_BYTES`; a bigger one is left out:
+    its versions unknown)."""
     texts: dict[str, str] = {}
     for path in paths:
         target = root / path
         try:
-            if target.stat().st_size > MAX_LOCK_BYTES:
+            limit = MAX_YAML_LOCK_BYTES if path.endswith(".yaml") else MAX_LOCK_BYTES
+            if target.stat().st_size > limit:
                 continue
             texts[path] = target.read_text(encoding="utf-8", errors="replace")
         except OSError:
