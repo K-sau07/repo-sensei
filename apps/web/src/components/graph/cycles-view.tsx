@@ -13,6 +13,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { LEVEL_LABELS, type Cycle, type DsmNode } from "@/lib/api/deps";
 
 import { useGraphState } from "./graph-state";
+import { GuessesSwitch } from "./guesses-switch";
 import { LevelSelect } from "./level-select";
 import { useCycles, useDsm } from "./use-deps";
 
@@ -34,10 +35,13 @@ export function CyclesView() {
   const name = (id: string) => labels.get(id) ?? id;
   return (
     <div className="flex max-w-3xl flex-col gap-4 p-4">
-      <LevelSelect
-        value={level}
-        onChange={(value) => void setState({ level: value, cycle: null })}
-      />
+      <div className="flex items-center gap-3">
+        <LevelSelect
+          value={level}
+          onChange={(value) => void setState({ level: value, cycle: null })}
+        />
+        <GuessesSwitch />
+      </div>
       {dsm.isPending ? (
         <Skeleton className="h-40" />
       ) : dsm.isError ? (

@@ -65,6 +65,9 @@ KIND_GROUPS: Mapping[str, str] = {
     NodeKind.COLUMN.value: "Tables",
 }
 SAMPLES = 3  # evidence lines kept on an aggregated edge
+# The least sure edge counted unless asked otherwise: a call matched by its name alone is a guess
+# (under it), and a cycle or a matrix cell made of guesses would show coupling the code lacks.
+MIN_CONF = 0.5
 MAX_FORCE = 2_000  # nodes a force layout is run for (more: the spiral)
 SEED = 7
 

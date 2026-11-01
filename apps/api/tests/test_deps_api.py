@@ -61,6 +61,20 @@ CYCLE = {
     B: "from app.loop.a import first\n\n\ndef second():\n    return first()\n",
 }
 
+# Methods called on receivers of unknown types, matched by their names alone (neither file
+# imports the other): guesses, a cycle only when they are counted.
+GUESS_X = "backend/app/jobs/x.py"
+GUESS_Y = "backend/app/mail/y.py"
+GUESSED = {
+    GUESS_X: (
+        "class Jobs:\n    def nightly_sweep(self, mailer):\n"
+        "        return mailer.compose_digest(self)\n"
+    ),
+    GUESS_Y: (
+        "class Mailer:\n    def compose_digest(self, jobs):\n"
+        "        return jobs.nightly_sweep(self)\n"
+    ),
+}
 
 THIRD_PARTY = {
     "backend/pyproject.toml": (
@@ -80,7 +94,7 @@ THIRD_PARTY = {
 async def _indexed(
     api_app: FastAPI, client: httpx.AsyncClient, db: AsyncSession, tmp_path: Path
 ) -> str:
-    snapshot, _ = await index_repo(db, tmp_path, {**ITEMS, **CYCLE, **THIRD_PARTY})
+    snapshot, _ = await index_repo(db, tmp_path, {**ITEMS, **CYCLE, **GUESSED, **THIRD_PARTY})
     snapshot.status, snapshot.merkle_root, snapshot.ready_at = SnapshotStatus.READY, "00" * 32, NOW
     repo = await db.get(Repo, snapshot.repo_id)
     assert repo is not None
@@ -209,6 +223,44 @@ async def test_the_dsm_shows_a_cycle_and_coupling(
     monkeypatch.setattr(deps_router, "MAX_DSM", 2)
     big = await client.get(f"{url}/deps/dsm", params={"level": "file"})
     assert (big.status_code, big.json()["error"]["code"]) == (422, "dsm_too_large")
+
+
+@pytest.mark.integration
+async def test_guessed_edges_are_left_out_unless_asked_for(
+    api_app: FastAPI, client: httpx.AsyncClient, db_session: AsyncSession, tmp_path: Path
+) -> None:
+    url = await _indexed(api_app, client, db_session, tmp_path)
+    jobs, mail = "backend/app/jobs", "backend/app/mail"
+
+    def pairs(body: dict[str, Any]) -> set[tuple[str, str]]:
+        return {(e["source"], e["target"]) for e in body["edges"]}
+
+    sure = (await client.get(f"{url}/deps", params={"level": "module"})).json()
+    assert {jobs, mail} <= {n["id"] for n in sure["nodes"]}  # still drawn, where they were
+    assert not pairs(sure) & {(jobs, mail), (mail, jobs)}
+    cycles = (await client.get(f"{url}/deps/cycles", params={"level": "module"})).json()
+    assert cycles["cycles"] == []
+    dsm = (await client.get(f"{url}/deps/dsm", params={"level": "module"})).json()
+    assert dsm["cycles"] == []
+
+    every = {"level": "module", "min_conf": 0}
+    guessed = (await client.get(f"{url}/deps", params=every)).json()
+    assert {(jobs, mail), (mail, jobs)} <= pairs(guessed)
+    assert {n["id"]: (n["x"], n["y"]) for n in guessed["nodes"]} == {
+        n["id"]: (n["x"], n["y"]) for n in sure["nodes"]
+    }
+    [cycle] = (await client.get(f"{url}/deps/cycles", params=every)).json()["cycles"]
+    assert cycle["nodes"] == [jobs, mail]
+    evidence = await client.get(
+        f"{url}/deps/edge-evidence",
+        params={"level": "file", "min_conf": 0, "src": GUESS_X, "dst": GUESS_Y},
+    )
+    [line] = evidence.json()["edges"]
+    assert line["confidence"] < 0.5
+    unasked = await client.get(
+        f"{url}/deps/edge-evidence", params={"level": "file", "src": GUESS_X, "dst": GUESS_Y}
+    )
+    assert unasked.json()["total"] == 0
 
 
 @pytest.mark.integration

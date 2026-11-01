@@ -26,6 +26,7 @@ import { ApiError } from "@/lib/api/errors";
 import { useGraphColors, type GraphColors } from "./graph-colors";
 import { EdgePanel } from "./graph-panels";
 import { useGraphState } from "./graph-state";
+import { GuessesSwitch } from "./guesses-switch";
 import { LevelSelect } from "./level-select";
 import { useDsm } from "./use-deps";
 
@@ -61,6 +62,11 @@ export function DsmView() {
           onChange={(value) => {
             setPicked(null);
             void setState({ level: value });
+          }}
+        />
+        <GuessesSwitch
+          onChange={() => {
+            setPicked(null);
           }}
         />
         {dsm.data ? (

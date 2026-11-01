@@ -2,7 +2,8 @@
 
 ``level`` is ``service``, ``package``, ``module`` (the default), ``file`` or ``symbol`` (see
 :mod:`sensei_engine.deps`); ``focus`` narrows it to a node and its neighbours ``depth`` hops out;
-``types`` (comma-separated) and ``min_conf`` filter the code's edges before they are counted.
+``types`` (comma-separated) and ``min_conf`` filter the code's edges before they are counted
+(``min_conf`` is 0.5 unless asked: calls matched by their names alone are guesses, left out).
 Each node comes with where it is drawn (the level's layout, computed once per graph and kept
 beside the snapshot as an artifact), its layer, size and cluster (its group a level up); each
 edge with its counts by type, its surest edge's confidence and a few evidence lines. Asked with
@@ -49,6 +50,7 @@ from sensei_core.storage import Bucket, ObjectStorage, artifact_key
 from sensei_engine.deps import (
     MANIFESTS,
     MAX_FORCE,
+    MIN_CONF,
     Cycle,
     DepGraph,
     Grouping,
@@ -69,7 +71,7 @@ router = APIRouter(prefix="/orgs/{org}/repos/{repo}", tags=["deps"])
 
 MAX_NODES = 20_000  # sent at once (more: the largest, and ``truncated``)
 MSGPACK = "application/x-msgpack"
-CACHED = 16  # levels kept in memory (per process)
+CACHED = 32  # levels (whole and as filtered) and layouts kept in memory (per process)
 log = get_logger(__name__)
 
 MAX_LAYOUT_BYTES = 64 << 20
@@ -223,7 +225,13 @@ async def _level(
     wanted = _types(types)
     if wanted is None and min_conf <= 0:
         return snapshot, graph, whole, whole
-    shown = await asyncio.to_thread(aggregate, graph, level, roots, types=wanted, min_conf=min_conf)
+    shown_key = (*plain_key, wanted, min_conf)
+    shown: DepGraph | None = cache.get(shown_key)
+    if shown is None:
+        shown = await asyncio.to_thread(
+            aggregate, graph, level, roots, types=wanted, min_conf=min_conf
+        )
+        cache.put(shown_key, shown)
     return snapshot, graph, whole, shown
 
 
@@ -288,7 +296,7 @@ async def deps(
     focus_on: Annotated[str | None, Query(alias="focus", min_length=1, max_length=2000)] = None,
     depth: Annotated[int, Query(ge=1, le=3)] = 1,
     types: Annotated[str | None, Query(max_length=500)] = None,
-    min_conf: Annotated[float, Query(ge=0, le=1)] = 0.0,
+    min_conf: Annotated[float, Query(ge=0, le=1)] = MIN_CONF,
     ref: RefParam = None,
 ) -> Any:
     """The level's nodes (where each is drawn) and edges (counted by type), or a focus of it."""
@@ -377,7 +385,7 @@ async def edge_evidence(
     dst: Annotated[str, Query(min_length=1, max_length=2000)],
     level: Level = "module",
     types: Annotated[str | None, Query(max_length=500)] = None,
-    min_conf: Annotated[float, Query(ge=0, le=1)] = 0.0,
+    min_conf: Annotated[float, Query(ge=0, le=1)] = MIN_CONF,
     limit: Annotated[int, Query(ge=1, le=500)] = 200,
     ref: RefParam = None,
 ) -> EdgeEvidenceOut:
@@ -468,7 +476,7 @@ async def deps_dsm(
     redis: RedisClient,
     level: Level = "module",
     types: Annotated[str | None, Query(max_length=500)] = None,
-    min_conf: Annotated[float, Query(ge=0, le=1)] = 0.0,
+    min_conf: Annotated[float, Query(ge=0, le=1)] = MIN_CONF,
     ref: RefParam = None,
 ) -> DsmOut:
     """The level as a dependency structure matrix, with its cycles and coupling metrics."""
@@ -516,7 +524,7 @@ async def deps_cycles(
     redis: RedisClient,
     level: Level = "module",
     types: Annotated[str | None, Query(max_length=500)] = None,
-    min_conf: Annotated[float, Query(ge=0, le=1)] = 0.0,
+    min_conf: Annotated[float, Query(ge=0, le=1)] = MIN_CONF,
     ref: RefParam = None,
 ) -> CyclesOut:
     """The level's cycles, the largest first, each with the edges that close it."""

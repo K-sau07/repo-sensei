@@ -124,6 +124,20 @@ test.describe("graph explorer", () => {
     await expect(page.getByRole("button", { name: "Show all" })).toBeVisible();
   });
 
+  test("calls guessed by name are counted only when asked", async ({ page }) => {
+    await page.goto("/acme/api/graph?tab=cycles");
+    await expect(page.getByTestId("cycle")).toHaveCount(1);
+    const asked = page.waitForRequest(
+      (r) => r.url().includes("/deps/cycles") && r.url().includes("min_conf=0"),
+    );
+    await page.getByRole("switch", { name: "Count calls guessed by name" }).click();
+    await asked;
+    await expect(page).toHaveURL(/guesses=true/);
+    await page.getByTestId("cycle").getByRole("button", { name: "Show in the graph" }).click();
+    await expect(page).toHaveURL(/guesses=true/); // the same edges, so the same cycle
+    await expect(page.getByRole("switch", { name: "Count calls guessed by name" })).toBeChecked();
+  });
+
   test("packages: versions, where each is declared, and who imports it", async ({ page }) => {
     await page.goto("/acme/api/graph?tab=packages");
     const fastapi = page.getByTestId("package").filter({ hasText: /^fastapi/ });

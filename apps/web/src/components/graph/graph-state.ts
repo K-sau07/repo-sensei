@@ -1,7 +1,7 @@
 /**
  * The graph explorer's state in its URL: the tab, the level, the node in focus and how many hops
- * around it, a search, a path's start and end, the table instead of the canvas, and a cycle to
- * show. Defaults stay out of the URL.
+ * around it, a search, a path's start and end, the table instead of the canvas, a cycle to show,
+ * and whether calls guessed by their names alone are counted. Defaults stay out of the URL.
  */
 import type { Route } from "next";
 import {
@@ -32,6 +32,7 @@ export const graphParsers = {
   to: parseAsString,
   table: parseAsBoolean.withDefault(false),
   cycle: parseAsInteger,
+  guesses: parseAsBoolean.withDefault(false),
 };
 
 export type GraphState = inferParserType<typeof graphParsers>;

@@ -42,6 +42,7 @@ import { GraphLegend } from "./graph-legend";
 import { EdgePanel, NodePanel } from "./graph-panels";
 import { MAX_DEGREE, useGraphState } from "./graph-state";
 import { GraphTable } from "./graph-table";
+import { GuessesSwitch } from "./guesses-switch";
 import { LevelSelect } from "./level-select";
 import { MAX_DSM, useCycles, useDeps, useDsm, useGraphSearch } from "./use-deps";
 
@@ -277,7 +278,14 @@ export function GraphExplorer() {
             Show all
           </Button>
         ) : null}
-        <span className="ml-auto flex items-center gap-1.5 text-xs text-fg-muted">
+        <span className="ml-auto">
+          <GuessesSwitch
+            onChange={() => {
+              setEdge(null);
+            }}
+          />
+        </span>
+        <span className="flex items-center gap-1.5 text-xs text-fg-muted">
           <Switch
             checked={table}
             disabled={!webgl}

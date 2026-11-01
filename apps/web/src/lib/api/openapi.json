@@ -10049,7 +10049,7 @@
             "name": "min_conf",
             "required": false,
             "schema": {
-              "default": 0.0,
+              "default": 0.5,
               "maximum": 1,
               "minimum": 0,
               "title": "Min Conf",
@@ -10172,7 +10172,7 @@
             "name": "min_conf",
             "required": false,
             "schema": {
-              "default": 0.0,
+              "default": 0.5,
               "maximum": 1,
               "minimum": 0,
               "title": "Min Conf",
@@ -10294,7 +10294,7 @@
             "name": "min_conf",
             "required": false,
             "schema": {
-              "default": 0.0,
+              "default": 0.5,
               "maximum": 1,
               "minimum": 0,
               "title": "Min Conf",
@@ -10438,7 +10438,7 @@
             "name": "min_conf",
             "required": false,
             "schema": {
-              "default": 0.0,
+              "default": 0.5,
               "maximum": 1,
               "minimum": 0,
               "title": "Min Conf",

@@ -130,13 +130,14 @@ function levelOf(raw: string | null): DepLevel | Response {
     : validationFailed("level", `Input should be ${DEP_LEVELS.map((l) => `'${l}'`).join(", ")}`);
 }
 
-/** The edges as `types` (comma-separated) and `min_conf` keep them: counted by those types. */
+/** The edges as `types` (comma-separated) and `min_conf` (0.5 unless asked) keep them: counted
+ * by those types. */
 function filtered(edges: readonly DepEdge[], url: URL): DepEdge[] {
   const wanted = (url.searchParams.get("types") ?? "")
     .split(",")
     .map((t) => t.trim())
     .filter(Boolean);
-  const least = Number(url.searchParams.get("min_conf") ?? "0");
+  const least = Number(url.searchParams.get("min_conf") ?? "0.5"); // the API's default
   const kept: DepEdge[] = [];
   for (const edge of edges) {
     if (edge.confidence < least) continue;
