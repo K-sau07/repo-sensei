@@ -48,8 +48,11 @@ class MemoryArtifacts:
 class Jobs:
     def __init__(self) -> None:
         self.asked: list[uuid.UUID] = []
+        self.down = False  # the broker unreachable
 
     async def layout(self, _org: uuid.UUID, _repo: uuid.UUID, snapshot_id: uuid.UUID) -> None:
+        if self.down:
+            raise ConnectionError("broker down")
         self.asked.append(snapshot_id)
 
 
@@ -130,6 +133,11 @@ async def test_the_galaxy_by_folder_and_by_meaning(
     )
     await db_session.flush()
     jobs: Jobs = api_app.state.galaxy_jobs
+    # The job couldn't be sent: not marked as on its way (the next request asks again).
+    jobs.down = True
+    failed = await client.get(f"{url}/galaxy", params={"layout": "semantic"})
+    assert failed.status_code == 500
+    jobs.down = False
     for _ in range(2):
         waiting = await client.get(f"{url}/galaxy", params={"layout": "semantic"})
         assert (waiting.status_code, waiting.json()["error"]["code"]) == (409, "galaxy_computing")

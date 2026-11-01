@@ -146,7 +146,11 @@ async def _ask_for(request: Request, redis: RedisClient, snapshot: Snapshot) -> 
         return
     key = galaxy_key(snapshot.id)
     if await redis.set(key, "1", nx=True, ex=KEY_TTL_SECONDS):
-        await jobs.layout(snapshot.org_id, snapshot.repo_id, snapshot.id)
+        try:
+            await jobs.layout(snapshot.org_id, snapshot.repo_id, snapshot.id)
+        except Exception:
+            await redis.delete(key)  # not sent: the next request asks again
+            raise
 
 
 @router.get("/galaxy", response_model=GalaxyOut)
