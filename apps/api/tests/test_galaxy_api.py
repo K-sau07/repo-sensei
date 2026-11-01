@@ -107,6 +107,13 @@ async def test_the_galaxy_by_folder_and_by_meaning(
     assert sum(c["files"] for c in clusters.values()) == len(body["stars"])
     assert {s["cluster"] for s in body["stars"]} == set(clusters)
     assert {c["label"]: c["files"] for c in clusters.values()} == {"backend": 4, "(root)": 1}
+    # A cluster's name sits on one of its stars (a folder's patch is curved: its mean is under it).
+    for cluster in clusters.values():
+        assert any(
+            (s["x"], s["y"], s["z"]) == (cluster["x"], cluster["y"], cluster["z"])
+            for s in body["stars"]
+            if s["cluster"] == cluster["id"]
+        )
 
     # Semantic: no summaries embedded here.
     none = await client.get(f"{url}/galaxy")

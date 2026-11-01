@@ -143,7 +143,24 @@ export function structural(points: ConstellationFixture["points"]): Omit<Galaxy,
   const clusters: GalaxyCluster[] = groups.map(([label, at], c) => {
     const mean = (axis: "x" | "y" | "z") =>
       at.reduce((sum, i) => sum + (points[i]?.[axis] ?? 0), 0) / Math.max(1, at.length);
-    return { id: c, label, x: mean("x"), y: mean("y"), z: mean("z"), files: at.length };
+    const [mx, my, mz] = [mean("x"), mean("y"), mean("z")];
+    // Its star nearest the mean (as the API): a folder's patch is curved, its mean under it.
+    let anchor = points[at[0] ?? 0];
+    let best = Infinity;
+    for (const i of at) {
+      const p = points[i];
+      if (!p) continue;
+      const d = (p.x - mx) ** 2 + (p.y - my) ** 2 + (p.z - mz) ** 2;
+      if (d < best) [anchor, best] = [p, d];
+    }
+    return {
+      id: c,
+      label,
+      x: anchor?.x ?? mx,
+      y: anchor?.y ?? my,
+      z: anchor?.z ?? mz,
+      files: at.length,
+    };
   });
   return { layout: "structural", stars, clusters };
 }

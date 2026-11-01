@@ -46,6 +46,7 @@ const CAMERA: [number, number, number] = [0, 0, 3.2];
 const FLIGHT_MS = 900;
 const POINT = 0.045;
 const PICK_PX = 10;
+const ORIGIN = new THREE.Vector3();
 
 type Picker = (x: number, y: number) => number | null;
 
@@ -159,7 +160,8 @@ function Flight({
   return null;
 }
 
-/** Puts each cluster's name where its center is drawn (hidden when behind the camera). */
+/** Puts each cluster's name where its center is drawn (hidden when behind the camera; dimmed
+ * on the far side of what the camera turns around: the stars are seen through). */
 function LabelMover({
   clusters,
   labels,
@@ -167,11 +169,20 @@ function LabelMover({
   clusters: readonly GalaxyCluster[];
   labels: React.RefObject<(HTMLButtonElement | null)[]>;
 }) {
-  const at = useMemo(() => new THREE.Vector3(), []);
+  const controls = useThree((state) => state.controls) as unknown as Orbit | null;
+  const [at, toCamera, toLabel] = useMemo(
+    () => [new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3()],
+    [],
+  );
   useFrame(({ camera, size }) => {
+    const target = controls?.target ?? ORIGIN;
+    toCamera.copy(camera.position).sub(target);
     clusters.forEach((cluster, i) => {
       const element = labels.current[i];
       if (!element) return;
+      const far = toLabel.set(cluster.x, cluster.y, cluster.z).sub(target).dot(toCamera) < 0;
+      element.style.opacity = far ? "0.35" : "1";
+      element.style.zIndex = far ? "0" : "1";
       at.set(cluster.x, cluster.y, cluster.z).project(camera);
       element.style.visibility = at.z > 1 ? "hidden" : "visible";
       const x = ((at.x + 1) / 2) * size.width;

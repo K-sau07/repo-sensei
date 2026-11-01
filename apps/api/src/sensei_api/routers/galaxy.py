@@ -98,14 +98,16 @@ def _structural(found: Constellation) -> tuple[list[GalaxyStar], list[GalaxyClus
     clusters: list[GalaxyCluster] = []
     for c, (label, members) in enumerate(groups):
         at = [found.points[i].position for i in members]
-        clusters.append(
-            GalaxyCluster(
-                id=c, label=label, x=sum(p[0] for p in at) / len(at),
-                y=sum(p[1] for p in at) / len(at), z=sum(p[2] for p in at) / len(at),
-                files=len(members),
-            )
-        )  # fmt: skip
+        x, y, z = _anchor(at)
+        clusters.append(GalaxyCluster(id=c, label=label, x=x, y=y, z=z, files=len(members)))
     return stars, clusters
+
+
+def _anchor(at: list[tuple[float, float, float]]) -> tuple[float, float, float]:
+    """Where a folder's name goes: its star nearest the stars' mean. A folder is a patch of a
+    shell, curved: the mean itself lies under it, among other folders."""
+    mean = tuple(sum(p[axis] for p in at) / len(at) for axis in range(3))
+    return min(at, key=lambda p: sum((p[axis] - mean[axis]) ** 2 for axis in range(3)))
 
 
 def _semantic(galaxy: Galaxy, found: Constellation) -> tuple[list[GalaxyStar], list[GalaxyCluster]]:
