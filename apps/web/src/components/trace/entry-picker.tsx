@@ -8,9 +8,10 @@
  */
 import { useQuery } from "@tanstack/react-query";
 import { Route as RouteIcon, Search } from "lucide-react";
+import type { Route } from "next";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useId, useState } from "react";
+import { useId, useState, type ReactNode } from "react";
 
 import { useCodeLocation } from "@/components/code/use-code";
 import { SYMBOLS_MIN_LENGTH } from "@/components/palette/use-server-results";
@@ -33,8 +34,44 @@ const ENTRY_KINDS: ReadonlySet<SymbolKind> = new Set([
   "class",
 ]);
 
-export function EntryPicker() {
+export interface PickerText {
+  title: string;
+  icon: ReactNode;
+  description: ReactNode;
+  label: string;
+  placeholder: string;
+  listLabel: string;
+  empty: string;
+}
+
+const TRACE_TEXT: PickerText = {
+  title: "Trace a feature",
+  icon: <RouteIcon aria-hidden className="size-5 text-fg-muted" />,
+  description: (
+    <>
+      From where it starts (a component, a hook, a route, a function, or a feature in words such as
+      &ldquo;add item&rdquo;) across the layers to the tables it reads and writes, each hop with the
+      code that proves it.
+    </>
+  ),
+  label: "Where the trace starts",
+  placeholder: "A feature (add item), a name, a route or a file",
+  listLabel: "Symbols to trace from",
+  empty: "No component, hook or function by that name. Press Enter to trace it as typed.",
+};
+
+/** A symbol to start from, by name, or what is typed: the trace's entry by default; `href`
+ * and `text` make it another page's (impact's). */
+export function EntryPicker({
+  href,
+  text = TRACE_TEXT,
+}: {
+  href?: (org: string, repo: string, entry: string) => Route;
+  text?: PickerText;
+} = {}) {
   const { org, repo, ref, ready } = useCodeLocation();
+  const target = (entry: string) =>
+    href ? href(org, repo, entry) : traceHref(org, repo, { from: entry });
   const router = useRouter();
   const [typed, setTyped] = useState("");
   const q = useDebouncedValue(typed.trim(), DEBOUNCE_MS);
@@ -61,13 +98,11 @@ export function EntryPicker() {
     >
       <div className="flex flex-col gap-1">
         <h2 id={`${hintId}-title`} className="flex items-center gap-2 text-lg font-semibold">
-          <RouteIcon aria-hidden className="size-5 text-fg-muted" />
-          Trace a feature
+          {text.icon}
+          {text.title}
         </h2>
         <p id={hintId} className="text-sm text-fg-muted">
-          From where it starts (a component, a hook, a route, a function, or a feature in words such
-          as &ldquo;add item&rdquo;) across the layers to the tables it reads and writes, each hop
-          with the code that proves it.
+          {text.description}
         </p>
       </div>
       <form
@@ -75,7 +110,7 @@ export function EntryPicker() {
         onSubmit={(event) => {
           event.preventDefault();
           const entry = typed.trim();
-          if (entry) router.push(traceHref(org, repo, { from: entry }));
+          if (entry) router.push(target(entry));
         }}
       >
         <div className="relative">
@@ -84,9 +119,9 @@ export function EntryPicker() {
             className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-fg-faint"
           />
           <Input
-            aria-label="Where the trace starts"
+            aria-label={text.label}
             aria-describedby={hintId}
-            placeholder="A feature (add item), a name, a route or a file"
+            placeholder={text.placeholder}
             value={typed}
             onChange={(event) => {
               setTyped(event.target.value);
@@ -103,15 +138,13 @@ export function EntryPicker() {
               <Skeleton className="h-8" />
             </div>
           ) : hits.length === 0 ? (
-            <p className="text-sm text-fg-muted">
-              No component, hook or function by that name. Press Enter to trace it as typed.
-            </p>
+            <p className="text-sm text-fg-muted">{text.empty}</p>
           ) : (
-            <ul aria-label="Symbols to trace from" className="flex flex-col">
+            <ul aria-label={text.listLabel} className="flex flex-col">
               {hits.map((hit) => (
                 <li key={hit.symbol_key}>
                   <Link
-                    href={traceHref(org, repo, { from: hit.symbol_key })}
+                    href={target(hit.symbol_key)}
                     className="flex items-baseline gap-2 rounded-sm px-2 py-1.5 text-sm outline-none hover:bg-surface-2 focus-visible:ring-2 focus-visible:ring-accent"
                   >
                     <span className="shrink-0 font-mono text-fg">{hit.name}</span>

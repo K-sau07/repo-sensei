@@ -75,14 +75,14 @@ test.describe("trace", () => {
       .hover();
     await expect(page.locator("[data-slot=tooltip-content]")).toContainText("Verified, 90% sure");
     await page.mouse.move(0, 0);
-    // The path opens as a diagram; later phases' actions are shown, disabled, with when.
+    // The path opens as a diagram, and the entry's impact.
     await expect(view.getByRole("link", { name: "Open as diagram" })).toHaveAttribute(
       "href",
       /\/acme\/api\/diagrams\?from=.+&path=1$/,
     );
-    await expect(view.getByRole("button", { name: /Impact/ })).toHaveAttribute(
-      "aria-disabled",
-      "true",
+    await expect(view.getByRole("link", { name: "Impact", exact: true })).toHaveAttribute(
+      "href",
+      /\/acme\/api\/impact\?symbol=tsx\+frontend%2Fsrc%2Froutes%2Flogin\.tsx/,
     );
 
     const { violations } = await new AxeBuilder({ page })

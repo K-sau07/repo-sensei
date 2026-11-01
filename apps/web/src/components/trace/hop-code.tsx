@@ -5,7 +5,7 @@
  * (the call site; the entry's own lines), lit and scrolled to, in the code browser's viewer. Links
  * open the place, and the hop's definition, in the code browser.
  */
-import { Code2, CornerDownRight, FileX2, X } from "lucide-react";
+import { Code2, CornerDownRight, FileX2, Radar, X } from "lucide-react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useState } from "react";
@@ -14,6 +14,7 @@ import { useCodeLocation, useFile } from "@/components/code/use-code";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ApiError } from "@/lib/api/errors";
+import { impactHref } from "@/lib/api/impact";
 import {
   definitionPlace,
   hopName,
@@ -133,6 +134,13 @@ export function HopCode({
               Open in code
             </Link>
           )}
+          <Link
+            href={impactHref(org, repo, { symbol: hop.node.symbol_key })}
+            className="inline-flex h-6 items-center gap-1 rounded-sm px-2 text-xs text-fg-muted hover:bg-surface-2 hover:text-fg"
+          >
+            <Radar aria-hidden className="size-3.5" />
+            Impact
+          </Link>
           {definition && definition.path !== place?.path && (
             <Link
               href={open(definition)}

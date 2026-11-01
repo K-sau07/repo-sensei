@@ -31,8 +31,10 @@ export interface GraphColors {
   /** An edge at rest, and one lit (hovered, on a path, found). */
   edge: string;
   lit: string;
-  /** What closes a cycle. */
+  /** What closes a cycle (and the top of the impact page's heat). */
   cycle: string;
+  /** The middle of the impact page's heat (its bottom: `lit`). */
+  warn: string;
   label: string;
   background: string;
 }
@@ -67,6 +69,7 @@ export function readGraphColors(element: Element): GraphColors {
     edge: hex(style, "--text-faint", grey),
     lit: hex(style, "--signal", "#3ee0b5"),
     cycle: hex(style, "--danger", "#f07070"),
+    warn: hex(style, "--warn", "#f0c040"),
     label: hex(style, "--text", "#e8e8e8"),
     background: hex(style, "--bg", "#0d0d0f"),
   };

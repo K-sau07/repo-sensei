@@ -10,11 +10,11 @@ import type { SymbolAt, SymbolKind } from "@/lib/api/types";
 
 import { SYMBOLS } from "./symbols";
 
-interface FixtureNode extends GraphNode {
+export interface FixtureNode extends GraphNode {
   docstring: string | null;
 }
 
-interface FixtureEdge {
+export interface FixtureEdge {
   src: string;
   dst: string;
   type: GraphHop["edge"]["type"];

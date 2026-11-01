@@ -33,8 +33,8 @@ import { RateLimited } from "@/components/search/rate-limited";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { ApiError } from "@/lib/api/errors";
+import { impactHref } from "@/lib/api/impact";
 import {
   downHops,
   hopName,
@@ -65,21 +65,6 @@ const PULSED = new Set<string>();
 
 function Frame({ children }: { children: ReactNode }) {
   return <div className="mx-auto flex w-full max-w-3xl flex-col p-8">{children}</div>;
-}
-
-/** An action a later phase builds: shown, not disabled away (its reason has to be readable). */
-function Soon({ icon, label }: { icon: ReactNode; label: string }) {
-  return (
-    <Tooltip>
-      <TooltipTrigger
-        render={<Button variant="ghost" size="sm" aria-disabled="true" className="opacity-50" />}
-      >
-        {icon}
-        {label}
-      </TooltipTrigger>
-      <TooltipContent>Coming in a later phase</TooltipContent>
-    </Tooltip>
-  );
 }
 
 function TraceSkeleton() {
@@ -318,7 +303,15 @@ function TraceView({ entry }: { entry: string }) {
               Open as diagram
             </Link>
           )}
-          <Soon icon={<Radar aria-hidden />} label="Impact" />
+          {first && (
+            <Link
+              href={impactHref(org, repo, { symbol: first.symbol_key })}
+              className="inline-flex h-7 items-center gap-1.5 rounded-sm px-2 text-sm text-fg-muted hover:bg-surface-2 hover:text-fg [&_svg]:size-4"
+            >
+              <Radar aria-hidden />
+              Impact
+            </Link>
+          )}
           <Link
             href={traceHref(org, repo)}
             className="inline-flex h-7 items-center rounded-sm px-2 text-sm text-fg-muted hover:bg-surface-2 hover:text-fg"

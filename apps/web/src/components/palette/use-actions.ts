@@ -6,6 +6,7 @@ import {
   Link2,
   LogOut,
   PanelLeft,
+  Radar,
   RotateCw,
   Route as TraceIcon,
   Settings,
@@ -21,6 +22,7 @@ import { writeClipboard } from "@/components/primitives/copy-button";
 import { useShellStore } from "@/components/shell/shell-store";
 import { signOut } from "@/components/shell/sign-out";
 import { ApiError } from "@/lib/api/errors";
+import { impactHref } from "@/lib/api/impact";
 import { actionId } from "@/lib/palette/locations";
 import { orgPath, repoPath } from "@/lib/routes";
 
@@ -164,7 +166,20 @@ export function useActions({ org, repo, code, path, ref }: ActionScope): ShownIt
     },
   );
   if (repo) {
+    const slug = repo.slug;
     items.push(
+      {
+        id: actionId("impact"),
+        group: "do",
+        kind: "action",
+        title: "Impact of…",
+        keywords: ["blast radius", "what breaks", "dependents", "change", "affected"],
+        icon: Radar,
+        scope: { org, repo: slug },
+        run: () => {
+          router.push(impactHref(org, slug));
+        },
+      },
       {
         id: actionId("trace"),
         group: "do",

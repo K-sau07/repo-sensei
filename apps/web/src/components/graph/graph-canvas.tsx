@@ -37,6 +37,8 @@ export interface GraphView {
   /** The edges that close a cycle, by key. */
   cycles: ReadonlySet<string>;
   selected: string | null;
+  /** Colors by node, over their layer's (the impact page's heat). */
+  paint?: ReadonlyMap<string, string>;
 }
 
 export interface GraphCanvasProps {
@@ -45,7 +47,7 @@ export interface GraphCanvasProps {
   /** No camera animations. */
   still: boolean;
   onSelectNode: (id: string | null) => void;
-  onSelectEdge: (source: string, target: string) => void;
+  onSelectEdge?: (source: string, target: string) => void;
   /** The camera's zoom ratio (1: the whole level), the nodes in view and the one nearest the
    * view's center, as it settles. */
   onZoom?: (ratio: number, visible: string[], nearest: string | null) => void;
@@ -229,7 +231,7 @@ function Controller({
         y: -node.y, // the layouts' y grows down, Sigma's up
         size: view.sizes.get(node.id) ?? 3,
         label: node.label,
-        color: view.colors.tints[tintOf(node.layer)],
+        color: view.paint?.get(node.id) ?? view.colors.tints[tintOf(node.layer)],
       });
     }
     for (const edge of view.edges) {
@@ -243,7 +245,7 @@ function Controller({
     }
     sigma.setCustomBBox({ x: [-BOX, BOX], y: [-BOX, BOX] });
     sigma.refresh();
-  }, [sigma, view.nodes, view.edges, view.sizes, view.colors]);
+  }, [sigma, view.nodes, view.edges, view.sizes, view.colors, view.paint]);
 
   // How it looks: read by the reducers.
   useEffect(() => {
@@ -301,7 +303,7 @@ function Controller({
       },
       clickEdge: ({ edge }) => {
         const [source, target] = sigma.getGraph().extremities(edge);
-        onSelectEdge(source, target);
+        onSelectEdge?.(source, target);
       },
     });
     const camera = sigma.getCamera();
@@ -332,7 +334,7 @@ function Controller({
     <>
       <div role="img" aria-label={label} className="sr-only" />
       <CameraControls still={still} />
-      <Minimap nodes={view.nodes} colors={view.colors} still={still} />
+      <Minimap nodes={view.nodes} colors={view.colors} paint={view.paint} still={still} />
     </>
   );
 }
@@ -382,10 +384,12 @@ function toMinimap(x: number, y: number): [number, number] {
 function Minimap({
   nodes,
   colors,
+  paint,
   still,
 }: {
   nodes: readonly ShownNode[];
   colors: GraphColors;
+  paint: ReadonlyMap<string, string> | undefined;
   still: boolean;
 }) {
   const sigma = useSigma();
@@ -420,11 +424,11 @@ function Minimap({
     context.setTransform(ratio, 0, 0, ratio, 0, 0);
     for (const node of nodes) {
       const [x, y] = toMinimap(node.x, -node.y);
-      context.fillStyle = colors.tints[tintOf(node.layer)];
+      context.fillStyle = paint?.get(node.id) ?? colors.tints[tintOf(node.layer)];
       context.fillRect(x - 0.75, y - 0.75, 1.5, 1.5);
     }
     return sheet;
-  }, [nodes, colors]);
+  }, [nodes, colors, paint]);
 
   useEffect(() => {
     const context = canvas.current?.getContext("2d");

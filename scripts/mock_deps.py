@@ -50,7 +50,8 @@ NOTE = (
 )
 
 
-def _graph() -> GraphSnapshot:
+def mock_graph() -> GraphSnapshot:
+    """The mock's code graph (graph.json) as the engine holds one."""
     fixture: dict[str, list[dict[str, Any]]] = orjson.loads(GRAPH.read_bytes())
     nodes = [
         Node(
@@ -203,7 +204,7 @@ def _package(found: Any) -> dict[str, Any]:
 
 
 def build() -> dict[str, Any]:
-    graph = _graph()
+    graph = mock_graph()
     paths, manifests, locks = _snapshot()
     frameworks = [f.as_json() for f in detect_frameworks(manifests)]
     roots = grouping(paths, frameworks)

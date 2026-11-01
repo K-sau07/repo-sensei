@@ -6,7 +6,7 @@
  * into the level below, a path from or to it, its code, a trace). An edge's: what it counts and
  * the lines of code behind it, each opening the code there.
  */
-import { ArrowRight, FolderOpen, Route as RouteIcon, X } from "lucide-react";
+import { ArrowRight, FolderOpen, Radar, Route as RouteIcon, X } from "lucide-react";
 import Link from "next/link";
 
 import { useRepoSlug } from "@/components/repo/use-repo";
@@ -21,6 +21,7 @@ import {
   type Dsm,
   type ShownNode,
 } from "@/lib/api/deps";
+import { impactHref } from "@/lib/api/impact";
 import { codePath } from "@/lib/routes";
 import { traceHref } from "@/lib/trace/url-state";
 
@@ -176,6 +177,15 @@ export function NodePanel({
           >
             <RouteIcon aria-hidden />
             Trace from here
+          </Link>
+        ) : null}
+        {node.level === "symbol" ? (
+          <Link
+            href={impactHref(org, repo, { symbol: node.id })}
+            className={buttonVariants({ size: "sm", variant: "outline" })}
+          >
+            <Radar aria-hidden />
+            Impact
           </Link>
         ) : null}
       </div>

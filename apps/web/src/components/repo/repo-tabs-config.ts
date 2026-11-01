@@ -115,7 +115,7 @@ export const PRIMARY_TABS: RepoTab[] = [
 export const OVERFLOW_TABS: RepoTab[] = [
   { id: "map", label: "Map", section: "map", icon: Orbit, feature: "semantic_search", phase: 6 },
   { id: "wiki", label: "Wiki", section: "wiki", icon: BookOpen, feature: "wiki", phase: 4 },
-  { id: "impact", label: "Impact", section: "impact", icon: MapIcon, feature: "callers", phase: 6 },
+  { id: "impact", label: "Impact", section: "impact", icon: MapIcon, feature: "callers" },
   { id: "index", label: "Index", section: "index", icon: FileStack },
   { id: "settings", label: "Settings", section: "settings", icon: Settings, adminOnly: true },
 ];

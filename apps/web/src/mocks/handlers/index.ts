@@ -4,6 +4,7 @@ import { constellationHandlers } from "./constellation";
 import { depsHandlers } from "./deps";
 import { diagramHandlers } from "./diagrams";
 import { graphHandlers } from "./graph";
+import { impactHandlers } from "./impact";
 import { invitationHandlers } from "./invitations";
 import { meHandlers } from "./me";
 import { memberHandlers } from "./members";
@@ -26,6 +27,7 @@ export const handlers = [
   ...symbolHandlers,
   ...graphHandlers,
   ...depsHandlers,
+  ...impactHandlers,
   ...traceHandlers,
   ...askHandlers,
   ...refHandlers,

@@ -12,6 +12,7 @@ import { toast } from "sonner";
 
 import { useShortcut } from "@/hooks/use-shortcut";
 import { innermostAt } from "@/lib/api/graph";
+import { impactHref } from "@/lib/api/impact";
 import type { SymbolAt } from "@/lib/api/types";
 import { codeViewKey, crossToCode } from "@/lib/code/transition";
 import { codePath, repoPath } from "@/lib/routes";
@@ -82,6 +83,9 @@ export function useCodeActions(): SymbolActions & { open: (place: CodePlace) => 
       },
       trace: (symbol) => {
         router.push(tracePath(org, repo, symbol.symbol_key) as Parameters<typeof router.push>[0]);
+      },
+      impact: (symbol) => {
+        router.push(impactHref(org, repo, { symbol: symbol.symbol_key }));
       },
     };
   }, [org, repo, ref, path, router, setReferences, pushBack]);

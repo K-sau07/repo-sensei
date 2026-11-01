@@ -1,0 +1,1504 @@
+{
+  "note": "For the mock impact endpoint (scripts/mock_impact.py): the mock graph's pages, and the engine's impact of a few changes, which the mock's own walk is checked against.",
+  "screens": [
+    "tsx frontend/src/components/Common/DataTable.tsx/DataTable().",
+    "tsx frontend/src/components/ui/sidebar.tsx/Sidebar().",
+    "tsx frontend/src/components/ui/sidebar.tsx/SidebarContent().",
+    "tsx frontend/src/components/ui/sidebar.tsx/SidebarFooter().",
+    "tsx frontend/src/components/ui/sidebar.tsx/SidebarGroup().",
+    "tsx frontend/src/components/ui/sidebar.tsx/SidebarGroupAction().",
+    "tsx frontend/src/components/ui/sidebar.tsx/SidebarGroupContent().",
+    "tsx frontend/src/components/ui/sidebar.tsx/SidebarGroupLabel().",
+    "tsx frontend/src/components/ui/sidebar.tsx/SidebarHeader().",
+    "tsx frontend/src/components/ui/sidebar.tsx/SidebarInput().",
+    "tsx frontend/src/components/ui/sidebar.tsx/SidebarInset().",
+    "tsx frontend/src/components/ui/sidebar.tsx/SidebarMenu().",
+    "tsx frontend/src/components/ui/sidebar.tsx/SidebarMenuAction().",
+    "tsx frontend/src/components/ui/sidebar.tsx/SidebarMenuBadge().",
+    "tsx frontend/src/components/ui/sidebar.tsx/SidebarMenuButton().",
+    "tsx frontend/src/components/ui/sidebar.tsx/SidebarMenuItem().",
+    "tsx frontend/src/components/ui/sidebar.tsx/SidebarMenuSkeleton().",
+    "tsx frontend/src/components/ui/sidebar.tsx/SidebarMenuSub().",
+    "tsx frontend/src/components/ui/sidebar.tsx/SidebarMenuSubButton().",
+    "tsx frontend/src/components/ui/sidebar.tsx/SidebarMenuSubItem().",
+    "tsx frontend/src/components/ui/sidebar.tsx/SidebarProvider().",
+    "tsx frontend/src/components/ui/sidebar.tsx/SidebarRail().",
+    "tsx frontend/src/components/ui/sidebar.tsx/SidebarSeparator().",
+    "tsx frontend/src/components/ui/sidebar.tsx/SidebarTrigger().",
+    "tsx frontend/src/main.tsx/",
+    "tsx frontend/src/routes/login.tsx/Login()."
+  ],
+  "cases": {
+    "py backend/app/crud.py/create_user().": {
+      "routes": [
+        {
+          "key": "api_endpoint POST /api/v1/users",
+          "score": 0.5852,
+          "distance": 2,
+          "via": "py backend/app/api/routes/users.py/create_user().",
+          "edge": "handled_by"
+        },
+        {
+          "key": "api_endpoint POST /api/v1/users/signup",
+          "score": 0.5852,
+          "distance": 2,
+          "via": "py backend/app/api/routes/users.py/register_user().",
+          "edge": "handled_by"
+        }
+      ],
+      "screens": [],
+      "tests": [],
+      "tables": [
+        {
+          "key": "table user",
+          "score": 0.595,
+          "distance": 1,
+          "via": "py backend/app/crud.py/create_user().",
+          "edge": "writes"
+        }
+      ],
+      "symbols": [
+        {
+          "key": "py backend/app/api/routes/users.py/create_user().",
+          "score": 0.765,
+          "distance": 1,
+          "via": "py backend/app/crud.py/create_user().",
+          "edge": "calls"
+        },
+        {
+          "key": "py backend/app/api/routes/users.py/register_user().",
+          "score": 0.765,
+          "distance": 1,
+          "via": "py backend/app/crud.py/create_user().",
+          "edge": "calls"
+        },
+        {
+          "key": "py backend/app/core/db.py/init_db().",
+          "score": 0.765,
+          "distance": 1,
+          "via": "py backend/app/crud.py/create_user().",
+          "edge": "calls"
+        },
+        {
+          "key": "py backend/app/initial_data.py/",
+          "score": 0.5852,
+          "distance": 2,
+          "via": "py backend/app/core/db.py/init_db().",
+          "edge": "imports"
+        },
+        {
+          "key": "py backend/app/initial_data.py/init().",
+          "score": 0.5852,
+          "distance": 2,
+          "via": "py backend/app/core/db.py/init_db().",
+          "edge": "calls"
+        },
+        {
+          "key": "py backend/app/initial_data.py/main().",
+          "score": 0.4477,
+          "distance": 3,
+          "via": "py backend/app/initial_data.py/init().",
+          "edge": "calls"
+        }
+      ]
+    },
+    "py backend/app/models.py/User#": {
+      "routes": [
+        {
+          "key": "api_endpoint DELETE /api/v1/users/{}",
+          "score": 0.5852,
+          "distance": 2,
+          "via": "py backend/app/api/routes/users.py/delete_user().",
+          "edge": "handled_by"
+        },
+        {
+          "key": "api_endpoint GET /api/v1/users",
+          "score": 0.5852,
+          "distance": 2,
+          "via": "py backend/app/api/routes/users.py/read_users().",
+          "edge": "handled_by"
+        },
+        {
+          "key": "api_endpoint GET /api/v1/users/{}",
+          "score": 0.5852,
+          "distance": 2,
+          "via": "py backend/app/api/routes/users.py/read_user_by_id().",
+          "edge": "handled_by"
+        },
+        {
+          "key": "api_endpoint PATCH /api/v1/users/{}",
+          "score": 0.5852,
+          "distance": 2,
+          "via": "py backend/app/api/routes/users.py/update_user().",
+          "edge": "handled_by"
+        },
+        {
+          "key": "api_endpoint POST /api/v1/private/users",
+          "score": 0.5852,
+          "distance": 2,
+          "via": "py backend/app/api/routes/private.py/create_user().",
+          "edge": "handled_by"
+        },
+        {
+          "key": "api_endpoint DELETE /api/v1/items/{}",
+          "score": 0.4477,
+          "distance": 3,
+          "via": "py backend/app/api/routes/items.py/delete_item().",
+          "edge": "handled_by"
+        },
+        {
+          "key": "api_endpoint DELETE /api/v1/users/me",
+          "score": 0.4477,
+          "distance": 3,
+          "via": "py backend/app/api/routes/users.py/delete_user_me().",
+          "edge": "handled_by"
+        },
+        {
+          "key": "api_endpoint GET /api/v1/items",
+          "score": 0.4477,
+          "distance": 3,
+          "via": "py backend/app/api/routes/items.py/read_items().",
+          "edge": "handled_by"
+        },
+        {
+          "key": "api_endpoint GET /api/v1/items/{}",
+          "score": 0.4477,
+          "distance": 3,
+          "via": "py backend/app/api/routes/items.py/read_item().",
+          "edge": "handled_by"
+        },
+        {
+          "key": "api_endpoint GET /api/v1/users/me",
+          "score": 0.4477,
+          "distance": 3,
+          "via": "py backend/app/api/routes/users.py/read_user_me().",
+          "edge": "handled_by"
+        },
+        {
+          "key": "api_endpoint PATCH /api/v1/users/me",
+          "score": 0.4477,
+          "distance": 3,
+          "via": "py backend/app/api/routes/users.py/update_user_me().",
+          "edge": "handled_by"
+        },
+        {
+          "key": "api_endpoint PATCH /api/v1/users/me/password",
+          "score": 0.4477,
+          "distance": 3,
+          "via": "py backend/app/api/routes/users.py/update_password_me().",
+          "edge": "handled_by"
+        },
+        {
+          "key": "api_endpoint POST /api/v1/items",
+          "score": 0.4477,
+          "distance": 3,
+          "via": "py backend/app/api/routes/items.py/create_item().",
+          "edge": "handled_by"
+        },
+        {
+          "key": "api_endpoint POST /api/v1/login/access-token",
+          "score": 0.4477,
+          "distance": 3,
+          "via": "py backend/app/api/routes/login.py/login_access_token().",
+          "edge": "handled_by"
+        },
+        {
+          "key": "api_endpoint POST /api/v1/login/test-token",
+          "score": 0.4477,
+          "distance": 3,
+          "via": "py backend/app/api/routes/login.py/test_token().",
+          "edge": "handled_by"
+        },
+        {
+          "key": "api_endpoint POST /api/v1/password-recovery-html-content/{}",
+          "score": 0.4477,
+          "distance": 3,
+          "via": "py backend/app/api/routes/login.py/recover_password_html_content().",
+          "edge": "handled_by"
+        },
+        {
+          "key": "api_endpoint POST /api/v1/password-recovery/{}",
+          "score": 0.4477,
+          "distance": 3,
+          "via": "py backend/app/api/routes/login.py/recover_password().",
+          "edge": "handled_by"
+        },
+        {
+          "key": "api_endpoint POST /api/v1/reset-password",
+          "score": 0.4477,
+          "distance": 3,
+          "via": "py backend/app/api/routes/login.py/reset_password().",
+          "edge": "handled_by"
+        },
+        {
+          "key": "api_endpoint POST /api/v1/users",
+          "score": 0.4477,
+          "distance": 3,
+          "via": "py backend/app/api/routes/users.py/create_user().",
+          "edge": "handled_by"
+        },
+        {
+          "key": "api_endpoint POST /api/v1/users/signup",
+          "score": 0.4477,
+          "distance": 3,
+          "via": "py backend/app/api/routes/users.py/register_user().",
+          "edge": "handled_by"
+        },
+        {
+          "key": "api_endpoint POST /api/v1/utils/test-email",
+          "score": 0.4477,
+          "distance": 3,
+          "via": "py backend/app/api/routes/utils.py/test_email().",
+          "edge": "handled_by"
+        },
+        {
+          "key": "api_endpoint PUT /api/v1/items/{}",
+          "score": 0.4477,
+          "distance": 3,
+          "via": "py backend/app/api/routes/items.py/update_item().",
+          "edge": "handled_by"
+        }
+      ],
+      "screens": [],
+      "tests": [],
+      "tables": [
+        {
+          "key": "table user",
+          "score": 0.7225,
+          "distance": 2,
+          "via": "orm_model py backend/app/models.py/User#",
+          "edge": "maps_to"
+        }
+      ],
+      "symbols": [
+        {
+          "key": "py backend/app/api/deps.py/",
+          "score": 0.765,
+          "distance": 1,
+          "via": "py backend/app/models.py/User#",
+          "edge": "references"
+        },
+        {
+          "key": "py backend/app/api/deps.py/get_current_active_superuser().",
+          "score": 0.765,
+          "distance": 1,
+          "via": "py backend/app/models.py/User#",
+          "edge": "references"
+        },
+        {
+          "key": "py backend/app/api/deps.py/get_current_user().",
+          "score": 0.765,
+          "distance": 1,
+          "via": "py backend/app/models.py/User#",
+          "edge": "references"
+        },
+        {
+          "key": "py backend/app/api/routes/private.py/",
+          "score": 0.765,
+          "distance": 1,
+          "via": "py backend/app/models.py/User#",
+          "edge": "imports"
+        },
+        {
+          "key": "py backend/app/api/routes/private.py/create_user().",
+          "score": 0.765,
+          "distance": 1,
+          "via": "py backend/app/models.py/User#",
+          "edge": "calls"
+        },
+        {
+          "key": "py backend/app/api/routes/users.py/",
+          "score": 0.765,
+          "distance": 1,
+          "via": "py backend/app/models.py/User#",
+          "edge": "imports"
+        },
+        {
+          "key": "py backend/app/api/routes/users.py/delete_user().",
+          "score": 0.765,
+          "distance": 1,
+          "via": "py backend/app/models.py/User#",
+          "edge": "references"
+        },
+        {
+          "key": "py backend/app/api/routes/users.py/read_user_by_id().",
+          "score": 0.765,
+          "distance": 1,
+          "via": "py backend/app/models.py/User#",
+          "edge": "references"
+        },
+        {
+          "key": "py backend/app/api/routes/users.py/read_users().",
+          "score": 0.765,
+          "distance": 1,
+          "via": "py backend/app/models.py/User#",
+          "edge": "references"
+        },
+        {
+          "key": "py backend/app/api/routes/users.py/update_user().",
+          "score": 0.765,
+          "distance": 1,
+          "via": "py backend/app/models.py/User#",
+          "edge": "references"
+        },
+        {
+          "key": "py backend/app/core/db.py/",
+          "score": 0.765,
+          "distance": 1,
+          "via": "py backend/app/models.py/User#",
+          "edge": "imports"
+        },
+        {
+          "key": "py backend/app/core/db.py/init_db().",
+          "score": 0.765,
+          "distance": 1,
+          "via": "py backend/app/models.py/User#",
+          "edge": "references"
+        },
+        {
+          "key": "py backend/app/crud.py/",
+          "score": 0.765,
+          "distance": 1,
+          "via": "py backend/app/models.py/User#",
+          "edge": "imports"
+        },
+        {
+          "key": "py backend/app/crud.py/authenticate().",
+          "score": 0.765,
+          "distance": 1,
+          "via": "py backend/app/models.py/User#",
+          "edge": "references"
+        },
+        {
+          "key": "py backend/app/crud.py/create_user().",
+          "score": 0.765,
+          "distance": 1,
+          "via": "py backend/app/models.py/User#",
+          "edge": "references"
+        },
+        {
+          "key": "py backend/app/crud.py/get_user_by_email().",
+          "score": 0.765,
+          "distance": 1,
+          "via": "py backend/app/models.py/User#",
+          "edge": "references"
+        },
+        {
+          "key": "py backend/app/crud.py/update_user().",
+          "score": 0.765,
+          "distance": 1,
+          "via": "py backend/app/models.py/User#",
+          "edge": "references"
+        },
+        {
+          "key": "py backend/app/models.py/Item#",
+          "score": 0.765,
+          "distance": 1,
+          "via": "py backend/app/models.py/User#",
+          "edge": "references"
+        },
+        {
+          "key": "py backend/app/api/main.py/",
+          "score": 0.5852,
+          "distance": 2,
+          "via": "py backend/app/api/routes/private.py/",
+          "edge": "imports"
+        },
+        {
+          "key": "py backend/app/api/routes/items.py/",
+          "score": 0.5852,
+          "distance": 2,
+          "via": "py backend/app/models.py/Item#",
+          "edge": "imports"
+        },
+        {
+          "key": "py backend/app/api/routes/items.py/create_item().",
+          "score": 0.5852,
+          "distance": 2,
+          "via": "py backend/app/api/deps.py/get_current_user().",
+          "edge": "injects"
+        },
+        {
+          "key": "py backend/app/api/routes/items.py/delete_item().",
+          "score": 0.5852,
+          "distance": 2,
+          "via": "py backend/app/api/deps.py/get_current_user().",
+          "edge": "injects"
+        },
+        {
+          "key": "py backend/app/api/routes/items.py/read_item().",
+          "score": 0.5852,
+          "distance": 2,
+          "via": "py backend/app/api/deps.py/get_current_user().",
+          "edge": "injects"
+        },
+        {
+          "key": "py backend/app/api/routes/items.py/read_items().",
+          "score": 0.5852,
+          "distance": 2,
+          "via": "py backend/app/api/deps.py/get_current_user().",
+          "edge": "injects"
+        },
+        {
+          "key": "py backend/app/api/routes/items.py/update_item().",
+          "score": 0.5852,
+          "distance": 2,
+          "via": "py backend/app/api/deps.py/get_current_user().",
+          "edge": "injects"
+        },
+        {
+          "key": "py backend/app/api/routes/login.py/",
+          "score": 0.5852,
+          "distance": 2,
+          "via": "py backend/app/api/deps.py/get_current_active_superuser().",
+          "edge": "imports"
+        },
+        {
+          "key": "py backend/app/api/routes/login.py/login_access_token().",
+          "score": 0.5852,
+          "distance": 2,
+          "via": "py backend/app/crud.py/authenticate().",
+          "edge": "calls"
+        },
+        {
+          "key": "py backend/app/api/routes/login.py/recover_password().",
+          "score": 0.5852,
+          "distance": 2,
+          "via": "py backend/app/crud.py/get_user_by_email().",
+          "edge": "calls"
+        },
+        {
+          "key": "py backend/app/api/routes/login.py/recover_password_html_content().",
+          "score": 0.5852,
+          "distance": 2,
+          "via": "py backend/app/api/deps.py/get_current_active_superuser().",
+          "edge": "references"
+        },
+        {
+          "key": "py backend/app/api/routes/login.py/reset_password().",
+          "score": 0.5852,
+          "distance": 2,
+          "via": "py backend/app/crud.py/get_user_by_email().",
+          "edge": "calls"
+        },
+        {
+          "key": "py backend/app/api/routes/login.py/test_token().",
+          "score": 0.5852,
+          "distance": 2,
+          "via": "py backend/app/api/deps.py/get_current_user().",
+          "edge": "injects"
+        },
+        {
+          "key": "py backend/app/api/routes/users.py/create_user().",
+          "score": 0.5852,
+          "distance": 2,
+          "via": "py backend/app/api/deps.py/get_current_active_superuser().",
+          "edge": "references"
+        },
+        {
+          "key": "py backend/app/api/routes/users.py/delete_user_me().",
+          "score": 0.5852,
+          "distance": 2,
+          "via": "py backend/app/api/deps.py/get_current_user().",
+          "edge": "injects"
+        },
+        {
+          "key": "py backend/app/api/routes/users.py/read_user_me().",
+          "score": 0.5852,
+          "distance": 2,
+          "via": "py backend/app/api/deps.py/get_current_user().",
+          "edge": "injects"
+        },
+        {
+          "key": "py backend/app/api/routes/users.py/register_user().",
+          "score": 0.5852,
+          "distance": 2,
+          "via": "py backend/app/crud.py/create_user().",
+          "edge": "calls"
+        },
+        {
+          "key": "py backend/app/api/routes/users.py/update_password_me().",
+          "score": 0.5852,
+          "distance": 2,
+          "via": "py backend/app/api/deps.py/get_current_user().",
+          "edge": "injects"
+        },
+        {
+          "key": "py backend/app/api/routes/users.py/update_user_me().",
+          "score": 0.5852,
+          "distance": 2,
+          "via": "py backend/app/api/deps.py/get_current_user().",
+          "edge": "injects"
+        },
+        {
+          "key": "py backend/app/api/routes/utils.py/",
+          "score": 0.5852,
+          "distance": 2,
+          "via": "py backend/app/api/deps.py/get_current_active_superuser().",
+          "edge": "imports"
+        },
+        {
+          "key": "py backend/app/api/routes/utils.py/test_email().",
+          "score": 0.5852,
+          "distance": 2,
+          "via": "py backend/app/api/deps.py/get_current_active_superuser().",
+          "edge": "references"
+        },
+        {
+          "key": "py backend/app/crud.py/create_item().",
+          "score": 0.5852,
+          "distance": 2,
+          "via": "py backend/app/models.py/Item#",
+          "edge": "references"
+        },
+        {
+          "key": "py backend/app/initial_data.py/",
+          "score": 0.5852,
+          "distance": 2,
+          "via": "py backend/app/core/db.py/init_db().",
+          "edge": "imports"
+        },
+        {
+          "key": "py backend/app/initial_data.py/init().",
+          "score": 0.5852,
+          "distance": 2,
+          "via": "py backend/app/core/db.py/init_db().",
+          "edge": "calls"
+        },
+        {
+          "key": "py backend/app/initial_data.py/main().",
+          "score": 0.4477,
+          "distance": 3,
+          "via": "py backend/app/initial_data.py/init().",
+          "edge": "calls"
+        }
+      ]
+    },
+    "py backend/app/api/deps.py/get_current_user().": {
+      "routes": [
+        {
+          "key": "api_endpoint DELETE /api/v1/items/{}",
+          "score": 0.5852,
+          "distance": 2,
+          "via": "py backend/app/api/routes/items.py/delete_item().",
+          "edge": "handled_by"
+        },
+        {
+          "key": "api_endpoint DELETE /api/v1/users/me",
+          "score": 0.5852,
+          "distance": 2,
+          "via": "py backend/app/api/routes/users.py/delete_user_me().",
+          "edge": "handled_by"
+        },
+        {
+          "key": "api_endpoint DELETE /api/v1/users/{}",
+          "score": 0.5852,
+          "distance": 2,
+          "via": "py backend/app/api/routes/users.py/delete_user().",
+          "edge": "handled_by"
+        },
+        {
+          "key": "api_endpoint GET /api/v1/items",
+          "score": 0.5852,
+          "distance": 2,
+          "via": "py backend/app/api/routes/items.py/read_items().",
+          "edge": "handled_by"
+        },
+        {
+          "key": "api_endpoint GET /api/v1/items/{}",
+          "score": 0.5852,
+          "distance": 2,
+          "via": "py backend/app/api/routes/items.py/read_item().",
+          "edge": "handled_by"
+        },
+        {
+          "key": "api_endpoint GET /api/v1/users/me",
+          "score": 0.5852,
+          "distance": 2,
+          "via": "py backend/app/api/routes/users.py/read_user_me().",
+          "edge": "handled_by"
+        },
+        {
+          "key": "api_endpoint GET /api/v1/users/{}",
+          "score": 0.5852,
+          "distance": 2,
+          "via": "py backend/app/api/routes/users.py/read_user_by_id().",
+          "edge": "handled_by"
+        },
+        {
+          "key": "api_endpoint PATCH /api/v1/users/me",
+          "score": 0.5852,
+          "distance": 2,
+          "via": "py backend/app/api/routes/users.py/update_user_me().",
+          "edge": "handled_by"
+        },
+        {
+          "key": "api_endpoint PATCH /api/v1/users/me/password",
+          "score": 0.5852,
+          "distance": 2,
+          "via": "py backend/app/api/routes/users.py/update_password_me().",
+          "edge": "handled_by"
+        },
+        {
+          "key": "api_endpoint POST /api/v1/items",
+          "score": 0.5852,
+          "distance": 2,
+          "via": "py backend/app/api/routes/items.py/create_item().",
+          "edge": "handled_by"
+        },
+        {
+          "key": "api_endpoint POST /api/v1/login/test-token",
+          "score": 0.5852,
+          "distance": 2,
+          "via": "py backend/app/api/routes/login.py/test_token().",
+          "edge": "handled_by"
+        },
+        {
+          "key": "api_endpoint PUT /api/v1/items/{}",
+          "score": 0.5852,
+          "distance": 2,
+          "via": "py backend/app/api/routes/items.py/update_item().",
+          "edge": "handled_by"
+        },
+        {
+          "key": "api_endpoint GET /api/v1/users",
+          "score": 0.4477,
+          "distance": 3,
+          "via": "py backend/app/api/routes/users.py/read_users().",
+          "edge": "handled_by"
+        },
+        {
+          "key": "api_endpoint PATCH /api/v1/users/{}",
+          "score": 0.4477,
+          "distance": 3,
+          "via": "py backend/app/api/routes/users.py/update_user().",
+          "edge": "handled_by"
+        },
+        {
+          "key": "api_endpoint POST /api/v1/password-recovery-html-content/{}",
+          "score": 0.4477,
+          "distance": 3,
+          "via": "py backend/app/api/routes/login.py/recover_password_html_content().",
+          "edge": "handled_by"
+        },
+        {
+          "key": "api_endpoint POST /api/v1/users",
+          "score": 0.4477,
+          "distance": 3,
+          "via": "py backend/app/api/routes/users.py/create_user().",
+          "edge": "handled_by"
+        },
+        {
+          "key": "api_endpoint POST /api/v1/utils/test-email",
+          "score": 0.4477,
+          "distance": 3,
+          "via": "py backend/app/api/routes/utils.py/test_email().",
+          "edge": "handled_by"
+        }
+      ],
+      "screens": [],
+      "tests": [],
+      "tables": [
+        {
+          "key": "table user",
+          "score": 0.765,
+          "distance": 1,
+          "via": "py backend/app/api/deps.py/get_current_user().",
+          "edge": "reads"
+        }
+      ],
+      "symbols": [
+        {
+          "key": "py backend/app/api/deps.py/",
+          "score": 0.765,
+          "distance": 1,
+          "via": "py backend/app/api/deps.py/get_current_user().",
+          "edge": "references"
+        },
+        {
+          "key": "py backend/app/api/deps.py/get_current_active_superuser().",
+          "score": 0.765,
+          "distance": 1,
+          "via": "py backend/app/api/deps.py/get_current_user().",
+          "edge": "injects"
+        },
+        {
+          "key": "py backend/app/api/routes/items.py/create_item().",
+          "score": 0.765,
+          "distance": 1,
+          "via": "py backend/app/api/deps.py/get_current_user().",
+          "edge": "injects"
+        },
+        {
+          "key": "py backend/app/api/routes/items.py/delete_item().",
+          "score": 0.765,
+          "distance": 1,
+          "via": "py backend/app/api/deps.py/get_current_user().",
+          "edge": "injects"
+        },
+        {
+          "key": "py backend/app/api/routes/items.py/read_item().",
+          "score": 0.765,
+          "distance": 1,
+          "via": "py backend/app/api/deps.py/get_current_user().",
+          "edge": "injects"
+        },
+        {
+          "key": "py backend/app/api/routes/items.py/read_items().",
+          "score": 0.765,
+          "distance": 1,
+          "via": "py backend/app/api/deps.py/get_current_user().",
+          "edge": "injects"
+        },
+        {
+          "key": "py backend/app/api/routes/items.py/update_item().",
+          "score": 0.765,
+          "distance": 1,
+          "via": "py backend/app/api/deps.py/get_current_user().",
+          "edge": "injects"
+        },
+        {
+          "key": "py backend/app/api/routes/login.py/test_token().",
+          "score": 0.765,
+          "distance": 1,
+          "via": "py backend/app/api/deps.py/get_current_user().",
+          "edge": "injects"
+        },
+        {
+          "key": "py backend/app/api/routes/users.py/delete_user().",
+          "score": 0.765,
+          "distance": 1,
+          "via": "py backend/app/api/deps.py/get_current_user().",
+          "edge": "injects"
+        },
+        {
+          "key": "py backend/app/api/routes/users.py/delete_user_me().",
+          "score": 0.765,
+          "distance": 1,
+          "via": "py backend/app/api/deps.py/get_current_user().",
+          "edge": "injects"
+        },
+        {
+          "key": "py backend/app/api/routes/users.py/read_user_by_id().",
+          "score": 0.765,
+          "distance": 1,
+          "via": "py backend/app/api/deps.py/get_current_user().",
+          "edge": "injects"
+        },
+        {
+          "key": "py backend/app/api/routes/users.py/read_user_me().",
+          "score": 0.765,
+          "distance": 1,
+          "via": "py backend/app/api/deps.py/get_current_user().",
+          "edge": "injects"
+        },
+        {
+          "key": "py backend/app/api/routes/users.py/update_password_me().",
+          "score": 0.765,
+          "distance": 1,
+          "via": "py backend/app/api/deps.py/get_current_user().",
+          "edge": "injects"
+        },
+        {
+          "key": "py backend/app/api/routes/users.py/update_user_me().",
+          "score": 0.765,
+          "distance": 1,
+          "via": "py backend/app/api/deps.py/get_current_user().",
+          "edge": "injects"
+        },
+        {
+          "key": "py backend/app/api/routes/login.py/",
+          "score": 0.5852,
+          "distance": 2,
+          "via": "py backend/app/api/deps.py/get_current_active_superuser().",
+          "edge": "imports"
+        },
+        {
+          "key": "py backend/app/api/routes/login.py/recover_password_html_content().",
+          "score": 0.5852,
+          "distance": 2,
+          "via": "py backend/app/api/deps.py/get_current_active_superuser().",
+          "edge": "references"
+        },
+        {
+          "key": "py backend/app/api/routes/users.py/",
+          "score": 0.5852,
+          "distance": 2,
+          "via": "py backend/app/api/deps.py/get_current_active_superuser().",
+          "edge": "imports"
+        },
+        {
+          "key": "py backend/app/api/routes/users.py/create_user().",
+          "score": 0.5852,
+          "distance": 2,
+          "via": "py backend/app/api/deps.py/get_current_active_superuser().",
+          "edge": "references"
+        },
+        {
+          "key": "py backend/app/api/routes/users.py/read_users().",
+          "score": 0.5852,
+          "distance": 2,
+          "via": "py backend/app/api/deps.py/get_current_active_superuser().",
+          "edge": "references"
+        },
+        {
+          "key": "py backend/app/api/routes/users.py/update_user().",
+          "score": 0.5852,
+          "distance": 2,
+          "via": "py backend/app/api/deps.py/get_current_active_superuser().",
+          "edge": "references"
+        },
+        {
+          "key": "py backend/app/api/routes/utils.py/",
+          "score": 0.5852,
+          "distance": 2,
+          "via": "py backend/app/api/deps.py/get_current_active_superuser().",
+          "edge": "imports"
+        },
+        {
+          "key": "py backend/app/api/routes/utils.py/test_email().",
+          "score": 0.5852,
+          "distance": 2,
+          "via": "py backend/app/api/deps.py/get_current_active_superuser().",
+          "edge": "references"
+        },
+        {
+          "key": "py backend/app/api/main.py/",
+          "score": 0.4477,
+          "distance": 3,
+          "via": "py backend/app/api/routes/login.py/",
+          "edge": "imports"
+        }
+      ]
+    },
+    "ts frontend/src/hooks/useAuth.ts/useAuth().": {
+      "routes": [],
+      "screens": [
+        {
+          "key": "tsx frontend/src/routes/login.tsx/Login().",
+          "score": 0.765,
+          "distance": 1,
+          "via": "ts frontend/src/hooks/useAuth.ts/useAuth().",
+          "edge": "uses_hook"
+        }
+      ],
+      "tests": [],
+      "tables": [],
+      "symbols": [
+        {
+          "key": "tsx frontend/src/routes/login.tsx/",
+          "score": 0.765,
+          "distance": 1,
+          "via": "ts frontend/src/hooks/useAuth.ts/useAuth().",
+          "edge": "imports"
+        }
+      ]
+    },
+    "py backend/app/core/security.py/verify_password().": {
+      "routes": [
+        {
+          "key": "api_endpoint PATCH /api/v1/users/me/password",
+          "score": 0.5852,
+          "distance": 2,
+          "via": "py backend/app/api/routes/users.py/update_password_me().",
+          "edge": "handled_by"
+        },
+        {
+          "key": "api_endpoint POST /api/v1/login/access-token",
+          "score": 0.4477,
+          "distance": 3,
+          "via": "py backend/app/api/routes/login.py/login_access_token().",
+          "edge": "handled_by"
+        }
+      ],
+      "screens": [],
+      "tests": [],
+      "tables": [],
+      "symbols": [
+        {
+          "key": "py backend/app/api/routes/users.py/",
+          "score": 0.765,
+          "distance": 1,
+          "via": "py backend/app/core/security.py/verify_password().",
+          "edge": "imports"
+        },
+        {
+          "key": "py backend/app/api/routes/users.py/update_password_me().",
+          "score": 0.765,
+          "distance": 1,
+          "via": "py backend/app/core/security.py/verify_password().",
+          "edge": "calls"
+        },
+        {
+          "key": "py backend/app/crud.py/",
+          "score": 0.765,
+          "distance": 1,
+          "via": "py backend/app/core/security.py/verify_password().",
+          "edge": "imports"
+        },
+        {
+          "key": "py backend/app/crud.py/authenticate().",
+          "score": 0.765,
+          "distance": 1,
+          "via": "py backend/app/core/security.py/verify_password().",
+          "edge": "calls"
+        },
+        {
+          "key": "py backend/app/api/main.py/",
+          "score": 0.5852,
+          "distance": 2,
+          "via": "py backend/app/api/routes/users.py/",
+          "edge": "imports"
+        },
+        {
+          "key": "py backend/app/api/routes/login.py/",
+          "score": 0.5852,
+          "distance": 2,
+          "via": "py backend/app/crud.py/",
+          "edge": "imports"
+        },
+        {
+          "key": "py backend/app/api/routes/login.py/login_access_token().",
+          "score": 0.5852,
+          "distance": 2,
+          "via": "py backend/app/crud.py/authenticate().",
+          "edge": "calls"
+        },
+        {
+          "key": "py backend/app/core/db.py/",
+          "score": 0.5852,
+          "distance": 2,
+          "via": "py backend/app/crud.py/",
+          "edge": "imports"
+        }
+      ]
+    },
+    "table user": {
+      "routes": [
+        {
+          "key": "api_endpoint DELETE /api/v1/users/{}",
+          "score": 0.5852,
+          "distance": 2,
+          "via": "py backend/app/api/routes/users.py/delete_user().",
+          "edge": "handled_by"
+        },
+        {
+          "key": "api_endpoint GET /api/v1/users",
+          "score": 0.5852,
+          "distance": 2,
+          "via": "py backend/app/api/routes/users.py/read_users().",
+          "edge": "handled_by"
+        },
+        {
+          "key": "api_endpoint GET /api/v1/users/{}",
+          "score": 0.5852,
+          "distance": 2,
+          "via": "py backend/app/api/routes/users.py/read_user_by_id().",
+          "edge": "handled_by"
+        },
+        {
+          "key": "api_endpoint PATCH /api/v1/users/{}",
+          "score": 0.5852,
+          "distance": 2,
+          "via": "py backend/app/api/routes/users.py/update_user().",
+          "edge": "handled_by"
+        },
+        {
+          "key": "api_endpoint DELETE /api/v1/users/me",
+          "score": 0.4552,
+          "distance": 2,
+          "via": "py backend/app/api/routes/users.py/delete_user_me().",
+          "edge": "handled_by"
+        },
+        {
+          "key": "api_endpoint PATCH /api/v1/users/me",
+          "score": 0.4552,
+          "distance": 2,
+          "via": "py backend/app/api/routes/users.py/update_user_me().",
+          "edge": "handled_by"
+        },
+        {
+          "key": "api_endpoint PATCH /api/v1/users/me/password",
+          "score": 0.4552,
+          "distance": 2,
+          "via": "py backend/app/api/routes/users.py/update_password_me().",
+          "edge": "handled_by"
+        },
+        {
+          "key": "api_endpoint POST /api/v1/private/users",
+          "score": 0.4552,
+          "distance": 2,
+          "via": "py backend/app/api/routes/private.py/create_user().",
+          "edge": "handled_by"
+        },
+        {
+          "key": "api_endpoint DELETE /api/v1/items/{}",
+          "score": 0.4477,
+          "distance": 3,
+          "via": "py backend/app/api/routes/items.py/delete_item().",
+          "edge": "handled_by"
+        },
+        {
+          "key": "api_endpoint GET /api/v1/items",
+          "score": 0.4477,
+          "distance": 3,
+          "via": "py backend/app/api/routes/items.py/read_items().",
+          "edge": "handled_by"
+        },
+        {
+          "key": "api_endpoint GET /api/v1/items/{}",
+          "score": 0.4477,
+          "distance": 3,
+          "via": "py backend/app/api/routes/items.py/read_item().",
+          "edge": "handled_by"
+        },
+        {
+          "key": "api_endpoint GET /api/v1/users/me",
+          "score": 0.4477,
+          "distance": 3,
+          "via": "py backend/app/api/routes/users.py/read_user_me().",
+          "edge": "handled_by"
+        },
+        {
+          "key": "api_endpoint POST /api/v1/items",
+          "score": 0.4477,
+          "distance": 3,
+          "via": "py backend/app/api/routes/items.py/create_item().",
+          "edge": "handled_by"
+        },
+        {
+          "key": "api_endpoint POST /api/v1/login/test-token",
+          "score": 0.4477,
+          "distance": 3,
+          "via": "py backend/app/api/routes/login.py/test_token().",
+          "edge": "handled_by"
+        },
+        {
+          "key": "api_endpoint POST /api/v1/password-recovery-html-content/{}",
+          "score": 0.4477,
+          "distance": 3,
+          "via": "py backend/app/api/routes/login.py/recover_password_html_content().",
+          "edge": "handled_by"
+        },
+        {
+          "key": "api_endpoint POST /api/v1/password-recovery/{}",
+          "score": 0.4477,
+          "distance": 3,
+          "via": "py backend/app/api/routes/login.py/recover_password().",
+          "edge": "handled_by"
+        },
+        {
+          "key": "api_endpoint POST /api/v1/reset-password",
+          "score": 0.4477,
+          "distance": 3,
+          "via": "py backend/app/api/routes/login.py/reset_password().",
+          "edge": "handled_by"
+        },
+        {
+          "key": "api_endpoint POST /api/v1/users",
+          "score": 0.4477,
+          "distance": 3,
+          "via": "py backend/app/api/routes/users.py/create_user().",
+          "edge": "handled_by"
+        },
+        {
+          "key": "api_endpoint POST /api/v1/users/signup",
+          "score": 0.4477,
+          "distance": 3,
+          "via": "py backend/app/api/routes/users.py/register_user().",
+          "edge": "handled_by"
+        },
+        {
+          "key": "api_endpoint PUT /api/v1/items/{}",
+          "score": 0.4477,
+          "distance": 3,
+          "via": "py backend/app/api/routes/items.py/update_item().",
+          "edge": "handled_by"
+        },
+        {
+          "key": "api_endpoint POST /api/v1/login/access-token",
+          "score": 0.3482,
+          "distance": 3,
+          "via": "py backend/app/api/routes/login.py/login_access_token().",
+          "edge": "handled_by"
+        },
+        {
+          "key": "api_endpoint POST /api/v1/utils/test-email",
+          "score": 0.3425,
+          "distance": 4,
+          "via": "py backend/app/api/routes/utils.py/test_email().",
+          "edge": "handled_by"
+        }
+      ],
+      "screens": [],
+      "tests": [],
+      "tables": [],
+      "symbols": [
+        {
+          "key": "orm_model py backend/app/models.py/User#",
+          "score": 0.85,
+          "distance": 1,
+          "via": "table user",
+          "edge": "maps_to"
+        },
+        {
+          "key": "py backend/app/alembic/versions/d98dd8ec85a3_edit_replace_id_integers_in_all_models_.py/downgrade().",
+          "score": 0.765,
+          "distance": 1,
+          "via": "table user",
+          "edge": "writes"
+        },
+        {
+          "key": "py backend/app/alembic/versions/d98dd8ec85a3_edit_replace_id_integers_in_all_models_.py/upgrade().",
+          "score": 0.765,
+          "distance": 1,
+          "via": "table user",
+          "edge": "writes"
+        },
+        {
+          "key": "py backend/app/api/deps.py/get_current_user().",
+          "score": 0.765,
+          "distance": 1,
+          "via": "table user",
+          "edge": "reads"
+        },
+        {
+          "key": "py backend/app/api/routes/users.py/delete_user().",
+          "score": 0.765,
+          "distance": 1,
+          "via": "table user",
+          "edge": "reads"
+        },
+        {
+          "key": "py backend/app/api/routes/users.py/read_user_by_id().",
+          "score": 0.765,
+          "distance": 1,
+          "via": "table user",
+          "edge": "reads"
+        },
+        {
+          "key": "py backend/app/api/routes/users.py/read_users().",
+          "score": 0.765,
+          "distance": 1,
+          "via": "table user",
+          "edge": "reads"
+        },
+        {
+          "key": "py backend/app/api/routes/users.py/update_user().",
+          "score": 0.765,
+          "distance": 1,
+          "via": "table user",
+          "edge": "reads"
+        },
+        {
+          "key": "py backend/app/core/db.py/init_db().",
+          "score": 0.765,
+          "distance": 1,
+          "via": "table user",
+          "edge": "reads"
+        },
+        {
+          "key": "py backend/app/crud.py/get_user_by_email().",
+          "score": 0.765,
+          "distance": 1,
+          "via": "table user",
+          "edge": "reads"
+        },
+        {
+          "key": "sql_statement backend/app/alembic/versions/d98dd8ec85a3_edit_replace_id_integers_in_all_models_.py:31",
+          "score": 0.765,
+          "distance": 1,
+          "via": "table user",
+          "edge": "writes"
+        },
+        {
+          "key": "sql_statement backend/app/alembic/versions/d98dd8ec85a3_edit_replace_id_integers_in_all_models_.py:33",
+          "score": 0.765,
+          "distance": 1,
+          "via": "table user",
+          "edge": "reads"
+        },
+        {
+          "key": "sql_statement backend/app/alembic/versions/d98dd8ec85a3_edit_replace_id_integers_in_all_models_.py:68",
+          "score": 0.765,
+          "distance": 1,
+          "via": "table user",
+          "edge": "reads"
+        },
+        {
+          "key": "sql_statement backend/app/alembic/versions/d98dd8ec85a3_edit_replace_id_integers_in_all_models_.py:71",
+          "score": 0.765,
+          "distance": 1,
+          "via": "table user",
+          "edge": "writes"
+        },
+        {
+          "key": "sql_statement backend/app/alembic/versions/d98dd8ec85a3_edit_replace_id_integers_in_all_models_.py:72",
+          "score": 0.765,
+          "distance": 1,
+          "via": "table user",
+          "edge": "reads"
+        },
+        {
+          "key": "py backend/app/models.py/User#",
+          "score": 0.7225,
+          "distance": 2,
+          "via": "orm_model py backend/app/models.py/User#",
+          "edge": "maps_to"
+        },
+        {
+          "key": "py backend/app/api/routes/private.py/create_user().",
+          "score": 0.595,
+          "distance": 1,
+          "via": "table user",
+          "edge": "writes"
+        },
+        {
+          "key": "py backend/app/api/routes/users.py/delete_user_me().",
+          "score": 0.595,
+          "distance": 1,
+          "via": "table user",
+          "edge": "writes"
+        },
+        {
+          "key": "py backend/app/api/routes/users.py/update_password_me().",
+          "score": 0.595,
+          "distance": 1,
+          "via": "table user",
+          "edge": "writes"
+        },
+        {
+          "key": "py backend/app/api/routes/users.py/update_user_me().",
+          "score": 0.595,
+          "distance": 1,
+          "via": "table user",
+          "edge": "writes"
+        },
+        {
+          "key": "py backend/app/crud.py/authenticate().",
+          "score": 0.595,
+          "distance": 1,
+          "via": "table user",
+          "edge": "writes"
+        },
+        {
+          "key": "py backend/app/crud.py/create_user().",
+          "score": 0.595,
+          "distance": 1,
+          "via": "table user",
+          "edge": "writes"
+        },
+        {
+          "key": "py backend/app/crud.py/update_user().",
+          "score": 0.595,
+          "distance": 1,
+          "via": "table user",
+          "edge": "writes"
+        },
+        {
+          "key": "py backend/app/api/deps.py/",
+          "score": 0.5852,
+          "distance": 2,
+          "via": "py backend/app/api/deps.py/get_current_user().",
+          "edge": "references"
+        },
+        {
+          "key": "py backend/app/api/deps.py/get_current_active_superuser().",
+          "score": 0.5852,
+          "distance": 2,
+          "via": "py backend/app/api/deps.py/get_current_user().",
+          "edge": "injects"
+        },
+        {
+          "key": "py backend/app/api/routes/items.py/create_item().",
+          "score": 0.5852,
+          "distance": 2,
+          "via": "py backend/app/api/deps.py/get_current_user().",
+          "edge": "injects"
+        },
+        {
+          "key": "py backend/app/api/routes/items.py/delete_item().",
+          "score": 0.5852,
+          "distance": 2,
+          "via": "py backend/app/api/deps.py/get_current_user().",
+          "edge": "injects"
+        },
+        {
+          "key": "py backend/app/api/routes/items.py/read_item().",
+          "score": 0.5852,
+          "distance": 2,
+          "via": "py backend/app/api/deps.py/get_current_user().",
+          "edge": "injects"
+        },
+        {
+          "key": "py backend/app/api/routes/items.py/read_items().",
+          "score": 0.5852,
+          "distance": 2,
+          "via": "py backend/app/api/deps.py/get_current_user().",
+          "edge": "injects"
+        },
+        {
+          "key": "py backend/app/api/routes/items.py/update_item().",
+          "score": 0.5852,
+          "distance": 2,
+          "via": "py backend/app/api/deps.py/get_current_user().",
+          "edge": "injects"
+        },
+        {
+          "key": "py backend/app/api/routes/login.py/recover_password().",
+          "score": 0.5852,
+          "distance": 2,
+          "via": "py backend/app/crud.py/get_user_by_email().",
+          "edge": "calls"
+        },
+        {
+          "key": "py backend/app/api/routes/login.py/recover_password_html_content().",
+          "score": 0.5852,
+          "distance": 2,
+          "via": "py backend/app/crud.py/get_user_by_email().",
+          "edge": "calls"
+        },
+        {
+          "key": "py backend/app/api/routes/login.py/reset_password().",
+          "score": 0.5852,
+          "distance": 2,
+          "via": "py backend/app/crud.py/get_user_by_email().",
+          "edge": "calls"
+        },
+        {
+          "key": "py backend/app/api/routes/login.py/test_token().",
+          "score": 0.5852,
+          "distance": 2,
+          "via": "py backend/app/api/deps.py/get_current_user().",
+          "edge": "injects"
+        },
+        {
+          "key": "py backend/app/api/routes/users.py/create_user().",
+          "score": 0.5852,
+          "distance": 2,
+          "via": "py backend/app/crud.py/get_user_by_email().",
+          "edge": "calls"
+        },
+        {
+          "key": "py backend/app/api/routes/users.py/read_user_me().",
+          "score": 0.5852,
+          "distance": 2,
+          "via": "py backend/app/api/deps.py/get_current_user().",
+          "edge": "injects"
+        },
+        {
+          "key": "py backend/app/api/routes/users.py/register_user().",
+          "score": 0.5852,
+          "distance": 2,
+          "via": "py backend/app/crud.py/get_user_by_email().",
+          "edge": "calls"
+        },
+        {
+          "key": "py backend/app/initial_data.py/",
+          "score": 0.5852,
+          "distance": 2,
+          "via": "py backend/app/core/db.py/init_db().",
+          "edge": "imports"
+        },
+        {
+          "key": "py backend/app/initial_data.py/init().",
+          "score": 0.5852,
+          "distance": 2,
+          "via": "py backend/app/core/db.py/init_db().",
+          "edge": "calls"
+        },
+        {
+          "key": "py backend/app/api/routes/private.py/",
+          "score": 0.5527,
+          "distance": 3,
+          "via": "py backend/app/models.py/User#",
+          "edge": "imports"
+        },
+        {
+          "key": "py backend/app/api/routes/users.py/",
+          "score": 0.5527,
+          "distance": 3,
+          "via": "py backend/app/models.py/User#",
+          "edge": "imports"
+        },
+        {
+          "key": "py backend/app/core/db.py/",
+          "score": 0.5527,
+          "distance": 3,
+          "via": "py backend/app/models.py/User#",
+          "edge": "imports"
+        },
+        {
+          "key": "py backend/app/crud.py/",
+          "score": 0.5527,
+          "distance": 3,
+          "via": "py backend/app/models.py/User#",
+          "edge": "imports"
+        },
+        {
+          "key": "py backend/app/models.py/Item#",
+          "score": 0.5527,
+          "distance": 3,
+          "via": "py backend/app/models.py/User#",
+          "edge": "references"
+        },
+        {
+          "key": "py backend/app/api/routes/login.py/login_access_token().",
+          "score": 0.4552,
+          "distance": 2,
+          "via": "py backend/app/crud.py/authenticate().",
+          "edge": "calls"
+        },
+        {
+          "key": "py backend/app/api/routes/login.py/",
+          "score": 0.4477,
+          "distance": 3,
+          "via": "py backend/app/api/deps.py/get_current_active_superuser().",
+          "edge": "imports"
+        },
+        {
+          "key": "py backend/app/api/routes/utils.py/",
+          "score": 0.4477,
+          "distance": 3,
+          "via": "py backend/app/api/deps.py/get_current_active_superuser().",
+          "edge": "imports"
+        },
+        {
+          "key": "py backend/app/api/routes/utils.py/test_email().",
+          "score": 0.4477,
+          "distance": 3,
+          "via": "py backend/app/api/deps.py/get_current_active_superuser().",
+          "edge": "references"
+        },
+        {
+          "key": "py backend/app/initial_data.py/main().",
+          "score": 0.4477,
+          "distance": 3,
+          "via": "py backend/app/initial_data.py/init().",
+          "edge": "calls"
+        },
+        {
+          "key": "py backend/app/api/main.py/",
+          "score": 0.4228,
+          "distance": 4,
+          "via": "py backend/app/api/routes/private.py/",
+          "edge": "imports"
+        },
+        {
+          "key": "py backend/app/api/routes/items.py/",
+          "score": 0.4228,
+          "distance": 4,
+          "via": "py backend/app/models.py/Item#",
+          "edge": "imports"
+        },
+        {
+          "key": "py backend/app/crud.py/create_item().",
+          "score": 0.4228,
+          "distance": 4,
+          "via": "py backend/app/models.py/Item#",
+          "edge": "references"
+        }
+      ]
+    }
+  }
+}

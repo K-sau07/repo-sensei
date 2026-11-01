@@ -27,6 +27,7 @@ export interface SymbolActions {
   goToDefinition: (symbol: CodeSymbol) => void;
   showReferences: (symbol: CodeSymbol) => void;
   trace: (symbol: CodeSymbol) => void;
+  impact: (symbol: CodeSymbol) => void;
 }
 
 function Action({
@@ -148,7 +149,13 @@ export function SymbolHoverCard({
             actions.trace(symbol);
           }}
         />
-        <Action label="Impact" icon={<Radar aria-hidden />} soon="Impact arrives in phase 6" />
+        <Action
+          label="Impact"
+          icon={<Radar aria-hidden />}
+          onClick={() => {
+            actions.impact(symbol);
+          }}
+        />
         <Action
           label="Ask about"
           icon={<MessageSquareText aria-hidden />}

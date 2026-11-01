@@ -72,8 +72,9 @@ test.describe("code intelligence", () => {
     await expect(card).toBeVisible();
     await expect(card.getByText("SessionDep", { exact: true })).toBeVisible();
     await expect(card.getByText("backend/app/api/deps.py:26")).toBeVisible();
-    // Phases to come are shown, disabled, with when.
-    await expect(card.getByRole("button", { name: /Impact/ })).toHaveAttribute(
+    // What a change to it would break: one click away. Phases to come are shown, disabled.
+    await expect(card.getByRole("button", { name: /Impact/ })).not.toHaveAttribute("aria-disabled");
+    await expect(card.getByRole("button", { name: /Ask about/ })).toHaveAttribute(
       "aria-disabled",
       "true",
     );
