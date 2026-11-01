@@ -6,6 +6,7 @@ requires-python = ">=3.13"
 dependencies = [
     "aioboto3>=15.5",
     "alembic>=1.16",
+    "argon2-cffi>=25.1",
     "asyncpg>=0.30",
     "celery[redis]>=5.6",
     "cryptography>=45",

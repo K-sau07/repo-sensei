@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from sensei_core.db.base import Base
 from sensei_core.models.agent_runs import AgentRun, AgentStep
+from sensei_core.models.api_keys import ApiKey
 from sensei_core.models.audit import ActorType, AuditEvent, UsageEvent, UsageKind
 from sensei_core.models.chunks import CodeChunk
 from sensei_core.models.conversations import (
@@ -54,6 +55,7 @@ __all__ = [
     "AgentRun",
     "AgentStep",
     "AnswerCacheEntry",
+    "ApiKey",
     "AuditEvent",
     "Base",
     "CodeChunk",

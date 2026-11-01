@@ -18,6 +18,7 @@ ORG_SETTING = "app.org_id"
 USER_SETTING = "app.user_id"
 INVITE_SETTING = "app.invite_token_hash"
 SHARE_SETTING = "app.share_token_hash"
+API_KEY_SETTING = "app.api_key_prefix"
 APP_ROLE = "sensei_app"
 SYSTEM_ROLE = "sensei_system"
 
@@ -26,6 +27,7 @@ _USER_EXPR = f"user_id = NULLIF(current_setting('{USER_SETTING}', true), '')::uu
 _ACTOR_EXPR = f"actor_user_id = NULLIF(current_setting('{USER_SETTING}', true), '')::uuid"
 _INVITE_EXPR = f"token_hash = decode(NULLIF(current_setting('{INVITE_SETTING}', true), ''), 'hex')"
 _SHARE_EXPR = f"share_token_hash = NULLIF(current_setting('{SHARE_SETTING}', true), '')"
+_API_KEY_EXPR = f"prefix = NULLIF(current_setting('{API_KEY_SETTING}', true), '')"
 
 
 class OrgScopedMixin:
@@ -76,6 +78,15 @@ def shared_rls_sql(table: str = "conversations") -> list[str]:
     """Shared conversations: besides the org's rows, the single row whose share token hash the
     caller presents (so a share link opens without signing in). Only for reading."""
     return [f'CREATE POLICY share_by_token ON "{table}" FOR SELECT USING ({_SHARE_EXPR})']
+
+
+def api_keys_rls_sql(table: str = "api_keys") -> list[str]:
+    """API keys: the current org's rows, plus the one row whose prefix the caller presents (a
+    bearer key is checked before its org is known). Only for reading; writes need the org."""
+    return [
+        *enable_org_rls_sql(table),
+        f'CREATE POLICY key_by_prefix ON "{table}" FOR SELECT USING ({_API_KEY_EXPR})',
+    ]
 
 
 def audit_log_rls_sql(table: str = "audit_log") -> list[str]:
@@ -151,6 +162,14 @@ async def set_share_context(session: AsyncSession, token_hash: str) -> None:
     await session.execute(
         text("SELECT set_config(:name, :value, true)"),
         {"name": SHARE_SETTING, "value": token_hash},
+    )
+
+
+async def set_api_key_context(session: AsyncSession, prefix: str) -> None:
+    """Let the current transaction read the one API key with ``prefix``."""
+    await session.execute(
+        text("SELECT set_config(:name, :value, true)"),
+        {"name": API_KEY_SETTING, "value": prefix},
     )
 
 

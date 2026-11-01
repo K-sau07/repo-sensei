@@ -52,6 +52,8 @@ class AuditAction(enum.StrEnum):
     CONVERSATION_UNSHARED = "conversation.unshared"
     DIAGRAM_SHARED = "diagram.shared"
     DIAGRAM_UNSHARED = "diagram.unshared"
+    API_KEY_CREATE = "api_key.create"
+    API_KEY_REVOKE = "api_key.revoke"
 
 
 def _clean_meta(meta: dict[str, Any] | None) -> dict[str, Any]:
@@ -60,6 +62,15 @@ def _clean_meta(meta: dict[str, Any] | None) -> dict[str, Any]:
         return {}
     cleaned: dict[str, Any] = redact(json.loads(json.dumps(meta, default=str)))
     return cleaned
+
+
+def _actor_type(actor_user_id: uuid.UUID | None) -> ActorType:
+    """A user's action through an API key (the request bound ``actor_type``) is the key's."""
+    if actor_user_id is None:
+        return ActorType.SYSTEM
+    if current_context().get("actor_type") == ActorType.API_KEY.value:
+        return ActorType.API_KEY
+    return ActorType.USER
 
 
 async def audit(
@@ -83,7 +94,7 @@ async def audit(
             id=event_id,
             org_id=org_id,
             actor_user_id=actor_user_id,
-            actor_type=actor_type or (ActorType.USER if actor_user_id else ActorType.SYSTEM),
+            actor_type=actor_type or _actor_type(actor_user_id),
             action=action.value,
             target_type=target_type,
             target_id=str(target_id) if target_id is not None else None,

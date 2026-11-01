@@ -7,21 +7,23 @@ environment except direct local calls during development.
 
 from __future__ import annotations
 
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Callable
 from contextlib import AsyncExitStack, asynccontextmanager
 
 import httpx
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from starlette.middleware.gzip import GZipMiddleware
 
 from sensei_api import __version__
+from sensei_api.auth import key_access
 from sensei_api.browse import ConstellationCache, TreeCache
 from sensei_api.errors import install_error_handlers
 from sensei_api.graphs import GraphStore
 from sensei_api.middleware import RequestIdMiddleware
 from sensei_api.routers import (
+    api_keys,
     ask,
     auth,
     browse,
@@ -53,6 +55,7 @@ from sensei_api.routers import (
     webhooks,
 )
 from sensei_api.routers.health import ReadinessCheck
+from sensei_core.auth.api_keys import ApiKeyService, Scope
 from sensei_core.auth.sessions import SessionService
 from sensei_core.config import Settings, get_settings
 from sensei_core.db import make_database
@@ -68,6 +71,19 @@ from sensei_engine.search.grep import ExactSearch
 from sensei_engine.snapshots import SnapshotCache
 
 API_PREFIX = "/api/v1"
+# Where an API key is let in (7.1), and with which scope: to read, and to call the unsafe
+# endpoints listed (reads that are POSTs, and asking). Every other router refuses keys.
+_READ_ONLY = (
+    "me", "repos", "indexing", "index_jobs", "browse", "constellation", "symbols", "graph",
+    "feature_maps", "overview", "refs", "staleness", "diagrams", "deps", "impact", "galaxy",
+)  # fmt: skip
+KEY_ACCESS: dict[str, tuple[Scope, frozenset[Callable[..., object]]]] = {
+    **{name: (Scope.READ_REPO, frozenset()) for name in _READ_ONLY},
+    "search": (Scope.READ_REPO, frozenset({search.search})),
+    "trace": (Scope.READ_REPO, frozenset({trace.trace})),
+    "ask": (Scope.ASK, frozenset({ask.ask})),
+    "runs": (Scope.ASK, frozenset()),
+}
 SERVICE_NAME = "sensei-api"
 
 log = get_logger(__name__)
@@ -77,6 +93,7 @@ def _install_services(app: FastAPI, settings: Settings) -> None:
     """Process-wide services, on ``app.state`` (tests replace them there)."""
     app.state.settings = settings
     app.state.session_service = SessionService(settings.auth)
+    app.state.api_key_service = ApiKeyService()
     app.state.token_cipher = TokenCipher.from_settings(settings.auth)
     app.state.org_service = OrgService(ConsoleMailer(), settings.web.origin)
     # Sends tasks by name; the workers package defines them.
@@ -188,8 +205,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         galaxy,
         home,
         shared,
+        api_keys,
     ):  # the order routes are matched in
-        app.include_router(module.router, prefix=API_PREFIX)
+        name = module.__name__.rsplit(".", 1)[-1]
+        scope, writes = KEY_ACCESS.get(name, (None, frozenset[Callable[..., object]]()))
+        app.include_router(
+            module.router,
+            prefix=API_PREFIX,
+            dependencies=[Depends(key_access(scope, writes))],
+        )
     # Wraps the whole middleware stack; RequestIdMiddleware tags the server span it creates.
     FastAPIInstrumentor.instrument_app(app, server_request_hook=scrub_server_span)
     return app
