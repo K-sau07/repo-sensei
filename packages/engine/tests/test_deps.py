@@ -16,6 +16,7 @@ from sensei_engine.deps import (
     DepEdge,
     DepGraph,
     DepNode,
+    Grouping,
     aggregate,
     coupling,
     cycles,
@@ -263,3 +264,13 @@ def test_coupling_metrics() -> None:
     assert metrics["f"].instability == 1.0  # depends, depended on by none
     lone = coupling(_dep({"x": "other"}, {}))
     assert lone["x"].instability is None
+
+
+def test_a_group_spread_over_several_parents_has_no_cluster(graph: GraphSnapshot) -> None:
+    # One package at the root, over two services (the routes, the rest of the app): packages
+    # and services don't nest.
+    roots = Grouping({"backend/app/api": "routes", "backend/app": "core"}, {".": "app"})
+    packages = aggregate(graph, "package", roots)
+    assert packages.nodes["."].cluster is None
+    files = aggregate(graph, "file", roots)
+    assert files.nodes["backend/app/crud.py"].cluster == "backend/app"  # one module: its own

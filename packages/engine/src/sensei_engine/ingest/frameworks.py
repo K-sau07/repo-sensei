@@ -237,7 +237,10 @@ def _compose_builds(text: str, root: str) -> dict[str, str]:
     builds: dict[str, str] = {}
     for name, service in _table(_table(_yaml(text)).get("services")).items():
         build = _table(service).get("build")
-        context = build if isinstance(build, str) else _table(build).get("context")
+        if build is None:
+            continue
+        # A build mapping without a context is built from the compose file's folder.
+        context = build if isinstance(build, str) else _table(build).get("context", ".")
         if not isinstance(context, str) or "://" in context or context.startswith("/"):
             continue
         dockerfile = None if isinstance(build, str) else _table(build).get("dockerfile")

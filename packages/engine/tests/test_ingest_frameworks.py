@@ -88,6 +88,7 @@ def test_alembic_compose_and_openapi() -> None:
             "  worker:\n    build:\n      context: .\n      dockerfile: backend/Dockerfile\n"
             "  e2e:\n    build:\n      context: .\n"
             "      dockerfile: frontend/Dockerfile.playwright\n"
+            "  jobs:\n    build:\n      dockerfile: workers/Dockerfile\n"
         ),
         "compose.override.yml": "services:\n  mailpit:\n    image: axllent/mailpit\n",
         "docker-compose.yaml": ": not yaml : [",
@@ -102,10 +103,10 @@ def test_alembic_compose_and_openapi() -> None:
         ("spec", "openapi"),
     }
     assert frameworks[".", "docker-compose"].details == {
-        "services": ["api", "db", "e2e", "mailpit", "out", "web", "worker"],
+        "services": ["api", "db", "e2e", "jobs", "mailpit", "out", "web", "worker"],
         # Where each one's code is: its Dockerfile's folder in its context (one outside the
         # repository, and a variant image's, left out); merged across files.
-        "builds": {"api": ".", "web": "frontend", "worker": "backend"},
+        "builds": {"api": ".", "jobs": "workers", "web": "frontend", "worker": "backend"},
     }
     assert frameworks["api", "openapi"].version == "3.1.0"
     assert frameworks["spec", "openapi"].version == "2.0"

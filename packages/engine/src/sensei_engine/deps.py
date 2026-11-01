@@ -218,14 +218,19 @@ def aggregate(
     member: list[str | None] = [group_of(node, level, roots) for node in graph.nodes]
     layers: defaultdict[str, Counter[str]] = defaultdict(Counter)
     sizes: Counter[str] = Counter()
+    # A group's cluster is the one group a level up holding all of it; one spread over several
+    # (a package beside two services: they don't nest) has none.
     clusters: dict[str, str | None] = {}
     for node, group in zip(graph.nodes, member, strict=True):
         if group is None:
             continue
         sizes[group] += 1
         layers[group][layer_of(node, None)] += 1
+        parent = group_of(node, up, roots) if up is not None else None
         if group not in clusters:
-            clusters[group] = group_of(node, up, roots) if up is not None else None
+            clusters[group] = parent
+        elif clusters[group] != parent:
+            clusters[group] = None
     nodes = {
         group: DepNode(
             group, label_of(group, level, roots, graph), _layer(layers[group]), sizes[group],
