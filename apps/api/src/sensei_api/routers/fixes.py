@@ -1,5 +1,7 @@
 """Fix intake (8.3): starting a fix from a pasted trace or a GitHub issue, listing a
-repository's fixes, reading one; and parsing a paste for the intake page's live preview.
+repository's fixes, reading one; and parsing a paste for the intake page's live preview. Then
+the run's controls (8.4-8.8): start, cancel, retry with more context, and people's decisions on
+its plan (approve, request changes, reject: :mod:`sensei_fixer.approvals`).
 
 A fix needs a member (viewers can read fixes, not start them) who can read the repository on
 GitHub; a GitHub issue is read with the user's own GitHub credential, so only issues they can
@@ -26,14 +28,17 @@ from sensei_api import streams
 from sensei_api.deps import DbSession, RedisClient
 from sensei_api.orgs import OrgAccessDep
 from sensei_api.repos import RepoAccessDep, RepoDep, checked, get_viewer, github_client
+from sensei_core.audit import AuditAction, audit
 from sensei_core.db.engine import Database
 from sensei_core.db.tenancy import set_org_context
-from sensei_core.errors import ConflictError, InvalidError, NotFoundError
+from sensei_core.errors import ConflictError, ForbiddenError, InvalidError, NotFoundError
 from sensei_core.fixes.service import FixService, repo_index
 from sensei_core.fixes.tickets import MAX_CONTEXTS, MAX_TEXT, Frame, Ticket, parse_ticket
 from sensei_core.github.client import Credential, GitHubError
 from sensei_core.jobs import FixJobs
 from sensei_core.models import (
+    ApprovalDecision,
+    FixApproval,
     FixRisk,
     FixRun,
     FixSource,
@@ -42,10 +47,12 @@ from sensei_core.models import (
     Repo,
     ReproResult,
     Role,
+    User,
 )
 from sensei_core.models.fixes import TERMINAL
 from sensei_core.orgs.service import OrgAccess, require_role
 from sensei_core.repos.access import RepoAccess
+from sensei_fixer.approvals import decide, required
 from sensei_fixer.events import FINAL, FixOutbox, fix_stream
 from sensei_fixer.pipeline import cancel, close_agent_run
 from sensei_fixer.state import FixStateError, FixStateMachine
@@ -124,6 +131,9 @@ class FixOut(FixSummaryOut):
         description="Its verification: runs, the verifier's verdict, risk and merge readiness."
     )
     stop_reason: str | None = Field(description="Why it stopped short, when it did.")
+    approvals_needed: int | None = Field(
+        description="Distinct approvers its plan needs (two for a high-risk fix); None: no plan."
+    )
 
     @classmethod
     def full(cls, run: FixRun, repo: Repo) -> FixOut:
@@ -132,7 +142,7 @@ class FixOut(FixSummaryOut):
             **summary.model_dump(), ticket=TicketOut.build(Ticket.model_validate(run.ticket)),
             repro_result=run.repro_result, root_cause=run.root_cause, repro=run.repro,
             plan=run.plan, patch=run.patch, verification=run.verification,
-            stop_reason=run.stop_reason,
+            stop_reason=run.stop_reason, approvals_needed=required(run.risk) if run.plan else None,
         )  # fmt: skip
 
 
@@ -402,6 +412,120 @@ async def retry_fix(
     background.add_task(outbox.publish, redis)
     background.add_task(_jobs(request).run_stage, run.org_id, run.id, run.stage.value)
     return FixOut.full(run, repo)
+
+
+class StepEdit(BaseModel):
+    description: str = Field(min_length=1, max_length=1_000)
+    path: str = Field(min_length=1, max_length=500)
+
+
+class FileEdit(BaseModel):
+    path: str = Field(min_length=1, max_length=500)
+    change: Literal["modify", "create"]
+    why: str = Field(default="", max_length=500)
+
+
+class PlanEdits(BaseModel):
+    """The plan as a person edited it (each part left out stays as the planner had it)."""
+
+    summary: str | None = Field(default=None, max_length=2_000)
+    steps: list[StepEdit] | None = Field(default=None, max_length=10)
+    files: list[FileEdit] | None = Field(default=None, max_length=8)
+
+
+class ApprovalIn(BaseModel):
+    decision: ApprovalDecision
+    plan_revision: int = Field(ge=0, description="The plan's revision decided on (as read).")
+    comment: str | None = Field(default=None, max_length=4_000)
+    plan_edits: PlanEdits | None = Field(
+        default=None, description="An edited plan (with request_changes): planned again."
+    )
+
+
+class ApprovalOut(BaseModel):
+    id: uuid.UUID
+    user_id: uuid.UUID
+    login: str | None
+    decision: ApprovalDecision
+    comment: str | None
+    plan_edits: dict[str, Any] | None
+    plan_revision: int
+    created_at: datetime
+
+
+@router.post("/fixes/{fix_id}/approval", response_model=FixOut)
+async def decide_fix(
+    *,
+    request: Request,
+    fix_id: uuid.UUID,
+    body: ApprovalIn,
+    access: OrgAccessDep,
+    db: DbSession,
+    readers: RepoAccessDep,
+    redis: RedisClient,
+    background: BackgroundTasks,
+) -> FixOut:
+    """Approve the fix's plan, ask for changes (planned again), or reject it. Members who can
+    write to the repository on GitHub (asked now); a high-risk fix needs two of them, and whoever
+    asked for it can't be the only one. Every decision is audited."""
+    require_role(access, Role.MEMBER)
+    run, repo = await _visible(request, access, db, readers, fix_id)
+    if not await readers.can_write(access.user, repo):
+        raise ForbiddenError(
+            "Deciding on a fix needs write access to the repository on GitHub.",
+            code="github_write_required",
+        )
+    run = await _locked(db, run)
+    edits = body.plan_edits.model_dump(exclude_none=True) if body.plan_edits else None
+    done = await decide(
+        db, run, user_id=access.user.id, login=access.user.login, decision=body.decision,
+        plan_revision=body.plan_revision, comment=body.comment, plan_edits=edits or None,
+    )  # fmt: skip
+    await audit(
+        db, AuditAction.FIX_DECISION, actor_user_id=access.user.id, org_id=access.org.id,
+        target_type="fix", target_id=run.id,
+        meta={"decision": body.decision.value, "plan_revision": body.plan_revision,
+              "risk": run.risk.value if run.risk else None, "approvals": done.approved_by,
+              "needed": done.needed, "status": run.status.value},
+    )  # fmt: skip
+    await close_agent_run(db, run)  # a rejection ends the run
+    outbox = FixOutbox(run.org_id, run.id, run.repo_id)
+    outbox.add(done.events)
+    background.add_task(outbox.publish, redis)
+    if done.queue:
+        background.add_task(_jobs(request).run_stage, run.org_id, run.id, run.stage.value)
+    return FixOut.full(run, repo)
+
+
+@router.get("/fixes/{fix_id}/approvals", response_model=list[ApprovalOut])
+async def list_approvals(
+    request: Request,
+    fix_id: uuid.UUID,
+    access: OrgAccessDep,
+    db: DbSession,
+    readers: RepoAccessDep,
+) -> list[ApprovalOut]:
+    """The decisions on the fix's plans, oldest first."""
+    run, _repo = await _visible(request, access, db, readers, fix_id)
+    rows = await db.execute(
+        select(FixApproval, User.login)
+        .outerjoin(User, User.id == FixApproval.user_id)
+        .where(FixApproval.fix_run_id == run.id)
+        .order_by(FixApproval.created_at, FixApproval.id)
+    )
+    return [
+        ApprovalOut(
+            id=row.id,
+            user_id=row.user_id,
+            login=login,
+            decision=row.decision,
+            comment=row.comment,
+            plan_edits=row.plan_edits,
+            plan_revision=row.plan_revision,
+            created_at=row.created_at,
+        )
+        for row, login in rows.tuples()
+    ]
 
 
 def _final(run: FixRun) -> dict[str, Any]:

@@ -392,3 +392,28 @@ async def test_a_patch_that_doesnt_apply_fails_verification(repo: Path) -> None:
     assert isinstance(outcome, Stop)
     assert outcome.status is FixStatus.FAILED
     assert outcome.reason.startswith("Verification: The patch doesn't apply")
+
+
+async def test_a_plan_asked_to_change_is_the_next_revision(repo: Path) -> None:
+    asked = {**PLAN, "revision": 1, "requests": [{
+        "by": "bo", "comment": "Callers expect an error.", "revision": 1,
+        "edits": {"steps": [{"description": "Raise ValueError", "path": "app/stats.py"}]},
+    }]}  # fmt: skip
+    good = {
+        "summary": "Raise ValueError for an empty list.",
+        "risks": [],
+        "steps": [{"description": "Raise ValueError", "path": "app/stats.py"}],
+        "files": [{"path": "app/stats.py", "change": "modify", "why": "the division"}],
+    }
+    fake = _fake([_tool("p1", "submit_plan", good)])
+    outcome = await plan_stage(_workspace(repo), fake.client, None)(
+        _stage(FixStage.PLAN, _facts(plan=asked))
+    )
+    assert isinstance(outcome, Advance), outcome
+    assert outcome.updates["plan"]["revision"] == 2
+    assert "requests" not in outcome.updates["plan"]  # the new plan answers them
+    first = fake.bodies("/v1/messages")[0]["messages"][0]["content"]
+    assert "Your earlier plan:" in first
+    assert (
+        "From @bo:\nCallers expect an error.\nTheir step: app/stats.py: Raise ValueError" in first
+    )

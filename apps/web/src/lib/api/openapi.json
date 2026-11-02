@@ -448,6 +448,129 @@
         "title": "ApiKeysOut",
         "type": "object"
       },
+      "ApprovalDecision": {
+        "enum": [
+          "approve",
+          "request_changes",
+          "reject"
+        ],
+        "title": "ApprovalDecision",
+        "type": "string"
+      },
+      "ApprovalIn": {
+        "properties": {
+          "comment": {
+            "anyOf": [
+              {
+                "maxLength": 4000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Comment"
+          },
+          "decision": {
+            "$ref": "#/components/schemas/ApprovalDecision"
+          },
+          "plan_edits": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PlanEdits"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "An edited plan (with request_changes): planned again."
+          },
+          "plan_revision": {
+            "description": "The plan's revision decided on (as read).",
+            "minimum": 0.0,
+            "title": "Plan Revision",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "decision",
+          "plan_revision"
+        ],
+        "title": "ApprovalIn",
+        "type": "object"
+      },
+      "ApprovalOut": {
+        "properties": {
+          "comment": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Comment"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "decision": {
+            "$ref": "#/components/schemas/ApprovalDecision"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "login": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Login"
+          },
+          "plan_edits": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Plan Edits"
+          },
+          "plan_revision": {
+            "title": "Plan Revision",
+            "type": "integer"
+          },
+          "user_id": {
+            "format": "uuid",
+            "title": "User Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "user_id",
+          "login",
+          "decision",
+          "comment",
+          "plan_edits",
+          "plan_revision",
+          "created_at"
+        ],
+        "title": "ApprovalOut",
+        "type": "object"
+      },
       "ArchitectureOut": {
         "properties": {
           "links": {
@@ -622,6 +745,7 @@
           "oauth.authorize",
           "oauth.refresh_reused",
           "fix.create",
+          "fix.decision",
           "sentry.connect",
           "sentry.disconnect"
         ],
@@ -3015,6 +3139,36 @@
         "title": "FeedbackOut",
         "type": "object"
       },
+      "FileEdit": {
+        "properties": {
+          "change": {
+            "enum": [
+              "modify",
+              "create"
+            ],
+            "title": "Change",
+            "type": "string"
+          },
+          "path": {
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Path",
+            "type": "string"
+          },
+          "why": {
+            "default": "",
+            "maxLength": 500,
+            "title": "Why",
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "change"
+        ],
+        "title": "FileEdit",
+        "type": "object"
+      },
       "FileOut": {
         "description": "A file. Like a listing, it depends only on the content; the commit is in\n``X-Commit-Sha``.",
         "properties": {
@@ -3142,6 +3296,18 @@
       },
       "FixOut": {
         "properties": {
+          "approvals_needed": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Distinct approvers its plan needs (two for a high-risk fix); None: no plan.",
+            "title": "Approvals Needed"
+          },
           "created_at": {
             "format": "date-time",
             "title": "Created At",
@@ -3187,6 +3353,19 @@
             ],
             "title": "Merge Readiness"
           },
+          "patch": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The change: its diff, files and attempts.",
+            "title": "Patch"
+          },
           "plan": {
             "anyOf": [
               {
@@ -3213,6 +3392,19 @@
           "repo": {
             "title": "Repo",
             "type": "string"
+          },
+          "repro": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The reproducing test and its runs.",
+            "title": "Repro"
           },
           "repro_result": {
             "anyOf": [
@@ -3266,12 +3458,37 @@
           "status": {
             "$ref": "#/components/schemas/FixStatus"
           },
+          "stop_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Why it stopped short, when it did.",
+            "title": "Stop Reason"
+          },
           "ticket": {
             "$ref": "#/components/schemas/TicketOut"
           },
           "title": {
             "title": "Title",
             "type": "string"
+          },
+          "verification": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Its verification: runs, the verifier's verdict, risk and merge readiness.",
+            "title": "Verification"
           }
         },
         "required": [
@@ -3291,7 +3508,12 @@
           "ticket",
           "repro_result",
           "root_cause",
-          "plan"
+          "repro",
+          "plan",
+          "patch",
+          "verification",
+          "stop_reason",
+          "approvals_needed"
         ],
         "title": "FixOut",
         "type": "object"
@@ -5581,6 +5803,55 @@
         "title": "PartialOut",
         "type": "object"
       },
+      "PlanEdits": {
+        "description": "The plan as a person edited it (each part left out stays as the planner had it).",
+        "properties": {
+          "files": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/FileEdit"
+                },
+                "maxItems": 8,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Files"
+          },
+          "steps": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/StepEdit"
+                },
+                "maxItems": 10,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Steps"
+          },
+          "summary": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Summary"
+          }
+        },
+        "title": "PlanEdits",
+        "type": "object"
+      },
       "Provenance": {
         "description": "How an edge is known, from a compiler's word to a model's guess.",
         "enum": [
@@ -5985,6 +6256,21 @@
         ],
         "title": "ReproResult",
         "type": "string"
+      },
+      "RetryIn": {
+        "properties": {
+          "context": {
+            "maxLength": 4000,
+            "minLength": 1,
+            "title": "Context",
+            "type": "string"
+          }
+        },
+        "required": [
+          "context"
+        ],
+        "title": "RetryIn",
+        "type": "object"
       },
       "Role": {
         "description": "Ordered from least to most privileged.",
@@ -7357,6 +7643,28 @@
           "citations"
         ],
         "title": "StalenessOut",
+        "type": "object"
+      },
+      "StepEdit": {
+        "properties": {
+          "description": {
+            "maxLength": 1000,
+            "minLength": 1,
+            "title": "Description",
+            "type": "string"
+          },
+          "path": {
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Path",
+            "type": "string"
+          }
+        },
+        "required": [
+          "description",
+          "path"
+        ],
+        "title": "StepEdit",
         "type": "object"
       },
       "StepOut": {
@@ -10410,6 +10718,356 @@
           }
         },
         "summary": "Get Fix",
+        "tags": [
+          "fixes"
+        ]
+      }
+    },
+    "/api/v1/orgs/{org}/fixes/{fix_id}/approval": {
+      "post": {
+        "description": "Approve the fix's plan, ask for changes (planned again), or reject it. Members who can\nwrite to the repository on GitHub (asked now); a high-risk fix needs two of them, and whoever\nasked for it can't be the only one. Every decision is audited.",
+        "operationId": "decide_fix_api_v1_orgs__org__fixes__fix_id__approval_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "fix_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Fix Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Organization slug",
+            "in": "path",
+            "name": "org",
+            "required": true,
+            "schema": {
+              "description": "Organization slug",
+              "title": "Org",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApprovalIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FixOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Decide Fix",
+        "tags": [
+          "fixes"
+        ]
+      }
+    },
+    "/api/v1/orgs/{org}/fixes/{fix_id}/approvals": {
+      "get": {
+        "description": "The decisions on the fix's plans, oldest first.",
+        "operationId": "list_approvals_api_v1_orgs__org__fixes__fix_id__approvals_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "fix_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Fix Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Organization slug",
+            "in": "path",
+            "name": "org",
+            "required": true,
+            "schema": {
+              "description": "Organization slug",
+              "title": "Org",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ApprovalOut"
+                  },
+                  "title": "Response List Approvals Api V1 Orgs  Org  Fixes  Fix Id  Approvals Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Approvals",
+        "tags": [
+          "fixes"
+        ]
+      }
+    },
+    "/api/v1/orgs/{org}/fixes/{fix_id}/cancel": {
+      "post": {
+        "description": "Cancel a fix that hasn't finished. Members. A stage still working stops at its next\ncheck, and what it found is dropped.",
+        "operationId": "cancel_fix_api_v1_orgs__org__fixes__fix_id__cancel_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "fix_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Fix Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Organization slug",
+            "in": "path",
+            "name": "org",
+            "required": true,
+            "schema": {
+              "description": "Organization slug",
+              "title": "Org",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FixOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Cancel Fix",
+        "tags": [
+          "fixes"
+        ]
+      }
+    },
+    "/api/v1/orgs/{org}/fixes/{fix_id}/events": {
+      "get": {
+        "description": "The fix's progress as server-sent events (types: queued, stage_started, step, log,\nstage_done, awaiting_approval, approved, replanning, done, not_reproduced, blocked, failed,\nrejected, cancelled). Replays from ``Last-Event-ID``; closes after the final event.",
+        "operationId": "fix_events_api_v1_orgs__org__fixes__fix_id__events_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "fix_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Fix Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Organization slug",
+            "in": "path",
+            "name": "org",
+            "required": true,
+            "schema": {
+              "description": "Organization slug",
+              "title": "Org",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "text/event-stream": {}
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Fix Events",
+        "tags": [
+          "fixes"
+        ]
+      }
+    },
+    "/api/v1/orgs/{org}/fixes/{fix_id}/retry": {
+      "post": {
+        "description": "Try a fix that couldn't be reproduced again, with more context (how to trigger it, the\ndata involved): from the investigation. Members.",
+        "operationId": "retry_fix_api_v1_orgs__org__fixes__fix_id__retry_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "fix_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Fix Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Organization slug",
+            "in": "path",
+            "name": "org",
+            "required": true,
+            "schema": {
+              "description": "Organization slug",
+              "title": "Org",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RetryIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FixOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Retry Fix",
+        "tags": [
+          "fixes"
+        ]
+      }
+    },
+    "/api/v1/orgs/{org}/fixes/{fix_id}/start": {
+      "post": {
+        "description": "Start a fix waiting for triage (a Sentry issue under the gate). Members.",
+        "operationId": "start_fix_api_v1_orgs__org__fixes__fix_id__start_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "fix_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Fix Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Organization slug",
+            "in": "path",
+            "name": "org",
+            "required": true,
+            "schema": {
+              "description": "Organization slug",
+              "title": "Org",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FixOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Start Fix",
         "tags": [
           "fixes"
         ]
@@ -13477,9 +14135,20 @@
     },
     "/api/v1/orgs/{org}/repos/{repo}/fixes/parse": {
       "post": {
-        "description": "What a paste parses to (the intake page's preview): nothing is saved.",
+        "description": "What a paste parses to (the intake page's preview, for those who can start a fix):\nnothing is saved.",
         "operationId": "parse_fix_api_v1_orgs__org__repos__repo__fixes_parse_post",
         "parameters": [
+          {
+            "description": "Organization slug",
+            "in": "path",
+            "name": "org",
+            "required": true,
+            "schema": {
+              "description": "Organization slug",
+              "title": "Org",
+              "type": "string"
+            }
+          },
           {
             "description": "Repository slug",
             "in": "path",
@@ -13489,17 +14158,6 @@
               "description": "Repository slug",
               "maxLength": 201,
               "title": "Repo",
-              "type": "string"
-            }
-          },
-          {
-            "description": "Organization slug",
-            "in": "path",
-            "name": "org",
-            "required": true,
-            "schema": {
-              "description": "Organization slug",
-              "title": "Org",
               "type": "string"
             }
           }

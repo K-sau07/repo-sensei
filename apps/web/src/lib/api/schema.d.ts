@@ -731,6 +731,132 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/orgs/{org}/fixes/{fix_id}/approval": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Decide Fix
+         * @description Approve the fix's plan, ask for changes (planned again), or reject it. Members who can
+         *     write to the repository on GitHub (asked now); a high-risk fix needs two of them, and whoever
+         *     asked for it can't be the only one. Every decision is audited.
+         */
+        post: operations["decide_fix_api_v1_orgs__org__fixes__fix_id__approval_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/fixes/{fix_id}/approvals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Approvals
+         * @description The decisions on the fix's plans, oldest first.
+         */
+        get: operations["list_approvals_api_v1_orgs__org__fixes__fix_id__approvals_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/fixes/{fix_id}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Cancel Fix
+         * @description Cancel a fix that hasn't finished. Members. A stage still working stops at its next
+         *     check, and what it found is dropped.
+         */
+        post: operations["cancel_fix_api_v1_orgs__org__fixes__fix_id__cancel_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/fixes/{fix_id}/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Fix Events
+         * @description The fix's progress as server-sent events (types: queued, stage_started, step, log,
+         *     stage_done, awaiting_approval, approved, replanning, done, not_reproduced, blocked, failed,
+         *     rejected, cancelled). Replays from ``Last-Event-ID``; closes after the final event.
+         */
+        get: operations["fix_events_api_v1_orgs__org__fixes__fix_id__events_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/fixes/{fix_id}/retry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Retry Fix
+         * @description Try a fix that couldn't be reproduced again, with more context (how to trigger it, the
+         *     data involved): from the investigation. Members.
+         */
+        post: operations["retry_fix_api_v1_orgs__org__fixes__fix_id__retry_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/fixes/{fix_id}/start": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Start Fix
+         * @description Start a fix waiting for triage (a Sentry issue under the gate). Members.
+         */
+        post: operations["start_fix_api_v1_orgs__org__fixes__fix_id__start_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/orgs/{org}/github/installations": {
         parameters: {
             query?: never;
@@ -1387,7 +1513,8 @@ export interface paths {
         put?: never;
         /**
          * Parse Fix
-         * @description What a paste parses to (the intake page's preview): nothing is saved.
+         * @description What a paste parses to (the intake page's preview, for those who can start a fix):
+         *     nothing is saved.
          */
         post: operations["parse_fix_api_v1_orgs__org__repos__repo__fixes_parse_post"];
         delete?: never;
@@ -2028,6 +2155,53 @@ export interface components {
             /** Keys */
             keys: components["schemas"]["ApiKeyOut"][];
         };
+        /**
+         * ApprovalDecision
+         * @enum {string}
+         */
+        ApprovalDecision: "approve" | "request_changes" | "reject";
+        /** ApprovalIn */
+        ApprovalIn: {
+            /** Comment */
+            comment?: string | null;
+            decision: components["schemas"]["ApprovalDecision"];
+            /** @description An edited plan (with request_changes): planned again. */
+            plan_edits?: components["schemas"]["PlanEdits"] | null;
+            /**
+             * Plan Revision
+             * @description The plan's revision decided on (as read).
+             */
+            plan_revision: number;
+        };
+        /** ApprovalOut */
+        ApprovalOut: {
+            /** Comment */
+            comment: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            decision: components["schemas"]["ApprovalDecision"];
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Login */
+            login: string | null;
+            /** Plan Edits */
+            plan_edits: {
+                [key: string]: unknown;
+            } | null;
+            /** Plan Revision */
+            plan_revision: number;
+            /**
+             * User Id
+             * Format: uuid
+             */
+            user_id: string;
+        };
         /** ArchitectureOut */
         ArchitectureOut: {
             /** Links */
@@ -2068,7 +2242,7 @@ export interface components {
          * AuditAction
          * @enum {string}
          */
-        AuditAction: "auth.login" | "auth.logout" | "auth.logout_all" | "org.create" | "org.update" | "org.delete" | "invitation.create" | "invitation.revoke" | "invitation.accept" | "member.role_change" | "member.remove" | "member.leave" | "github.install.linked" | "github.install.deleted" | "github.install.suspended" | "github.install.unsuspended" | "github.install.permissions_accepted" | "repo.connected" | "repo.settings_update" | "repo.disconnected" | "repo.index_started" | "repo.index_cancelled" | "agent.cost_cap_warning" | "conversation.shared" | "conversation.unshared" | "diagram.shared" | "diagram.unshared" | "api_key.create" | "api_key.revoke" | "oauth.authorize" | "oauth.refresh_reused" | "fix.create" | "sentry.connect" | "sentry.disconnect";
+        AuditAction: "auth.login" | "auth.logout" | "auth.logout_all" | "org.create" | "org.update" | "org.delete" | "invitation.create" | "invitation.revoke" | "invitation.accept" | "member.role_change" | "member.remove" | "member.leave" | "github.install.linked" | "github.install.deleted" | "github.install.suspended" | "github.install.unsuspended" | "github.install.permissions_accepted" | "repo.connected" | "repo.settings_update" | "repo.disconnected" | "repo.index_started" | "repo.index_cancelled" | "agent.cost_cap_warning" | "conversation.shared" | "conversation.unshared" | "diagram.shared" | "diagram.unshared" | "api_key.create" | "api_key.revoke" | "oauth.authorize" | "oauth.refresh_reused" | "fix.create" | "fix.decision" | "sentry.connect" | "sentry.disconnect";
         /** AuditEventOut */
         AuditEventOut: {
             /** Action */
@@ -2982,6 +3156,21 @@ export interface components {
             /** Note */
             note: string;
         };
+        /** FileEdit */
+        FileEdit: {
+            /**
+             * Change
+             * @enum {string}
+             */
+            change: "modify" | "create";
+            /** Path */
+            path: string;
+            /**
+             * Why
+             * @default
+             */
+            why: string;
+        };
         /**
          * FileOut
          * @description A file. Like a listing, it depends only on the content; the commit is in
@@ -3027,6 +3216,11 @@ export interface components {
         /** FixOut */
         FixOut: {
             /**
+             * Approvals Needed
+             * @description Distinct approvers its plan needs (two for a high-risk fix); None: no plan.
+             */
+            approvals_needed: number | null;
+            /**
              * Created At
              * Format: date-time
              */
@@ -3042,6 +3236,13 @@ export interface components {
             id: string;
             /** Merge Readiness */
             merge_readiness: number | null;
+            /**
+             * Patch
+             * @description The change: its diff, files and attempts.
+             */
+            patch: {
+                [key: string]: unknown;
+            } | null;
             /** Plan */
             plan: {
                 [key: string]: unknown;
@@ -3050,6 +3251,13 @@ export interface components {
             pr_url: string | null;
             /** Repo */
             repo: string;
+            /**
+             * Repro
+             * @description The reproducing test and its runs.
+             */
+            repro: {
+                [key: string]: unknown;
+            } | null;
             repro_result: components["schemas"]["ReproResult"] | null;
             risk: components["schemas"]["FixRisk"] | null;
             /** Root Cause */
@@ -3061,9 +3269,21 @@ export interface components {
             source_ref: string | null;
             stage: components["schemas"]["FixStage"];
             status: components["schemas"]["FixStatus"];
+            /**
+             * Stop Reason
+             * @description Why it stopped short, when it did.
+             */
+            stop_reason: string | null;
             ticket: components["schemas"]["TicketOut"];
             /** Title */
             title: string;
+            /**
+             * Verification
+             * @description Its verification: runs, the verifier's verdict, risk and merge readiness.
+             */
+            verification: {
+                [key: string]: unknown;
+            } | null;
         };
         /**
          * FixRisk
@@ -3918,6 +4138,18 @@ export interface components {
             files?: number | null;
         };
         /**
+         * PlanEdits
+         * @description The plan as a person edited it (each part left out stays as the planner had it).
+         */
+        PlanEdits: {
+            /** Files */
+            files?: components["schemas"]["FileEdit"][] | null;
+            /** Steps */
+            steps?: components["schemas"]["StepEdit"][] | null;
+            /** Summary */
+            summary?: string | null;
+        };
+        /**
          * Provenance
          * @description How an edge is known, from a compiler's word to a model's guess.
          * @enum {string}
@@ -4074,6 +4306,11 @@ export interface components {
          * @enum {string}
          */
         ReproResult: "reproduced" | "not_reproduced" | "flaky";
+        /** RetryIn */
+        RetryIn: {
+            /** Context */
+            context: string;
+        };
         /**
          * Role
          * @description Ordered from least to most privileged.
@@ -4539,6 +4776,13 @@ export interface components {
             citations: components["schemas"]["CitedOut"][];
             /** Sha */
             sha: string;
+        };
+        /** StepEdit */
+        StepEdit: {
+            /** Description */
+            description: string;
+            /** Path */
+            path: string;
         };
         /** StepOut */
         StepOut: {
@@ -6224,6 +6468,212 @@ export interface operations {
             };
         };
     };
+    decide_fix_api_v1_orgs__org__fixes__fix_id__approval_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                fix_id: string;
+                /** @description Organization slug */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ApprovalIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FixOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_approvals_api_v1_orgs__org__fixes__fix_id__approvals_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                fix_id: string;
+                /** @description Organization slug */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApprovalOut"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    cancel_fix_api_v1_orgs__org__fixes__fix_id__cancel_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                fix_id: string;
+                /** @description Organization slug */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FixOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    fix_events_api_v1_orgs__org__fixes__fix_id__events_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                fix_id: string;
+                /** @description Organization slug */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/event-stream": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    retry_fix_api_v1_orgs__org__fixes__fix_id__retry_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                fix_id: string;
+                /** @description Organization slug */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RetryIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FixOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    start_fix_api_v1_orgs__org__fixes__fix_id__start_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                fix_id: string;
+                /** @description Organization slug */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FixOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_installations_api_v1_orgs__org__github_installations_get: {
         parameters: {
             query?: never;
@@ -7818,10 +8268,10 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                /** @description Repository slug */
-                repo: string;
                 /** @description Organization slug */
                 org: string;
+                /** @description Repository slug */
+                repo: string;
             };
             cookie?: never;
         };

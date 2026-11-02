@@ -57,6 +57,7 @@ class AuditAction(enum.StrEnum):
     OAUTH_AUTHORIZE = "oauth.authorize"
     OAUTH_REFRESH_REUSED = "oauth.refresh_reused"
     FIX_CREATE = "fix.create"
+    FIX_DECISION = "fix.decision"  # an approval, a request for changes, a rejection
     SENTRY_CONNECT = "sentry.connect"
     SENTRY_DISCONNECT = "sentry.disconnect"
 

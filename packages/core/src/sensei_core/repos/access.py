@@ -6,7 +6,8 @@
   read it (``GET /repositories/{id}``, by id so renames don't matter). The installation can see
   every repository it covers, but a member who can't read one on GitHub must not read it here.
 
-Answers are cached in Redis for five minutes per (user, repository). ``forget_repo`` and
+Answers are cached in Redis for five minutes per (user, repository); whether a user may **write**
+(:meth:`RepoAccess.can_write`, for approving a fix) is asked live every time. ``forget_repo`` and
 ``forget_user`` drop them early: they bump a generation number that is part of every cache key,
 so an answer GitHub gave before the bump (even one written after it) is never read again.
 """
@@ -90,6 +91,26 @@ class RepoAccess:
                 if isinstance(result, BaseException):
                     raise result  # every check has finished: nothing left running
         return [repo for repo in repos if answers[repo.id]]
+
+    async def can_write(self, user: User, repo: Repo) -> bool:
+        """Whether ``user`` may push to ``repo`` on GitHub, asked now and never cached (approving
+        a fix decides to change the code: a permission taken away a minute ago counts). GitHub
+        says it in the repository's ``permissions``, as the user's own token sees them."""
+        credential = await self.credential(user)
+        try:
+            found = await self._client.get_json(f"/repositories/{repo.github_repo_id}", credential)
+        except GitHubError as exc:
+            if exc.status in (403, 404):
+                return False
+            if exc.status == 401:
+                raise OAuthError("github_reauth_required", "Sign in with GitHub again.") from None
+            raise
+        body = cast("dict[str, object]", found) if isinstance(found, dict) else {}
+        permissions = body.get("permissions")
+        if not isinstance(permissions, dict):
+            return False
+        granted = cast("dict[str, object]", permissions)
+        return any(granted.get(level) is True for level in ("push", "maintain", "admin"))
 
     async def forget_repo(self, repo_id: uuid.UUID) -> None:
         await self._bump(_REPO_GEN.format(repo=repo_id))

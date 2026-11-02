@@ -191,11 +191,22 @@ class FixApproval(IdMixin, OrgScopedMixin, Base):
         ForeignKeyConstraint(
             ["fix_run_id", "org_id"], ["fix_runs.id", "fix_runs.org_id"], ondelete="CASCADE"
         ),
+        # A person approves a revision of the plan once (two approvers are two people).
+        Index(
+            "uq_fix_approvals_one_approval",
+            "fix_run_id",
+            "plan_revision",
+            "user_id",
+            unique=True,
+            postgresql_where=text("decision = 'approve'"),
+        ),
     )
 
     fix_run_id: Mapped[uuid.UUID] = mapped_column(index=True)
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
     decision: Mapped[ApprovalDecision] = mapped_column(_enum(ApprovalDecision, "fix_decision"))
+    # The plan's revision decided on (8.8): approvals of an earlier plan don't count for a new one.
+    plan_revision: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     comment: Mapped[str | None] = mapped_column(Text)
     plan_edits: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
     created_at: Mapped[datetime] = mapped_column(
