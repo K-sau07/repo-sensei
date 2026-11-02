@@ -43,7 +43,7 @@ from packaging.version import InvalidVersion, Version
 
 from sensei_core.config import SandboxSettings
 from sensei_core.redaction import redact_text
-from sensei_engine.sandbox.network import BUILD_NETWORK, Networks
+from sensei_engine.sandbox.network import BUILD_NETWORK, INSTALL_CONCURRENCY, Networks
 from sensei_engine.sandbox.runner import (
     DEFAULT_PYTHON,
     LABEL,
@@ -498,7 +498,8 @@ class DependencyImages:
                 "--security-opt=no-new-privileges", f"--memory={INSTALL_MEMORY_MB}m",
                 f"--memory-swap={INSTALL_MEMORY_MB}m", f"--pids-limit={INSTALL_PIDS}",
                 f"--mount=type=bind,source={folder},target={MOUNT},readonly", base,
-                "env", f"HTTPS_PROXY={proxy}", f"HTTP_PROXY={proxy}", "NO_PROXY=", *install,
+                "env", f"HTTPS_PROXY={proxy}", f"HTTP_PROXY={proxy}", "NO_PROXY=",
+                f"UV_CONCURRENT_DOWNLOADS={INSTALL_CONCURRENCY}", *install,
             ]  # fmt: skip
             try:
                 code, out = await self._exec(argv)

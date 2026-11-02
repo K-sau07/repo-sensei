@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from sensei_engine.sandbox.deps import install_output
-from sensei_engine.sandbox.network import BUILD_NETWORK, Networks
+from sensei_engine.sandbox.network import BUILD_NETWORK, INSTALL_CONCURRENCY, Networks
 from sensei_engine.sandbox.runner import (
     LABEL,
     Sandbox,
@@ -46,7 +46,8 @@ INSTALLER = "10002:10002"  # the Node image's installer, who owns /opt/deps (nev
 # Copy the two files to where node_modules goes, then install exactly the lock, no scripts.
 _INSTALL = (
     f"cp {MOUNT}/package.json {MOUNT}/package-lock.json /opt/deps/ && cd /opt/deps && "
-    "npm ci --ignore-scripts --no-audit --no-fund --loglevel=error"
+    "npm ci --ignore-scripts --no-audit --no-fund --loglevel=error "
+    f"--maxsockets={INSTALL_CONCURRENCY}"
 )
 
 

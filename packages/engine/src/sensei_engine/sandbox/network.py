@@ -25,6 +25,7 @@ PROXY_ALIAS = "registry-proxy"
 PROXY_IMAGE = "repo-sensei/registry-proxy:1"
 PROXY_PORT = 3128
 PROXY_URL = f"http://{PROXY_ALIAS}:{PROXY_PORT}"
+INSTALL_CONCURRENCY = 8  # downloads at once per install (under the proxy's per-client limit)
 READY_SECONDS = 15.0
 _PROBE = f"import socket; socket.create_connection(('127.0.0.1', {PROXY_PORT}), timeout=2)"
 

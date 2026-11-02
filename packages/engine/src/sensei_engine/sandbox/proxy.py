@@ -33,8 +33,10 @@ ALLOWED = frozenset(
 PORT = 3128
 HTTPS_PORT = 443
 MAX_HEADER_BYTES = 8192
-MAX_CONNECTIONS = 64  # tunnels open at once, all clients
-MAX_PER_CLIENT = 8  # connections from one address (one install can't take every tunnel)
+MAX_CONNECTIONS = 128  # tunnels open at once, all clients
+# Connections from one address: one install can't take every tunnel. Installs download 8 at a
+# time (INSTALL_CONCURRENCY); this leaves them room.
+MAX_PER_CLIENT = 16
 TUNNEL_SECONDS = 600.0  # the longest a tunnel stays open, busy or not
 HEADER_TIMEOUT_SECONDS = 10.0
 CONNECT_TIMEOUT_SECONDS = 15.0
