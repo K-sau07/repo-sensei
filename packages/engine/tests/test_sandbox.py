@@ -8,18 +8,20 @@ import os
 import tarfile
 import time
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 import pytest
 
 from sensei_engine.sandbox.deps import (
     MOUNT,
+    NOT_WRITTEN,
     Dependencies,
     DependencyImages,
     detect,
     install_argv,
     install_output,
     requirement_lines,
+    wrote_to,
 )
 from sensei_engine.sandbox.runner import (
     DEADLINE_LABEL,
@@ -518,3 +520,26 @@ def test_detect_only_reads(tmp_path: Path) -> None:
     before = sorted(os.listdir(root))
     detect(root)
     assert sorted(os.listdir(root)) == before
+
+
+async def test_an_install_counts_only_if_its_files_reach_the_commit() -> None:
+    """``docker diff`` is what ``docker commit`` takes: under a runtime that keeps the writes
+    inside the container (gVisor's root overlay), an install that "worked" left nothing."""
+    said: dict[str, bytes] = {
+        "runc": b"C /opt\nC /opt/venv\nA /opt/venv/lib/python3.13/site-packages/attrs\n",
+        "overlay": b"A /.gvisor.filestore.abc\n",
+        "other": b"A /opt/venv2/x\nA /tmp/sensei\n",
+    }
+
+    def fake(kind: str, code: int = 0) -> Any:
+        async def exec_(argv: list[str]) -> tuple[int, bytes]:
+            assert argv[1:] == ["diff", "sensei-deps-1"]
+            return code, said[kind]
+
+        return exec_
+
+    assert await wrote_to(fake("runc"), "docker", "sensei-deps-1", "/opt/venv")
+    assert not await wrote_to(fake("overlay"), "docker", "sensei-deps-1", "/opt/venv")
+    assert not await wrote_to(fake("other"), "docker", "sensei-deps-1", "/opt/venv")
+    assert not await wrote_to(fake("runc", 1), "docker", "sensei-deps-1", "/opt/venv")
+    assert "--overlay2=none" in NOT_WRITTEN

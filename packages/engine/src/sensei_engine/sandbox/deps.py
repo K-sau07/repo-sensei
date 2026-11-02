@@ -32,6 +32,7 @@ import tempfile
 import tomllib
 import uuid
 from collections import deque
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal, cast
@@ -503,6 +504,10 @@ class DependencyImages:
             ]  # fmt: skip
             try:
                 code, out = await self._exec(argv)
+                if code == 0 and not await wrote_to(
+                    self._exec, self._sandbox.docker(), name, "/opt/venv"
+                ):
+                    code, out = 1, out + f"\n{NOT_WRITTEN}".encode()
                 if code == 0:
                     code, said = await self._exec(
                         [
@@ -547,6 +552,30 @@ def _write_requirements(folder: Path, deps: Dependencies) -> None:
     folder.chmod(0o755)  # read by the install's container, as the installer
     for name in ("requirements.txt", "constraints.txt"):
         (folder / name).chmod(0o644)
+
+
+# What an install that "worked" but left nothing to commit says: a runtime that keeps the
+# container's writes inside it (gVisor's root file system overlay, on by default) makes images
+# without the dependencies, and every run of them fails on its imports.
+NOT_WRITTEN = (
+    "the install wrote nothing docker can commit: the sandbox runtime keeps writes inside the "
+    "container (for gVisor, give installs a runsc runtime registered with --overlay2=none)"
+)
+
+
+async def wrote_to(
+    exec_: Callable[[list[str]], Awaitable[tuple[int, bytes]]], docker: str, name: str, folder: str
+) -> bool:
+    """Whether container ``name``'s changes (``docker diff``: what ``docker commit`` takes)
+    include files in ``folder``."""
+    code, out = await exec_([docker, "diff", name])
+    if code != 0:
+        return False
+    inside = folder.rstrip("/") + "/"
+    return any(
+        line[2:].startswith(inside) for line in out.decode("utf-8", "replace").splitlines()
+        if line[:2] in ("A ", "C ")
+    )  # fmt: skip
 
 
 def install_output(out: bytes) -> str:

@@ -23,7 +23,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from sensei_engine.sandbox.deps import install_output
+from sensei_engine.sandbox.deps import NOT_WRITTEN, install_output, wrote_to
 from sensei_engine.sandbox.network import BUILD_NETWORK, INSTALL_CONCURRENCY, Networks
 from sensei_engine.sandbox.runner import (
     LABEL,
@@ -180,6 +180,10 @@ class NodeImages:
             ]  # fmt: skip
             try:
                 code, out = await self._exec(argv)
+                if code == 0 and not await wrote_to(
+                    self._exec, self._sandbox.docker(), name, "/opt/deps/node_modules"
+                ):
+                    code, out = 1, out + f"\n{NOT_WRITTEN}".encode()
                 if code == 0:
                     code, said = await self._exec(
                         [
