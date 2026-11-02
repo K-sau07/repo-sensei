@@ -16,7 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from starlette.middleware.gzip import GZipMiddleware
 
-from sensei_api import __version__
+from sensei_api import __version__, mcp
 from sensei_api.auth import key_access
 from sensei_api.browse import ConstellationCache, TreeCache
 from sensei_api.errors import install_error_handlers
@@ -150,6 +150,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             app.state.storage = storage
             # First to go at shutdown: Ask's runs store that they were stopped.
             resources.push_async_callback(ask.stop_runs, app.state)
+            # The MCP server's sessions (stateless: a task group for its requests).
+            await resources.enter_async_context(app.state.mcp_server.session_manager.run())
             app.state.readiness_checks.update(
                 {"database": database.ping, "redis": lambda: ping_redis(redis)}
             )
@@ -233,6 +235,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
     # OAuth discovery, at the origin's root (RFC 8414, RFC 9728; the web app forwards it).
     app.include_router(oauth.well_known)
+    # The MCP server (7.3), at the root too: /mcp checks its own bearer (tokens for /mcp).
+    app.state.mcp_server = mcp.build(app)
+    app.state.mcp_http = mcp.http_app(app.state.mcp_server)
+    app.include_router(mcp.router)
     # Wraps the whole middleware stack; RequestIdMiddleware tags the server span it creates.
     FastAPIInstrumentor.instrument_app(app, server_request_hook=scrub_server_span)
     return app

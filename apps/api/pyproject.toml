@@ -11,6 +11,7 @@ dependencies = [
     "python-multipart>=0.0.20",
     "sensei-core",
     "sensei-engine",
+    "sensei-mcp",
     "sse-starlette>=2.2",
     "uuid-utils>=0.11",
     "uvicorn[standard]>=0.37",
@@ -25,3 +26,4 @@ packages = ["src/sensei_api"]
 
 [tool.uv.sources]
 sensei-engine = { workspace = true }
+sensei-mcp = { workspace = true }

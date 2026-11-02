@@ -34,11 +34,19 @@ from sensei_core.auth.sessions import ActiveSession, IssuedSession, SessionServi
 from sensei_core.config import Settings
 from sensei_core.errors import DomainError
 from sensei_core.models import ActorType, User
-from sensei_core.oauth.service import ACCESS_PREFIX, OAuthService, TokenPrincipal, TokenRejected
+from sensei_core.oauth.service import (
+    ACCESS_PREFIX,
+    OAuthService,
+    TokenPrincipal,
+    TokenRejected,
+)
 
 UNSAFE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 CSRF_HEADER = "x-csrf-token"
 KEY_PREFIX = "rs_"
+# Marks, in its ASGI scope, a request the MCP server's tools make to the API in-process (7.3):
+# nothing from outside can set it. Only there is a token for ``/mcp`` taken by the API's routes.
+INTERNAL_MCP = "sensei.internal_mcp"
 REJECTED = {
     "invalid": "This API key isn't valid.",
     "revoked": "This API key was revoked.",
@@ -152,8 +160,9 @@ async def get_bearer(
         return None
     found: Principal
     if token.startswith(ACCESS_PREFIX):
+        resource = oauth.resources.mcp if request.scope.get(INTERNAL_MCP) else oauth.resources.api
         try:
-            found = await oauth.authenticate(db, token, resource=oauth.resources.api)
+            found = await oauth.authenticate(db, token, resource=resource)
         except TokenRejected as rejected:
             raise TokenUnauthorized(
                 TOKEN_REJECTED[rejected.reason],

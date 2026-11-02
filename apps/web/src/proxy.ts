@@ -33,12 +33,12 @@ export function proxy(request: NextRequest) {
 export const config = {
   matcher: [
     {
-      // Pages only: not the API (nor its OAuth discovery under /.well-known/), Next internals,
-      // the few files in public/, or router prefetches.
+      // Pages only: not the API (nor its OAuth discovery under /.well-known/, nor /mcp), Next
+      // internals, the few files in public/, or router prefetches.
       // Files are listed by name: a page path can end in ".js" too (a file in a repository), and
       // it must still get its CSP and the sign-in check.
       source:
-        "/((?!api/|\\.well-known/|_next/static/|_next/image|favicon\\.ico$|robots\\.txt$|sitemap\\.xml$|mockServiceWorker\\.js$).*)",
+        "/((?!api/|mcp$|\\.well-known/|_next/static/|_next/image|favicon\\.ico$|robots\\.txt$|sitemap\\.xml$|mockServiceWorker\\.js$).*)",
       missing: [
         { type: "header", key: "next-router-prefetch" },
         { type: "header", key: "purpose", value: "prefetch" },

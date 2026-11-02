@@ -78,6 +78,8 @@ const nextConfig: NextConfig = {
               source: "/.well-known/oauth-protected-resource/:path*",
               destination: `${apiProxyOrigin}/.well-known/oauth-protected-resource/:path*`,
             },
+            // The MCP server (Streamable HTTP), at the origin's /mcp.
+            { source: "/mcp", destination: `${apiProxyOrigin}/mcp` },
           ]
         : [],
     ),

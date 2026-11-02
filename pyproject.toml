@@ -9,6 +9,7 @@ dependencies = [
     "sensei-evals",
     "sensei-api",
     "sensei-workers",
+    "sensei-mcp",
 ]
 
 [dependency-groups]
@@ -42,6 +43,7 @@ sensei-evals = { workspace = true }
 sensei-api = { workspace = true }
 sensei-workers = { workspace = true }
 sensei-testing = { workspace = true }
+sensei-mcp = { workspace = true }
 
 # ---------------------------------------------------------------- ruff
 [tool.ruff]
@@ -69,6 +71,7 @@ known-first-party = [
     "sensei_api",
     "sensei_workers",
     "sensei_testing",
+    "sensei_mcp",
 ]
 
 [tool.ruff.lint.flake8-tidy-imports]
@@ -83,7 +86,7 @@ asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 python_functions = ["test_*"]
 filterwarnings = ["error"]
-testpaths = ["apps/api/tests", "workers/tests", "packages/core/tests", "packages/engine/tests", "packages/evals/tests", "scripts/hooks/tests"]
+testpaths = ["apps/api/tests", "workers/tests", "packages/core/tests", "packages/engine/tests", "packages/evals/tests", "packages/mcp_server/tests", "scripts/hooks/tests"]
 markers = [
     "integration: needs running infrastructure (postgres, redis, minio, docker)",
     "slow: takes more than a few seconds",
@@ -92,4 +95,4 @@ markers = [
 
 [tool.coverage.run]
 branch = true
-source = ["sensei_core", "sensei_engine", "sensei_evals", "sensei_api", "sensei_workers"]
+source = ["sensei_core", "sensei_engine", "sensei_evals", "sensei_api", "sensei_workers", "sensei_mcp"]
