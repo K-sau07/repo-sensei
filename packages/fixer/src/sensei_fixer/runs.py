@@ -28,6 +28,7 @@ from sensei_engine.snapshots import read_file
 from sensei_fixer.frameworks import TestSetup
 
 OUTPUT_TAIL = 6_000
+FULL_OUTPUT = 2 * 1024 * 1024  # of a run's output, kept to read a suite's results from
 COMPOSE_FILES = ("docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml")
 TEST_ENV = {"PYTHONDONTWRITEBYTECODE": "1", "CI": "1", "NO_COLOR": "1", "FORCE_COLOR": "0"}
 
@@ -43,6 +44,7 @@ class RunResult:
     output: str  # the end of stdout and stderr
     seconds: float
     timed_out: bool = False
+    full: str = ""  # all of it (up to FULL_OUTPUT), where a suite says which tests failed
 
 
 class FixRunner(Protocol):
@@ -84,8 +86,15 @@ class SandboxFixRunner:
             self.root, cmd, image=self.image, workdir="" if node else self.setup.project,
             env={**TEST_ENV, **(self.env or {})}, limits=limits, network=self.network,
         )  # fmt: skip
-        output = f"{result.stdout}\n{result.stderr}".strip()[-OUTPUT_TAIL:]
-        return RunResult(result.ok, result.exit_code, output, result.duration, result.timed_out)
+        full = f"{result.stdout}\n{result.stderr}".strip()
+        return RunResult(
+            result.ok,
+            result.exit_code,
+            full[-OUTPUT_TAIL:],
+            result.duration,
+            result.timed_out,
+            full[-FULL_OUTPUT:],
+        )
 
 
 @asynccontextmanager

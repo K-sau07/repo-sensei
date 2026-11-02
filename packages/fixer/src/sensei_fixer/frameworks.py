@@ -47,6 +47,13 @@ class TestSetup:
         suffix = "ts" if self.typescript else "js"
         return _join(self.test_dir, f"sensei-repro-{fix_id}.test.{suffix}")
 
+    def extra_path(self, fix_id: str) -> str:
+        """The verifier's extra tests' file (8.7): beside the reproducing test, never kept."""
+        repro = self.test_path(fix_id)
+        return repro.replace("test_sensei_repro_", "test_sensei_extra_").replace(
+            "sensei-repro-", "sensei-extra-"
+        )
+
     def command(self, test_path: str) -> tuple[str, ...]:
         """The argv that runs only ``test_path``, from the project's folder."""
         relative = str(PurePosixPath(test_path).relative_to(self.project or "."))
@@ -57,12 +64,14 @@ class TestSetup:
         return ("npx", "jest", "--runTestsByPath", relative)
 
     def suite(self) -> tuple[str, ...]:
-        """The argv that runs the project's whole suite (8.7)."""
+        """The argv that runs the project's whole suite (8.7), saying which tests failed
+        (:mod:`sensei_fixer.suites` reads it)."""
         if self.framework == "pytest":
-            return ("python", "-m", "pytest", "-q", "-p", "no:cacheprovider")
+            return ("python", "-m", "pytest", "-q", "-p", "no:cacheprovider", "-rfE",
+                    "--tb=short")  # fmt: skip
         if self.framework == "vitest":
             return ("npx", "vitest", "run")
-        return ("npx", "jest")
+        return ("npx", "jest", "--ci")
 
 
 def _join(folder: str, name: str) -> str:

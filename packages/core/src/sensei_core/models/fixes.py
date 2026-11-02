@@ -154,6 +154,11 @@ class FixRun(IdMixin, OrgScopedMixin, TimestampMixin, Base):
     # The reproducing test and its runs (8.6): the patch stage writes it again, verify runs it.
     repro: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
     plan: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    # The change (8.7): its diff, files and size, the attempts and the suite's baseline.
+    patch: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    # Its verification from a clean checkout: the runs, the verifier's verdict and extra tests,
+    # risk and merge readiness with their reasons, and what couldn't be verified.
+    verification: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
     diff_ref: Mapped[str | None] = mapped_column(Text)  # where the patch is stored
     risk: Mapped[FixRisk | None] = mapped_column(_enum(FixRisk, "fix_risk"))
     merge_readiness: Mapped[int | None] = mapped_column(Integer)

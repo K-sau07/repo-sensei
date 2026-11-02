@@ -92,31 +92,7 @@ class GitHistory:
         self.head = commit_id(head)
 
     async def _git(self, *args: str) -> str:
-        process = await asyncio.create_subprocess_exec(
-            "git", *_SAFE_CONFIG, *args,
-            cwd=self.root, env=_env(), stdin=asyncio.subprocess.DEVNULL,
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-        )  # fmt: skip
-        assert process.stdout is not None  # noqa: S101 - piped above
-        assert process.stderr is not None  # noqa: S101
-        try:
-            (out, cut), (err, _) = await asyncio.wait_for(
-                asyncio.gather(_upto(process.stdout, MAX_OUTPUT_BYTES),
-                               _upto(process.stderr, 16 * 1024)),
-                TIMEOUT_SECONDS,
-            )  # fmt: skip
-        except TimeoutError:
-            process.kill()
-            await process.wait()
-            raise HistoryError("git took too long; ask about less.") from None
-        if cut:  # enough of it: what's left isn't read (a commit adding a huge file)
-            with contextlib.suppress(ProcessLookupError):  # it may have finished meanwhile
-                process.kill()
-        await process.wait()
-        if process.returncode != 0 and not cut:
-            said = err.decode("utf-8", "replace").strip().splitlines()
-            raise HistoryError(said[-1] if said else "git couldn't answer that.")
-        return out.decode("utf-8", "replace")
+        return await git(self.root, *args)
 
     async def resolve(self, sha: str) -> str | None:
         """The full id of the commit ``sha`` names in the history before ``head`` (or ``head``),
@@ -183,6 +159,56 @@ class GitHistory:
             left = len(lines) - MAX_SHOW_LINES
             lines = [*lines[:MAX_SHOW_LINES], f"[{left} more lines: name a path to see less]"]
         return "\n".join(lines)
+
+
+async def git(
+    root: Path,
+    *args: str,
+    cap: int | None = None,
+    stdin: bytes | None = None,
+    whole: bool = False,
+) -> str:
+    """git's output for ``args`` in the checkout at ``root`` (safely configured, see the
+    module): at most ``cap`` bytes of it (:data:`MAX_OUTPUT_BYTES` by default), the rest
+    unread, unless ``whole`` (then more is an error). :class:`HistoryError` with what git said
+    when it fails."""
+    cap = MAX_OUTPUT_BYTES if cap is None else cap
+    process = await asyncio.create_subprocess_exec(
+        "git", *_SAFE_CONFIG, *args,
+        cwd=root, env=_env(),
+        stdin=asyncio.subprocess.PIPE if stdin is not None else asyncio.subprocess.DEVNULL,
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+    )  # fmt: skip
+    assert process.stdout is not None  # noqa: S101 - piped above
+    assert process.stderr is not None  # noqa: S101
+
+    async def feed() -> None:
+        if stdin is not None and process.stdin is not None:
+            process.stdin.write(stdin)
+            with contextlib.suppress(BrokenPipeError, ConnectionResetError):
+                await process.stdin.drain()
+            process.stdin.close()
+
+    try:
+        _, (out, cut), (err, _) = await asyncio.wait_for(
+            asyncio.gather(feed(), _upto(process.stdout, cap), _upto(process.stderr, 16 * 1024)),
+            TIMEOUT_SECONDS,
+        )
+    except TimeoutError:
+        with contextlib.suppress(ProcessLookupError):
+            process.kill()
+        await process.wait()
+        raise HistoryError("git took too long; ask about less.") from None
+    if cut:  # enough of it: what's left isn't read (a commit adding a huge file)
+        with contextlib.suppress(ProcessLookupError):  # it may have finished meanwhile
+            process.kill()
+    await process.wait()
+    if cut and whole:
+        raise HistoryError(f"git's answer is over {cap} bytes.")
+    if process.returncode != 0 and not cut:
+        said = err.decode("utf-8", "replace").strip().splitlines()
+        raise HistoryError(said[-1] if said else "git couldn't answer that.")
+    return out.decode("utf-8", "replace")
 
 
 async def _upto(stream: asyncio.StreamReader, cap: int) -> tuple[bytes, bool]:

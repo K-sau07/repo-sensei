@@ -43,8 +43,8 @@ log = get_logger(__name__)
 Sessions = Callable[[], AbstractAsyncContextManager[AsyncSession]]
 # What a stage may set on the run (anything else in its updates is a bug, and refused).
 FACTS = (
-    "commit_sha", "root_cause", "repro", "plan", "repro_result", "risk", "merge_readiness",
-    "diff_ref", "pr_url",
+    "commit_sha", "root_cause", "repro", "plan", "repro_result", "patch", "verification", "risk",
+    "merge_readiness", "diff_ref", "pr_url",
 )  # fmt: skip
 SETTABLE = frozenset(FACTS)
 

@@ -119,6 +119,10 @@ class FixOut(FixSummaryOut):
     root_cause: dict[str, Any] | None
     repro: dict[str, Any] | None = Field(description="The reproducing test and its runs.")
     plan: dict[str, Any] | None
+    patch: dict[str, Any] | None = Field(description="The change: its diff, files and attempts.")
+    verification: dict[str, Any] | None = Field(
+        description="Its verification: runs, the verifier's verdict, risk and merge readiness."
+    )
     stop_reason: str | None = Field(description="Why it stopped short, when it did.")
 
     @classmethod
@@ -127,7 +131,8 @@ class FixOut(FixSummaryOut):
         return cls(
             **summary.model_dump(), ticket=TicketOut.build(Ticket.model_validate(run.ticket)),
             repro_result=run.repro_result, root_cause=run.root_cause, repro=run.repro,
-            plan=run.plan, stop_reason=run.stop_reason,
+            plan=run.plan, patch=run.patch, verification=run.verification,
+            stop_reason=run.stop_reason,
         )  # fmt: skip
 
 

@@ -11,20 +11,28 @@ vanished and sends a queued stage's message again when it seems lost.
 from __future__ import annotations
 
 import uuid
+from contextlib import AbstractAsyncContextManager
 from datetime import UTC, datetime
+from pathlib import Path
 
 from sensei_core.db.tenancy import set_org_context
 from sensei_core.jobs import TaskName, fix_stage_message
 from sensei_core.logging import get_logger
 from sensei_core.models import FixRun, FixStage
 from sensei_core.models.fixes import TERMINAL
+from sensei_engine.llm.anthropic_client import AnthropicClient
 from sensei_fixer.budget import Budget
+from sensei_fixer.frameworks import TestSetup
 from sensei_fixer.investigate import investigate_stage
+from sensei_fixer.patch import patch_stage
 from sensei_fixer.pipeline import FixPipeline
+from sensei_fixer.plan import plan_stage
 from sensei_fixer.reproduce import reproduce_stage
-from sensei_fixer.runs import sandbox_runner
+from sensei_fixer.rootcause import root_cause_stage
+from sensei_fixer.runs import FixRunner, sandbox_runner
 from sensei_fixer.stages import StageHandler, default_handlers
 from sensei_fixer.sweep import RESEND_EVERY_SECONDS, sweep_stalled
+from sensei_fixer.verify import verify_stage
 from sensei_workers.app import celery_app
 from sensei_workers.base import SenseiTask
 from sensei_workers.fixes_workspace import drop_worktree, fix_workspace
@@ -37,15 +45,19 @@ def handlers() -> dict[FixStage, StageHandler]:
     """The stages built so far; the rest stop, saying so."""
     runtime = get_runtime()
     found = default_handlers()
-    found[FixStage.INVESTIGATE] = investigate_stage(
-        fix_workspace, lambda: runtime.anthropic, runtime.costs
-    )
-    found[FixStage.REPRODUCE] = reproduce_stage(
-        fix_workspace,
-        lambda root, setup: sandbox_runner(runtime.settings.sandbox, root, setup),
-        lambda: runtime.anthropic,
-        runtime.costs,
-    )
+
+    def runners(root: Path, setup: TestSetup) -> AbstractAsyncContextManager[FixRunner]:
+        return sandbox_runner(runtime.settings.sandbox, root, setup)
+
+    def client() -> AnthropicClient:
+        return runtime.anthropic
+
+    found[FixStage.INVESTIGATE] = investigate_stage(fix_workspace, client, runtime.costs)
+    found[FixStage.REPRODUCE] = reproduce_stage(fix_workspace, runners, client, runtime.costs)
+    found[FixStage.ROOT_CAUSE] = root_cause_stage(fix_workspace)
+    found[FixStage.PLAN] = plan_stage(fix_workspace, client, runtime.costs)
+    found[FixStage.PATCH] = patch_stage(fix_workspace, runners, client, runtime.costs)
+    found[FixStage.VERIFY] = verify_stage(fix_workspace, runners, client, runtime.costs)
     return found
 
 
