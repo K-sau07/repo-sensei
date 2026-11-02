@@ -36,9 +36,12 @@ _CONFIG_NAME = re.compile(
     r"setupTests\.(ts|tsx|js|jsx)|(vitest|jest)\.setup\.(ts|tsx|js|jsx|mjs))$"
 )
 _CONFIG_LINE = re.compile(r"pytest|vitest|jest|addopts|testpaths|\"test\"\s*:", re.IGNORECASE)
+# The files whose lines configure tests (in source code, "pytest" is only a word in a comment).
+_MANIFESTS = frozenset({"pyproject.toml", "setup.cfg", "tox.ini", "package.json", "noxfile.py"})
 _DETECTION = re.compile(
     r"PYTEST_CURRENT_TEST|PYTEST_VERSION|[\"']pytest[\"']\s+in\s+sys\.modules|"
-    r"\bVITEST\b|JEST_WORKER_ID|process\.env\.(CI|NODE_ENV)\b|"
+    r"\bVITEST\b|JEST_WORKER_ID|process\.env\.CI\b|"
+    r"NODE_ENV\W{1,8}[\"'`]test[\"'`]|[\"'`]test[\"'`]\W{1,8}process\.env\.NODE_ENV|"
     r"environ(\.get)?\s*[\[(]\s*[\"']CI[\"']|getenv\(\s*[\"']CI[\"']"
 )
 _HEADER = re.compile(
@@ -112,9 +115,20 @@ def parse_diff(diff: str) -> list[FileChange]:
             current.deleted = target == "/dev/null"
             current.path = (old or current.path) if current.deleted else target.removeprefix("b/")
             current.old_path = old
-        elif current is not None and _HEADER.match(line):
-            current.unreviewable.append(line.strip())
+        elif current is not None:
+            _header(current, line)
     return changes
+
+
+def _header(change: FileChange, line: str) -> None:
+    """An extended header line of ``change``'s (before its first hunk)."""
+    # An empty file has no ---/+++ lines: its mode line is all that says it's new (or gone).
+    if line.startswith("new file mode"):
+        change.old_path = None
+    elif line.startswith("deleted file mode"):
+        change.deleted = True
+    if _HEADER.match(line):
+        change.unreviewable.append(line.strip())
 
 
 def _shadows(path: str) -> bool:
@@ -124,6 +138,8 @@ def _shadows(path: str) -> bool:
     pure = PurePosixPath(path)
     if pure.suffix == ".pth":
         return True
+    if any(part in _TOOLS or part in _STARTUP for part in pure.parts[:-1]):
+        return True  # anything in a package standing in for one (``pytest/__main__.py``)
     if pure.name == "__init__.py" and len(pure.parts) >= 2:
         module, folder = pure.parts[-2], pure.parts[:-2]
     elif pure.suffix == ".py":
@@ -157,7 +173,9 @@ def review(diff: str, hidden_test: str = "", existing: Collection[str] = ()) -> 
                 findings.append(Finding("test_changed", change.path, "an existing test changed"))
         elif name == "conftest.py" or _CONFIG_NAME.match(name):
             findings.append(Finding("test_config", change.path, "the test setup changed"))
-        elif any(_CONFIG_LINE.search(t) for t in (*change.added, *change.removed)):
+        elif name in _MANIFESTS and any(
+            _CONFIG_LINE.search(t) for t in (*change.added, *change.removed)
+        ):
             findings.append(Finding("test_config", change.path, "test settings changed"))
         for text in change.added:
             if _DETECTION.search(text):

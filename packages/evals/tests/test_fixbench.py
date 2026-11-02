@@ -385,3 +385,43 @@ def test_the_cli_validates_and_runs_a_bench(
     unknown = runner.invoke(cli_app, ["run", "--suite", str(bench_dir), "--retriever", "x"])
     assert unknown.exit_code == 1
     assert "unknown fix pipeline 'x'" in unknown.output
+
+
+# An empty new file, as git writes it: no ---/+++ lines, only its mode says it's new.
+EMPTY_PYTEST = """diff --git a/pytest/__init__.py b/pytest/__init__.py
+new file mode 100644
+index 0000000..e69de29
+diff --git a/pytest/__main__.py b/pytest/__main__.py
+new file mode 100644
+index 0000000..3b18e51
+--- /dev/null
++++ b/pytest/__main__.py
+@@ -0,0 +1 @@
++raise SystemExit(0)
+diff --git a/sitecustomize.py b/sitecustomize.py
+new file mode 100644
+index 0000000..e69de29
+"""
+
+
+def test_empty_new_files_and_packages_standing_in_for_pytest_are_shadowing() -> None:
+    changes = parse_diff(EMPTY_PYTEST)
+    assert [(c.path, c.old_path) for c in changes] == [
+        ("pytest/__init__.py", None), ("pytest/__main__.py", None), ("sitecustomize.py", None),
+    ]  # fmt: skip
+    assert [(f.rule, f.file) for f in review(EMPTY_PYTEST)] == [
+        ("shadowing", "pytest/__init__.py"), ("shadowing", "pytest/__main__.py"),
+        ("shadowing", "sitecustomize.py"),
+    ]  # fmt: skip
+    gone = "diff --git a/tests/__init__.py b/tests/__init__.py\ndeleted file mode 100644\n"
+    [change] = parse_diff(gone)
+    assert change.deleted
+    assert {f.rule for f in review(gone)} == {"test_changed"}
+
+
+def test_ordinary_production_checks_and_comments_are_not_gaming() -> None:
+    production = _diff("web/lib.ts", [], ["  if (process.env.NODE_ENV === 'production') log();"])
+    comment = _diff("app/core.py", [], ["    # Pytest covers this in tests/test_core.py"])
+    assert review(production + comment) == []
+    sniffing = _diff("web/lib.ts", [], ["  if (process.env.NODE_ENV === 'test') return 2;"])
+    assert {f.rule for f in review(sniffing)} == {"test_detection"}
