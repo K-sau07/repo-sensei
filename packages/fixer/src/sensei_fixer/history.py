@@ -4,12 +4,17 @@ commit wrote a line, what a commit changed.
 Read from a checkout with history (made by the worker); nothing in it runs: git is called with
 a fixed argv (never a shell), without the user's or system's configuration, hooks, external
 diff or text-conversion drivers, so a repository can't make it run anything. Commits and paths
-are checked before they reach git (``--`` before paths); output is capped.
+are checked before they reach git (``--`` before paths); output is capped as it is read.
+
+The history is shallow (the worker fetches the latest commits): its oldest commit stands for
+everything before it (blame credits it with every older line, its diff adds the whole tree), so
+blame says where the history stops, and that commit is never a suspect.
 """
 
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import os
 import re
 from dataclasses import dataclass
@@ -23,7 +28,7 @@ MAX_OUTPUT_BYTES = 256 * 1024
 MAX_LOG = 50
 MAX_BLAME_LINES = 200
 MAX_SHOW_LINES = 400
-_SHA = re.compile(r"^[0-9a-fA-F]{7,40}$")
+_SHA = re.compile(r"^[0-9a-fA-F]{7,64}$")  # SHA-1, or a SHA-256 repository's
 _SEP = "\x1f"  # between a log line's fields (no subject holds it)
 _SAFE_CONFIG = (
     "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c", "diff.external=",
@@ -51,6 +56,7 @@ class BlameLine:
     date: str
     summary: str
     text: str
+    boundary: bool = False  # where the fetched history stops: an older commit wrote it
 
 
 def _env() -> dict[str, str]:
@@ -60,13 +66,15 @@ def _env() -> dict[str, str]:
     return env
 
 
-def commit_id(value: str) -> str:
-    if not _SHA.match(value):
-        raise HistoryError(f"{value!r} isn't a commit id (7 to 40 hex digits).")
+def commit_id(value: object) -> str:
+    if not isinstance(value, str) or not _SHA.match(value):
+        raise HistoryError(f"{value!r} isn't a commit id (7 to 64 hex digits).")
     return value.lower()
 
 
-def repo_path(value: str) -> str:
+def repo_path(value: object) -> str:
+    if not isinstance(value, str):
+        raise HistoryError("A path is a string: a file of the repository.")
     try:
         path = check_path(value)
     except UnsafePathError:
@@ -89,29 +97,57 @@ class GitHistory:
             cwd=self.root, env=_env(), stdin=asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
         )  # fmt: skip
+        assert process.stdout is not None  # noqa: S101 - piped above
+        assert process.stderr is not None  # noqa: S101
         try:
-            out, err = await asyncio.wait_for(process.communicate(), TIMEOUT_SECONDS)
+            (out, cut), (err, _) = await asyncio.wait_for(
+                asyncio.gather(_upto(process.stdout, MAX_OUTPUT_BYTES),
+                               _upto(process.stderr, 16 * 1024)),
+                TIMEOUT_SECONDS,
+            )  # fmt: skip
         except TimeoutError:
             process.kill()
             await process.wait()
             raise HistoryError("git took too long; ask about less.") from None
-        if process.returncode != 0:
+        if cut:  # enough of it: what's left isn't read (a commit adding a huge file)
+            with contextlib.suppress(ProcessLookupError):  # it may have finished meanwhile
+                process.kill()
+        await process.wait()
+        if process.returncode != 0 and not cut:
             said = err.decode("utf-8", "replace").strip().splitlines()
             raise HistoryError(said[-1] if said else "git couldn't answer that.")
-        return out[:MAX_OUTPUT_BYTES].decode("utf-8", "replace")
+        return out.decode("utf-8", "replace")
+
+    async def resolve(self, sha: str) -> str | None:
+        """The full id of the commit ``sha`` names in the history before ``head`` (or ``head``),
+        unless it is where a shallow history stops (it stands for every older commit)."""
+        try:
+            found = (
+                await self._git("rev-parse", "--verify", "--quiet", f"{commit_id(sha)}^{{commit}}")
+            ).strip()
+            await self._git("merge-base", "--is-ancestor", found, self.head)
+        except HistoryError:
+            return None
+        return None if found in await self.shallow() else found
+
+    async def shallow(self) -> frozenset[str]:
+        """The commits a shallow history stops at (none: the history is whole)."""
+        try:
+            where = (await self._git("rev-parse", "--git-path", "shallow")).strip()
+        except HistoryError:
+            return frozenset()
+        path = Path(where) if Path(where).is_absolute() else self.root / where
+        try:
+            return frozenset(path.read_text().split())
+        except OSError:
+            return frozenset()
 
     async def exists(self, sha: str) -> bool:
-        """``sha`` names a commit in the history before ``head`` (or ``head``)."""
-        try:
-            found = await self._git(
-                "rev-parse", "--verify", "--quiet", f"{commit_id(sha)}^{{commit}}"
-            )
-            await self._git("merge-base", "--is-ancestor", found.strip(), self.head)
-        except HistoryError:
-            return False
-        return True
+        """``sha`` names a commit in the history before ``head`` (or ``head``), not where a
+        shallow history stops."""
+        return await self.resolve(sha) is not None
 
-    async def log(self, path: str | None = None, limit: int = 20) -> list[Commit]:
+    async def log(self, path: object = None, limit: int = 20) -> list[Commit]:
         """The commits before ``head`` that changed ``path`` (any, without one), newest first."""
         args = ["log", f"--max-count={max(1, min(limit, MAX_LOG))}", "--no-merges",
                 f"--format=%H{_SEP}%an{_SEP}%aI{_SEP}%s", self.head]  # fmt: skip
@@ -124,7 +160,7 @@ class GitHistory:
                 commits.append(Commit(parts[0], parts[1], parts[2], parts[3]))
         return commits
 
-    async def blame(self, path: str, start: int, end: int) -> list[BlameLine]:
+    async def blame(self, path: object, start: int, end: int) -> list[BlameLine]:
         """Which commit last changed each of the lines ``start``-``end`` of ``path`` at
         ``head``."""
         if start < 1 or end < start:
@@ -135,7 +171,7 @@ class GitHistory:
         )
         return _porcelain(out)
 
-    async def show(self, sha: str, path: str | None = None) -> str:
+    async def show(self, sha: str, path: object = None) -> str:
         """What a commit changed: its message and files, and the diff (of ``path`` alone, when
         given), at most :data:`MAX_SHOW_LINES` lines."""
         args = ["show", "--no-ext-diff", "--no-textconv", "--stat", "--patch",
@@ -147,6 +183,17 @@ class GitHistory:
             left = len(lines) - MAX_SHOW_LINES
             lines = [*lines[:MAX_SHOW_LINES], f"[{left} more lines: name a path to see less]"]
         return "\n".join(lines)
+
+
+async def _upto(stream: asyncio.StreamReader, cap: int) -> tuple[bytes, bool]:
+    """At most ``cap`` bytes of ``stream`` (and whether there was more)."""
+    data = bytearray()
+    while len(data) <= cap:
+        chunk = await stream.read(64 * 1024)
+        if not chunk:
+            return bytes(data), False
+        data += chunk
+    return bytes(data[:cap]), True
 
 
 def _iso(epoch: str) -> str:
@@ -169,14 +216,16 @@ def _porcelain(out: str) -> list[BlameLine]:
                 BlameLine(
                     line=final, sha=sha, author=known.get("author", ""),
                     date=_iso(known.get("author-time", "")), summary=known.get("summary", ""),
-                    text=line[1:],
+                    text=line[1:], boundary="boundary" in known,
                 )
             )  # fmt: skip
             continue
         head = line.split(" ")
-        if len(head) >= 3 and _SHA.match(head[0]) and len(head[0]) == 40:
+        if len(head) >= 3 and _SHA.match(head[0]) and len(head[0]) in (40, 64):
             sha, final = head[0], int(head[2])
             facts.setdefault(sha, {})
+        elif sha and line == "boundary":
+            facts[sha]["boundary"] = "1"
         elif sha and " " in line:
             key, value = line.split(" ", 1)
             facts[sha].setdefault(key, value)

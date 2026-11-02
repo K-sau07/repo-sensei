@@ -35,12 +35,13 @@ from sensei_core.models import FixStatus, ReproResult
 from sensei_core.usage import CostCalculator
 from sensei_engine.agent.tools import ToolContext, run_tool
 from sensei_engine.agent.tools.base import ToolResult
-from sensei_engine.llm.anthropic_client import PROVIDER, AnthropicClient, LLMTurn, Tier
+from sensei_engine.llm.anthropic_client import AnthropicClient, LLMTurn, Tier
 from sensei_fixer.frameworks import NoFramework, TestSetup, detect
 from sensei_fixer.history import GitHistory
 from sensei_fixer.investigate import READ_TOOLS, Hooks, first_message
 from sensei_fixer.runs import FixRunner, RunResult, SetupFailed
 from sensei_fixer.stages import Advance, Outcome, StageContext, StageHandler, Step, Stop
+from sensei_fixer.tooling import guarded, settle, turn_cost
 
 PROMPT_VERSION = "reproduce.v1"
 RUNS = 3
@@ -196,7 +197,7 @@ class _Writing:
             )
             return _text("Submitted.", "submitted")
         if name in READ_TOOLS:
-            return await run_tool(self.ctx, name, args)
+            return await guarded(name, run_tool(self.ctx, name, args))
         return _text(f"There is no tool {name!r}.", "unknown tool", error=True)
 
     async def write_test(self, content: str) -> ToolResult:
@@ -237,18 +238,6 @@ class TestWriter:
     costs: CostCalculator | None = None
     max_turns: int = MAX_TURNS
 
-    def _cost(self, usage: Sequence[Any]) -> Decimal:
-        total = Decimal(0)
-        for item in usage:
-            if self.costs is not None:
-                priced = self.costs.cost(
-                    PROVIDER, item.model, tokens_in=item.input_tokens,
-                    tokens_out=item.output_tokens, tokens_cache_read=item.cache_read_tokens,
-                    tokens_cache_write=item.cache_write_tokens,
-                )  # fmt: skip
-                total += priced or Decimal(0)
-        return total
-
     async def write(self, writing: _Writing, root_cause: Mapping[str, Any] | None) -> Attempt:
         hooks, attempt = writing.hooks, writing.attempt
         first = brief(writing.ticket, root_cause, writing.setup, writing.test_path)
@@ -260,7 +249,7 @@ class TestWriter:
             result = await self.client.turn(
                 LLMTurn(tuple(messages), system, tools, Tier.STANDARD, effort="medium")
             )
-            await hooks.spend(1, self._cost(result.usage), 0.0)
+            await hooks.spend(1, turn_cost(self.costs, result.usage), 0.0)
             calls = [b for b in result.content if b.get("type") == "tool_use"]
             named = ", ".join(c["name"] for c in calls) or "no tools"
             ms = round((time.monotonic() - started) * 1000)
@@ -276,6 +265,7 @@ class TestWriter:
                 await hooks.record(Step("tool", name, done.summary))
                 answers.append(done.param(str(call["id"])))
                 answers += done.notes(name)
+            await settle(writing.ctx)
             if attempt.submitted:
                 return attempt
             messages.append({"role": "user", "content": answers})
