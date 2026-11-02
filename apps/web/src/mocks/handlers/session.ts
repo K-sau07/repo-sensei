@@ -10,7 +10,12 @@ export function currentUser(): MockUser | Response {
   if (scenario === "expired") {
     return apiError(401, "session_expired", "Your session has expired. Please sign in again.");
   }
-  const id = scenario === "as-friend" ? FRIEND : scenario === "as-member" ? HUBOT : OCTO;
+  const id =
+    scenario === "as-friend"
+      ? FRIEND
+      : scenario === "as-member" || scenario === "as-viewer"
+        ? HUBOT
+        : OCTO;
   const user = db.users.find((u) => u.id === id);
   if (!user) throw new Error("mock seed is missing a user");
   return user;

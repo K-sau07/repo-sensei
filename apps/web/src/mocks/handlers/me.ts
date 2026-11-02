@@ -1,7 +1,7 @@
 import { http, HttpResponse } from "msw";
 
 import type { Me, MyOrg, SessionInfo } from "@/lib/api/types";
-import { db, saveDb, type MockUser } from "@/mocks/db";
+import { db, roleIn, saveDb, type MockUser } from "@/mocks/db";
 import { mockScenario } from "@/mocks/scenario";
 
 import { apiError } from "./errors";
@@ -12,8 +12,8 @@ export function meOf(user: MockUser): Me {
     mockScenario() === "no-orgs"
       ? []
       : db.orgs.flatMap((org) => {
-          const membership = db.members[org.slug]?.find((m) => m.user_id === user.id);
-          return membership ? [{ slug: org.slug, name: org.name, role: membership.role }] : [];
+          const role = roleIn(org.slug, user.id);
+          return role ? [{ slug: org.slug, name: org.name, role }] : [];
         });
   const last = db.lastOrg[user.id] ?? null;
   return {

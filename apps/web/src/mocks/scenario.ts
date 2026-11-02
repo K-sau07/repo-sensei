@@ -3,14 +3,22 @@
  *   localStorage.setItem("sensei.mock.scenario", "no-orgs")
  * MSW runs its handlers in the page, so they can read this. Unset means the normal signed-in user
  * (Octo, owner of Acme). "as-friend" signs in as a second user (friend@example.com), to accept
- * invitations; "as-member" as Hubot, a plain member of Acme, to see what non-admins get.
+ * invitations; "as-member" as Hubot, a plain member of Acme, to see what non-admins get;
+ * "as-viewer" as Hubot again, a viewer of Acme, to see what viewers get.
  */
 export type MockScenario =
-  "signed-in" | "signed-out" | "expired" | "no-orgs" | "as-friend" | "as-member";
+  "signed-in" | "signed-out" | "expired" | "no-orgs" | "as-friend" | "as-member" | "as-viewer";
 
 export const SCENARIO_KEY = "sensei.mock.scenario";
 
-const SCENARIOS = new Set<string>(["signed-out", "expired", "no-orgs", "as-friend", "as-member"]);
+const SCENARIOS = new Set<string>([
+  "signed-out",
+  "expired",
+  "no-orgs",
+  "as-friend",
+  "as-member",
+  "as-viewer",
+]);
 
 export function mockScenario(): MockScenario {
   if (typeof localStorage === "undefined") return "signed-in";

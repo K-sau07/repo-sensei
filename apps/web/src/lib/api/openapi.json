@@ -3308,6 +3308,18 @@
             "description": "Distinct approvers its plan needs (two for a high-risk fix); None: no plan.",
             "title": "Approvals Needed"
           },
+          "author": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Who asked for it (their login); None: Sentry did.",
+            "title": "Author"
+          },
           "created_at": {
             "format": "date-time",
             "title": "Created At",
@@ -3503,6 +3515,7 @@
           "merge_readiness",
           "pr_url",
           "created_by",
+          "author",
           "created_at",
           "finished_at",
           "ticket",
@@ -3570,6 +3583,18 @@
       },
       "FixSummaryOut": {
         "properties": {
+          "author": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Who asked for it (their login); None: Sentry did.",
+            "title": "Author"
+          },
           "created_at": {
             "format": "date-time",
             "title": "Created At",
@@ -3677,6 +3702,7 @@
           "merge_readiness",
           "pr_url",
           "created_by",
+          "author",
           "created_at",
           "finished_at"
         ],

@@ -1,14 +1,14 @@
 import type { Metadata } from "next";
 import { Suspense } from "react";
 
-import { TabPlaceholder } from "@/components/repo/tab-placeholder";
+import { FixesPage } from "@/components/fixes/fixes-page";
 
 export const metadata: Metadata = { title: "Fixes" };
 
-export default function FixesPage() {
+export default function Page() {
   return (
     <Suspense>
-      <TabPlaceholder tab="fixes" />
+      <FixesPage />
     </Suspense>
   );
 }

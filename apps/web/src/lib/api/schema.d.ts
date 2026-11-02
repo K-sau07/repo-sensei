@@ -3221,6 +3221,11 @@ export interface components {
              */
             approvals_needed: number | null;
             /**
+             * Author
+             * @description Who asked for it (their login); None: Sentry did.
+             */
+            author: string | null;
+            /**
              * Created At
              * Format: date-time
              */
@@ -3307,6 +3312,11 @@ export interface components {
         FixStatus: "needs_triage" | "queued" | "running" | "awaiting_approval" | "succeeded" | "not_reproduced" | "blocked" | "failed" | "rejected" | "cancelled";
         /** FixSummaryOut */
         FixSummaryOut: {
+            /**
+             * Author
+             * @description Who asked for it (their login); None: Sentry did.
+             */
+            author: string | null;
             /**
              * Created At
              * Format: date-time

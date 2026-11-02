@@ -4,6 +4,7 @@
  * accept) survive page loads; `resetMockDb()` restores the seed.
  */
 import type { Diagram } from "@/lib/api/diagrams";
+import type { Fix } from "@/lib/api/fixes";
 import type {
   ApiKey,
   AvailableRepo,
@@ -16,6 +17,7 @@ import type {
 } from "@/lib/api/types";
 
 import type { MockJob } from "./jobs";
+import { mockScenario } from "./scenario";
 
 export interface MockUser {
   id: string;
@@ -61,6 +63,8 @@ export interface MockDb {
   jobs: Record<string, MockJob[]>;
   /** Diagrams per repository id, newest last (see handlers/diagrams.ts). */
   diagrams?: Record<string, Diagram[]>;
+  /** Fixes per repository id (see handlers/fixes.ts). */
+  fixes?: Record<string, Fix[]>;
   /** API keys, newest first (see handlers/api-keys.ts). */
   apiKeys?: MockApiKey[];
 }
@@ -259,7 +263,9 @@ export function membersOf(slug: string): Member[] {
 }
 
 export function roleIn(slug: string, userId: string): Role | null {
-  return db.members[slug]?.find((m) => m.user_id === userId)?.role ?? null;
+  const role = db.members[slug]?.find((m) => m.user_id === userId)?.role ?? null;
+  // "as-viewer": Hubot, seen as a viewer (what a viewer gets, without another seeded member).
+  return role && userId === HUBOT && mockScenario() === "as-viewer" ? "viewer" : role;
 }
 
 const RANK: Record<Role, number> = { viewer: 0, member: 1, admin: 2, owner: 3 };

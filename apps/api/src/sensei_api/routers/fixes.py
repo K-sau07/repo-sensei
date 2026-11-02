@@ -107,16 +107,17 @@ class FixSummaryOut(BaseModel):
     merge_readiness: int | None
     pr_url: str | None
     created_by: uuid.UUID | None
+    author: str | None = Field(description="Who asked for it (their login); None: Sentry did.")
     created_at: datetime
     finished_at: datetime | None
 
     @classmethod
-    def from_run(cls, run: FixRun, repo: Repo) -> FixSummaryOut:
+    def from_run(cls, run: FixRun, repo: Repo, author: str | None = None) -> FixSummaryOut:
         return cls(
             id=run.id, repo=repo.slug, title=run.title, source=run.source,
             source_ref=run.source_ref, status=run.status, stage=run.stage, risk=run.risk,
             merge_readiness=run.merge_readiness, pr_url=run.pr_url, created_by=run.created_by,
-            created_at=run.created_at, finished_at=run.finished_at,
+            author=author, created_at=run.created_at, finished_at=run.finished_at,
         )  # fmt: skip
 
 
@@ -136,14 +137,29 @@ class FixOut(FixSummaryOut):
     )
 
     @classmethod
-    def full(cls, run: FixRun, repo: Repo) -> FixOut:
-        summary = FixSummaryOut.from_run(run, repo)
+    def full(cls, run: FixRun, repo: Repo, author: str | None = None) -> FixOut:
+        summary = FixSummaryOut.from_run(run, repo, author)
         return cls(
             **summary.model_dump(), ticket=TicketOut.build(Ticket.model_validate(run.ticket)),
             repro_result=run.repro_result, root_cause=run.root_cause, repro=run.repro,
             plan=run.plan, patch=run.patch, verification=run.verification,
             stop_reason=run.stop_reason, approvals_needed=required(run.risk) if run.plan else None,
         )  # fmt: skip
+
+
+async def authors(db: AsyncSession, runs: list[FixRun]) -> dict[uuid.UUID, str]:
+    """The logins of who asked for ``runs``, by user id (one query)."""
+    ids = {run.created_by for run in runs if run.created_by is not None}
+    if not ids:
+        return {}
+    found = await db.execute(select(User.id, User.login).where(User.id.in_(ids)))
+    return dict(found.tuples().all())
+
+
+async def full(db: AsyncSession, run: FixRun, repo: Repo) -> FixOut:
+    """``run`` as the API shows it, with its author's login."""
+    known = await authors(db, [run])
+    return FixOut.full(run, repo, known.get(run.created_by) if run.created_by else None)
 
 
 class ParseIn(BaseModel):
@@ -267,7 +283,7 @@ async def create_fix(
     elif run.status is FixStatus.QUEUED:
         # After the commit (the worker must find the row): sent once the response is.
         background.add_task(_jobs(request).run_stage, run.org_id, run.id, run.stage.value)
-    return FixOut.full(run, repo)
+    return await full(db, run, repo)
 
 
 @router.get("/repos/{repo}/fixes", response_model=list[FixSummaryOut])
@@ -279,7 +295,12 @@ async def list_fixes(
 ) -> list[FixSummaryOut]:
     """The repository's fixes, newest first."""
     runs = await _service(request).list(db, repo, status=status_filter)
-    return [FixSummaryOut.from_run(run, repo) for run in runs]
+    runs = list(runs)
+    known = await authors(db, runs)
+    return [
+        FixSummaryOut.from_run(run, repo, known.get(run.created_by) if run.created_by else None)
+        for run in runs
+    ]
 
 
 async def _visible(
@@ -306,7 +327,7 @@ async def get_fix(
     readers: RepoAccessDep,
 ) -> FixOut:
     run, repo = await _visible(request, access, db, readers, fix_id)
-    return FixOut.full(run, repo)
+    return await full(db, run, repo)
 
 
 async def _locked(db: AsyncSession, run: FixRun) -> FixRun:
@@ -347,7 +368,7 @@ async def start_fix(
     outbox.add(machine.events)
     background.add_task(outbox.publish, redis)
     background.add_task(_jobs(request).run_stage, run.org_id, run.id, run.stage.value)
-    return FixOut.full(run, repo)
+    return await full(db, run, repo)
 
 
 @router.post("/fixes/{fix_id}/cancel", response_model=FixOut)
@@ -374,7 +395,7 @@ async def cancel_fix(
     outbox = FixOutbox(run.org_id, run.id, run.repo_id)
     outbox.add(events)
     background.add_task(outbox.publish, redis)
-    return FixOut.full(run, repo)
+    return await full(db, run, repo)
 
 
 class RetryIn(BaseModel):
@@ -411,7 +432,7 @@ async def retry_fix(
     outbox.add(machine.events)
     background.add_task(outbox.publish, redis)
     background.add_task(_jobs(request).run_stage, run.org_id, run.id, run.stage.value)
-    return FixOut.full(run, repo)
+    return await full(db, run, repo)
 
 
 class StepEdit(BaseModel):
@@ -494,7 +515,7 @@ async def decide_fix(
     background.add_task(outbox.publish, redis)
     if done.queue:
         background.add_task(_jobs(request).run_stage, run.org_id, run.id, run.stage.value)
-    return FixOut.full(run, repo)
+    return await full(db, run, repo)
 
 
 @router.get("/fixes/{fix_id}/approvals", response_model=list[ApprovalOut])

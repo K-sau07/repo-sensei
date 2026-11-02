@@ -133,7 +133,8 @@ async def test_a_pasted_trace_starts_a_fix_members_only(
     assert fix["ticket"]["error_type"] == "ZeroDivisionError"
     assert fix["ticket"]["frames"][0]["line"] == 12
     listed = (await client.get(f"{API}/orgs/acme/repos/items/fixes")).json()
-    assert [f["id"] for f in listed] == [fix["id"]]
+    assert [(f["id"], f["author"]) for f in listed] == [(fix["id"], owner.login)]
+    assert fix["author"] == owner.login
     assert (await client.get(f"{API}/orgs/acme/repos/items/fixes?status=failed")).json() == []
     got = await client.get(f"{API}/orgs/acme/fixes/{fix['id']}")
     assert (got.status_code, got.json()["ticket"]["message"]) == (200, "division by zero")
