@@ -42,6 +42,9 @@ class Scope(enum.StrEnum):
     # (query routing and reranking), metered like any search.
     READ_REPO = "read:repo"
     ASK = "ask"  # ask questions (spends the org's model budget)
+    # Connect a repository (org admins), which starts its first index: OAuth tokens only (the
+    # CLI's ``sensei repos connect``), never an API key.
+    CONNECT_REPO = "connect:repo"
     FIX = "fix"  # later (phase 8)
     ADMIN = "admin"  # none for now
 

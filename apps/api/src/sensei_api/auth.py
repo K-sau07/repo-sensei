@@ -20,7 +20,7 @@ rule).
 from __future__ import annotations
 
 import hmac
-from collections.abc import Awaitable, Callable, Collection
+from collections.abc import Awaitable, Callable, Mapping
 from typing import Annotated
 from urllib.parse import urlsplit
 
@@ -284,21 +284,27 @@ async def refuse_keys(request: Request) -> None:
 
 
 def key_access(
-    scope: Scope | None, writes: Collection[Callable[..., object]] = ()
+    scope: Scope | None, writes: Mapping[Callable[..., object], Scope] | None = None
 ) -> Callable[..., Awaitable[None]]:
     """A router's rule for API keys: refused (``scope`` None), or let in with ``scope`` to read,
-    and to call the unsafe endpoints in ``writes`` (the handler functions). Checked from the
-    header alone (no database: public routes stay public); the key and its scope are checked
-    where an endpoint needs its user (:func:`get_bearer`). Requests without a key pass."""
+    and to call the unsafe endpoints in ``writes`` (the handler functions) with the scope each
+    is mapped to. Checked from the header alone (no database: public routes stay public); the
+    key and its scope are checked where an endpoint needs its user (:func:`get_bearer`).
+    Requests without a key pass."""
     if scope is None:
         return refuse_keys
+    allowed = dict(writes or {})
 
     async def rule(request: Request) -> None:
         if _bearer_key(request) is None:
             return
         request.state.key_scope = scope
+        if request.method in SAFE_METHODS:
+            return
         endpoint = request.scope.get("endpoint")
-        if request.method not in SAFE_METHODS and endpoint not in writes:
+        needed = allowed.get(endpoint) if endpoint is not None else None
+        if needed is None:
             raise Forbidden("API keys can't be used for this.", code="api_key_not_allowed")
+        request.state.key_scope = needed
 
     return rule

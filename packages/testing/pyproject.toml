@@ -7,6 +7,7 @@ dependencies = [
     "sensei-core",
     "sensei-engine",
     "sensei-api",
+    "sensei-cli",
     "pytest>=8.4",
     "fakeredis>=2.31",
     "httpx>=0.28",

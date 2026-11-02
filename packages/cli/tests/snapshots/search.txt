@@ -1,0 +1,12 @@
+ 1  evil  function · ui
+    web/src/\x1b[2Jevil.ts:L10-42
+        10  \x1b]0;pwned\x07const a = 1
+ 2  login  function · api
+    backend/app/auth.py:L10-42
+        10  def login(form):
+        11      user = check(form)
+        12      return token(user)
+ 3  LoginForm  function · ui
+    web/src/Login.tsx:L10-42
+        10  export function LoginForm() {
+Search by meaning is still being prepared: these are matches by name and text.

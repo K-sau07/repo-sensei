@@ -163,9 +163,14 @@ async def test_a_key_acts_as_its_user_where_keys_are_let_in_within_its_scopes(
         f"{API}/orgs/acme/repos/items/ask", json={"question": "what?"}, headers=_bearer(reader)
     )
     assert refused(asked, "api_key_scope")
+    # Connecting needs connect:repo, which keys are never given.
+    imported = await client.post(
+        f"{API}/orgs/acme/repos/import", json={"url": "https://github.com/o/r"},
+        headers=_bearer(reader),
+    )  # fmt: skip
+    assert refused(imported, "api_key_scope")
     # Writes keys aren't let do, and routers that refuse keys.
     for method, path in (
-        ("POST", "/orgs/acme/repos/import"),
         ("DELETE", "/orgs/acme/repos/items"),
         ("GET", "/orgs/acme/api-keys"),
         ("GET", "/orgs/acme/members"),

@@ -1,0 +1,6 @@
+To sign in, open http://sensei.test/device and enter the code:
+
+    BCDF-GHJK
+
+Waiting for approval…
+Signed in as ada to acme.

@@ -1,0 +1,3 @@
+Repo   Status               Languages           Files  Indexed
+items  ready                Python, TypeScript  1,234  2026-10-30
+web    running · embed 42%                             never

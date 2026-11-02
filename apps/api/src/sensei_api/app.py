@@ -74,19 +74,24 @@ from sensei_engine.search.grep import ExactSearch
 from sensei_engine.snapshots import SnapshotCache
 
 API_PREFIX = "/api/v1"
-# Where an API key is let in (7.1), and with which scope: to read, and to call the unsafe
-# endpoints listed (reads that are POSTs, and asking). Every other router refuses keys.
+# Where an API key or token is let in (7.1), and with which scope: to read, and to call the
+# unsafe endpoints listed, each with its own scope (reads that are POSTs, asking, connecting).
+# Every other router refuses them.
 _READ_ONLY = (
-    "me", "repos", "indexing", "index_jobs", "constellation", "symbols", "graph",
-    "feature_maps", "overview", "refs", "staleness", "diagrams", "deps", "impact", "galaxy",
+    "me", "indexing", "index_jobs", "constellation", "symbols", "graph", "feature_maps",
+    "overview", "refs", "staleness", "diagrams", "deps", "impact", "galaxy",
 )  # fmt: skip
-KEY_ACCESS: dict[str, tuple[Scope, frozenset[Callable[..., object]]]] = {
-    **{name: (Scope.READ_REPO, frozenset()) for name in _READ_ONLY},
-    "browse": (Scope.READ_REPO, frozenset({browse.grep})),
-    "search": (Scope.READ_REPO, frozenset({search.search})),
-    "trace": (Scope.READ_REPO, frozenset({trace.trace})),
-    "ask": (Scope.ASK, frozenset({ask.ask})),
-    "runs": (Scope.ASK, frozenset()),
+_CONNECTING: dict[Callable[..., object], Scope] = dict.fromkeys(
+    (repos.connect_repo, repos.import_repo, repos.estimate_repo), Scope.CONNECT_REPO
+)
+KEY_ACCESS: dict[str, tuple[Scope, dict[Callable[..., object], Scope]]] = {
+    **{name: (Scope.READ_REPO, {}) for name in _READ_ONLY},
+    "repos": (Scope.READ_REPO, _CONNECTING),
+    "browse": (Scope.READ_REPO, {browse.grep: Scope.READ_REPO}),
+    "search": (Scope.READ_REPO, {search.search: Scope.READ_REPO}),
+    "trace": (Scope.READ_REPO, {trace.trace: Scope.READ_REPO}),
+    "ask": (Scope.ASK, {ask.ask: Scope.ASK}),
+    "runs": (Scope.ASK, {}),
 }
 SERVICE_NAME = "sensei-api"
 
@@ -227,7 +232,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             # needs a browser session (refusing keys and tokens there itself).
             app.include_router(module.router, prefix=API_PREFIX)
             continue
-        scope, writes = KEY_ACCESS.get(name, (None, frozenset[Callable[..., object]]()))
+        scope, writes = KEY_ACCESS.get(name, (None, dict[Callable[..., object], Scope]()))
         app.include_router(
             module.router,
             prefix=API_PREFIX,

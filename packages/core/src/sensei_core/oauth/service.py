@@ -57,7 +57,7 @@ from sensei_core.orgs.service import OrgAccess
 
 Clock = Callable[[], datetime]
 
-SCOPES = (Scope.READ_REPO.value, Scope.ASK.value)
+SCOPES = (Scope.READ_REPO.value, Scope.ASK.value, Scope.CONNECT_REPO.value)
 DEFAULT_SCOPES = (Scope.READ_REPO.value,)
 IGNORED_SCOPES = frozenset({"offline_access"})  # refresh tokens are always given
 REQUEST_TTL = timedelta(minutes=10)

@@ -10,6 +10,11 @@ export const SCOPE_LABELS: Record<string, { title: string; detail: string }> = {
     title: "Ask questions",
     detail: "Get answers with citations, spending your organization's AI budget.",
   },
+  "connect:repo": {
+    title: "Connect repositories",
+    detail:
+      "Add repositories to your organization if you're an admin. Each one is indexed right away, which spends your organization's budget.",
+  },
 };
 
 export function scopeLabel(scope: string): { title: string; detail: string } {

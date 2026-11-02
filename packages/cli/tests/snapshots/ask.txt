@@ -1,0 +1,6 @@
+Login checks the password [1] from the form [2].
+
+Sources
+[1] backend/app/auth.py:L10-42  verified
+[2] web/src/Login.tsx:L7
+Confidence: high

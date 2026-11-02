@@ -1,0 +1,14 @@
+Run:
+  code --add-mcp '{"name": "repo-sensei", "type": "http", "url": "http://sensei.test/mcp"}'
+
+or put this in .vscode/mcp.json:
+{
+  "servers": {
+    "repo-sensei": {
+      "type": "http",
+      "url": "http://sensei.test/mcp"
+    }
+  }
+}
+
+Start the server from the MCP view and sign in when VS Code asks.

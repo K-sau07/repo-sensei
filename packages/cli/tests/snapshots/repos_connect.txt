@@ -1,0 +1,6 @@
+langflow-ai/langflow · public
+about 4,321 files · 9,876,543 tokens · about 12 min to index
+Cost: about $1.37, once
+Connect it and start indexing? [Y/n]: y
+Connected as langflow.
+Indexing has started: `sensei index status langflow --watch` follows it.

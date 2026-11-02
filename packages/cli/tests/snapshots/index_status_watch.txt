@@ -1,0 +1,6 @@
+Following acme-gh/items…
+  running · parse 10% · about 5 min left
+  running · embed 60% · about 1 min left
+acme-gh/items (items)
+Status: ready
+Last indexed: 2026-10-30 14:02 UTC at abc1234 · 1,234 files · 56,789 lines

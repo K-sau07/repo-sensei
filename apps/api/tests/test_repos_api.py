@@ -517,6 +517,58 @@ async def test_import_a_public_repository(
     assert row.installation_id is None
 
 
+async def _device_token(
+    app: FastAPI, client: httpx.AsyncClient, db: AsyncSession, user: User, scope: str
+) -> str:
+    """An API token from the device flow, as ``sensei login`` gets one."""
+    device = (await client.post(f"{API}/oauth/device/code", data={"scope": scope})).json()
+    _, headers = await sign_in(app, client, db, user)
+    allowed = await client.post(
+        f"{API}/oauth/device/decision",
+        json={"user_code": device["user_code"], "org": "acme", "approve": True},
+        headers=headers,
+    )
+    assert allowed.status_code == 204, allowed.text
+    client.cookies.clear()
+    poll = {"grant_type": "urn:ietf:params:oauth:grant-type:device_code",
+            "client_id": "sensei-cli", "device_code": device["device_code"]}  # fmt: skip
+    got = await client.post(f"{API}/oauth/token", data=poll)
+    assert got.status_code == 200, got.text
+    return got.json()["access_token"]
+
+
+async def test_a_token_connects_with_the_connect_scope_and_an_api_key_never(
+    app: FastAPI, client: httpx.AsyncClient, db_session: AsyncSession, fake: FakeGitHub
+) -> None:
+    admin, _ = await _admin_org(app, client, db_session)
+    url = {"url": "https://github.com/langflow-ai/langflow"}
+    # Reading only: estimating and importing need connect:repo, and say so.
+    reader = await _device_token(app, client, db_session, admin, "read:repo")
+    for path in ("/repos/estimate", "/repos/import"):
+        refused = await client.post(
+            f"{API}/orgs/acme{path}", json=url, headers={"Authorization": f"Bearer {reader}"}
+        )
+        assert refused.status_code == 403, refused.text
+        assert 'scope="connect:repo"' in refused.headers["www-authenticate"]
+    connector = await _device_token(app, client, db_session, admin, "read:repo connect:repo")
+    bearer = {"Authorization": f"Bearer {connector}"}
+    estimated = await client.post(f"{API}/orgs/acme/repos/estimate", json=url, headers=bearer)
+    assert estimated.status_code == 200, estimated.text
+    imported = await client.post(f"{API}/orgs/acme/repos/import", json=url, headers=bearer)
+    assert (imported.status_code, imported.json()["slug"]) == (201, "langflow")
+    # Still nothing else written with it.
+    gone = await client.delete(f"{API}/orgs/acme/repos/langflow", headers=bearer)
+    assert (gone.status_code, gone.json()["error"]["code"]) == (403, "api_key_not_allowed")
+    # API keys can't be given the scope.
+    _, headers = await sign_in(app, client, db_session, admin)
+    made = await client.post(
+        f"{API}/orgs/acme/api-keys",
+        json={"name": "ci", "scopes": ["read:repo", "connect:repo"]},
+        headers=headers,
+    )
+    assert made.status_code == 422, made.text
+
+
 @pytest.mark.parametrize(
     ("url", "code"),
     [

@@ -10,6 +10,7 @@ dependencies = [
     "sensei-api",
     "sensei-workers",
     "sensei-mcp",
+    "sensei-cli",
 ]
 
 [dependency-groups]
@@ -44,6 +45,7 @@ sensei-api = { workspace = true }
 sensei-workers = { workspace = true }
 sensei-testing = { workspace = true }
 sensei-mcp = { workspace = true }
+sensei-cli = { workspace = true }
 
 # ---------------------------------------------------------------- ruff
 [tool.ruff]
@@ -62,6 +64,8 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 "**/tests/**" = ["S101", "PLR2004", "S105", "S106", "S608", "PLR0911", "PLR0917"]  # probe-table identifiers; parametrized fixtures; matrix runners
 "scripts/**" = ["T201"]
+# The CLI tests' stand-in server: a route table answering inline, checking what it is sent.
+"packages/testing/src/sensei_testing/cli.py" = ["S101", "PLR0911"]
 
 [tool.ruff.lint.isort]
 known-first-party = [
@@ -72,6 +76,7 @@ known-first-party = [
     "sensei_workers",
     "sensei_testing",
     "sensei_mcp",
+    "sensei_cli",
 ]
 
 [tool.ruff.lint.flake8-tidy-imports]
@@ -86,7 +91,7 @@ asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 python_functions = ["test_*"]
 filterwarnings = ["error"]
-testpaths = ["apps/api/tests", "workers/tests", "packages/core/tests", "packages/engine/tests", "packages/evals/tests", "packages/mcp_server/tests", "scripts/hooks/tests"]
+testpaths = ["apps/api/tests", "workers/tests", "packages/core/tests", "packages/engine/tests", "packages/evals/tests", "packages/mcp_server/tests", "packages/cli/tests", "scripts/hooks/tests"]
 markers = [
     "integration: needs running infrastructure (postgres, redis, minio, docker)",
     "slow: takes more than a few seconds",
@@ -95,4 +100,4 @@ markers = [
 
 [tool.coverage.run]
 branch = true
-source = ["sensei_core", "sensei_engine", "sensei_evals", "sensei_api", "sensei_workers", "sensei_mcp"]
+source = ["sensei_core", "sensei_engine", "sensei_evals", "sensei_api", "sensei_workers", "sensei_mcp", "sensei_cli"]

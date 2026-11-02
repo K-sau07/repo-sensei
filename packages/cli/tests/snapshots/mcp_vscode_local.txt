@@ -1,0 +1,24 @@
+Put this in .vscode/mcp.json:
+{
+  "inputs": [
+    {
+      "type": "promptString",
+      "id": "sensei-api-key",
+      "description": "repo-sensei API key",
+      "password": true
+    }
+  ],
+  "servers": {
+    "repo-sensei": {
+      "type": "stdio",
+      "command": "sensei-mcp",
+      "env": {
+        "SENSEI_URL": "http://sensei.test",
+        "SENSEI_API_KEY": "${input:sensei-api-key}"
+      }
+    }
+  }
+}
+
+VS Code asks for the API key the first time the server starts, and keeps it.
+Create an API key at http://sensei.test/<org>/settings/api-keys.

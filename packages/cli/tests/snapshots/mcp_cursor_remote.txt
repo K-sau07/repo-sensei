@@ -1,0 +1,10 @@
+Put this in .cursor/mcp.json:
+{
+  "mcpServers": {
+    "repo-sensei": {
+      "url": "http://sensei.test/mcp"
+    }
+  }
+}
+
+In Cursor's MCP settings, sign in to repo-sensei when it asks.

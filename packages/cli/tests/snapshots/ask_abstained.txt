@@ -1,0 +1,3 @@
+Not answered from the code: No code handles payments.
+Searched: payment; stripe
+Try: Ask about orders instead.

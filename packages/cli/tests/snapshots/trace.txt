@@ -1,0 +1,10 @@
+Path 1 · 86% sure · reaches the data
+  ui      LoginPage  page
+          web/src/Login.tsx:L5-60
+          ↓ calls_api (95%)
+  route   POST /api/v1/login  route
+          backend/app/auth.py:L10-42
+          ↓ reads (90%)
+  db      users  table
+          backend/app/models.py:L3-20
+  ■ It ends here: Nothing reads it back.

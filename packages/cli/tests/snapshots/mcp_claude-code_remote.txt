@@ -1,0 +1,14 @@
+Run:
+  claude mcp add --transport http repo-sensei http://sensei.test/mcp
+
+or put this in .mcp.json:
+{
+  "mcpServers": {
+    "repo-sensei": {
+      "type": "http",
+      "url": "http://sensei.test/mcp"
+    }
+  }
+}
+
+In Claude Code, run /mcp and choose repo-sensei to sign in.

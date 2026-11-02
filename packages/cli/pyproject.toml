@@ -1,0 +1,16 @@
+[project]
+name = "sensei-cli"
+version = "0.1.0"
+description = "repo-sensei on the command line: sign in, connect repositories, search, ask and trace."
+requires-python = ">=3.13"
+dependencies = ["httpx>=0.28", "keyring>=25.6", "rich>=14", "typer>=0.16"]
+
+[project.scripts]
+sensei = "sensei_cli.main:main"
+
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/sensei_cli"]
