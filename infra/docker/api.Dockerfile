@@ -18,9 +18,12 @@ WORKDIR /app
 # Dependencies first (cached until the lockfile changes), then our code.
 COPY pyproject.toml uv.lock .python-version ./
 COPY apps/api/pyproject.toml apps/api/
+COPY packages/cli/pyproject.toml packages/cli/
 COPY packages/core/pyproject.toml packages/core/
 COPY packages/engine/pyproject.toml packages/engine/
 COPY packages/evals/pyproject.toml packages/evals/
+COPY packages/fixer/pyproject.toml packages/fixer/
+COPY packages/mcp_server/pyproject.toml packages/mcp_server/
 COPY packages/testing/pyproject.toml packages/testing/
 COPY workers/pyproject.toml workers/
 RUN --mount=type=cache,target=/root/.cache/uv \
@@ -29,6 +32,8 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 COPY apps/api apps/api
 COPY packages/core packages/core
 COPY packages/engine packages/engine
+COPY packages/fixer packages/fixer
+COPY packages/mcp_server packages/mcp_server
 COPY scripts/healthcheck.py scripts/healthcheck.py
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev --no-editable --package sensei-api
