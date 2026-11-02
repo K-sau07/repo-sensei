@@ -48,8 +48,13 @@ class Networks:
         return process.returncode or 0, out.decode("utf-8", "replace").strip()
 
     async def _network(self, name: str, *, internal: bool) -> None:
-        code, _ = await self._docker("network", "inspect", name)
+        code, found = await self._docker("network", "inspect", "--format={{.Internal}}", name)
         if code == 0:
+            # One made by hand without --internal would give installs a way out: refused.
+            if internal and found.strip() != "true":
+                raise SandboxUnavailableError(
+                    f"the {name} network isn't internal: remove it (docker network rm {name})"
+                )
             return
         flags = ["--internal"] if internal else []
         code, said = await self._docker(

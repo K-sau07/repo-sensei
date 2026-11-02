@@ -9,9 +9,13 @@ ARG NODE_VERSION=22
 
 FROM node:${NODE_VERSION}-trixie-slim
 # The image's own "node" user takes uid 1000; the sandbox user is 10001 like the Python image's.
+# /opt/deps belongs to the installer (10002), who fills it when a dependencies image is made.
 RUN groupadd --system --gid 10001 sandbox \
     && useradd --system --uid 10001 --gid sandbox --home-dir /work --shell /usr/sbin/nologin sandbox \
-    && mkdir -p /opt/deps
+    && groupadd --system --gid 10002 installer \
+    && useradd --system --uid 10002 --gid installer --home-dir /tmp --shell /usr/sbin/nologin installer \
+    && mkdir -p /opt/deps \
+    && chown installer:installer /opt/deps
 COPY --chmod=0755 sensei-node-run /usr/local/bin/sensei-node-run
 ENV HOME=/work \
     npm_config_cache=/tmp/.npm \

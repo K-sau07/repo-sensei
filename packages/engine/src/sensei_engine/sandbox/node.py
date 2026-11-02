@@ -41,7 +41,8 @@ MOUNT = "/tmp/sensei"  # noqa: S108 - inside the install's container, mounted re
 MAX_MANIFEST_BYTES = 2 * 1024 * 1024
 MAX_LOCK_BYTES = 64 * 1024 * 1024
 INSTALL_TIMEOUT_SECONDS = 900.0
-RECIPE = "npm-ci-ignore-scripts-1"
+RECIPE = "npm-ci-ignore-scripts-2"
+INSTALLER = "10002:10002"  # the Node image's installer, who owns /opt/deps (never root)
 # Copy the two files to where node_modules goes, then install exactly the lock, no scripts.
 _INSTALL = (
     f"cp {MOUNT}/package.json {MOUNT}/package-lock.json /opt/deps/ && cd /opt/deps && "
@@ -169,10 +170,11 @@ class NodeImages:
             # be committed into the image.
             argv = [
                 self._sandbox.docker(), "run", f"--name={name}", f"--label={LABEL}=deps-build",
-                "--pull=never", f"--network={BUILD_NETWORK}", "--user=0:0", "--cap-drop=ALL",
+                "--pull=never", f"--network={BUILD_NETWORK}", f"--user={INSTALLER}",
+                *self._sandbox.runtime_args(), "--cap-drop=ALL",
                 "--security-opt=no-new-privileges", "--memory=4096m", "--memory-swap=4096m",
                 "--pids-limit=512", f"--mount=type=bind,source={folder},target={MOUNT},readonly",
-                "--entrypoint=env", self._base, f"HTTPS_PROXY={proxy}", f"HTTP_PROXY={proxy}",
+                self._base, "env", f"HTTPS_PROXY={proxy}", f"HTTP_PROXY={proxy}", "HOME=/tmp",
                 "npm_config_cache=/tmp/.npm", "sh", "-c", _INSTALL,
             ]  # fmt: skip
             try:
@@ -183,6 +185,8 @@ class NodeImages:
                             self._sandbox.docker(),
                             "commit",
                             "--change=USER 10001:10001",
+                            # The install's command isn't the image's: back to the base's.
+                            '--change=CMD ["node"]',
                             f"--change=LABEL {LABEL}=deps",
                             name,
                             tag,
@@ -216,4 +220,6 @@ class NodeImages:
 def _write_manifests(folder: Path, deps: NodeDependencies) -> None:
     (folder / "package.json").write_bytes(deps.package_json or b"")
     (folder / "package-lock.json").write_bytes(deps.lock or b"")
-    folder.chmod(0o755)
+    folder.chmod(0o755)  # read by the install's container, as the installer
+    for name in ("package.json", "package-lock.json"):
+        (folder / name).chmod(0o644)

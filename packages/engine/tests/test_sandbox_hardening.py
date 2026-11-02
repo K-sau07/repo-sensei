@@ -10,8 +10,9 @@ from pathlib import Path
 
 import pytest
 
+from sensei_engine.sandbox.network import Networks
 from sensei_engine.sandbox.node import detect_node, node_command
-from sensei_engine.sandbox.proxy import ALLOWED, Proxy, parse_connect, public
+from sensei_engine.sandbox.proxy import ALLOWED, MAX_PER_CLIENT, Proxy, parse_connect, public
 from sensei_engine.sandbox.runner import Limits, Sandbox, SandboxUnavailableError, run_argv
 from sensei_engine.sandbox.sidecars import postgres_argv, postgres_env
 
@@ -173,3 +174,50 @@ def test_a_symlinked_lockfile_is_not_read(tmp_path: Path) -> None:
     (tmp_path / "package.json").write_text("{}")
     (tmp_path / "package-lock.json").symlink_to(tmp_path / "secret")
     assert detect_node(tmp_path).lock is None
+
+
+async def test_one_client_cant_hold_every_tunnel() -> None:
+    proxy = Proxy({"pkg.test"})
+    server = await asyncio.start_server(proxy.handle, "127.0.0.1", 0)
+    port = server.sockets[0].getsockname()[1]
+    held: list[asyncio.StreamWriter] = []
+    try:
+        for _ in range(MAX_PER_CLIENT):  # each still sending its request line
+            _, writer = await asyncio.open_connection("127.0.0.1", port)
+            writer.write(b"CONNECT pkg.test:443 HTTP/1.1\r\n")
+            await writer.drain()
+            held.append(writer)
+        await asyncio.sleep(0.05)
+        reader, writer = await asyncio.open_connection("127.0.0.1", port)
+        writer.write(b"CONNECT pkg.test:443 HTTP/1.1\r\n\r\n")
+        await writer.drain()
+        answer = await asyncio.wait_for(reader.readuntil(b"\r\n\r\n"), 5)
+        assert answer.startswith(b"HTTP/1.1 429")
+        writer.close()
+    finally:
+        for writer in held:
+            writer.close()
+        server.close()
+        await server.wait_closed()
+
+
+def test_installs_and_sidecars_get_gvisor_where_it_is_required() -> None:
+    with pytest.raises(SandboxUnavailableError, match="gVisor"):
+        Sandbox(require_gvisor=True).runtime_args()
+    assert Sandbox(require_gvisor=True, runtime="runsc").runtime_args() == ["--runtime=runsc"]
+    assert Sandbox().runtime_args() == []  # development: Docker's default runtime
+    argv = postgres_argv("docker", "db", "net", "pg", 0.0, runtime=["--runtime=runsc"])
+    assert "--runtime=runsc" in argv
+
+
+async def test_a_build_network_made_without_internal_is_refused(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    networks = Networks(Sandbox())
+
+    async def inspected(*_args: str) -> tuple[int, str]:
+        return 0, "false"  # it exists, but has a way out
+
+    monkeypatch.setattr(networks, "_docker", inspected)
+    with pytest.raises(SandboxUnavailableError, match="isn't internal"):
+        await networks.proxy()

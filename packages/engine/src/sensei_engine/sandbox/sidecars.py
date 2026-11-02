@@ -15,7 +15,7 @@ import asyncio
 import contextlib
 import time
 import uuid
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 
@@ -55,10 +55,19 @@ def postgres_env() -> dict[str, str]:
     }
 
 
-def postgres_argv(binary: str, name: str, network: str, image: str, now: float) -> list[str]:
-    """``docker run`` for the database: on the run's network only, data in memory, limited."""
+def postgres_argv(
+    binary: str,
+    name: str,
+    network: str,
+    image: str,
+    now: float,
+    *,
+    runtime: Sequence[str] = (),
+) -> list[str]:
+    """``docker run`` for the database: on the run's network only, data in memory, limited,
+    under the sandbox's runtime (gVisor where it's required: untrusted code talks to it)."""
     return [
-        binary, "run", "--detach", f"--name={name}", f"--label={LABEL}=sidecar",
+        binary, "run", "--detach", f"--name={name}", f"--label={LABEL}=sidecar", *runtime,
         f"--label={DEADLINE_LABEL}={int(now) + LIFETIME_SECONDS}", "--pull=never",
         f"--network={network}", f"--network-alias={DB_ALIAS}",
         "--tmpfs=/var/lib/postgresql/data:rw,size=512m", "--tmpfs=/var/run/postgresql:rw",
@@ -93,7 +102,10 @@ async def postgres(
     network = await networks.run_network(f"sensei-run-{run_id}")
     name = f"{NAME_PREFIX}db-{run_id}"
     try:
-        if await _docker(*postgres_argv(binary, name, network, image, time.time())) != 0:
+        argv = postgres_argv(
+            binary, name, network, image, time.time(), runtime=sandbox.runtime_args()
+        )
+        if await _docker(*argv) != 0:
             raise SandboxUnavailableError(
                 f"couldn't start the database ({image}; pull it with `make sandbox-image`)"
             )

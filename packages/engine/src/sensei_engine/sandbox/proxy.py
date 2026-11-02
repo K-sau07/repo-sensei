@@ -21,6 +21,7 @@ import ipaddress
 import logging
 import socket
 from collections.abc import Awaitable, Callable, Collection
+from typing import Any, cast
 
 ALLOWED = frozenset(
     {
@@ -32,7 +33,9 @@ ALLOWED = frozenset(
 PORT = 3128
 HTTPS_PORT = 443
 MAX_HEADER_BYTES = 8192
-MAX_CONNECTIONS = 64
+MAX_CONNECTIONS = 64  # tunnels open at once, all clients
+MAX_PER_CLIENT = 8  # connections from one address (one install can't take every tunnel)
+TUNNEL_SECONDS = 600.0  # the longest a tunnel stays open, busy or not
 HEADER_TIMEOUT_SECONDS = 10.0
 CONNECT_TIMEOUT_SECONDS = 15.0
 IDLE_TIMEOUT_SECONDS = 120.0
@@ -111,14 +114,24 @@ class Proxy:
         self._port = port
         self._resolve = resolver
         self._slots = asyncio.Semaphore(MAX_CONNECTIONS)
+        self._clients: dict[str, int] = {}
 
     async def handle(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
-        async with self._slots:
-            try:
-                await self._handle(reader, writer)
-            finally:
-                with contextlib.suppress(OSError):
-                    writer.close()
+        peer: Any = writer.get_extra_info("peername")
+        client = str(cast("tuple[Any, ...]", peer)[0]) if isinstance(peer, tuple) else "?"
+        if self._clients.get(client, 0) >= MAX_PER_CLIENT:
+            await self._refuse(writer, "429 Too Many Requests", f"from {client}")
+            writer.close()
+            return
+        self._clients[client] = self._clients.get(client, 0) + 1
+        try:
+            await self._handle(reader, writer)
+        finally:
+            self._clients[client] -= 1
+            if not self._clients[client]:
+                del self._clients[client]
+            with contextlib.suppress(OSError):
+                writer.close()
 
     async def _refuse(self, writer: asyncio.StreamWriter, status: str, what: str) -> None:
         log.info("refused %s: %s", what, status)
@@ -139,6 +152,17 @@ class Proxy:
             await self._refuse(writer, target, what)
             return
         host, port = target
+        async with self._slots:  # only a request that checks out takes one
+            await self._tunnel(reader, writer, host, port, what)
+
+    async def _tunnel(
+        self,
+        reader: asyncio.StreamReader,
+        writer: asyncio.StreamWriter,
+        host: str,
+        port: int,
+        what: str,
+    ) -> None:
         address = await self._resolve(host, port)
         if address is None:
             await self._refuse(writer, "502 Bad Gateway", what)
@@ -153,7 +177,14 @@ class Proxy:
         log.info("tunnel %s (%s)", host, address)
         writer.write(b"HTTP/1.1 200 Connection Established\r\n\r\n")
         await writer.drain()
-        await asyncio.gather(_pipe(reader, upstream_writer), _pipe(upstream_reader, writer))
+        tunnel = asyncio.gather(_pipe(reader, upstream_writer), _pipe(upstream_reader, writer))
+        try:
+            await asyncio.wait_for(tunnel, TUNNEL_SECONDS)
+        except TimeoutError:
+            log.info("tunnel to %s closed after %g s", host, TUNNEL_SECONDS)
+        finally:
+            with contextlib.suppress(OSError):
+                upstream_writer.close()
 
 
 async def serve(host: str, port: int, allowed: Collection[str] = ALLOWED) -> None:

@@ -234,6 +234,15 @@ async def test_dependencies_install_once_into_an_image(
         snapshot, ["python", "-c", "import six; print(six.__version__)"], image=first.image
     )
     assert result.stdout == "1.17.0\n"
+    # Installed by the installer (never root), and the image runs the base's command, not the
+    # install's.
+    owner = await sandbox.run(
+        snapshot, ["python", "-c", "import os, six; print(os.stat(six.__file__).st_uid)"],
+        image=first.image,
+    )  # fmt: skip
+    assert owner.stdout == "10002\n"
+    config = _docker("image", "inspect", "--format={{json .Config.Cmd}}", first.image)
+    assert config.stdout.strip() == '["python3"]'
 
 
 # ---------------------------------------------------------------- 8.2 hardening

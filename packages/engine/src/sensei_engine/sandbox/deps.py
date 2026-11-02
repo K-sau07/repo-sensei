@@ -65,7 +65,9 @@ INSTALL_TIMEOUT_SECONDS = 600.0
 MOUNT = "/tmp/sensei"  # noqa: S108 - inside the install's container, mounted read-only
 INSTALL_MEMORY_MB = 4096
 INSTALL_PIDS = 512
-RECIPE = "proxied-1"  # how images are made: a change makes new ones
+RECIPE = "proxied-2"
+# The runner images' installer, who owns the virtualenv: installs never run as root.
+INSTALLER = "10002:10002"  # how images are made: a change makes new ones
 LOG_TAIL_BYTES = 4096  # of the install's output, kept as the limitation's detail
 MAX_DETAIL_LINES = 40
 
@@ -491,7 +493,8 @@ class DependencyImages:
             # environment it would be committed into the image.
             argv = [
                 self._sandbox.docker(), "run", f"--name={name}", f"--label={LABEL}=deps-build",
-                "--pull=never", f"--network={BUILD_NETWORK}", "--user=0:0", "--cap-drop=ALL",
+                "--pull=never", f"--network={BUILD_NETWORK}", f"--user={INSTALLER}",
+                *self._sandbox.runtime_args(), "--cap-drop=ALL",
                 "--security-opt=no-new-privileges", f"--memory={INSTALL_MEMORY_MB}m",
                 f"--memory-swap={INSTALL_MEMORY_MB}m", f"--pids-limit={INSTALL_PIDS}",
                 f"--mount=type=bind,source={folder},target={MOUNT},readonly", base,
@@ -505,6 +508,8 @@ class DependencyImages:
                             self._sandbox.docker(),
                             "commit",
                             "--change=USER 10001:10001",
+                            # The install's command isn't the image's: back to the base's.
+                            '--change=CMD ["python3"]',
                             f"--change=LABEL {LABEL}=deps",
                             name,
                             tag,
@@ -538,7 +543,9 @@ class DependencyImages:
 def _write_requirements(folder: Path, deps: Dependencies) -> None:
     (folder / "requirements.txt").write_text("\n".join(deps.requirements) + "\n")
     (folder / "constraints.txt").write_text("\n".join(deps.constraints) + "\n")
-    folder.chmod(0o755)  # the install's container reads it as root without capabilities
+    folder.chmod(0o755)  # read by the install's container, as the installer
+    for name in ("requirements.txt", "constraints.txt"):
+        (folder / name).chmod(0o644)
 
 
 def install_output(out: bytes) -> str:

@@ -14,10 +14,14 @@ FROM ${UV_IMAGE} AS uv
 
 FROM python:${PYTHON_VERSION}-slim-trixie
 COPY --from=uv /uv /uvx /bin/
-# The virtualenv belongs to root: a run (as the sandbox user) can import from it, not change it.
+# The virtualenv belongs to the installer (10002), who fills it when a dependencies image is made
+# (never root): a run, as the sandbox user (10001), can import from it, not change it.
 RUN groupadd --system --gid 10001 sandbox \
     && useradd --system --uid 10001 --gid sandbox --home-dir /work --shell /usr/sbin/nologin sandbox \
-    && uv venv --python /usr/local/bin/python /opt/venv
+    && groupadd --system --gid 10002 installer \
+    && useradd --system --uid 10002 --gid installer --home-dir /tmp --shell /usr/sbin/nologin installer \
+    && uv venv --python /usr/local/bin/python /opt/venv \
+    && chown -R installer:installer /opt/venv
 ENV PATH=/opt/venv/bin:$PATH \
     VIRTUAL_ENV=/opt/venv \
     HOME=/work \

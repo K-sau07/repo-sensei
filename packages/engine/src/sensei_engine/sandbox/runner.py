@@ -325,6 +325,12 @@ class Sandbox:
                 "not for running other people's code in production"
             )
 
+    def runtime_args(self) -> list[str]:
+        """``--runtime`` for any container of the sandbox's (runs, installs, sidecars), after
+        checking gVisor is there where it's required."""
+        self.check_isolation()
+        return [f"--runtime={self.runtime}"] if self.runtime is not None else []
+
     def runner_image(self, python: str = DEFAULT_PYTHON) -> str:
         return runner_image(python, repository=self.image)
 
