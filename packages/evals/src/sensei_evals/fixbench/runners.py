@@ -16,7 +16,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
 
-from sensei_engine.sandbox.runner import Sandbox, SandboxError
+from sensei_engine.sandbox.node import node_command
+from sensei_engine.sandbox.runner import Limits, Sandbox, SandboxError
 from sensei_evals.fixbench.bench import Command
 
 OUTPUT_TAIL = 4000
@@ -84,25 +85,30 @@ class LocalRunner:
 
 @dataclass(slots=True)
 class SandboxRunner:
-    """In a fresh sandbox container, from the image with the dependencies of the folder the
-    command runs in (``images``, by workdir)."""
+    """In a fresh sandbox container with a fix's limits, from the image with the dependencies
+    of the folder the command runs in (``images``, by workdir); a JavaScript folder's
+    (``node``) through the Node image's launcher, in a writable copy."""
 
     sandbox: Sandbox
     images: Mapping[str, str]
+    node: frozenset[str] = frozenset()
     trusted_only: bool = False
 
     async def run(self, checkout: Path, command: Command) -> TestResult:
         image = self.images.get(command.workdir)
         if image is None:
             return TestResult(False, None, f"no sandbox image for {command.workdir!r}", 0.0)
+        is_node = command.workdir in self.node
+        argv = node_command(command.workdir, command.command) if is_node else command.command
         try:
             result = await self.sandbox.run(
                 checkout,
-                command.command,
+                argv,
                 image=image,
                 time_limit=command.timeout_seconds,
-                workdir=command.workdir,
+                workdir="" if is_node else command.workdir,
                 env={"PYTHONDONTWRITEBYTECODE": "1", "CI": "1", "NO_COLOR": "1"},
+                limits=Limits.for_fixes(),
             )
         except SandboxError as error:
             return TestResult(False, None, f"the sandbox failed: {error}", 0.0)

@@ -407,6 +407,9 @@ class SandboxSettings(BaseSettings):
     docker_binary: str = "docker"
     # gVisor (runsc) where the host has it (Linux); Docker's default runtime when unset.
     runtime: Literal["runc", "runsc"] | None = None
+    # Refuse to run without gVisor (8.2: staging and production, where fixes run a repository's
+    # tests). Off in development (macOS has no gVisor): runs are isolated by Docker alone.
+    require_gvisor: bool = False
     image: str = "repo-sensei/python-runner"  # tagged by Python version (make sandbox-image)
     index_url: str = "https://pypi.org/simple"
     # Packages without wheels are built from source: their build code runs while the image

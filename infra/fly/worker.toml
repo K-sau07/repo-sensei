@@ -12,6 +12,8 @@ primary_region = "iad"
 [env]
   SENSEI_ENV = "staging"
   SENSEI_WORKER_CONCURRENCY = "2"
+  # Repository code runs in gVisor only (8.2): without it, sandbox runs are refused.
+  SENSEI_SANDBOX_REQUIRE_GVISOR = "true"
 
 # Two process groups from one image. Run exactly one beat machine: `fly scale count beat=1`
 # (two schedulers would send every periodic task twice).

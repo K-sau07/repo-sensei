@@ -82,11 +82,15 @@ e2e-real: ## Browser tests against the real API and a GitHub OAuth stub (needs `
 
 SANDBOX_PYTHONS := 3.13 3.14 3.12
 
-sandbox-image: ## Build the sandbox's Python runner images (one per Python version)
+sandbox-image: ## Build the sandbox's images: Python and Node runners, the registry proxy; pull Postgres
 	for py in $(SANDBOX_PYTHONS); do \
 		docker build -f sandbox/images/python-runner.Dockerfile --build-arg PYTHON_VERSION=$$py \
 			-t repo-sensei/python-runner:$$py sandbox/images || exit 1; \
 	done
+	docker build -f sandbox/images/node-runner.Dockerfile -t repo-sensei/node-runner:22 sandbox/images
+	docker build -f sandbox/images/registry-proxy.Dockerfile -t repo-sensei/registry-proxy:1 \
+		packages/engine/src/sensei_engine/sandbox
+	docker pull postgres:17-alpine
 
 openapi: ## Export the OpenAPI schema and regenerate the web client types
 	uv run python scripts/export_openapi.py

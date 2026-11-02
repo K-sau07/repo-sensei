@@ -13,10 +13,11 @@ from typing import Literal
 import pytest
 
 from sensei_engine.sandbox.deps import (
+    MOUNT,
     Dependencies,
     DependencyImages,
     detect,
-    dockerfile,
+    install_argv,
     install_output,
     requirement_lines,
 )
@@ -172,7 +173,12 @@ async def test_a_queued_runs_deadline_counts_from_when_it_starts(
             return 0
 
         async def _run(
-            self, argv: list[str], name: str, time_limit: float, stdin: bytes | None
+            self,
+            argv: list[str],
+            name: str,
+            time_limit: float,
+            stdin: bytes | None,
+            limits: Limits,
         ) -> RunResult:
             started.append(argv)
             await release.wait()
@@ -479,15 +485,13 @@ def test_the_image_key_changes_with_what_it_installs() -> None:
 
 
 def test_the_install_is_wheels_only_unless_source_builds() -> None:
-    wheels = dockerfile("base:1", "https://pypi.org/simple", constraints=True, source_builds=False)
+    wheels = install_argv("https://pypi.org/simple", constraints=True, source_builds=False)
+    assert wheels[:3] == ["uv", "pip", "install"]
     assert "--no-build" in wheels
     assert "--no-config" in wheels
-    assert "--index-url https://pypi.org/simple" in wheels
-    assert "--constraint /tmp/sensei/constraints.txt" in wheels
-    assert wheels.startswith("FROM base:1\n")
-    assert "USER 10001:10001" in wheels
-    assert "COPY" not in wheels  # mounted for the install only, never a layer
-    sources = dockerfile("base:1", "https://pypi.org/simple", constraints=False, source_builds=True)
+    assert wheels[wheels.index("--index-url") + 1] == "https://pypi.org/simple"
+    assert wheels[wheels.index("--constraint") + 1] == f"{MOUNT}/constraints.txt"
+    sources = install_argv("https://pypi.org/simple", constraints=False, source_builds=True)
     assert "--no-build" not in sources
     assert "--constraint" not in sources
 

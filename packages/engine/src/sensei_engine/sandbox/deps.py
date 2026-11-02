@@ -30,6 +30,7 @@ import os
 import re
 import tempfile
 import tomllib
+import uuid
 from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -42,6 +43,7 @@ from packaging.version import InvalidVersion, Version
 
 from sensei_core.config import SandboxSettings
 from sensei_core.redaction import redact_text
+from sensei_engine.sandbox.network import BUILD_NETWORK, Networks
 from sensei_engine.sandbox.runner import (
     DEFAULT_PYTHON,
     LABEL,
@@ -60,6 +62,10 @@ MAX_LOCK_BYTES = 32 * 1024 * 1024
 MAX_REQUIREMENT_FILES = 16
 MAX_REQUIREMENTS = 2000
 INSTALL_TIMEOUT_SECONDS = 600.0
+MOUNT = "/tmp/sensei"  # noqa: S108 - inside the install's container, mounted read-only
+INSTALL_MEMORY_MB = 4096
+INSTALL_PIDS = 512
+RECIPE = "proxied-1"  # how images are made: a change makes new ones
 LOG_TAIL_BYTES = 4096  # of the install's output, kept as the limitation's detail
 MAX_DETAIL_LINES = 40
 
@@ -373,36 +379,30 @@ def detect(root: Path, project: str = "") -> Dependencies:
     )
 
 
-def dockerfile(base_image: str, index_url: str, *, constraints: bool, source_builds: bool) -> str:
-    """The dependencies image: the runner image plus ``uv pip install`` of the two files, which
-    are mounted for that step only (no layer of the image holds them)."""
-    install = [
-        "uv pip install --python /opt/venv/bin/python --no-config --no-cache",
-        f"--index-url {index_url} --link-mode copy --requirement /tmp/sensei/requirements.txt",
-    ]
+def install_argv(index_url: str, *, constraints: bool, source_builds: bool) -> list[str]:
+    """``uv pip install`` of the two files (mounted read-only at ``/tmp/sensei``) into the
+    runner image's virtualenv."""
+    argv = [
+        "uv", "pip", "install", "--python", "/opt/venv/bin/python", "--no-config", "--no-cache",
+        "--index-url", index_url, "--link-mode", "copy",
+        "--requirement", f"{MOUNT}/requirements.txt",
+    ]  # fmt: skip
     if not source_builds:
-        install[0] += " --no-build"
+        argv.append("--no-build")
     if constraints:
-        install.append("--constraint /tmp/sensei/constraints.txt")
-    return "\n".join(
-        [
-            f"FROM {base_image}",
-            "USER root",
-            "RUN --mount=type=bind,source=.,target=/tmp/sensei \\\n    "
-            + " \\\n    ".join(install),
-            "USER 10001:10001",
-            "",
-        ]
-    )
+        argv += ["--constraint", f"{MOUNT}/constraints.txt"]
+    return argv
 
 
 class DependencyImages:
     """Builds (once) and finds the dependencies images of a :class:`Sandbox`.
 
-    An install tries wheels only first. When some package has no wheel and ``source_builds`` is
-    on, it's tried again building those from source: their build code runs during the image
-    build, which has network (no secrets, nothing of ours mounted; 8.2 puts it behind the
-    registry proxy). Off, such a repository gets the limitation instead."""
+    An install runs in a container from the runner image on the internal build network, whose
+    only way out is the registry proxy (8.2: the package registries, nothing else), and the
+    container is then committed as the image. It tries wheels only first. When some package has
+    no wheel and ``source_builds`` is on, it's tried again building those from source: their
+    build code runs in that container (no secrets, nothing of ours mounted, the registries
+    only). Off, such a repository gets the limitation instead."""
 
     def __init__(
         self,
@@ -412,6 +412,7 @@ class DependencyImages:
         index_url: str = INDEX_URL,
         source_builds: bool = True,
         timeout: float = INSTALL_TIMEOUT_SECONDS,
+        networks: Networks | None = None,
     ) -> None:
         if not re.fullmatch(r"https?://[^\s\"'\\]+", index_url):
             raise SandboxError(f"not an index URL: {index_url!r}")
@@ -420,6 +421,7 @@ class DependencyImages:
         self._index_url = index_url
         self._source_builds = source_builds
         self._timeout = timeout
+        self._networks = networks or Networks(sandbox)
         self._building: dict[str, asyncio.Lock] = {}
 
     @classmethod
@@ -441,7 +443,9 @@ class DependencyImages:
             raise SandboxUnavailableError(f"no {base} image: build it with `make sandbox-image`")
         if deps.empty:
             return Prepared(image=base, dependencies=deps, installed=True)
-        recipe = dockerfile(base, self._index_url, constraints=True, source_builds=False)
+        recipe = " ".join(
+            [RECIPE, *install_argv(self._index_url, constraints=True, source_builds=False)]
+        )
         tag = f"{self._repository}:{deps.key(base_id, recipe)[:32]}"
         async with self._building.setdefault(tag, asyncio.Lock()):
             if await self._sandbox.image_id(tag) is not None:
@@ -473,43 +477,68 @@ class DependencyImages:
     async def _build(
         self, tag: str, base: str, deps: Dependencies, *, source_builds: bool
     ) -> tuple[bool, str]:
-        """Build ``tag``: whether it built, and what the install said."""
+        """Install into a container from ``base`` behind the proxy, and commit it as ``tag``:
+        whether it worked, and what the install said."""
+        proxy = await self._networks.proxy()
+        name = f"sensei-deps-{uuid.uuid4().hex}"
         with tempfile.TemporaryDirectory(prefix="sensei-deps-") as context:
             folder = Path(context)
-            (folder / "requirements.txt").write_text("\n".join(deps.requirements) + "\n")
-            (folder / "constraints.txt").write_text("\n".join(deps.constraints) + "\n")
-            (folder / "Dockerfile").write_text(
-                dockerfile(
-                    base,
-                    self._index_url,
-                    constraints=bool(deps.constraints),
-                    source_builds=source_builds,
-                )
+            await asyncio.to_thread(_write_requirements, folder, deps)
+            install = install_argv(
+                self._index_url, constraints=bool(deps.constraints), source_builds=source_builds
             )
+            # The proxy is set for the install's process only (``env``): as the container's
+            # environment it would be committed into the image.
             argv = [
-                self._sandbox.docker(),
-                "build",
-                "--pull=false",
-                "--progress=plain",
-                f"--label={LABEL}=deps",
-                f"--tag={tag}",
-                str(folder),
-            ]
-            process = await asyncio.create_subprocess_exec(
-                *argv,
-                env=docker_env(),
-                stdin=asyncio.subprocess.DEVNULL,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.STDOUT,
-            )
+                self._sandbox.docker(), "run", f"--name={name}", f"--label={LABEL}=deps-build",
+                "--pull=never", f"--network={BUILD_NETWORK}", "--user=0:0", "--cap-drop=ALL",
+                "--security-opt=no-new-privileges", f"--memory={INSTALL_MEMORY_MB}m",
+                f"--memory-swap={INSTALL_MEMORY_MB}m", f"--pids-limit={INSTALL_PIDS}",
+                f"--mount=type=bind,source={folder},target={MOUNT},readonly", base,
+                "env", f"HTTPS_PROXY={proxy}", f"HTTP_PROXY={proxy}", "NO_PROXY=", *install,
+            ]  # fmt: skip
             try:
-                out, _ = await process.communicate()
+                code, out = await self._exec(argv)
+                if code == 0:
+                    code, said = await self._exec(
+                        [
+                            self._sandbox.docker(),
+                            "commit",
+                            "--change=USER 10001:10001",
+                            f"--change=LABEL {LABEL}=deps",
+                            name,
+                            tag,
+                        ]
+                    )
+                    if code != 0:
+                        out += b"\n" + said
             finally:
-                if process.returncode is None:  # cancelled (the time limit)
-                    with contextlib.suppress(ProcessLookupError):
-                        process.terminate()  # the CLI cancels the build on its way out
-                    await process.wait()
-        return process.returncode == 0, install_output(out)
+                with contextlib.suppress(OSError):
+                    await self._exec([self._sandbox.docker(), "rm", "--force", name])
+        return code == 0, install_output(out)
+
+    async def _exec(self, argv: list[str]) -> tuple[int, bytes]:
+        process = await asyncio.create_subprocess_exec(
+            *argv,
+            env=docker_env(),
+            stdin=asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+        try:
+            out, _ = await process.communicate()
+        finally:
+            if process.returncode is None:  # cancelled (the time limit)
+                with contextlib.suppress(ProcessLookupError):
+                    process.terminate()
+                await process.wait()
+        return process.returncode or 0, out
+
+
+def _write_requirements(folder: Path, deps: Dependencies) -> None:
+    (folder / "requirements.txt").write_text("\n".join(deps.requirements) + "\n")
+    (folder / "constraints.txt").write_text("\n".join(deps.constraints) + "\n")
+    folder.chmod(0o755)  # the install's container reads it as root without capabilities
 
 
 def install_output(out: bytes) -> str:

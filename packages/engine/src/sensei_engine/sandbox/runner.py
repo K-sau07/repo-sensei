@@ -25,8 +25,12 @@ created it only after the run gave up and removed nothing): the command runs und
 container carries its deadline (counted from when it starts) in a label, so
 :meth:`Sandbox.sweep` (before every run) removes any still there after it.
 
-Hardening for runs whose results reach a fix (gVisor, a registry proxy, disk quotas) is 8.2;
-``runtime="runsc"`` already selects gVisor where the host has it.
+Hardening (8.2): ``runtime="runsc"`` selects gVisor, and ``require_gvisor`` refuses to run
+without it (staging, production; development warns once). A fix's runs get
+:meth:`Limits.for_fixes`; the writable tmpfs sizes are a run's disk quota (the image is
+read-only). A run that needs a database gets a throwaway one on its own internal network
+(:mod:`.sidecars`); dependency installs reach the registries only (:mod:`.network`,
+:mod:`.proxy`).
 """
 
 from __future__ import annotations
@@ -45,6 +49,7 @@ from pathlib import Path
 from typing import Literal
 
 from sensei_core.config import SandboxSettings
+from sensei_core.logging import get_logger
 from sensei_core.redaction import redact_text
 from sensei_engine.snapshots import check_path
 
@@ -77,6 +82,7 @@ _DOCKER_ENV = (
     "DOCKER_TLS_VERIFY",
     "XDG_RUNTIME_DIR",
 )
+log = get_logger(__name__)
 _ENV_NAME_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,127}")
 _DEADLINE_RE = re.compile(r"[0-9]+")
 
@@ -98,8 +104,17 @@ class Limits:
     pids: int = 256
     timeout_seconds: float = 120.0
     max_output_bytes: int = 1024 * 1024  # of stdout, and again of stderr
+    # The only writable places (the image is read-only): their sizes are the run's disk quota.
     work_mb: int = 256  # /work
     tmp_mb: int = 64  # /tmp
+
+    @classmethod
+    def for_fixes(cls) -> Limits:
+        """A fix's runs (8.2): a repository's whole test suite, with a copy of its code."""
+        return cls(
+            cpus=2.0, memory_mb=4096, pids=512, timeout_seconds=600.0,
+            max_output_bytes=5 * 1024 * 1024, work_mb=2048, tmp_mb=512,
+        )  # fmt: skip
 
 
 @dataclass(frozen=True, slots=True)
@@ -173,9 +188,11 @@ def run_argv(
     stdin: bool,
     time_limit: float,
     now: float,
+    network: str = "none",
 ) -> list[str]:
     """``docker run`` for one sandboxed command (``source`` already checked) that may run for
-    ``time_limit`` seconds from ``now`` (the epoch's)."""
+    ``time_limit`` seconds from ``now`` (the epoch's): with no network, or on ``network`` (a
+    run's own internal one, shared with its sidecars only)."""
     inside = math.ceil(time_limit) + INSIDE_GRACE_SECONDS
     deadline = math.ceil(now + inside + DOCKER_TIMEOUT_SECONDS)
     argv = [
@@ -186,7 +203,7 @@ def run_argv(
         f"--label={LABEL}=run",
         f"--label={DEADLINE_LABEL}={deadline}",
         "--pull=never",  # only images built here; a missing one is an error, not a download
-        "--network=none",
+        f"--network={network}",
         "--read-only",
         f"--mount=type=bind,source={source},target=/src,readonly",
         f"--tmpfs=/work:rw,nosuid,nodev,size={limits.work_mb}m,uid={SANDBOX_UID},gid={SANDBOX_UID}",
@@ -261,12 +278,15 @@ class Sandbox:
         runtime: Runtime | None = None,
         limits: Limits | None = None,
         max_concurrent: int = 2,
+        require_gvisor: bool = False,
     ) -> None:
         self.binary = binary
         self.image = image  # the runner image's repository; a tag per Python version
         self.runtime: Runtime | None = runtime
         self.limits = limits or Limits()
+        self.require_gvisor = require_gvisor
         self._slots = asyncio.Semaphore(max_concurrent)
+        self._warned = False
 
     @classmethod
     def from_settings(cls, settings: SandboxSettings) -> Sandbox:
@@ -282,7 +302,24 @@ class Sandbox:
                 max_output_bytes=settings.max_output_bytes,
             ),
             max_concurrent=settings.max_concurrent,
+            require_gvisor=settings.require_gvisor,
         )
+
+    def check_isolation(self) -> None:
+        """gVisor where it's required (else :class:`SandboxUnavailableError`); without it, said
+        once: runs are isolated by Docker alone (development)."""
+        if self.runtime == "runsc":
+            return
+        if self.require_gvisor:
+            raise SandboxUnavailableError(
+                "gVisor (runsc) is required for sandbox runs here; set SENSEI_SANDBOX_RUNTIME=runsc"
+            )
+        if not self._warned:
+            self._warned = True
+            log.warning(
+                "sandbox runs are isolated by Docker alone (no gVisor): fine for development, "
+                "not for running other people's code in production"
+            )
 
     def runner_image(self, python: str = DEFAULT_PYTHON) -> str:
         return runner_image(python, repository=self.image)
@@ -304,12 +341,18 @@ class Sandbox:
         workdir: str = "",
         env: Mapping[str, str] | None = None,
         stdin: bytes | None = None,
+        limits: Limits | None = None,
+        network: str | None = None,
     ) -> RunResult:
         """Run ``cmd`` (an argv) in a fresh container, with the snapshot unpacked at ``root``
         mounted at ``/src``, in ``/src/<workdir>``, for up to ``time_limit`` seconds (the
         limits' by default). ``image`` is the runner image by default (or a dependencies
-        image). :class:`SandboxUnavailableError` when docker can't start it."""
-        limits = self.limits
+        image); ``limits`` the sandbox's by default (:meth:`Limits.for_fixes` for a fix's);
+        no network unless ``network`` names a run's own (:mod:`.sidecars`).
+        :class:`SandboxUnavailableError` when docker can't start it, or gVisor is required
+        and not set."""
+        self.check_isolation()
+        limits = limits or self.limits
         limit = time_limit or limits.timeout_seconds
         name = NAME_PREFIX + uuid.uuid4().hex
         await self.sweep()
@@ -331,13 +374,13 @@ class Sandbox:
                 stdin=stdin is not None,
                 time_limit=limit,
                 now=time.time(),
+                network=network or "none",
             )
-            return await self._run(argv, name, limit, stdin)
+            return await self._run(argv, name, limit, stdin, limits)
 
     async def _run(
-        self, argv: list[str], name: str, time_limit: float, stdin: bytes | None
+        self, argv: list[str], name: str, time_limit: float, stdin: bytes | None, limits: Limits
     ) -> RunResult:
-        limits = self.limits
         started = time.monotonic()
         process = await asyncio.create_subprocess_exec(
             *argv,
