@@ -12,6 +12,8 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
 from sensei_core.config import Settings
+from sensei_core.jobs import TaskName
+from sensei_workers.beat import BEAT_SCHEDULE
 from sensei_workers.fixes_workspace import (
     _org_scoped,  # pyright: ignore[reportPrivateUsage]
     drop_worktree,
@@ -19,6 +21,7 @@ from sensei_workers.fixes_workspace import (
     prune_worktrees,
 )
 from sensei_workers.ingest.cache import repo_lock
+from sensei_workers.tasks.fixes import run_fix_stage
 
 
 def _copies(folder: Path, n: int) -> list[uuid.UUID]:
@@ -68,3 +71,11 @@ async def test_every_transaction_the_tools_begin_is_the_orgs(migrated_test_db: S
             assert await db.scalar(query) == str(org)
     finally:
         await engine.dispose()
+
+
+def test_a_fix_stage_sent_again_is_not_skipped_and_the_sweep_is_scheduled() -> None:
+    # No "done" marker: a stage queued again (a retry, an edited plan) is new work, and a
+    # duplicate does nothing anyway (the run's row decides).
+    assert run_fix_stage.idempotent_on == ()
+    scheduled = {entry["task"] for entry in BEAT_SCHEDULE.values()}
+    assert TaskName.SWEEP_STALLED_FIXES.value in scheduled

@@ -47,7 +47,7 @@ from sensei_core.models.fixes import TERMINAL
 from sensei_core.orgs.service import OrgAccess, require_role
 from sensei_core.repos.access import RepoAccess
 from sensei_fixer.events import FINAL, FixOutbox, fix_stream
-from sensei_fixer.pipeline import cancel
+from sensei_fixer.pipeline import cancel, close_agent_run
 from sensei_fixer.state import FixStateError, FixStateMachine
 
 router = APIRouter(prefix="/orgs/{org}", tags=["fixes"])
@@ -295,7 +295,14 @@ async def get_fix(
 
 
 async def _locked(db: AsyncSession, run: FixRun) -> FixRun:
-    found = await db.scalar(select(FixRun).where(FixRun.id == run.id).with_for_update())
+    # populate_existing: the row as it is once locked, not the copy loaded before (a stage
+    # may have finished meanwhile).
+    found = await db.scalar(
+        select(FixRun)
+        .where(FixRun.id == run.id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
     if found is None:
         raise NotFoundError("No such fix.", code="fix_not_found")
     return found
@@ -348,6 +355,7 @@ async def cancel_fix(
         events = cancel(run, by=f"@{access.user.login}")
     except FixStateError as error:
         raise ConflictError(str(error), code="fix_finished") from None
+    await close_agent_run(db, run)
     outbox = FixOutbox(run.org_id, run.id, run.repo_id)
     outbox.add(events)
     background.add_task(outbox.publish, redis)

@@ -20,7 +20,7 @@ import respx
 from fakeredis import FakeAsyncRedis
 from fastapi import FastAPI
 from pydantic import SecretStr
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from sensei_core.auth.github_login import store_tokens
@@ -429,3 +429,27 @@ async def test_a_fix_that_wasnt_reproduced_is_retried_with_more_context(
     assert run.ticket["context"] == [f"From @{owner.login}: Only with an empty cart."]
     twice = await client.post(url, json={"context": "again"}, headers=headers)
     assert (twice.status_code, twice.json()["error"]["code"]) == (409, "fix_not_retryable")
+
+
+async def test_cancel_acts_on_the_row_it_locked_not_an_earlier_copy(
+    app: FastAPI, client: httpx.AsyncClient, db_session: AsyncSession
+) -> None:
+    owner, repo = await _org(app, db_session)
+    run = FixRun(
+        org_id=repo.org_id, repo_id=repo.id, source=FixSource.PASTE, title="KeyError",
+        ticket={"title": "KeyError"}, status=FixStatus.RUNNING, stage=FixStage.INVESTIGATE,
+    )  # fmt: skip
+    db_session.add(run)
+    await db_session.flush()
+    # A worker finishes the stage meanwhile: the row changes, the loaded copy doesn't.
+    await db_session.execute(
+        update(FixRun)
+        .where(FixRun.id == run.id)
+        .values(status=FixStatus.FAILED, stop_reason="Investigation: none.")
+        .execution_options(synchronize_session=False)
+    )
+    assert run.status is FixStatus.RUNNING  # the stale copy
+    _, headers = await sign_in(app, client, db_session, owner)
+    late = await client.post(f"{API}/orgs/acme/fixes/{run.id}/cancel", headers=headers)
+    assert (late.status_code, late.json()["error"]["code"]) == (409, "fix_finished")
+    assert run.stop_reason == "Investigation: none."  # not overwritten as cancelled

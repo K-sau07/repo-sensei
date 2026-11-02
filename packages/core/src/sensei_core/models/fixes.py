@@ -167,6 +167,10 @@ class FixRun(IdMixin, OrgScopedMixin, TimestampMixin, Base):
     )
     # Why it stopped short (not reproduced, blocked, failed, cancelled), for people.
     stop_reason: Mapped[str | None] = mapped_column(Text)
+    # When its status last changed: how long it has been queued, or running (the stall sweep).
+    status_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
     # What it has spent, against the fixer's budget.
     spent_turns: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     spent_cost_usd: Mapped[Decimal] = mapped_column(

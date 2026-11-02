@@ -7,6 +7,7 @@ from __future__ import annotations
 import uuid
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
@@ -43,6 +44,7 @@ from sensei_fixer.stages import (
     default_handlers,
 )
 from sensei_fixer.state import FixStateMachine
+from sensei_fixer.sweep import sweep_stalled
 from sensei_testing import make_user
 
 pytestmark = pytest.mark.integration
@@ -249,3 +251,93 @@ async def test_a_stage_without_its_handler_says_so(
     await db_session.refresh(run)
     assert (run.status, run.stop_reason) == (FixStatus.FAILED,
                                              "The investigate stage isn't built yet.")  # fmt: skip
+
+
+async def test_a_fix_that_used_its_budget_up_takes_no_more_turns(
+    db_session: AsyncSession, fake_redis: FakeAsyncRedis
+) -> None:
+    budget = Budget(max_turns=3, max_cost_usd=Decimal(5), max_sandbox_seconds=600)
+    turns: list[int] = []
+
+    async def thrifty(ctx: StageContext) -> Outcome:
+        for n in range(1, 10):
+            await ctx.check()  # before each turn
+            turns.append(n)
+            await ctx.spend(1, Decimal("0.01"), 0.0)
+        return Advance()
+
+    run = await _fix(db_session)
+    pipeline = _pipeline(db_session, fake_redis, {FixStage.INTAKE: thrifty}, budget)
+    assert await pipeline.run_stage(run.org_id, run.id) is None
+    await db_session.refresh(run)
+    assert turns == [1, 2, 3]  # not a fourth
+    assert (run.status, run.stop_reason) == (
+        FixStatus.FAILED,
+        "Stopped: it used its 3 agent turns.",
+    )
+    exact = await _fix(db_session)  # all of it, and done: fine
+    pipeline = _pipeline(db_session, fake_redis, {FixStage.INTAKE: _advancing()},
+                         Budget(max_turns=1))  # fmt: skip
+    assert await pipeline.run_stage(exact.org_id, exact.id) is FixStage.INVESTIGATE
+
+
+async def test_a_message_for_a_stage_the_fix_has_left_does_nothing(
+    db_session: AsyncSession, fake_redis: FakeAsyncRedis
+) -> None:
+    run = await _fix(db_session)  # queued at intake
+    calls: list[str] = []
+
+    async def counted(_ctx: StageContext) -> Outcome:
+        calls.append("ran")
+        return Advance()
+
+    pipeline = _pipeline(db_session, fake_redis, {FixStage.INTAKE: counted})
+    assert await pipeline.run_stage(run.org_id, run.id, FixStage.REPRODUCE) is None
+    assert calls == []
+    assert await pipeline.run_stage(run.org_id, run.id, FixStage.INTAKE) is FixStage.INVESTIGATE
+    assert calls == ["ran"]
+
+
+async def test_the_sweep_fails_lost_stages_and_sends_lost_messages_again(
+    db_session: AsyncSession, fake_redis: FakeAsyncRedis
+) -> None:
+    now = datetime.now(UTC)
+    lost, waiting, forgotten, fresh = [await _fix(db_session) for _ in range(4)]
+    await set_org_context(db_session, lost.org_id)  # RLS: the test's session is an org's
+    agent = AgentRun(org_id=lost.org_id, repo_id=lost.repo_id, kind="fix", mode="fix",
+                     question=lost.title)  # fmt: skip
+    db_session.add(agent)
+    await db_session.flush()
+    lost.run_id, lost.status, lost.stage = agent.id, FixStatus.RUNNING, FixStage.INVESTIGATE
+    ages = {lost: timedelta(seconds=2100 + 601), waiting: timedelta(minutes=11),
+            forgotten: timedelta(hours=25), fresh: timedelta(minutes=2)}  # fmt: skip
+    for run, age in ages.items():
+        await set_org_context(db_session, run.org_id)
+        run.status_at = now - age
+        await db_session.flush()
+    for run in (lost, waiting, forgotten, fresh):
+        await set_org_context(db_session, run.org_id)  # RLS: the test's session is an org's
+        swept = await sweep_stalled(db_session, now, time_limit_seconds=2100)
+        await db_session.flush()  # where the sweep's session commits (before the next org's)
+        for outbox in swept.failed:
+            await outbox.publish(fake_redis)
+        if run is waiting:
+            assert swept.resend == [(run.org_id, run.id, "intake")]
+        else:
+            assert swept.resend == []
+    for run in (lost, waiting, forgotten, fresh):
+        await set_org_context(db_session, run.org_id)
+        await db_session.refresh(run)
+    assert lost.status is FixStatus.FAILED
+    assert lost.stop_reason == (
+        "The investigate stage's worker stopped before it finished (it was restarted, or ran "
+        "out of time)."
+    )
+    assert (forgotten.status, forgotten.stop_reason) == (
+        FixStatus.FAILED, "No worker took the intake stage in 24 hours.",
+    )  # fmt: skip
+    assert (waiting.status, fresh.status) == (FixStatus.QUEUED, FixStatus.QUEUED)
+    await set_org_context(db_session, lost.org_id)
+    await db_session.refresh(agent)
+    assert (agent.status, agent.stopped, agent.finished_at) == ("failed", "failed", now)
+    assert [e["type"] for e in await _events(fake_redis, lost.id)] == ["failed"]

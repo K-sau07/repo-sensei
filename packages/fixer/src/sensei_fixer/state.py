@@ -45,6 +45,7 @@ class FixStateMachine:
     events: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
 
     def _event(self, kind: str, **extra: Any) -> None:
+        self.run.status_at = self.clock()  # each move says so: this is when its status began
         self.events.append(
             {
                 "type": kind,

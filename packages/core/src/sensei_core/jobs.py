@@ -53,6 +53,7 @@ class TaskName(enum.StrEnum):
     EVICT_REPO_CACHE = "sensei.maintenance.evict_repo_cache"
     VACUUM_CHUNKS = "sensei.maintenance.vacuum_chunks"
     SWEEP_STALLED_JOBS = "sensei.maintenance.sweep_stalled_jobs"
+    SWEEP_STALLED_FIXES = "sensei.maintenance.sweep_stalled_fixes"
     SWEEP_SNAPSHOTS = "sensei.maintenance.sweep_snapshots"
     DROP_REF = "sensei.maintenance.drop_ref"
     PRUNE_OAUTH = "sensei.maintenance.prune_oauth"
@@ -237,8 +238,9 @@ def fix_queue(stage: str) -> Queue:
 
 
 def fix_stage_message(org_id: uuid.UUID, fix_id: uuid.UUID, stage: str) -> dict[str, Any]:
-    """``send_task``'s arguments for a fix's next stage (the stage names the unit of work, so a
-    stage sent twice runs once)."""
+    """``send_task``'s arguments for a fix's next stage. Sending it twice is harmless: a worker
+    takes the stage only while the run is queued at it (the run's row decides, not the
+    message)."""
     return {
         "name": TaskName.RUN_FIX_STAGE.value,
         "kwargs": {"org_id": str(org_id), "fix_id": str(fix_id), "stage": stage},
@@ -252,7 +254,7 @@ class FixJobs(Protocol):
 
 class CeleryFixJobs:
     """A fix's stage for a worker (8.4). False when it couldn't be sent: the run stays queued,
-    and the sweep (or a person starting it again) sends it later."""
+    and the stall sweep sends it again."""
 
     def __init__(self, app: Celery) -> None:
         self._app = app

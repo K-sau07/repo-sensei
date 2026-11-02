@@ -13,6 +13,8 @@ BEAT_SCHEDULE: dict[str, dict[str, Any]] = {
     "evict-repo-cache": {"task": TaskName.EVICT_REPO_CACHE.value, "schedule": 3600.0},
     # An index job whose worker vanished without a word doesn't block its repository forever.
     "sweep-stalled-jobs": {"task": TaskName.SWEEP_STALLED_JOBS.value, "schedule": 600.0},
+    # A fix whose stage lost its worker fails, saying so; a lost queued stage is sent again.
+    "sweep-stalled-fixes": {"task": TaskName.SWEEP_STALLED_FIXES.value, "schedule": 600.0},
     # Snapshots past their retention (5.2.5) go, with their archives and artifacts.
     "sweep-snapshots": {"task": TaskName.SWEEP_SNAPSHOTS.value, "schedule": 86400.0},
     # Expired OAuth requests, device codes and tokens (7.2) don't pile up.

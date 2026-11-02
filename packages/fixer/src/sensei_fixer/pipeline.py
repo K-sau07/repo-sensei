@@ -2,8 +2,9 @@
 
 :meth:`FixPipeline.run_stage`:
 
-1. takes the stage (the run's row locked: only a ``queued`` run moves on, so a duplicate
-   delivery or a cancelled run does nothing), and its agent run is made on the first stage;
+1. takes the stage (the run's row locked: only a run ``queued`` at the stage asked for moves
+   on, so a duplicate or stale message, or a cancelled run, does nothing), and its agent run is
+   made on the first stage;
 2. runs the stage's handler with the row unlocked (stages are long: model turns, the sandbox),
    recording its steps and spend as it goes;
 3. locks the row again and applies what the handler said, unless the run was cancelled
@@ -70,8 +71,11 @@ class FixPipeline:
         await set_org_context(db, org_id)
         return await db.scalar(select(FixRun).where(FixRun.id == fix_id).with_for_update())
 
-    async def run_stage(self, org_id: uuid.UUID, fix_id: uuid.UUID) -> FixStage | None:
-        taken = await self._take(org_id, fix_id)
+    async def run_stage(
+        self, org_id: uuid.UUID, fix_id: uuid.UUID, stage: FixStage | None = None
+    ) -> FixStage | None:
+        """Run the stage the run is queued at (only if it is ``stage``, when given)."""
+        taken = await self._take(org_id, fix_id, stage)
         if taken is None:
             return None
         ctx, outbox = taken
@@ -91,12 +95,14 @@ class FixPipeline:
         return await self._finish(org_id, fix_id, ctx.stage, outcome, outbox)
 
     async def _take(
-        self, org_id: uuid.UUID, fix_id: uuid.UUID
+        self, org_id: uuid.UUID, fix_id: uuid.UUID, wanted: FixStage | None
     ) -> tuple[StageContext, FixOutbox] | None:
         async with self.sessions() as db:
             run = await self._locked(db, org_id, fix_id)
             if run is None or run.status is not FixStatus.QUEUED:
                 return None
+            if wanted is not None and run.stage is not wanted:
+                return None  # a message for a stage it has left (it is on another queue)
             machine = FixStateMachine(run, self.clock)
             stage = machine.begin_stage()
             if run.run_id is None:
@@ -177,8 +183,8 @@ class FixPipeline:
                 run = await db.get(FixRun, fix_id)
                 if run is None or run.status is not FixStatus.RUNNING:
                     raise Cancelled("cancelled")
-                if self.budget.over(run) is not None:
-                    raise Cancelled("over budget")
+                if self.budget.exhausted(run) is not None:
+                    raise Cancelled("budget used up")
 
         return check
 
@@ -199,8 +205,10 @@ class FixPipeline:
             over = self.budget.over(run)
             if over is not None:
                 outcome = Stop(FixStatus.FAILED, f"Stopped: {over}.")
-            elif outcome is None:  # it said it was stopped, yet the run goes on: stop it
-                outcome = Stop(FixStatus.FAILED, f"The {stage.value} stage stopped.")
+            elif outcome is None:  # it was stopped (its budget), yet the run goes on: stop it
+                used = self.budget.exhausted(run)
+                said = f"Stopped: {used}." if used else f"The {stage.value} stage stopped."
+                outcome = Stop(FixStatus.FAILED, said)
             unknown = set(outcome.updates) - SETTABLE
             if unknown:
                 said = f"The {stage.value} stage set {', '.join(sorted(unknown))}."
@@ -211,7 +219,7 @@ class FixPipeline:
                 machine.advance()
             else:
                 machine.stop(outcome.status, outcome.reason)
-            await self._close_agent_run(db, run)
+            await close_agent_run(db, run, self.clock)
             outbox.add(machine.events)
             following = queued_stage(run)
             status = run.status.value
@@ -220,15 +228,19 @@ class FixPipeline:
         log.info("fix stage finished", fix_id=str(fix_id), stage=stage.value, status=status, ms=ms)
         return following
 
-    async def _close_agent_run(self, db: AsyncSession, run: FixRun) -> None:
-        if run.run_id is None or run.status not in TERMINAL:
-            return
-        agent = await db.get(AgentRun, run.run_id)
-        if agent is None:
-            return
-        agent.status = "succeeded" if run.status is FixStatus.SUCCEEDED else "failed"
-        agent.stopped = None if run.status is FixStatus.SUCCEEDED else run.status.value[:16]
-        agent.finished_at = self.clock()
+
+async def close_agent_run(
+    db: AsyncSession, run: FixRun, clock: Callable[[], datetime] = utcnow
+) -> None:
+    """Close ``run``'s agent run once the fix has ended (however: a stage, a cancel, the sweep)."""
+    if run.run_id is None or run.status not in TERMINAL:
+        return
+    agent = await db.get(AgentRun, run.run_id)
+    if agent is None or agent.finished_at is not None:
+        return
+    agent.status = "succeeded" if run.status is FixStatus.SUCCEEDED else "failed"
+    agent.stopped = None if run.status is FixStatus.SUCCEEDED else run.status.value[:16]
+    agent.finished_at = clock()
 
 
 def queued_stage(run: FixRun) -> FixStage | None:
