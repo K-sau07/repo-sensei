@@ -5,6 +5,11 @@ import { expect, test } from "./fixtures";
 
 const ITEMS = "/acme/api/code/backend/app/api/routes/items.py";
 
+/** The code viewer on screen (the page before a move between files may stay mounted, hidden). */
+function viewerOf(page: Page) {
+  return page.getByTestId("code-viewer").filter({ visible: true });
+}
+
 /** A move between files is a view transition: the page takes clicks once it has finished. */
 async function settled(page: Page) {
   await page.waitForFunction(
@@ -24,7 +29,7 @@ async function settled(page: Page) {
 
 /** The middle of `word` where it first appears in the viewer's line containing `lineText`. */
 async function wordAt(page: Page, lineText: string, word: string) {
-  const viewer = page.getByTestId("code-viewer");
+  const viewer = viewerOf(page);
   await settled(page);
   await expect(viewer.locator(".cm-line", { hasText: lineText }).first()).toBeVisible();
   const point = await viewer.evaluate(
@@ -83,7 +88,7 @@ test.describe("code intelligence", () => {
     await expect(page).toHaveURL(/\/backend\/app\/api\/deps\.py\?L=26$/);
     await expect(page.getByRole("heading", { level: 2, name: "deps.py" })).toBeVisible();
 
-    await page.getByTestId("code-viewer").locator(".cm-content").focus();
+    await viewerOf(page).locator(".cm-content").focus();
     await page.keyboard.press("Alt+ArrowLeft");
     await expect(page).toHaveURL(/\/backend\/app\/api\/routes\/items\.py\?L=\d+$/);
   });
@@ -167,7 +172,7 @@ test.describe("code intelligence", () => {
       .click();
     await expect(calls.getByText("read_items", { exact: true }).first()).toBeVisible();
 
-    await page.getByTestId("code-viewer").locator(".cm-content").focus();
+    await viewerOf(page).locator(".cm-content").focus();
     await clickWord(page, "with Session(engine) as session", "session");
     await page.keyboard.press("t");
     await expect(page).toHaveURL(
