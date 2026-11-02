@@ -17,6 +17,16 @@ export const SCOPE_LABELS: Record<string, { title: string; detail: string }> = {
   },
 };
 
+/** Scopes in the order they're shown: reading, then what goes further (unknown ones last). */
+export function sortScopes(scopes: readonly string[]): string[] {
+  const order = Object.keys(SCOPE_LABELS);
+  const rank = (scope: string) => {
+    const at = order.indexOf(scope);
+    return at === -1 ? order.length : at;
+  };
+  return [...scopes].sort((a, b) => rank(a) - rank(b) || a.localeCompare(b));
+}
+
 export function scopeLabel(scope: string): { title: string; detail: string } {
   return SCOPE_LABELS[scope] ?? { title: scope, detail: "" };
 }

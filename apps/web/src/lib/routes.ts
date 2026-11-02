@@ -9,7 +9,9 @@ export type OrgSection =
   | "repos/new"
   | "settings"
   | "settings/general"
-  | "settings/members";
+  | "settings/members"
+  | "settings/api-keys"
+  | "settings/mcp";
 
 /**
  * Org-scoped paths. Typed routes can't check a runtime slug, so the cast lives here, once, and the

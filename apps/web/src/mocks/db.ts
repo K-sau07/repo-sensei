@@ -5,6 +5,7 @@
  */
 import type { Diagram } from "@/lib/api/diagrams";
 import type {
+  ApiKey,
   AvailableRepo,
   Invitation,
   Member,
@@ -36,6 +37,12 @@ export interface MockInvitation extends Invitation {
   invited_by: string;
 }
 
+/** An API key: its owner and org, and its hash's stand-in (the key itself, kept to check). */
+export interface MockApiKey extends Omit<ApiKey, "mine" | "owner_login"> {
+  org: string;
+  user_id: string;
+}
+
 /** A connected repository, as the list endpoint returns it. */
 export type MockRepo = Repo;
 
@@ -54,6 +61,8 @@ export interface MockDb {
   jobs: Record<string, MockJob[]>;
   /** Diagrams per repository id, newest last (see handlers/diagrams.ts). */
   diagrams?: Record<string, Diagram[]>;
+  /** API keys, newest first (see handlers/api-keys.ts). */
+  apiKeys?: MockApiKey[];
 }
 
 const STORAGE_KEY = "sensei.mock.db.v5";

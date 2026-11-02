@@ -191,3 +191,35 @@ async def test_an_api_key_works_too(
         ).json()["result"]
         assert called["structuredContent"]["repos"][0]["slug"] == "items"
         assert (await _rpc(client, "rs_nope", "tools/list")).status_code == 401
+
+
+async def test_the_settings_page_checks_the_server_as_an_editor_meets_it(
+    api_app: FastAPI, client: httpx.AsyncClient, db_session: AsyncSession
+) -> None:
+    owner = await _org(db_session)
+    _, headers = await sign_in(api_app, client, db_session, owner)
+    checked = await client.post(f"{API}/orgs/acme/mcp/test", headers=headers)
+    assert checked.status_code == 200, checked.text
+    found = checked.json()
+    assert found["ok"] is True, found["checks"]
+    assert [c["name"] for c in found["checks"]] == ["challenge", "metadata", "tools"]
+    assert found["url"] == MCP
+    assert found["server_name"] == "repo-sensei"
+    assert len(found["tools"]) == 8
+    assert "sensei_ask" in found["tools"]
+    # A page's: keys and tokens can't call it; another org's members can't either.
+    key = (
+        await client.post(
+            f"{API}/orgs/acme/api-keys",
+            json={"name": "k", "scopes": ["read:repo"]},
+            headers=headers,
+        )
+    ).json()["key"]
+    client.cookies.clear()
+    refused = await client.post(
+        f"{API}/orgs/acme/mcp/test", headers={"Authorization": f"Bearer {key}"}
+    )
+    assert (refused.status_code, refused.json()["error"]["code"]) == (403, "api_key_not_allowed")
+    stranger = await make_user(db_session)
+    _, theirs = await sign_in(api_app, client, db_session, stranger)
+    assert (await client.post(f"{API}/orgs/acme/mcp/test", headers=theirs)).status_code == 404

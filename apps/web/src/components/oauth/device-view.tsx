@@ -116,9 +116,22 @@ export function DeviceView() {
       ) : null}
       {asked ? (
         <>
+          {/* The code is the one defence against being sent someone else's: it must match. */}
+          <div className="flex flex-col items-center gap-1 rounded-lg border border-line bg-surface-2 px-4 py-3">
+            <span className="text-xs text-fg-muted">
+              Check it matches the code in your terminal
+            </span>
+            <span
+              className="font-mono text-2xl font-medium tracking-[0.2em]"
+              data-testid="device-code"
+            >
+              {asked.user_code}
+            </span>
+          </div>
           <p className="text-sm">
             <span className="font-medium">{asked.client_name}</span> asks to use repo-sensei as @
-            {me.data?.login} with code <span className="font-mono">{asked.user_code}</span>.
+            {me.data?.login}. If you didn&apos;t just run{" "}
+            <span className="font-mono">sensei login</span>, deny it.
           </p>
           <ScopeList scopes={asked.scopes} />
           {orgs.length > 0 ? <OrgPicker orgs={orgs} value={chosen} onChange={setOrg} /> : null}

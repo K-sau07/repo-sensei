@@ -15,6 +15,8 @@ export const queryKeys = {
     $api.queryOptions("get", "/api/v1/orgs/{org}/members", org(slug)).queryKey,
   invitations: (slug: string) =>
     $api.queryOptions("get", "/api/v1/orgs/{org}/invitations", org(slug)).queryKey,
+  apiKeys: (slug: string) =>
+    $api.queryOptions("get", "/api/v1/orgs/{org}/api-keys", org(slug)).queryKey,
   repos: (slug: string) => $api.queryOptions("get", "/api/v1/orgs/{org}/repos", org(slug)).queryKey,
   repo: (slug: string, repo: string) =>
     $api.queryOptions("get", "/api/v1/orgs/{org}/repos/{repo}", {

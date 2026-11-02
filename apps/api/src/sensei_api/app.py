@@ -41,6 +41,7 @@ from sensei_api.routers import (
     indexing,
     internal,
     invitations,
+    mcp_setup,
     me,
     oauth,
     orgs,
@@ -224,6 +225,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         home,
         shared,
         api_keys,
+        mcp_setup,
         oauth,
     ):  # the order routes are matched in
         name = module.__name__.rsplit(".", 1)[-1]

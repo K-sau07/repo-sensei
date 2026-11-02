@@ -60,10 +60,11 @@ def setup(client: Client, server: str, *, local: bool) -> Setup:
             )
         case Client.VSCODE, False:
             entry = {"type": "http", "url": url}
+            compact = json.dumps({"name": NAME, **entry}, separators=(",", ":"))
             return Setup(
                 ".vscode/mcp.json",
                 {"servers": {NAME: entry}},
-                f"code --add-mcp {shlex.quote(json.dumps({'name': NAME, **entry}))}",
+                f"code --add-mcp {shlex.quote(compact)}",
                 "Start the server from the MCP view and sign in when VS Code asks.",
             )
         case Client.VSCODE, True:

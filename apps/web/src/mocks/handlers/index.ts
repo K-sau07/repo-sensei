@@ -1,3 +1,4 @@
+import { apiKeyHandlers } from "./api-keys";
 import { askHandlers } from "./ask";
 import { browseHandlers } from "./browse";
 import { constellationHandlers } from "./constellation";
@@ -7,6 +8,7 @@ import { galaxyHandlers } from "./galaxy";
 import { graphHandlers } from "./graph";
 import { impactHandlers } from "./impact";
 import { invitationHandlers } from "./invitations";
+import { mcpHandlers } from "./mcp";
 import { meHandlers } from "./me";
 import { memberHandlers } from "./members";
 import { oauthHandlers } from "./oauth";
@@ -43,4 +45,6 @@ export const handlers = [
   ...orgHandlers,
   ...memberHandlers,
   ...invitationHandlers,
+  ...apiKeyHandlers,
+  ...mcpHandlers,
 ];

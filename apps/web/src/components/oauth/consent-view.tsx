@@ -19,7 +19,7 @@ import { Button } from "@/components/ui/button";
 import { $api, api } from "@/lib/api/client";
 import { ApiError } from "@/lib/api/errors";
 
-import { firstOrg, GrantCard, OrgPicker, ScopeList } from "./grant-parts";
+import { firstOrg, GrantCard, HomeLink, OrgPicker, ScopeList } from "./grant-parts";
 
 export function ConsentView() {
   const params = useSearchParams();
@@ -45,6 +45,7 @@ export function ConsentView() {
           {params.get("error_description") ?? "The app's request was missing or wrong."} Start again
           from the app.
         </p>
+        <HomeLink />
       </GrantCard>
     );
   }
@@ -57,6 +58,7 @@ export function ConsentView() {
         <p className="text-sm text-fg-muted" data-testid="consent-error">
           Requests last 10 minutes and are answered once. Start again from the app.
         </p>
+        <HomeLink />
       </GrantCard>
     ) : (
       <ErrorState title="Couldn't load the request" onRetry={() => void request.refetch()} />

@@ -3,6 +3,7 @@
 /** What the consent and device pages share: the card, the scopes asked for, and which org the
  * access is for. */
 import { Check } from "lucide-react";
+import Link from "next/link";
 
 import {
   Select,
@@ -11,7 +12,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { scopeLabel } from "@/lib/api/oauth";
+import { scopeLabel, sortScopes } from "@/lib/api/oauth";
 
 export function GrantCard({ children }: { children: React.ReactNode }) {
   return (
@@ -21,10 +22,19 @@ export function GrantCard({ children }: { children: React.ReactNode }) {
   );
 }
 
+/** Where a dead end leads: back into the app. */
+export function HomeLink() {
+  return (
+    <Link href="/" className="text-sm underline underline-offset-2">
+      Go to repo-sensei
+    </Link>
+  );
+}
+
 export function ScopeList({ scopes }: { scopes: readonly string[] }) {
   return (
     <ul aria-label="What it can do" className="flex flex-col gap-2">
-      {scopes.map((scope) => {
+      {sortScopes(scopes).map((scope) => {
         const label = scopeLabel(scope);
         return (
           <li key={scope} className="flex gap-2 text-sm">

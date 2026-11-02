@@ -67,7 +67,7 @@ export function apiMiddleware({
  * In mock mode, hold each browser request until the MSW worker intercepts, so nothing reaches the
  * real API by accident. The env check is inline so real builds drop this (and MSW) entirely.
  */
-async function fetchAfterMocks(request: Request): Promise<Response> {
+export async function fetchAfterMocks(request: Request): Promise<Response> {
   if (process.env.NEXT_PUBLIC_MOCKS === "1" && typeof window !== "undefined") {
     const { startMocks } = await import("@/mocks/start");
     await startMocks();

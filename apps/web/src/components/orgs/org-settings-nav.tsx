@@ -9,6 +9,8 @@ import { orgPath } from "@/lib/routes";
 const ITEMS = [
   { section: "settings/general", label: "General" },
   { section: "settings/members", label: "Members" },
+  { section: "settings/api-keys", label: "API keys" },
+  { section: "settings/mcp", label: "Editors (MCP)" },
 ] as const;
 
 export function OrgSettingsNav() {

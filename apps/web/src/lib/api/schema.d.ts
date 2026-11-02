@@ -828,6 +828,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/orgs/{org}/mcp/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Check Connection
+         * @description Check the MCP server as an editor meets it: the sign-in challenge, the sign-in document,
+         *     and a session listing the tools.
+         */
+        post: operations["check_connection_api_v1_orgs__org__mcp_test_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/orgs/{org}/members": {
         parameters: {
             query?: never;
@@ -3426,6 +3447,35 @@ export interface components {
             linked: number | null;
             /** Unresolved Edges */
             unresolved_edges: number | null;
+        };
+        /** McpCheck */
+        McpCheck: {
+            /** Detail */
+            detail: string;
+            /**
+             * Name
+             * @enum {string}
+             */
+            name: "challenge" | "metadata" | "tools";
+            /** Ok */
+            ok: boolean;
+        };
+        /** McpTestOut */
+        McpTestOut: {
+            /** Checks */
+            checks: components["schemas"]["McpCheck"][];
+            /** Ms */
+            ms: number;
+            /** Ok */
+            ok: boolean;
+            /** Protocol Version */
+            protocol_version: string | null;
+            /** Server Name */
+            server_name: string | null;
+            /** Tools */
+            tools: string[];
+            /** Url */
+            url: string;
         };
         /** MeResponse */
         MeResponse: {
@@ -6059,6 +6109,38 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    check_connection_api_v1_orgs__org__mcp_test_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization slug */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["McpTestOut"];
+                };
             };
             /** @description Validation Error */
             422: {

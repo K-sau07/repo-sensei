@@ -44,6 +44,10 @@ test.describe("signing in an editor or the CLI", () => {
   test("an expired or bad request says so and sends nobody anywhere", async ({ page }) => {
     await page.goto("/oauth/consent?request=mock-expired");
     await expect(page.getByTestId("consent-error")).toContainText("Requests last 10 minutes");
+    await expect(page.getByRole("link", { name: "Go to repo-sensei" })).toHaveAttribute(
+      "href",
+      "/",
+    );
     await page.goto(
       "/oauth/consent?error=invalid_request&error_description=The%20redirect_uri%20isn%27t%20one%20of%20the%20client%27s.",
     );
@@ -64,6 +68,11 @@ test.describe("signing in an editor or the CLI", () => {
     await expect(code).toHaveValue("BCDF-GHJK");
     await page.getByRole("button", { name: "Continue" }).click();
     await expect(page.getByText("repo-sensei CLI", { exact: true })).toBeVisible();
+    // The code to check against the terminal, shown large; reading before asking.
+    await expect(page.getByTestId("device-code")).toHaveText("BCDF-GHJK");
+    await expect(
+      page.getByRole("list", { name: "What it can do" }).getByRole("listitem"),
+    ).toHaveText([/^Read your repositories/, /^Ask questions/]);
     const audit = await new AxeBuilder({ page }).include("main").analyze();
     expect(audit.violations).toEqual([]);
     await page.getByRole("button", { name: "Allow" }).click();

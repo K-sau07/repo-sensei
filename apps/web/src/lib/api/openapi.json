@@ -4429,6 +4429,97 @@
         "title": "LinkHealthOut",
         "type": "object"
       },
+      "McpCheck": {
+        "properties": {
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "name": {
+            "enum": [
+              "challenge",
+              "metadata",
+              "tools"
+            ],
+            "title": "Name",
+            "type": "string"
+          },
+          "ok": {
+            "title": "Ok",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "name",
+          "ok",
+          "detail"
+        ],
+        "title": "McpCheck",
+        "type": "object"
+      },
+      "McpTestOut": {
+        "properties": {
+          "checks": {
+            "items": {
+              "$ref": "#/components/schemas/McpCheck"
+            },
+            "title": "Checks",
+            "type": "array"
+          },
+          "ms": {
+            "title": "Ms",
+            "type": "integer"
+          },
+          "ok": {
+            "title": "Ok",
+            "type": "boolean"
+          },
+          "protocol_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Protocol Version"
+          },
+          "server_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Server Name"
+          },
+          "tools": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Tools",
+            "type": "array"
+          },
+          "url": {
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ok",
+          "url",
+          "server_name",
+          "protocol_version",
+          "tools",
+          "checks",
+          "ms"
+        ],
+        "title": "McpTestOut",
+        "type": "object"
+      },
       "MeResponse": {
         "properties": {
           "avatar_url": {
@@ -9992,6 +10083,51 @@
         "summary": "Leave Org",
         "tags": [
           "orgs"
+        ]
+      }
+    },
+    "/api/v1/orgs/{org}/mcp/test": {
+      "post": {
+        "description": "Check the MCP server as an editor meets it: the sign-in challenge, the sign-in document,\nand a session listing the tools.",
+        "operationId": "check_connection_api_v1_orgs__org__mcp_test_post",
+        "parameters": [
+          {
+            "description": "Organization slug",
+            "in": "path",
+            "name": "org",
+            "required": true,
+            "schema": {
+              "description": "Organization slug",
+              "title": "Org",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpTestOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Check Connection",
+        "tags": [
+          "mcp"
         ]
       }
     },
