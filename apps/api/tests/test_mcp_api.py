@@ -223,3 +223,22 @@ async def test_the_settings_page_checks_the_server_as_an_editor_meets_it(
     stranger = await make_user(db_session)
     _, theirs = await sign_in(api_app, client, db_session, stranger)
     assert (await client.post(f"{API}/orgs/acme/mcp/test", headers=theirs)).status_code == 404
+
+
+async def test_an_oversized_message_is_refused(
+    api_app: FastAPI, client: httpx.AsyncClient, db_session: AsyncSession
+) -> None:
+    async with api_app.state.mcp_server.session_manager.run():
+        owner = await _org(db_session)
+        token = await _token(api_app, client, db_session, owner, scope="read:repo", resource=MCP)
+        message = b'{"jsonrpc": "2.0", "id": 1, "method": "x", "params": "' + b"a" * (2 << 20)
+        huge = await client.post(
+            "/mcp",
+            content=message + b'"}',
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+                "Accept": "application/json, text/event-stream",
+            },
+        )
+        assert huge.status_code == 413

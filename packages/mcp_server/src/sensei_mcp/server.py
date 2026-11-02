@@ -21,7 +21,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
 from pydantic import Field
 
-from sensei_mcp.api import ApiError, SenseiApi
+from sensei_mcp.api import ApiError, SenseiApi, segment
 
 # Characters of JSON a result may take: an answer goes out twice (structured, and as text for
 # clients without structured output), so this keeps it near 4k tokens (Claude Code warns at 10k).
@@ -135,7 +135,7 @@ async def _key(api: SenseiApi, repo: str, symbol: str) -> str:
 async def sensei_list_repos(ctx: Context) -> Json:
     async def run(api: SenseiApi) -> Json:
         org = await api.org()
-        repos = await api.get_list(f"/orgs/{org}/repos")
+        repos = await api.get_list(f"/orgs/{segment(org)}/repos")
 
         def top(languages: Json) -> list[str]:
             return sorted(languages, key=lambda lang: -float(languages[lang] or 0))[:5]
@@ -481,7 +481,7 @@ async def _for_org(ctx: Context, org: str, run: Callable[[SenseiApi], Awaitable[
 
 async def file_resource(org: str, repo: str, path: str, ctx: Context) -> str:
     async def run(api: SenseiApi) -> str:
-        found = await api.get(f"/orgs/{org}/repos/{repo}/file", {"path": path})
+        found = await api.get(f"/orgs/{segment(org)}/repos/{segment(repo)}/file", {"path": path})
         return str(found.get("content") or "")
 
     return await _for_org(ctx, org, run)
@@ -489,7 +489,7 @@ async def file_resource(org: str, repo: str, path: str, ctx: Context) -> str:
 
 async def feature_map_resource(org: str, repo: str, key: str, ctx: Context) -> str:
     async def run(api: SenseiApi) -> str:
-        found = await api.get(f"/orgs/{org}/repos/{repo}/feature-maps")
+        found = await api.get(f"/orgs/{segment(org)}/repos/{segment(repo)}/feature-maps")
         for one in _dicts(found.get("maps")):
             if one.get("key") == key:
                 return json.dumps(one, default=str)

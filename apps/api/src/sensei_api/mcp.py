@@ -33,6 +33,7 @@ from sensei_api.auth import (
     get_oauth_service,
 )
 from sensei_api.deps import DbSession
+from sensei_api.routers.webhooks import read_body
 from sensei_core.auth.api_keys import ApiKeyService, KeyRejected
 from sensei_core.auth.api_keys import Scope as KeyScope
 from sensei_core.oauth.service import ACCESS_PREFIX, OAuthService, TokenRejected
@@ -40,6 +41,7 @@ from sensei_mcp.api import SenseiApi
 from sensei_mcp.server import SenseiServer, build_server
 
 MCP_PATH = "/mcp"
+MAX_BODY = 1024 * 1024
 ASK_TOOLS = frozenset({"sensei_ask"})
 
 router = APIRouter(include_in_schema=False)
@@ -158,7 +160,7 @@ async def mcp(
     if not principal.allows(KeyScope.READ_REPO):
         return _challenge(oauth, 403, "insufficient_scope", "Reading needs read:repo.",
                           scope="read:repo")  # fmt: skip
-    body = await request.body()
+    body = await read_body(request, MAX_BODY)  # JSON-RPC messages are small
     if _calls(body) & ASK_TOOLS and not principal.allows(KeyScope.ASK):
         return _challenge(oauth, 403, "insufficient_scope", "Asking needs the ask scope.",
                           scope="read:repo ask")  # fmt: skip

@@ -11,13 +11,26 @@ API errors become :class:`ApiError` (status, code, message) for the tools to rep
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import AsyncIterator, Mapping
 from typing import Any, cast
+from urllib.parse import quote
 
 import httpx
 
 API = "/api/v1"
 TIMEOUT = httpx.Timeout(30.0, read=120.0)  # asking can take a while
+
+
+SLUG = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,200}$")
+
+
+def segment(slug: str) -> str:
+    """``slug`` as one path segment: a slug (an org's, a repository's) or nothing. A tool's
+    arguments are the model's, so ``../`` or ``?`` must never steer a request elsewhere."""
+    if not SLUG.match(slug) or slug in (".", ".."):
+        raise ApiError(400, "invalid_slug", f"{slug!r} isn't a repository or organization name.")
+    return quote(slug, safe="")
 
 
 class ApiError(Exception):
@@ -69,7 +82,7 @@ class SenseiApi:
         return self._org
 
     async def repo_path(self, repo: str, rest: str = "") -> str:
-        return f"/orgs/{await self.org()}/repos/{repo}{rest}"
+        return f"/orgs/{segment(await self.org())}/repos/{segment(repo)}{rest}"
 
     async def get(self, path: str, params: Mapping[str, Any] | None = None) -> dict[str, Any]:
         return await self._json("GET", path, params=params)

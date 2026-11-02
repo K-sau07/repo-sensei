@@ -221,3 +221,14 @@ async def test_resources_and_prompts() -> None:
         assert json.loads(content.text)["title"] == "Login"
         prompts = await client.list_prompts()
         assert {p.name for p in prompts.prompts} == {"explain", "trace"}
+
+
+async def test_a_repository_name_cant_steer_a_request_elsewhere() -> None:
+    async with connected() as client:
+        for name in ("../../../orgs/acme/repos/x?y=", "api/../other", "..", "a b"):
+            found = await client.call_tool("sensei_search", {"repo": name, "query": "x"})
+            assert found.is_error, name
+            [said] = found.content
+            assert isinstance(said, TextContent)
+            assert "invalid_slug" in said.text
+        assert [r for r in SEEN if "/search" in r.url.path] == []  # nothing was asked
