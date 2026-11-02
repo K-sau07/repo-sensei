@@ -8,6 +8,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import uuid
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
@@ -25,7 +26,18 @@ from sensei_core.auth.github_login import store_tokens
 from sensei_core.config import GitHubSettings, Settings
 from sensei_core.github.oauth import GitHubTokens
 from sensei_core.mail import MemoryMailer
-from sensei_core.models import FixRun, Membership, Repo, RepoSource, Role, SentryIntegration, User
+from sensei_core.models import (
+    FixRun,
+    FixSource,
+    FixStage,
+    FixStatus,
+    Membership,
+    Repo,
+    RepoSource,
+    Role,
+    SentryIntegration,
+    User,
+)
 from sensei_core.orgs.service import OrgService
 from sensei_testing import make_user, sign_in
 
@@ -41,6 +53,17 @@ ZeroDivisionError: division by zero
 SECRET = "sentry-client-secret"
 
 
+class FakeFixJobs:
+    """What would be sent to a worker."""
+
+    def __init__(self) -> None:
+        self.sent: list[tuple[str, str]] = []
+
+    async def run_stage(self, org_id: uuid.UUID, fix_id: uuid.UUID, stage: str) -> bool:
+        self.sent.append((str(fix_id), stage))
+        return True
+
+
 @pytest.fixture
 def app(api_app: FastAPI, migrated_test_db: Settings, fake_redis: FakeAsyncRedis,
         db_session: AsyncSession) -> FastAPI:  # fmt: skip
@@ -54,6 +77,7 @@ def app(api_app: FastAPI, migrated_test_db: Settings, fake_redis: FakeAsyncRedis
         yield db_session  # the webhook's own sessions see the test's (rolled back) data
 
     api_app.state.stream_sessions = same_session
+    api_app.state.fix_jobs = FakeFixJobs()
     return api_app
 
 
@@ -278,3 +302,51 @@ async def test_sentry_is_connected_by_admins_and_its_webhook_starts_fixes(
     assert runs[0].created_by is None  # the org's, not a person's
     culprit = runs[0].ticket["frames"][0]
     assert (culprit["line"], culprit["function"]) == (12, "unit_price")
+
+
+async def test_a_new_fix_goes_to_a_worker_and_can_be_cancelled_once(
+    app: FastAPI, client: httpx.AsyncClient, db_session: AsyncSession
+) -> None:
+    owner, _ = await _org(app, db_session)
+    _, headers = await sign_in(app, client, db_session, owner)
+    fix = (
+        await client.post(
+            f"{API}/orgs/acme/repos/items/fixes",
+            json={"source": "paste", "text": TRACE},
+            headers=headers,
+        )
+    ).json()
+    assert app.state.fix_jobs.sent == [(fix["id"], "intake")]
+    cancelled = await client.post(f"{API}/orgs/acme/fixes/{fix['id']}/cancel", headers=headers)
+    assert cancelled.status_code == 200, cancelled.text
+    assert cancelled.json()["status"] == "cancelled"
+    again = await client.post(f"{API}/orgs/acme/fixes/{fix['id']}/cancel", headers=headers)
+    assert (again.status_code, again.json()["error"]["code"]) == (409, "fix_finished")
+    # The stream replays it and closes on the final event.
+    async with client.stream("GET", f"{API}/orgs/acme/fixes/{fix['id']}/events") as stream:
+        body = (await stream.aread()).decode()
+    assert "event: cancelled" in body
+    assert "Cancelled by @" in body
+
+
+async def test_a_fix_waiting_for_triage_starts_when_a_member_starts_it(
+    app: FastAPI, client: httpx.AsyncClient, db_session: AsyncSession
+) -> None:
+    owner, repo = await _org(app, db_session)
+    run = FixRun(
+        org_id=repo.org_id, repo_id=repo.id, source=FixSource.SENTRY, source_ref="77",
+        title="KeyError", ticket={"title": "KeyError"}, status=FixStatus.NEEDS_TRIAGE,
+        stage=FixStage.INTAKE,
+    )  # fmt: skip
+    db_session.add(run)
+    await db_session.flush()
+    viewer = await _member(db_session, repo, Role.VIEWER)
+    _, theirs = await sign_in(app, client, db_session, viewer)
+    refused = await client.post(f"{API}/orgs/acme/fixes/{run.id}/start", headers=theirs)
+    assert refused.status_code == 403
+    _, headers = await sign_in(app, client, db_session, owner)
+    started = await client.post(f"{API}/orgs/acme/fixes/{run.id}/start", headers=headers)
+    assert (started.status_code, started.json()["status"]) == (200, "queued")
+    assert app.state.fix_jobs.sent == [(str(run.id), "intake")]
+    twice = await client.post(f"{API}/orgs/acme/fixes/{run.id}/start", headers=headers)
+    assert (twice.status_code, twice.json()["error"]["code"]) == (409, "fix_not_waiting")

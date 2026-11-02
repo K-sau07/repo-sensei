@@ -63,7 +63,13 @@ from sensei_core.auth.api_keys import ApiKeyService, Scope
 from sensei_core.auth.sessions import SessionService
 from sensei_core.config import Settings, get_settings
 from sensei_core.db import make_database
-from sensei_core.jobs import CeleryDispatcher, CeleryGalaxyJobs, CeleryRepoJobs, make_celery
+from sensei_core.jobs import (
+    CeleryDispatcher,
+    CeleryFixJobs,
+    CeleryGalaxyJobs,
+    CeleryRepoJobs,
+    make_celery,
+)
 from sensei_core.logging import configure_logging, get_logger
 from sensei_core.mail import ConsoleMailer
 from sensei_core.oauth.clients import ClientRegistry
@@ -120,6 +126,7 @@ def _install_services(app: FastAPI, settings: Settings) -> None:
     app.state.webhook_dispatcher = CeleryDispatcher(producer)
     app.state.repo_jobs = CeleryRepoJobs(producer)
     app.state.galaxy_jobs = CeleryGalaxyJobs(producer)
+    app.state.fix_jobs = CeleryFixJobs(producer)
     # Files are served from unpacked snapshots on local disk, and directory listings from
     # Merkle trees held in memory.
     app.state.snapshot_cache = SnapshotCache(

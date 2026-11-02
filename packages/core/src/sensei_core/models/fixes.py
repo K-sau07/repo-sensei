@@ -12,6 +12,7 @@ from __future__ import annotations
 import enum
 import uuid
 from datetime import datetime
+from decimal import Decimal
 from typing import Any
 
 from sqlalchemy import (
@@ -19,11 +20,13 @@ from sqlalchemy import (
     CheckConstraint,
     DateTime,
     Enum,
+    Float,
     ForeignKey,
     ForeignKeyConstraint,
     Index,
     Integer,
     LargeBinary,
+    Numeric,
     String,
     Text,
     func,
@@ -142,6 +145,14 @@ class FixRun(IdMixin, OrgScopedMixin, TimestampMixin, Base):
     run_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("agent_runs.id", ondelete="SET NULL")
     )
+    # Why it stopped short (not reproduced, blocked, failed, cancelled), for people.
+    stop_reason: Mapped[str | None] = mapped_column(Text)
+    # What it has spent, against the fixer's budget.
+    spent_turns: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    spent_cost_usd: Mapped[Decimal] = mapped_column(
+        Numeric(12, 6), default=Decimal(0), server_default="0"
+    )
+    spent_sandbox_seconds: Mapped[float] = mapped_column(Float, default=0.0, server_default="0")
 
 
 class FixApproval(IdMixin, OrgScopedMixin, Base):

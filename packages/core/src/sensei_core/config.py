@@ -428,6 +428,17 @@ class SandboxSettings(BaseSettings):
     introspect: bool = False
 
 
+class FixerSettings(BaseSettings):
+    """Fix mode (phase 8): what one fix may spend before it stops (turns of its agents, model
+    cost, time in the sandbox)."""
+
+    model_config = _config("SENSEI_FIXER_")
+
+    max_turns: int = Field(default=120, ge=1)
+    max_cost_usd: Decimal = Field(default=Decimal("3.00"), ge=0)
+    max_sandbox_minutes: float = Field(default=30.0, gt=0)
+
+
 class Settings(BaseSettings):
     """Root settings object. Use :func:`get_settings` instead of constructing directly."""
 
@@ -457,6 +468,7 @@ class Settings(BaseSettings):
     search: SearchSettings = Field(default_factory=SearchSettings)
     sandbox: SandboxSettings = Field(default_factory=SandboxSettings)
     agent: AgentSettings = Field(default_factory=AgentSettings)
+    fixer: FixerSettings = Field(default_factory=FixerSettings)
 
     @model_validator(mode="after")
     def _refuse_dev_secrets_outside_dev(self) -> Settings:

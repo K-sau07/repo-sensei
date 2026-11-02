@@ -43,6 +43,7 @@ from sensei_core.fixes.sentry import (
 )
 from sensei_core.fixes.service import FixService, repo_paths
 from sensei_core.fixes.tickets import parse_ticket
+from sensei_core.jobs import FixJobs
 from sensei_core.logging import get_logger
 from sensei_core.models import FixSource, FixStatus, Org, Repo, Role, SentryIntegration
 from sensei_core.orgs.service import require_role
@@ -180,9 +181,11 @@ async def start_from_sentry(
     org_id: uuid.UUID,
     resource: str | None,
     payload: dict[str, Any],
+    jobs: FixJobs | None = None,
     now: datetime | None = None,
 ) -> uuid.UUID | None:
-    """A fix from a verified delivery (its id), or None when it isn't one to make."""
+    """A fix from a verified delivery (its id), or None when it isn't one to make; a started
+    one is sent to a worker once it is committed."""
     issue = parse_webhook(resource, payload)
     if issue is None:
         return None
@@ -216,7 +219,11 @@ async def start_from_sentry(
             db, repo, ticket, source=FixSource.SENTRY, source_ref=issue.id,
             status=FixStatus.QUEUED if go else FixStatus.NEEDS_TRIAGE,
         )  # fmt: skip
-        return run.id
+        started = (run.org_id, run.id, run.stage.value) if go else None
+        made = run.id
+    if started is not None and jobs is not None:
+        await jobs.run_stage(*started)
+    return made
 
 
 @router.post("/webhooks/sentry/{org}", status_code=status.HTTP_202_ACCEPTED)
@@ -254,6 +261,6 @@ async def sentry_webhook(
     background.add_task(
         start_from_sentry, sessions=_sessions(request), cipher=cipher,
         http=request.app.state.http, org_id=org_id, resource=sentry_hook_resource,
-        payload=payload,
+        payload=payload, jobs=request.app.state.fix_jobs,
     )  # fmt: skip
     return Response(status_code=status.HTTP_202_ACCEPTED)

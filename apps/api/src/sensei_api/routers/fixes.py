@@ -10,19 +10,28 @@ from __future__ import annotations
 
 import re
 import uuid
+from collections.abc import AsyncGenerator, Callable
+from contextlib import AbstractAsyncContextManager
 from datetime import datetime
 from typing import Annotated, Any, Literal, cast
 
-from fastapi import APIRouter, Query, Request, Response, status
+from fastapi import APIRouter, BackgroundTasks, Query, Request, Response, status
 from pydantic import BaseModel, Field, model_validator
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sse_starlette import EventSourceResponse, ServerSentEvent
 
-from sensei_api.deps import DbSession
+from sensei_api import streams
+from sensei_api.deps import DbSession, RedisClient
 from sensei_api.orgs import OrgAccessDep
 from sensei_api.repos import RepoAccessDep, RepoDep, checked, get_viewer, github_client
-from sensei_core.errors import InvalidError, NotFoundError
+from sensei_core.db.engine import Database
+from sensei_core.db.tenancy import set_org_context
+from sensei_core.errors import ConflictError, InvalidError, NotFoundError
 from sensei_core.fixes.service import FixService, repo_paths
 from sensei_core.fixes.tickets import MAX_TEXT, Frame, Ticket, parse_ticket
 from sensei_core.github.client import Credential, GitHubError
+from sensei_core.jobs import FixJobs
 from sensei_core.models import (
     FixRisk,
     FixRun,
@@ -33,7 +42,12 @@ from sensei_core.models import (
     ReproResult,
     Role,
 )
-from sensei_core.orgs.service import require_role
+from sensei_core.models.fixes import TERMINAL
+from sensei_core.orgs.service import OrgAccess, require_role
+from sensei_core.repos.access import RepoAccess
+from sensei_fixer.events import FINAL, FixOutbox, fix_stream
+from sensei_fixer.pipeline import cancel
+from sensei_fixer.state import FixStateError, FixStateMachine
 
 router = APIRouter(prefix="/orgs/{org}", tags=["fixes"])
 MAX_COMMENTS = 50
@@ -132,6 +146,20 @@ class FixIn(BaseModel):
         return self
 
 
+def _jobs(request: Request) -> FixJobs:
+    jobs: FixJobs = request.app.state.fix_jobs
+    return jobs
+
+
+def _short_session(request: Request) -> AbstractAsyncContextManager[AsyncSession]:
+    """A session of its own (streams outlive the request's); tests may swap the factory."""
+    factory = getattr(request.app.state, "stream_sessions", None)
+    if factory is not None:
+        return cast("Callable[[], AbstractAsyncContextManager[AsyncSession]]", factory)()
+    database: Database = request.app.state.database
+    return database.session()
+
+
 def _service(request: Request) -> FixService:
     found: FixService | None = getattr(request.app.state, "fix_service", None)
     return found or FixService()
@@ -191,6 +219,7 @@ async def create_fix(
     repo: RepoDep,
     db: DbSession,
     readers: RepoAccessDep,
+    background: BackgroundTasks,
 ) -> FixOut:
     """Start a fix from a pasted trace (or a description) or a GitHub issue. An issue already
     being fixed answers 200 with that fix."""
@@ -209,6 +238,9 @@ async def create_fix(
                                               access=access)  # fmt: skip
     if not new:
         response.status_code = status.HTTP_200_OK
+    elif run.status is FixStatus.QUEUED:
+        # After the commit (the worker must find the row): sent once the response is.
+        background.add_task(_jobs(request).run_stage, run.org_id, run.id, run.stage.value)
     return FixOut.full(run, repo)
 
 
@@ -224,14 +256,9 @@ async def list_fixes(
     return [FixSummaryOut.from_run(run, repo) for run in runs]
 
 
-@router.get("/fixes/{fix_id}", response_model=FixOut)
-async def get_fix(
-    request: Request,
-    fix_id: uuid.UUID,
-    access: OrgAccessDep,
-    db: DbSession,
-    readers: RepoAccessDep,
-) -> FixOut:
+async def _visible(
+    request: Request, access: OrgAccess, db: AsyncSession, readers: RepoAccess, fix_id: uuid.UUID
+) -> tuple[FixRun, Repo]:
     run = await _service(request).get(db, access.org.id, fix_id)
     repo = await db.get(Repo, run.repo_id)
     # As its repository: a fix on one the user can't read on GitHub looks like no fix.
@@ -241,4 +268,138 @@ async def get_fix(
         or not await checked(readers, access.user, [repo])
     ):
         raise NotFoundError("No such fix.", code="fix_not_found")
+    return run, repo
+
+
+@router.get("/fixes/{fix_id}", response_model=FixOut)
+async def get_fix(
+    request: Request,
+    fix_id: uuid.UUID,
+    access: OrgAccessDep,
+    db: DbSession,
+    readers: RepoAccessDep,
+) -> FixOut:
+    run, repo = await _visible(request, access, db, readers, fix_id)
     return FixOut.full(run, repo)
+
+
+async def _locked(db: AsyncSession, run: FixRun) -> FixRun:
+    found = await db.scalar(select(FixRun).where(FixRun.id == run.id).with_for_update())
+    if found is None:
+        raise NotFoundError("No such fix.", code="fix_not_found")
+    return found
+
+
+@router.post("/fixes/{fix_id}/start", response_model=FixOut)
+async def start_fix(
+    *,
+    request: Request,
+    fix_id: uuid.UUID,
+    access: OrgAccessDep,
+    db: DbSession,
+    readers: RepoAccessDep,
+    redis: RedisClient,
+    background: BackgroundTasks,
+) -> FixOut:
+    """Start a fix waiting for triage (a Sentry issue under the gate). Members."""
+    require_role(access, Role.MEMBER)
+    run, repo = await _visible(request, access, db, readers, fix_id)
+    run = await _locked(db, run)
+    machine = FixStateMachine(run)
+    try:
+        machine.start()
+    except FixStateError as error:
+        raise ConflictError(str(error), code="fix_not_waiting") from None
+    outbox = FixOutbox(run.org_id, run.id, run.repo_id)
+    outbox.add(machine.events)
+    background.add_task(outbox.publish, redis)
+    background.add_task(_jobs(request).run_stage, run.org_id, run.id, run.stage.value)
+    return FixOut.full(run, repo)
+
+
+@router.post("/fixes/{fix_id}/cancel", response_model=FixOut)
+async def cancel_fix(
+    *,
+    request: Request,
+    fix_id: uuid.UUID,
+    access: OrgAccessDep,
+    db: DbSession,
+    readers: RepoAccessDep,
+    redis: RedisClient,
+    background: BackgroundTasks,
+) -> FixOut:
+    """Cancel a fix that hasn't finished. Members. A stage still working stops at its next
+    check, and what it found is dropped."""
+    require_role(access, Role.MEMBER)
+    run, repo = await _visible(request, access, db, readers, fix_id)
+    run = await _locked(db, run)
+    try:
+        events = cancel(run, by=f"@{access.user.login}")
+    except FixStateError as error:
+        raise ConflictError(str(error), code="fix_finished") from None
+    outbox = FixOutbox(run.org_id, run.id, run.repo_id)
+    outbox.add(events)
+    background.add_task(outbox.publish, redis)
+    return FixOut.full(run, repo)
+
+
+def _final(run: FixRun) -> dict[str, Any]:
+    kind = "done" if run.status is FixStatus.SUCCEEDED else run.status.value
+    return {
+        "type": kind,
+        "fix_id": str(run.id),
+        "stage": run.stage.value,
+        "status": run.status.value,
+        "reason": run.stop_reason,
+        "pr_url": run.pr_url,
+    }
+
+
+@router.get(
+    "/fixes/{fix_id}/events",
+    response_class=EventSourceResponse,
+    responses={200: {"content": {"text/event-stream": {}}}},
+)
+async def fix_events(
+    *,
+    request: Request,
+    fix_id: uuid.UUID,
+    access: OrgAccessDep,
+    db: DbSession,
+    readers: RepoAccessDep,
+    redis: RedisClient,
+) -> EventSourceResponse:
+    """The fix's progress as server-sent events (types: queued, stage_started, step, log,
+    stage_done, awaiting_approval, approved, replanning, done, not_reproduced, blocked, failed,
+    rejected, cancelled). Replays from ``Last-Event-ID``; closes after the final event."""
+    run, _ = await _visible(request, access, db, readers, fix_id)
+    cursor = streams.last_event_id(request)
+    org_id = run.org_id
+    latest: list[FixRun] = [run]
+
+    async def going() -> bool:
+        async with _short_session(request) as session:
+            await set_org_context(session, org_id)
+            current = await session.get(FixRun, fix_id)
+            if current is None:
+                return False
+            latest[0] = current
+            return current.status not in TERMINAL
+
+    async def events() -> AsyncGenerator[ServerSentEvent]:
+        ended = False
+        async for item in streams.follow(
+            request, redis, fix_stream(fix_id), cursor, stop_on=FINAL,
+            follow_new=run.status not in TERMINAL, still=going,
+        ):  # fmt: skip
+            ended = ended or item.event in FINAL
+            yield item
+        if ended or await request.is_disconnected():
+            return
+        if latest[0].status not in TERMINAL:
+            await going()  # the last word from the database
+        if latest[0].status in TERMINAL:
+            # Over, but the stream doesn't say so (it expired, Redis was down): the row does.
+            yield streams.event(_final(latest[0]))
+
+    return streams.response(events())

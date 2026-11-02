@@ -56,6 +56,7 @@ class TaskName(enum.StrEnum):
     SWEEP_SNAPSHOTS = "sensei.maintenance.sweep_snapshots"
     DROP_REF = "sensei.maintenance.drop_ref"
     PRUNE_OAUTH = "sensei.maintenance.prune_oauth"
+    RUN_FIX_STAGE = "sensei.agent.run_fix_stage"
 
 
 # Tasks go to the queue named by the second part of their name ("sensei.<queue>.<task>").
@@ -225,6 +226,48 @@ class CeleryGalaxyJobs:
             )
         except Exception:
             log.warning("could not queue a galaxy layout", snapshot=str(snapshot_id), exc_info=True)
+
+
+# A fix's stages that run the repository's code go to the sandbox queue; the rest are agents'.
+SANDBOX_STAGES = frozenset({"reproduce", "patch", "verify"})
+
+
+def fix_queue(stage: str) -> Queue:
+    return Queue.SANDBOX if stage in SANDBOX_STAGES else Queue.AGENT
+
+
+def fix_stage_message(org_id: uuid.UUID, fix_id: uuid.UUID, stage: str) -> dict[str, Any]:
+    """``send_task``'s arguments for a fix's next stage (the stage names the unit of work, so a
+    stage sent twice runs once)."""
+    return {
+        "name": TaskName.RUN_FIX_STAGE.value,
+        "kwargs": {"org_id": str(org_id), "fix_id": str(fix_id), "stage": stage},
+        "queue": fix_queue(stage).value,
+    }
+
+
+class FixJobs(Protocol):
+    async def run_stage(self, org_id: uuid.UUID, fix_id: uuid.UUID, stage: str) -> bool: ...
+
+
+class CeleryFixJobs:
+    """A fix's stage for a worker (8.4). False when it couldn't be sent: the run stays queued,
+    and the sweep (or a person starting it again) sends it later."""
+
+    def __init__(self, app: Celery) -> None:
+        self._app = app
+
+    async def run_stage(self, org_id: uuid.UUID, fix_id: uuid.UUID, stage: str) -> bool:
+        message = fix_stage_message(org_id, fix_id, stage)
+        try:
+            await asyncio.to_thread(
+                self._app.send_task, message["name"], kwargs=message["kwargs"],
+                queue=message["queue"],
+            )  # fmt: skip
+        except Exception:
+            log.warning("could not queue a fix stage", fix=str(fix_id), stage=stage, exc_info=True)
+            return False
+        return True
 
 
 class CeleryDispatcher:
