@@ -37,7 +37,8 @@ MAX_CONNECTIONS = 128  # tunnels open at once, all clients
 # Connections from one address: one install can't take every tunnel. Installs download 8 at a
 # time (INSTALL_CONCURRENCY); this leaves them room.
 MAX_PER_CLIENT = 16
-TUNNEL_SECONDS = 600.0  # the longest a tunnel stays open, busy or not
+# The longest a tunnel stays open, busy or not: longer than the longest install (900 s).
+TUNNEL_SECONDS = 960.0
 HEADER_TIMEOUT_SECONDS = 10.0
 CONNECT_TIMEOUT_SECONDS = 15.0
 IDLE_TIMEOUT_SECONDS = 120.0
