@@ -140,3 +140,13 @@ def test_paths_match_by_their_longest_shared_suffix_and_never_ambiguously() -> N
     assert index.match("/x/src/utils.ts") is None  # web/ or admin/: can't tell
     assert index.match("/x/web/src/utils.ts") == "web/src/utils.ts"
     assert index.match("/x/nothing.py") is None
+
+
+def test_a_crafted_line_doesnt_stall_the_parser() -> None:
+    import time  # noqa: PLC0415
+
+    crafted = "at " + " (:1" * 50_000 + "x"
+    started = time.monotonic()
+    parse_ticket(crafted)
+    parse_ticket("\n".join(["    at f (" + ":1" * 950 + "x"] * 100))
+    assert time.monotonic() - started < 1.0

@@ -12,6 +12,7 @@ import uuid
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import httpx
 import pytest
@@ -350,3 +351,45 @@ async def test_a_fix_waiting_for_triage_starts_when_a_member_starts_it(
     assert app.state.fix_jobs.sent == [(str(run.id), "intake")]
     twice = await client.post(f"{API}/orgs/acme/fixes/{run.id}/start", headers=headers)
     assert (twice.status_code, twice.json()["error"]["code"]) == (409, "fix_not_waiting")
+
+
+async def test_the_preview_is_for_members_and_sentry_points_only_at_sentry(
+    app: FastAPI, client: httpx.AsyncClient, db_session: AsyncSession
+) -> None:
+    owner, repo = await _org(app, db_session)
+    viewer = await _member(db_session, repo, Role.VIEWER)
+    _, theirs = await sign_in(app, client, db_session, viewer)
+    preview = await client.post(
+        f"{API}/orgs/acme/repos/items/fixes/parse", json={"text": TRACE}, headers=theirs
+    )
+    assert preview.status_code == 403
+    _, headers = await sign_in(app, client, db_session, owner)
+    setup = {"sentry_org": "acme", "api_url": "https://10.0.0.5", "token": "sntrys_token",
+             "client_secret": SECRET}  # fmt: skip
+    inside = await client.put(f"{API}/orgs/acme/integrations/sentry", json=setup, headers=headers)
+    assert (inside.status_code, inside.json()["error"]["code"]) == (422, "sentry_host")
+
+
+async def test_two_runs_from_one_issue_at_once_make_one(
+    app: FastAPI, db_session: AsyncSession
+) -> None:
+    from sensei_core.fixes.service import FixService  # noqa: PLC0415
+    from sensei_core.fixes.tickets import parse_ticket  # noqa: PLC0415
+
+    _, repo = await _org(app, db_session)
+    first, new = await FixService().create(db_session, repo, parse_ticket(TRACE),
+                                           source=FixSource.SENTRY, source_ref="88")  # fmt: skip
+    assert new
+    # The other delivery checked before this one's insert: its check finds nothing.
+    racing = FixService()
+    real = racing.open_for
+    calls: list[int] = []
+
+    async def missed_once(*args: Any) -> FixRun | None:
+        calls.append(1)
+        return None if len(calls) == 1 else await real(*args)
+
+    racing.open_for = missed_once  # type: ignore[method-assign]
+    again, made = await racing.create(db_session, repo, parse_ticket(TRACE),
+                                      source=FixSource.SENTRY, source_ref="88")  # fmt: skip
+    assert (again.id, made, len(calls)) == (first.id, False, 2)  # the index refused a second

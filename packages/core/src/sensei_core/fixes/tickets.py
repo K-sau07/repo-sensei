@@ -22,13 +22,15 @@ from pydantic import BaseModel, Field
 Language = Literal["python", "javascript"]
 MAX_TEXT = 200_000  # characters of a paste looked at
 MAX_FRAMES = 200
+MAX_LINE = 2_000  # characters: a longer line isn't a frame (and isn't matched)
 
 _PY_FRAME = re.compile(r'^\s*File "(?P<file>[^"]+)", line (?P<line>\d+)(?:, in (?P<fn>.+))?$')
 # The traceback's last line: the exception's (dotted) class, and its message.
 _PY_ERROR = re.compile(r"^(?P<type>[A-Za-z_][\w.]*)(?::\s?(?P<message>.*))?$")
-# ``at fn (location:line:col)`` (a location may hold parentheses: webpack's ``(app-pages-browser)``)
-# and ``at location:line:col``.
-_JS_AT = re.compile(r"^\s*at (?P<fn>.+?) \((?P<loc>.+?):(?P<line>\d+)(?::\d+)?\)$")
+# ``at fn (location:line:col)`` and ``at location:line:col``; Firefox/Safari ``fn@location:...``.
+# A function name has no parentheses and a location no space, so the parts can't overlap (no
+# backtracking blow-up on crafted lines); lines longer than MAX_LINE aren't frames anyway.
+_JS_AT = re.compile(r"^\s*at (?P<fn>[^()]*?) \((?P<loc>\S+?):(?P<line>\d+)(?::\d+)?\)$")
 _JS_AT_BARE = re.compile(r"^\s*at (?P<loc>\S+?):(?P<line>\d+)(?::\d+)?$")
 _JS_AT_SIGN = re.compile(r"^\s*(?P<fn>[^@\s]*)@(?P<loc>\S+?):(?P<line>\d+)(?::\d+)?$")
 _JS_ERROR = re.compile(
@@ -142,6 +144,8 @@ def _python(lines: Sequence[str], index: PathIndex | None) -> tuple[list[Frame],
     frames: list[Frame] = []
     for i in range(start + 1, len(lines)):
         line = lines[i]
+        if len(line) > MAX_LINE:
+            continue
         if found := _PY_FRAME.match(line):
             frames.append(_frame(found["file"], found["line"], found["fn"], index))
             continue
@@ -156,6 +160,8 @@ def _javascript(
     frames: list[Frame] = []
     error: tuple[str | None, str] | None = None
     for line in lines:
+        if len(line) > MAX_LINE:
+            continue
         stripped = line.strip()
         found = _JS_AT.match(line) or _JS_AT_BARE.match(line) or _JS_AT_SIGN.match(line)
         if found:
@@ -184,10 +190,17 @@ def _trace_text(text: str) -> str:
     return "\n".join(blocks) if blocks else text
 
 
-def parse_ticket(text: str, *, title: str | None = None, paths: Iterable[str] = ()) -> Ticket:
-    """A ticket from pasted text (a trace, or an issue's title and body)."""
+def parse_ticket(
+    text: str,
+    *,
+    title: str | None = None,
+    paths: Iterable[str] = (),
+    index: PathIndex | None = None,
+) -> Ticket:
+    """A ticket from pasted text (a trace, or an issue's title and body); ``index`` (the
+    repository's files, built once) or ``paths``."""
     text = text[:MAX_TEXT].replace("\r\n", "\n")
-    index = PathIndex(paths)
+    index = index if index is not None else PathIndex(paths)
     lines = _trace_text(text).split("\n")
     parsed_py = _python(lines, index)
     language: Language | None = None

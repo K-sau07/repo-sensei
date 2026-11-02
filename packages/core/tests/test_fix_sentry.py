@@ -128,3 +128,24 @@ async def test_sentry_says_the_issues_last_14_days_and_its_latest_event() -> Non
         assert await client.events_14d("9999") is None
     assert seen[0].url.params["statsPeriod"] == "14d"
     assert seen[0].headers["authorization"] == "Bearer sntrys_token_value"
+
+
+@pytest.mark.parametrize(
+    ("url", "ok"),
+    [
+        ("https://sentry.io", True),
+        ("https://acme.sentry.io/", True),
+        ("https://de.sentry.io:443", True),
+        ("http://sentry.io", False),
+        ("https://sentry.io.evil.com", False),
+        ("https://evilsentry.io", False),
+        ("https://10.0.0.5", False),
+        ("https://user:pw@sentry.io", False),
+        ("https://sentry.io:8443", False),
+        ("not a url", False),
+    ],
+)
+def test_sentry_is_asked_only_on_the_allowed_hosts(url: str, ok: bool) -> None:
+    from sensei_core.fixes.sentry import host_allowed  # noqa: PLC0415
+
+    assert host_allowed(url, ["sentry.io"]) is ok

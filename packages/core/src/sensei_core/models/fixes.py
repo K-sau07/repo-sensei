@@ -29,7 +29,9 @@ from sqlalchemy import (
     Numeric,
     String,
     Text,
+    UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
@@ -114,6 +116,19 @@ class FixRun(IdMixin, OrgScopedMixin, TimestampMixin, Base):
         Index("ix_fix_runs_repo_created", "repo_id", "created_at"),
         Index("ix_fix_runs_org_status", "org_id", "status"),
         Index("ix_fix_runs_source_ref", "org_id", "source", "source_ref"),
+        # One run at a time per issue: two deliveries at once can't both start one.
+        Index(
+            "uq_fix_runs_open_ref",
+            "repo_id",
+            "source",
+            "source_ref",
+            unique=True,
+            postgresql_where=text(
+                "source_ref IS NOT NULL AND status NOT IN ('succeeded', 'not_reproduced', "
+                "'blocked', 'failed', 'rejected', 'cancelled')"
+            ),
+        ),
+        UniqueConstraint("id", "org_id"),  # for the (run, org) foreign key of approvals
         ForeignKeyConstraint(
             ["repo_id", "org_id"], ["repos.id", "repos.org_id"], ondelete="CASCADE"
         ),
@@ -157,10 +172,14 @@ class FixRun(IdMixin, OrgScopedMixin, TimestampMixin, Base):
 
 class FixApproval(IdMixin, OrgScopedMixin, Base):
     __tablename__ = "fix_approvals"
-
-    fix_run_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("fix_runs.id", ondelete="CASCADE"), index=True
+    __table_args__ = (
+        # The run is in the same org (row-level security checks the approval's own org only).
+        ForeignKeyConstraint(
+            ["fix_run_id", "org_id"], ["fix_runs.id", "fix_runs.org_id"], ondelete="CASCADE"
+        ),
     )
+
+    fix_run_id: Mapped[uuid.UUID] = mapped_column(index=True)
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
     decision: Mapped[ApprovalDecision] = mapped_column(_enum(ApprovalDecision, "fix_decision"))
     comment: Mapped[str | None] = mapped_column(Text)

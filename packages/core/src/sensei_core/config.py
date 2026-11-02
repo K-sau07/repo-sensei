@@ -437,6 +437,9 @@ class FixerSettings(BaseSettings):
     max_turns: int = Field(default=120, ge=1)
     max_cost_usd: Decimal = Field(default=Decimal("3.00"), ge=0)
     max_sandbox_minutes: float = Field(default=30.0, gt=0)
+    # Where a Sentry integration may point (the host or a subdomain of it): Sentry's cloud by
+    # default; a self-hosted Sentry is added here by whoever runs repo-sensei, not by an org.
+    sentry_hosts: list[str] = Field(default_factory=lambda: ["sentry.io"])
 
 
 class Settings(BaseSettings):

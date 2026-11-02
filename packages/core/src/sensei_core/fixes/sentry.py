@@ -22,6 +22,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any, cast
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -33,6 +34,21 @@ TIMEOUT = httpx.Timeout(10.0)
 _PROJECT_IN_URL = re.compile(r"/projects/[^/]+/(?P<slug>[^/]+)/")
 
 Json = dict[str, Any]
+
+
+def host_allowed(url: str, hosts: Iterable[str]) -> bool:
+    """``url`` is HTTPS on one of ``hosts`` (or a subdomain of one), on the default port and
+    without credentials: where Sentry's API may be asked (nothing an org chooses can make the
+    API fetch an internal address)."""
+    try:
+        parts = urlsplit(url)
+        port = parts.port
+    except ValueError:
+        return False
+    host = (parts.hostname or "").lower().rstrip(".")
+    if parts.scheme != "https" or parts.username or parts.password or port not in (None, 443):
+        return False
+    return any(host == h or host.endswith(f".{h}") for h in (x.lower() for x in hosts))
 
 
 def signature_valid(secret: str, body: bytes, signature: str | None) -> bool:
@@ -187,7 +203,10 @@ class SentryClient:
             return None
         if response.status_code != 200:
             return None
-        return _obj(response.json())
+        try:
+            return _obj(response.json())
+        except ValueError:
+            return None
 
     async def events_14d(self, issue_id: str) -> int | None:
         """How many events the issue had in the last 14 days (None: Sentry didn't say)."""

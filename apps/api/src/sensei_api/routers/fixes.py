@@ -8,6 +8,7 @@ see come in. The pipeline (8.4) picks queued runs up; nothing runs here.
 
 from __future__ import annotations
 
+import asyncio
 import re
 import uuid
 from collections.abc import AsyncGenerator, Callable
@@ -28,7 +29,7 @@ from sensei_api.repos import RepoAccessDep, RepoDep, checked, get_viewer, github
 from sensei_core.db.engine import Database
 from sensei_core.db.tenancy import set_org_context
 from sensei_core.errors import ConflictError, InvalidError, NotFoundError
-from sensei_core.fixes.service import FixService, repo_paths
+from sensei_core.fixes.service import FixService, repo_index
 from sensei_core.fixes.tickets import MAX_TEXT, Frame, Ticket, parse_ticket
 from sensei_core.github.client import Credential, GitHubError
 from sensei_core.jobs import FixJobs
@@ -203,10 +204,18 @@ async def _issue_text(
     return str(issue.get("title") or f"Issue #{number}"), "\n\n".join(parts), str(issue["html_url"])
 
 
+async def _parse(db: AsyncSession, repo: Repo, text: str, title: str | None = None) -> Ticket:
+    """Parsed off the event loop (a long paste takes a moment), against the cached index."""
+    index = await repo_index(db, repo)
+    return await asyncio.to_thread(parse_ticket, text, title=title, index=index)
+
+
 @router.post("/repos/{repo}/fixes/parse", response_model=TicketOut)
-async def parse_fix(body: ParseIn, repo: RepoDep, db: DbSession) -> TicketOut:
-    """What a paste parses to (the intake page's preview): nothing is saved."""
-    return TicketOut.build(parse_ticket(body.text, paths=await repo_paths(db, repo)))
+async def parse_fix(body: ParseIn, access: OrgAccessDep, repo: RepoDep, db: DbSession) -> TicketOut:
+    """What a paste parses to (the intake page's preview, for those who can start a fix):
+    nothing is saved."""
+    require_role(access, Role.MEMBER)
+    return TicketOut.build(await _parse(db, repo, body.text))
 
 
 @router.post("/repos/{repo}/fixes", response_model=FixOut, status_code=status.HTTP_201_CREATED)
@@ -224,15 +233,14 @@ async def create_fix(
     """Start a fix from a pasted trace (or a description) or a GitHub issue. An issue already
     being fixed answers 200 with that fix."""
     require_role(access, Role.MEMBER)  # before asking GitHub anything
-    paths = await repo_paths(db, repo)
     if body.source == "paste":
-        ticket = parse_ticket(body.text or "", title=body.title, paths=paths)
+        ticket = await _parse(db, repo, body.text or "", body.title)
         source, ref = FixSource.PASTE, None
     else:
         number = issue_number(body.issue or "", repo)
         viewer = await get_viewer(access, readers)  # the user's own: their issues only
         title, text, url = await _issue_text(request, repo, number, viewer)
-        ticket = parse_ticket(f"{title}\n\n{text}", title=title, paths=paths)
+        ticket = await _parse(db, repo, f"{title}\n\n{text}", title)
         source, ref = FixSource.GITHUB_ISSUE, url
     run, new = await _service(request).create(db, repo, ticket, source=source, source_ref=ref,
                                               access=access)  # fmt: skip

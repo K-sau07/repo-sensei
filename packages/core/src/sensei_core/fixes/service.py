@@ -9,15 +9,17 @@ mapped onto the files of the repository's last index.
 from __future__ import annotations
 
 import uuid
+from collections import OrderedDict
 from collections.abc import Callable
 from datetime import UTC, datetime
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from sensei_core.audit import AuditAction, audit
 from sensei_core.errors import NotFoundError
-from sensei_core.fixes.tickets import Ticket
+from sensei_core.fixes.tickets import PathIndex, Ticket
 from sensei_core.indexing.snapshots import resolve_snapshot
 from sensei_core.models import FixRun, FixSource, FixStage, FixStatus, Repo, RepoFile, Role
 from sensei_core.models.fixes import TERMINAL
@@ -32,6 +34,10 @@ def utcnow() -> datetime:
     return datetime.now(UTC)
 
 
+_INDEXES: OrderedDict[uuid.UUID, PathIndex] = OrderedDict()
+CACHED_INDEXES = 16
+
+
 async def repo_paths(db: AsyncSession, repo: Repo) -> list[str]:
     """The files of the repository's last index (none if it has never been indexed)."""
     try:
@@ -42,6 +48,27 @@ async def repo_paths(db: AsyncSession, repo: Repo) -> list[str]:
         select(RepoFile.path).where(RepoFile.snapshot_id == snapshot.id).limit(MAX_PATHS)
     )
     return list(found)
+
+
+async def repo_index(db: AsyncSession, repo: Repo) -> PathIndex:
+    """The repository's files as a :class:`PathIndex`, built once per snapshot (a few kept):
+    the intake page parses as the user types."""
+    try:
+        snapshot = await resolve_snapshot(db, repo, None)
+    except NotFoundError:
+        return PathIndex(())
+    cached = _INDEXES.get(snapshot.id)
+    if cached is not None:
+        _INDEXES.move_to_end(snapshot.id)
+        return cached
+    found = await db.scalars(
+        select(RepoFile.path).where(RepoFile.snapshot_id == snapshot.id).limit(MAX_PATHS)
+    )
+    index = PathIndex(list(found))
+    _INDEXES[snapshot.id] = index
+    while len(_INDEXES) > CACHED_INDEXES:
+        _INDEXES.popitem(last=False)
+    return index
 
 
 class FixService:
@@ -89,8 +116,17 @@ class FixService:
             title=ticket.title, ticket=ticket.model_dump(mode="json"), status=status,
             stage=FixStage.INTAKE, created_by=access.user.id if access else None,
         )  # fmt: skip
-        db.add(run)
-        await db.flush()
+        try:
+            async with db.begin_nested():  # two deliveries at once: one run (a unique index)
+                db.add(run)
+                await db.flush()
+        except IntegrityError:
+            if source_ref is None:
+                raise
+            existing = await self.open_for(db, repo, source, source_ref)
+            if existing is None:
+                raise
+            return existing, False
         await audit(
             db, AuditAction.FIX_CREATE, actor_user_id=access.user.id if access else None,
             org_id=repo.org_id, target_type="fix_run", target_id=run.id,

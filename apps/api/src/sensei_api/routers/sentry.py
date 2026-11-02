@@ -14,8 +14,9 @@ the inbox for someone to decide. Deliveries about anything else are acknowledged
 from __future__ import annotations
 
 import json
+import secrets
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from contextlib import AbstractAsyncContextManager
 from datetime import UTC, datetime
 from typing import Annotated, Any, cast
@@ -36,6 +37,8 @@ from sensei_core.db.tenancy import set_org_context
 from sensei_core.errors import InvalidError, NotFoundError
 from sensei_core.fixes.sentry import (
     SentryClient,
+    SentryIssue,
+    host_allowed,
     parse_webhook,
     should_auto_run,
     signature_valid,
@@ -107,6 +110,8 @@ async def put_sentry(
 ) -> SentryOut:
     """Connect Sentry (or change the connection). Admins."""
     require_role(access, Role.ADMIN)
+    if not host_allowed(body.api_url, request.app.state.settings.fixer.sentry_hosts):
+        raise InvalidError("That isn't a Sentry this server talks to.", code="sentry_host")
     org_id = access.org.id
     repos = {
         row.slug: row.id
@@ -182,13 +187,36 @@ async def start_from_sentry(
     resource: str | None,
     payload: dict[str, Any],
     jobs: FixJobs | None = None,
+    hosts: Sequence[str] = ("sentry.io",),
     now: datetime | None = None,
 ) -> uuid.UUID | None:
     """A fix from a verified delivery (its id), or None when it isn't one to make; a started
-    one is sent to a worker once it is committed."""
+    one is sent to a worker once it is committed. Runs after the delivery was answered:
+    whatever goes wrong is logged with the org and issue (Sentry doesn't retry a 202)."""
     issue = parse_webhook(resource, payload)
     if issue is None:
         return None
+    try:
+        return await _start(
+            sessions, cipher=cipher, http=http, org_id=org_id, issue=issue, jobs=jobs,
+            hosts=hosts, now=now,
+        )  # fmt: skip
+    except Exception:
+        log.exception("a Sentry delivery made no fix", org_id=str(org_id), issue=issue.id)
+        return None
+
+
+async def _start(
+    sessions: Callable[[], AbstractAsyncContextManager[AsyncSession]],
+    *,
+    cipher: TokenCipher,
+    http: httpx.AsyncClient,
+    org_id: uuid.UUID,
+    issue: SentryIssue,
+    jobs: FixJobs | None,
+    hosts: Sequence[str],
+    now: datetime | None,
+) -> uuid.UUID | None:
     async with sessions() as db:
         await set_org_context(db, org_id)
         found = await db.scalar(select(SentryIntegration).where(SentryIntegration.org_id == org_id))
@@ -196,6 +224,9 @@ async def start_from_sentry(
         repo = await db.get(Repo, uuid.UUID(repo_id)) if repo_id else None
         if found is None or repo is None or repo.deleted_at is not None:
             log.info("sentry delivery for no connected repository", project=issue.project)
+            return None
+        if not host_allowed(found.api_url, hosts):
+            log.warning("sentry integration points outside the allowed hosts", org_id=str(org_id))
             return None
         service = FixService()
         if await service.open_for(db, repo, FixSource.SENTRY, issue.id) is not None:
@@ -241,11 +272,13 @@ async def sentry_webhook(
     org_id = await db.scalar(
         select(Org.id).where(Org.slug == org.lower(), Org.deleted_at.is_(None))
     )
-    if org_id is None:
-        raise refused  # the same answer: which orgs exist isn't said
-    await set_org_context(db, org_id)
-    found = await db.scalar(select(SentryIntegration).where(SentryIntegration.org_id == org_id))
-    if found is None:
+    found = None
+    if org_id is not None:
+        await set_org_context(db, org_id)
+        found = await db.scalar(select(SentryIntegration).where(SentryIntegration.org_id == org_id))
+    if org_id is None or found is None:
+        # The same answer, after the same work: which orgs exist isn't said.
+        signature_valid(secrets.token_hex(16), body, sentry_hook_signature)
         raise refused
     cipher = _cipher(request)
     secret = cipher.decrypt(found.client_secret_enc, context=_context(org_id, "secret")).decode()
@@ -262,5 +295,6 @@ async def sentry_webhook(
         start_from_sentry, sessions=_sessions(request), cipher=cipher,
         http=request.app.state.http, org_id=org_id, resource=sentry_hook_resource,
         payload=payload, jobs=request.app.state.fix_jobs,
+        hosts=request.app.state.settings.fixer.sentry_hosts,
     )  # fmt: skip
     return Response(status_code=status.HTTP_202_ACCEPTED)
