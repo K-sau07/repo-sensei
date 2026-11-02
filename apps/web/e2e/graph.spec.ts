@@ -177,7 +177,8 @@ test.describe("graph explorer", () => {
     const started = Date.now();
     await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
     await page.mouse.down();
-    for (let i = 0; i < 60; i++) {
+    // At most 60 moves, for at most 20 s: a software rasterizer (CI) draws each frame slowly.
+    for (let i = 0; i < 60 && Date.now() - started < 20_000; i++) {
       await page.mouse.move(box.x + box.width / 2 + Math.sin(i / 6) * 200, box.y + box.height / 2);
     }
     await page.mouse.up();
