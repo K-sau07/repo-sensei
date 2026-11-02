@@ -620,7 +620,10 @@
           "api_key.create",
           "api_key.revoke",
           "oauth.authorize",
-          "oauth.refresh_reused"
+          "oauth.refresh_reused",
+          "fix.create",
+          "sentry.connect",
+          "sentry.disconnect"
         ],
         "title": "AuditAction",
         "type": "string"
@@ -3084,6 +3087,433 @@
         "title": "FileOut",
         "type": "object"
       },
+      "FixIn": {
+        "properties": {
+          "issue": {
+            "anyOf": [
+              {
+                "maxLength": 300,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Issue"
+          },
+          "source": {
+            "enum": [
+              "paste",
+              "github_issue"
+            ],
+            "title": "Source",
+            "type": "string"
+          },
+          "text": {
+            "anyOf": [
+              {
+                "maxLength": 200000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Text"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          }
+        },
+        "required": [
+          "source"
+        ],
+        "title": "FixIn",
+        "type": "object"
+      },
+      "FixOut": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "created_by": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created By"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "merge_readiness": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Merge Readiness"
+          },
+          "plan": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Plan"
+          },
+          "pr_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pr Url"
+          },
+          "repo": {
+            "title": "Repo",
+            "type": "string"
+          },
+          "repro_result": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ReproResult"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "risk": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FixRisk"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "root_cause": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Root Cause"
+          },
+          "source": {
+            "$ref": "#/components/schemas/FixSource"
+          },
+          "source_ref": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Ref"
+          },
+          "stage": {
+            "$ref": "#/components/schemas/FixStage"
+          },
+          "status": {
+            "$ref": "#/components/schemas/FixStatus"
+          },
+          "ticket": {
+            "$ref": "#/components/schemas/TicketOut"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "repo",
+          "title",
+          "source",
+          "source_ref",
+          "status",
+          "stage",
+          "risk",
+          "merge_readiness",
+          "pr_url",
+          "created_by",
+          "created_at",
+          "finished_at",
+          "ticket",
+          "repro_result",
+          "root_cause",
+          "plan"
+        ],
+        "title": "FixOut",
+        "type": "object"
+      },
+      "FixRisk": {
+        "enum": [
+          "low",
+          "medium",
+          "high"
+        ],
+        "title": "FixRisk",
+        "type": "string"
+      },
+      "FixSource": {
+        "enum": [
+          "paste",
+          "github_issue",
+          "sentry"
+        ],
+        "title": "FixSource",
+        "type": "string"
+      },
+      "FixStage": {
+        "enum": [
+          "intake",
+          "investigate",
+          "reproduce",
+          "root_cause",
+          "plan",
+          "awaiting_approval",
+          "patch",
+          "verify",
+          "pr",
+          "done"
+        ],
+        "title": "FixStage",
+        "type": "string"
+      },
+      "FixStatus": {
+        "enum": [
+          "needs_triage",
+          "queued",
+          "running",
+          "awaiting_approval",
+          "succeeded",
+          "not_reproduced",
+          "blocked",
+          "failed",
+          "rejected",
+          "cancelled"
+        ],
+        "title": "FixStatus",
+        "type": "string"
+      },
+      "FixSummaryOut": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "created_by": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created By"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "merge_readiness": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Merge Readiness"
+          },
+          "pr_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pr Url"
+          },
+          "repo": {
+            "title": "Repo",
+            "type": "string"
+          },
+          "risk": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FixRisk"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "source": {
+            "$ref": "#/components/schemas/FixSource"
+          },
+          "source_ref": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Ref"
+          },
+          "stage": {
+            "$ref": "#/components/schemas/FixStage"
+          },
+          "status": {
+            "$ref": "#/components/schemas/FixStatus"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "repo",
+          "title",
+          "source",
+          "source_ref",
+          "status",
+          "stage",
+          "risk",
+          "merge_readiness",
+          "pr_url",
+          "created_by",
+          "created_at",
+          "finished_at"
+        ],
+        "title": "FixSummaryOut",
+        "type": "object"
+      },
+      "FrameOut": {
+        "properties": {
+          "file": {
+            "title": "File",
+            "type": "string"
+          },
+          "function": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Function"
+          },
+          "in_repo": {
+            "title": "In Repo",
+            "type": "boolean"
+          },
+          "library": {
+            "title": "Library",
+            "type": "boolean"
+          },
+          "line": {
+            "title": "Line",
+            "type": "integer"
+          },
+          "path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The repository's file the frame is in, if it is one.",
+            "title": "Path"
+          }
+        },
+        "required": [
+          "file",
+          "line",
+          "function",
+          "path",
+          "in_repo",
+          "library"
+        ],
+        "title": "FrameOut",
+        "type": "object"
+      },
       "FreshnessOut": {
         "properties": {
           "behind": {
@@ -5105,6 +5535,21 @@
         "title": "PackagesOut",
         "type": "object"
       },
+      "ParseIn": {
+        "properties": {
+          "text": {
+            "maxLength": 200000,
+            "minLength": 1,
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "title": "ParseIn",
+        "type": "object"
+      },
       "PartialOut": {
         "description": "What a stage done with work left for the next index cut short.",
         "properties": {
@@ -5531,6 +5976,15 @@
         },
         "title": "RepoUpdate",
         "type": "object"
+      },
+      "ReproResult": {
+        "enum": [
+          "reproduced",
+          "not_reproduced",
+          "flaky"
+        ],
+        "title": "ReproResult",
+        "type": "string"
       },
       "Role": {
         "description": "Ordered from least to most privileged.",
@@ -6526,6 +6980,103 @@
         "title": "SearchSnippet",
         "type": "object"
       },
+      "SentryIn": {
+        "properties": {
+          "api_url": {
+            "default": "https://sentry.io",
+            "pattern": "^https://[^\\s/]+(/[^\\s]*)?$",
+            "title": "Api Url",
+            "type": "string"
+          },
+          "auto_run": {
+            "default": false,
+            "title": "Auto Run",
+            "type": "boolean"
+          },
+          "client_secret": {
+            "maxLength": 500,
+            "minLength": 8,
+            "title": "Client Secret",
+            "type": "string"
+          },
+          "min_events": {
+            "default": 10,
+            "maximum": 100000.0,
+            "minimum": 1.0,
+            "title": "Min Events",
+            "type": "integer"
+          },
+          "projects": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "maxProperties": 200,
+            "title": "Projects",
+            "type": "object"
+          },
+          "sentry_org": {
+            "maxLength": 100,
+            "minLength": 1,
+            "pattern": "^[a-z0-9][a-z0-9_-]*$",
+            "title": "Sentry Org",
+            "type": "string"
+          },
+          "token": {
+            "maxLength": 500,
+            "minLength": 8,
+            "title": "Token",
+            "type": "string"
+          }
+        },
+        "required": [
+          "sentry_org",
+          "token",
+          "client_secret"
+        ],
+        "title": "SentryIn",
+        "type": "object"
+      },
+      "SentryOut": {
+        "properties": {
+          "api_url": {
+            "title": "Api Url",
+            "type": "string"
+          },
+          "auto_run": {
+            "title": "Auto Run",
+            "type": "boolean"
+          },
+          "min_events": {
+            "title": "Min Events",
+            "type": "integer"
+          },
+          "projects": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Projects",
+            "type": "object"
+          },
+          "sentry_org": {
+            "title": "Sentry Org",
+            "type": "string"
+          },
+          "webhook_url": {
+            "title": "Webhook Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "sentry_org",
+          "api_url",
+          "projects",
+          "auto_run",
+          "min_events",
+          "webhook_url"
+        ],
+        "title": "SentryOut",
+        "type": "object"
+      },
       "SessionInfo": {
         "properties": {
           "created_at": {
@@ -7097,6 +7648,87 @@
           "results"
         ],
         "title": "SymbolsOut",
+        "type": "object"
+      },
+      "TicketOut": {
+        "properties": {
+          "culprit": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FrameOut"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The innermost frame in the repository."
+          },
+          "error_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Type"
+          },
+          "frames": {
+            "items": {
+              "$ref": "#/components/schemas/FrameOut"
+            },
+            "title": "Frames",
+            "type": "array"
+          },
+          "language": {
+            "anyOf": [
+              {
+                "enum": [
+                  "python",
+                  "javascript"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Language"
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "versions": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Versions",
+            "type": "object"
+          }
+        },
+        "required": [
+          "title",
+          "language",
+          "error_type",
+          "message",
+          "frames",
+          "versions",
+          "culprit"
+        ],
+        "title": "TicketOut",
         "type": "object"
       },
       "TraceBreakOut": {
@@ -9729,6 +10361,60 @@
         ]
       }
     },
+    "/api/v1/orgs/{org}/fixes/{fix_id}": {
+      "get": {
+        "operationId": "get_fix_api_v1_orgs__org__fixes__fix_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "fix_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Fix Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Organization slug",
+            "in": "path",
+            "name": "org",
+            "required": true,
+            "schema": {
+              "description": "Organization slug",
+              "title": "Org",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FixOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Fix",
+        "tags": [
+          "fixes"
+        ]
+      }
+    },
     "/api/v1/orgs/{org}/github/installations": {
       "get": {
         "description": "GitHub accounts connected to the org.",
@@ -9899,6 +10585,138 @@
         "summary": "Home",
         "tags": [
           "home"
+        ]
+      }
+    },
+    "/api/v1/orgs/{org}/integrations/sentry": {
+      "delete": {
+        "operationId": "delete_sentry_api_v1_orgs__org__integrations_sentry_delete",
+        "parameters": [
+          {
+            "description": "Organization slug",
+            "in": "path",
+            "name": "org",
+            "required": true,
+            "schema": {
+              "description": "Organization slug",
+              "title": "Org",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Sentry",
+        "tags": [
+          "sentry"
+        ]
+      },
+      "get": {
+        "operationId": "get_sentry_api_v1_orgs__org__integrations_sentry_get",
+        "parameters": [
+          {
+            "description": "Organization slug",
+            "in": "path",
+            "name": "org",
+            "required": true,
+            "schema": {
+              "description": "Organization slug",
+              "title": "Org",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SentryOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Sentry",
+        "tags": [
+          "sentry"
+        ]
+      },
+      "put": {
+        "description": "Connect Sentry (or change the connection). Admins.",
+        "operationId": "put_sentry_api_v1_orgs__org__integrations_sentry_put",
+        "parameters": [
+          {
+            "description": "Organization slug",
+            "in": "path",
+            "name": "org",
+            "required": true,
+            "schema": {
+              "description": "Organization slug",
+              "title": "Org",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SentryIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SentryOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Put Sentry",
+        "tags": [
+          "sentry"
         ]
       }
     },
@@ -12515,6 +13333,215 @@
         ]
       }
     },
+    "/api/v1/orgs/{org}/repos/{repo}/fixes": {
+      "get": {
+        "description": "The repository's fixes, newest first.",
+        "operationId": "list_fixes_api_v1_orgs__org__repos__repo__fixes_get",
+        "parameters": [
+          {
+            "description": "Repository slug",
+            "in": "path",
+            "name": "repo",
+            "required": true,
+            "schema": {
+              "description": "Repository slug",
+              "maxLength": 201,
+              "title": "Repo",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Organization slug",
+            "in": "path",
+            "name": "org",
+            "required": true,
+            "schema": {
+              "description": "Organization slug",
+              "title": "Org",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/FixStatus"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/FixSummaryOut"
+                  },
+                  "title": "Response List Fixes Api V1 Orgs  Org  Repos  Repo  Fixes Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Fixes",
+        "tags": [
+          "fixes"
+        ]
+      },
+      "post": {
+        "description": "Start a fix from a pasted trace (or a description) or a GitHub issue. An issue already\nbeing fixed answers 200 with that fix.",
+        "operationId": "create_fix_api_v1_orgs__org__repos__repo__fixes_post",
+        "parameters": [
+          {
+            "description": "Organization slug",
+            "in": "path",
+            "name": "org",
+            "required": true,
+            "schema": {
+              "description": "Organization slug",
+              "title": "Org",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Repository slug",
+            "in": "path",
+            "name": "repo",
+            "required": true,
+            "schema": {
+              "description": "Repository slug",
+              "maxLength": 201,
+              "title": "Repo",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FixIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FixOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Fix",
+        "tags": [
+          "fixes"
+        ]
+      }
+    },
+    "/api/v1/orgs/{org}/repos/{repo}/fixes/parse": {
+      "post": {
+        "description": "What a paste parses to (the intake page's preview): nothing is saved.",
+        "operationId": "parse_fix_api_v1_orgs__org__repos__repo__fixes_parse_post",
+        "parameters": [
+          {
+            "description": "Repository slug",
+            "in": "path",
+            "name": "repo",
+            "required": true,
+            "schema": {
+              "description": "Repository slug",
+              "maxLength": 201,
+              "title": "Repo",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Organization slug",
+            "in": "path",
+            "name": "org",
+            "required": true,
+            "schema": {
+              "description": "Organization slug",
+              "title": "Org",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ParseIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TicketOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Parse Fix",
+        "tags": [
+          "fixes"
+        ]
+      }
+    },
     "/api/v1/orgs/{org}/repos/{repo}/galaxy": {
       "get": {
         "description": "Every file a star, in clusters (see the module).",
@@ -14682,6 +15709,80 @@
         "summary": "Github Webhook",
         "tags": [
           "webhooks"
+        ]
+      }
+    },
+    "/api/v1/webhooks/sentry/{org}": {
+      "post": {
+        "operationId": "sentry_webhook_api_v1_webhooks_sentry__org__post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "org",
+            "required": true,
+            "schema": {
+              "title": "Org",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "sentry-hook-resource",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Sentry-Hook-Resource"
+            }
+          },
+          {
+            "in": "header",
+            "name": "sentry-hook-signature",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 200,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Sentry-Hook-Signature"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Sentry Webhook",
+        "tags": [
+          "sentry"
         ]
       }
     }

@@ -19,6 +19,17 @@ from sensei_core.models.diagrams import Diagram, DiagramKind, DiagramSource
 from sensei_core.models.embeddings import EmbeddingCache
 from sensei_core.models.evals import EvalRun
 from sensei_core.models.files import RepoFile
+from sensei_core.models.fixes import (
+    ApprovalDecision,
+    FixApproval,
+    FixRisk,
+    FixRun,
+    FixSource,
+    FixStage,
+    FixStatus,
+    ReproResult,
+    SentryIntegration,
+)
 from sensei_core.models.github import GitHubInstallation
 from sensei_core.models.glossary import GlossaryTerm
 from sensei_core.models.graph import (
@@ -65,6 +76,7 @@ __all__ = [
     "AgentStep",
     "AnswerCacheEntry",
     "ApiKey",
+    "ApprovalDecision",
     "AuditEvent",
     "Base",
     "ClientKind",
@@ -81,6 +93,12 @@ __all__ = [
     "EmbeddingCache",
     "EvalRun",
     "FeatureMap",
+    "FixApproval",
+    "FixRisk",
+    "FixRun",
+    "FixSource",
+    "FixStage",
+    "FixStatus",
     "GitHubInstallation",
     "GlossaryTerm",
     "GrantStatus",
@@ -107,7 +125,9 @@ __all__ = [
     "RepoRef",
     "RepoSource",
     "RepoStatus",
+    "ReproResult",
     "Role",
+    "SentryIntegration",
     "Snapshot",
     "SnapshotStatus",
     "Stage",

@@ -56,6 +56,9 @@ class AuditAction(enum.StrEnum):
     API_KEY_REVOKE = "api_key.revoke"
     OAUTH_AUTHORIZE = "oauth.authorize"
     OAUTH_REFRESH_REUSED = "oauth.refresh_reused"
+    FIX_CREATE = "fix.create"
+    SENTRY_CONNECT = "sentry.connect"
+    SENTRY_DISCONNECT = "sentry.disconnect"
 
 
 def _clean_meta(meta: dict[str, Any] | None) -> dict[str, Any]:

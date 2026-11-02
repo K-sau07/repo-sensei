@@ -28,7 +28,7 @@ def get_dispatcher(request: Request) -> WebhookDispatcher:
     return dispatcher
 
 
-async def _read_body(request: Request, limit: int) -> bytes:
+async def read_body(request: Request, limit: int) -> bytes:
     """The raw body (the signature covers exact bytes), refusing anything over ``limit``."""
     too_large = AppError("Payload too large.", code="payload_too_large", status_code=413)
     declared = request.headers.get("content-length")
@@ -68,7 +68,7 @@ async def github_webhook(
         raise AppError(
             "Webhooks are not configured.", code="webhooks_not_configured", status_code=503
         )
-    body = await _read_body(request, settings.github.webhook_max_bytes)
+    body = await read_body(request, settings.github.webhook_max_bytes)
     if not signature_valid(secret.get_secret_value(), body, x_hub_signature_256):
         raise AppError("Invalid signature.", code="invalid_signature", status_code=401)
     if not x_github_event or not x_github_delivery:

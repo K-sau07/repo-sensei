@@ -46,6 +46,11 @@ def _client(request: Request) -> GitHubClient:
     return GitHubClient(_settings(request).github, http, etags=RedisETagCache(redis, cipher))
 
 
+def github_client(request: Request) -> GitHubClient:
+    """The API's GitHub client (with the shared ETag cache), for other routers."""
+    return _client(request)
+
+
 def get_repo_service(request: Request, app: GitHubAppDep) -> RepoService:
     state = request.app.state
     calc: CostCalculator | None = getattr(state, "cost_calculator", None)

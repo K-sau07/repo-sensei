@@ -31,6 +31,7 @@ from sensei_api.routers import (
     deps,
     diagrams,
     feature_maps,
+    fixes,
     galaxy,
     github,
     graph,
@@ -50,6 +51,7 @@ from sensei_api.routers import (
     repos,
     runs,
     search,
+    sentry,
     shared,
     staleness,
     symbols,
@@ -226,6 +228,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         shared,
         api_keys,
         mcp_setup,
+        fixes,
+        sentry,
         oauth,
     ):  # the order routes are matched in
         name = module.__name__.rsplit(".", 1)[-1]

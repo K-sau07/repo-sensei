@@ -714,6 +714,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/orgs/{org}/fixes/{fix_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Fix */
+        get: operations["get_fix_api_v1_orgs__org__fixes__fix_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/orgs/{org}/github/installations": {
         parameters: {
             query?: never;
@@ -771,6 +788,28 @@ export interface paths {
         put?: never;
         post?: never;
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/integrations/sentry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Sentry */
+        get: operations["get_sentry_api_v1_orgs__org__integrations_sentry_get"];
+        /**
+         * Put Sentry
+         * @description Connect Sentry (or change the connection). Admins.
+         */
+        put: operations["put_sentry_api_v1_orgs__org__integrations_sentry_put"];
+        post?: never;
+        /** Delete Sentry */
+        delete: operations["delete_sentry_api_v1_orgs__org__integrations_sentry_delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -1312,6 +1351,51 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/orgs/{org}/repos/{repo}/fixes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Fixes
+         * @description The repository's fixes, newest first.
+         */
+        get: operations["list_fixes_api_v1_orgs__org__repos__repo__fixes_get"];
+        put?: never;
+        /**
+         * Create Fix
+         * @description Start a fix from a pasted trace (or a description) or a GitHub issue. An issue already
+         *     being fixed answers 200 with that fix.
+         */
+        post: operations["create_fix_api_v1_orgs__org__repos__repo__fixes_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/repos/{repo}/fixes/parse": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Parse Fix
+         * @description What a paste parses to (the intake page's preview): nothing is saved.
+         */
+        post: operations["parse_fix_api_v1_orgs__org__repos__repo__fixes_parse_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/orgs/{org}/repos/{repo}/galaxy": {
         parameters: {
             query?: never;
@@ -1784,6 +1868,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/webhooks/sentry/{org}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Sentry Webhook */
+        post: operations["sentry_webhook_api_v1_webhooks_sentry__org__post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -1967,7 +2068,7 @@ export interface components {
          * AuditAction
          * @enum {string}
          */
-        AuditAction: "auth.login" | "auth.logout" | "auth.logout_all" | "org.create" | "org.update" | "org.delete" | "invitation.create" | "invitation.revoke" | "invitation.accept" | "member.role_change" | "member.remove" | "member.leave" | "github.install.linked" | "github.install.deleted" | "github.install.suspended" | "github.install.unsuspended" | "github.install.permissions_accepted" | "repo.connected" | "repo.settings_update" | "repo.disconnected" | "repo.index_started" | "repo.index_cancelled" | "agent.cost_cap_warning" | "conversation.shared" | "conversation.unshared" | "diagram.shared" | "diagram.unshared" | "api_key.create" | "api_key.revoke" | "oauth.authorize" | "oauth.refresh_reused";
+        AuditAction: "auth.login" | "auth.logout" | "auth.logout_all" | "org.create" | "org.update" | "org.delete" | "invitation.create" | "invitation.revoke" | "invitation.accept" | "member.role_change" | "member.remove" | "member.leave" | "github.install.linked" | "github.install.deleted" | "github.install.suspended" | "github.install.unsuspended" | "github.install.permissions_accepted" | "repo.connected" | "repo.settings_update" | "repo.disconnected" | "repo.index_started" | "repo.index_cancelled" | "agent.cost_cap_warning" | "conversation.shared" | "conversation.unshared" | "diagram.shared" | "diagram.unshared" | "api_key.create" | "api_key.revoke" | "oauth.authorize" | "oauth.refresh_reused" | "fix.create" | "sentry.connect" | "sentry.disconnect";
         /** AuditEventOut */
         AuditEventOut: {
             /** Action */
@@ -2909,6 +3010,130 @@ export interface components {
             /** Size */
             size: number;
         };
+        /** FixIn */
+        FixIn: {
+            /** Issue */
+            issue?: string | null;
+            /**
+             * Source
+             * @enum {string}
+             */
+            source: "paste" | "github_issue";
+            /** Text */
+            text?: string | null;
+            /** Title */
+            title?: string | null;
+        };
+        /** FixOut */
+        FixOut: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Created By */
+            created_by: string | null;
+            /** Finished At */
+            finished_at: string | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Merge Readiness */
+            merge_readiness: number | null;
+            /** Plan */
+            plan: {
+                [key: string]: unknown;
+            } | null;
+            /** Pr Url */
+            pr_url: string | null;
+            /** Repo */
+            repo: string;
+            repro_result: components["schemas"]["ReproResult"] | null;
+            risk: components["schemas"]["FixRisk"] | null;
+            /** Root Cause */
+            root_cause: {
+                [key: string]: unknown;
+            } | null;
+            source: components["schemas"]["FixSource"];
+            /** Source Ref */
+            source_ref: string | null;
+            stage: components["schemas"]["FixStage"];
+            status: components["schemas"]["FixStatus"];
+            ticket: components["schemas"]["TicketOut"];
+            /** Title */
+            title: string;
+        };
+        /**
+         * FixRisk
+         * @enum {string}
+         */
+        FixRisk: "low" | "medium" | "high";
+        /**
+         * FixSource
+         * @enum {string}
+         */
+        FixSource: "paste" | "github_issue" | "sentry";
+        /**
+         * FixStage
+         * @enum {string}
+         */
+        FixStage: "intake" | "investigate" | "reproduce" | "root_cause" | "plan" | "awaiting_approval" | "patch" | "verify" | "pr" | "done";
+        /**
+         * FixStatus
+         * @enum {string}
+         */
+        FixStatus: "needs_triage" | "queued" | "running" | "awaiting_approval" | "succeeded" | "not_reproduced" | "blocked" | "failed" | "rejected" | "cancelled";
+        /** FixSummaryOut */
+        FixSummaryOut: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Created By */
+            created_by: string | null;
+            /** Finished At */
+            finished_at: string | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Merge Readiness */
+            merge_readiness: number | null;
+            /** Pr Url */
+            pr_url: string | null;
+            /** Repo */
+            repo: string;
+            risk: components["schemas"]["FixRisk"] | null;
+            source: components["schemas"]["FixSource"];
+            /** Source Ref */
+            source_ref: string | null;
+            stage: components["schemas"]["FixStage"];
+            status: components["schemas"]["FixStatus"];
+            /** Title */
+            title: string;
+        };
+        /** FrameOut */
+        FrameOut: {
+            /** File */
+            file: string;
+            /** Function */
+            function: string | null;
+            /** In Repo */
+            in_repo: boolean;
+            /** Library */
+            library: boolean;
+            /** Line */
+            line: number;
+            /**
+             * Path
+             * @description The repository's file the frame is in, if it is one.
+             */
+            path: string | null;
+        };
         /** FreshnessOut */
         FreshnessOut: {
             /** Behind */
@@ -3671,6 +3896,11 @@ export interface components {
             /** Undeclared */
             undeclared: components["schemas"]["PackageOut"][];
         };
+        /** ParseIn */
+        ParseIn: {
+            /** Text */
+            text: string;
+        };
         /**
          * PartialOut
          * @description What a stage done with work left for the next index cut short.
@@ -3839,6 +4069,11 @@ export interface components {
             /** Tracked Branches */
             tracked_branches?: string[] | null;
         };
+        /**
+         * ReproResult
+         * @enum {string}
+         */
+        ReproResult: "reproduced" | "not_reproduced" | "flaky";
         /**
          * Role
          * @description Ordered from least to most privileged.
@@ -4149,6 +4384,51 @@ export interface components {
             /** Start Line */
             start_line: number;
         };
+        /** SentryIn */
+        SentryIn: {
+            /**
+             * Api Url
+             * @default https://sentry.io
+             */
+            api_url: string;
+            /**
+             * Auto Run
+             * @default false
+             */
+            auto_run: boolean;
+            /** Client Secret */
+            client_secret: string;
+            /**
+             * Min Events
+             * @default 10
+             */
+            min_events: number;
+            /** Projects */
+            projects?: {
+                [key: string]: string;
+            };
+            /** Sentry Org */
+            sentry_org: string;
+            /** Token */
+            token: string;
+        };
+        /** SentryOut */
+        SentryOut: {
+            /** Api Url */
+            api_url: string;
+            /** Auto Run */
+            auto_run: boolean;
+            /** Min Events */
+            min_events: number;
+            /** Projects */
+            projects: {
+                [key: string]: string;
+            };
+            /** Sentry Org */
+            sentry_org: string;
+            /** Webhook Url */
+            webhook_url: string;
+        };
         /** SessionInfo */
         SessionInfo: {
             /**
@@ -4359,6 +4639,25 @@ export interface components {
             query: string;
             /** Results */
             results: components["schemas"]["SymbolOut"][];
+        };
+        /** TicketOut */
+        TicketOut: {
+            /** @description The innermost frame in the repository. */
+            culprit: components["schemas"]["FrameOut"] | null;
+            /** Error Type */
+            error_type: string | null;
+            /** Frames */
+            frames: components["schemas"]["FrameOut"][];
+            /** Language */
+            language: ("python" | "javascript") | null;
+            /** Message */
+            message: string | null;
+            /** Title */
+            title: string;
+            /** Versions */
+            versions: {
+                [key: string]: string;
+            };
         };
         /** TraceBreakOut */
         TraceBreakOut: {
@@ -5892,6 +6191,39 @@ export interface operations {
             };
         };
     };
+    get_fix_api_v1_orgs__org__fixes__fix_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                fix_id: string;
+                /** @description Organization slug */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FixOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_installations_api_v1_orgs__org__github_installations_get: {
         parameters: {
             query?: never;
@@ -5980,6 +6312,104 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["HomeOut"];
                 };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_sentry_api_v1_orgs__org__integrations_sentry_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization slug */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SentryOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    put_sentry_api_v1_orgs__org__integrations_sentry_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization slug */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SentryIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SentryOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_sentry_api_v1_orgs__org__integrations_sentry_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization slug */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Validation Error */
             422: {
@@ -7309,6 +7739,118 @@ export interface operations {
             };
         };
     };
+    list_fixes_api_v1_orgs__org__repos__repo__fixes_get: {
+        parameters: {
+            query?: {
+                status?: components["schemas"]["FixStatus"] | null;
+            };
+            header?: never;
+            path: {
+                /** @description Repository slug */
+                repo: string;
+                /** @description Organization slug */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FixSummaryOut"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_fix_api_v1_orgs__org__repos__repo__fixes_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization slug */
+                org: string;
+                /** @description Repository slug */
+                repo: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FixIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FixOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    parse_fix_api_v1_orgs__org__repos__repo__fixes_parse_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Repository slug */
+                repo: string;
+                /** @description Organization slug */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ParseIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TicketOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     galaxy_api_v1_orgs__org__repos__repo__galaxy_get: {
         parameters: {
             query?: {
@@ -8323,6 +8865,40 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["WebhookAccepted"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    sentry_webhook_api_v1_webhooks_sentry__org__post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "sentry-hook-resource"?: string | null;
+                "sentry-hook-signature"?: string | null;
+            };
+            path: {
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */
