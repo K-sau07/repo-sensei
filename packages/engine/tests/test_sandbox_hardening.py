@@ -126,7 +126,9 @@ def test_a_fixs_runs_get_the_fix_limits(tmp_path: Path) -> None:
     for flag in ("--cpus=2", "--memory=4096m", "--memory-swap=4096m", "--pids-limit=512",
                  "--network=sensei-run-abc", "--read-only", "--cap-drop=ALL"):  # fmt: skip
         assert flag in argv
-    assert any(a.startswith("--tmpfs=/work:") and "size=2048m" in a for a in argv)
+    work = next(a for a in argv if a.startswith("--tmpfs=/work:"))
+    assert "size=2048m" in work
+    assert ",noexec," in work  # nothing written there runs, unless a run allows it
     assert limits.max_output_bytes == 5 * 1024 * 1024
     assert limits.timeout_seconds == 600
     assert not any("docker.sock" in a for a in argv)

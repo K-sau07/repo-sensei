@@ -107,6 +107,9 @@ class Limits:
     # The only writable places (the image is read-only): their sizes are the run's disk quota.
     work_mb: int = 256  # /work
     tmp_mb: int = 64  # /tmp
+    # /work allows running files written there: a JavaScript run executes its tools' scripts
+    # from the copy it makes (no protection is lost: that code can already do what node can).
+    work_exec: bool = False
 
     @classmethod
     def for_fixes(cls) -> Limits:
@@ -206,7 +209,8 @@ def run_argv(
         f"--network={network}",
         "--read-only",
         f"--mount=type=bind,source={source},target=/src,readonly",
-        f"--tmpfs=/work:rw,nosuid,nodev,size={limits.work_mb}m,uid={SANDBOX_UID},gid={SANDBOX_UID}",
+        f"--tmpfs=/work:rw,nosuid,nodev,{'exec' if limits.work_exec else 'noexec'},"
+        f"size={limits.work_mb}m,uid={SANDBOX_UID},gid={SANDBOX_UID}",
         f"--tmpfs=/tmp:rw,nosuid,nodev,size={limits.tmp_mb}m",
         f"--user={SANDBOX_UID}:{SANDBOX_UID}",
         "--cap-drop=ALL",

@@ -12,7 +12,7 @@ import asyncio
 import os
 import time
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Protocol
 
@@ -108,7 +108,7 @@ class SandboxRunner:
                 time_limit=command.timeout_seconds,
                 workdir="" if is_node else command.workdir,
                 env={"PYTHONDONTWRITEBYTECODE": "1", "CI": "1", "NO_COLOR": "1"},
-                limits=Limits.for_fixes(),
+                limits=replace(Limits.for_fixes(), work_exec=is_node),
             )
         except SandboxError as error:
             return TestResult(False, None, f"the sandbox failed: {error}", 0.0)

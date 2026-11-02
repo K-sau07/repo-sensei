@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import subprocess
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -362,3 +363,10 @@ async def test_node_dependencies_install_behind_the_proxy_and_runs_use_them(
     assert result.ok, result.stderr
     assert result.stdout == "true /work/src/web\n"
     assert not (web / "written.txt").exists()  # the snapshot itself is untouched
+    # Tools run as scripts from the copy (npx vitest): /work must allow it for these runs.
+    run_script = "printf '#!/bin/sh\\necho ran\\n' > t.sh && chmod +x t.sh && ./t.sh"
+    ran = await sandbox.run(
+        snapshot, node_command("web", ["sh", "-c", run_script]), image=prepared.image,
+        limits=replace(Limits.for_fixes(), work_exec=True),
+    )  # fmt: skip
+    assert (ran.ok, ran.stdout) == (True, "ran\n"), ran.stderr
