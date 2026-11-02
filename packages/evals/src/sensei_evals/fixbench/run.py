@@ -115,10 +115,14 @@ async def judge(bench: Bench, bug: Bug, attempt: FixAttempt, runner: TestRunner)
         except PatchError as error:
             reason = f"the proposed diff doesn't apply: {error}"
             return base.model_copy(update={"verdict": "unsafe", "reason": reason})
-        fresh.write(bug.spec.hidden_test.path, bug.hidden_source)
+        try:
+            fresh.write(bug.spec.hidden_test.path, bug.hidden_source)
+        except PatchError as error:
+            reason = f"the proposed diff moves the hidden test's place: {error}"
+            return base.model_copy(update={"verdict": "unsafe", "reason": reason})
         hidden = Check.of(await runner.run(fresh.path, bug.spec.hidden_test))
         # The app's own suite, without the hidden test (which may sit among its tests).
-        (fresh.path / bug.spec.hidden_test.path).unlink()
+        fresh.remove(bug.spec.hidden_test.path)
         suite = Check.of(await runner.run(fresh.path, bench.spec.suites[bug.spec.layer]))
     problems = [
         *([] if hidden.passed else ["the hidden test fails"]),

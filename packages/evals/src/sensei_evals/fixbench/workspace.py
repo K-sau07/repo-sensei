@@ -70,10 +70,25 @@ class Workspace:
         self.git("add", "-A")
         return self.git("diff", "--cached", "--binary", since)
 
+    def inside(self, relative: str) -> Path:
+        """``relative`` in the workspace, refusing a path that leads out of it (a symbolic
+        link a diff made): the judge writes and deletes on this machine."""
+        root = self.path.resolve()
+        target = (self.path / relative).resolve()
+        if not target.is_relative_to(root):
+            raise PatchError(f"{relative} leads outside the workspace")
+        return target
+
     def write(self, relative: str, content: str) -> None:
-        target = self.path / relative
+        target = self.inside(relative)
         target.parent.mkdir(parents=True, exist_ok=True)
+        if target.is_symlink():
+            raise PatchError(f"{relative} is a symbolic link")
         target.write_text(content, encoding="utf-8")
+
+    def remove(self, relative: str) -> None:
+        target = self.inside(relative)
+        target.unlink(missing_ok=True)
 
 
 def _ignore(_directory: str, names: list[str]) -> set[str]:

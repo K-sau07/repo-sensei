@@ -76,7 +76,7 @@ async def check_bug(
             check.problems.append("the hidden test passes with the bug in")
         elif _BROKEN.search(planted.output):
             check.problems.append(f"the hidden test breaks rather than fails:\n{planted.output}")
-        (ws.path / hidden.path).unlink()
+        ws.remove(hidden.path)
         suite = await runner.run(ws.path, bench.spec.suites[bug.spec.layer])
         if not suite.passed and suite_passes:  # (if it fails on the clean app, that's said)
             check.warnings.append("the app's own tests already catch it")
