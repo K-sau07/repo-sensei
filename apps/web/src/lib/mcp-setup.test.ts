@@ -7,7 +7,7 @@ import { MCP_CLIENTS, mcpSetup, shellQuote } from "./mcp-setup";
 
 // The CLI's `sensei mcp config` output (its snapshots): the page shows the same setups.
 const SNAPSHOTS = join(import.meta.dirname, "../../../../packages/cli/tests/snapshots");
-const SERVER = "http://sensei.test";
+const SERVER = "https://sensei.test";
 
 /** The command after "Run:", and the JSON block, from a CLI snapshot. */
 function fromCli(client: string, mode: string): { command: string | null; json: unknown } {

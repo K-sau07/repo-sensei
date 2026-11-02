@@ -1,4 +1,4 @@
-To sign in, open http://sensei.test/device and enter the code:
+To sign in, open https://sensei.test/device and enter the code:
 
     BCDF-GHJK
 

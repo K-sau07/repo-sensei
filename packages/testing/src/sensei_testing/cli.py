@@ -16,7 +16,7 @@ from typer.testing import CliRunner, Result
 
 from sensei_cli import main
 
-SERVER = "http://sensei.test"
+SERVER = "https://sensei.test"
 Json = dict[str, Any]
 Handler = Callable[[httpx.Request], httpx.Response | None]
 

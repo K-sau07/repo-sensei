@@ -1,3 +1,3 @@
-Signed in to http://sensei.test as ada (Ada L.)
+Signed in to https://sensei.test as ada (Ada L.)
 Organization: acme (admin)
 Scopes: read:repo, ask (the sign-in renews itself).

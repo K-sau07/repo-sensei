@@ -12,6 +12,7 @@ import os
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urlsplit
 
 DEFAULT_SERVER = "http://localhost:3000"
 FILE = "config.toml"
@@ -33,6 +34,21 @@ def config_dir() -> Path:
 def normal_server(url: str) -> str:
     """A server's origin as kept (no trailing slash): what tokens are filed under."""
     return url.strip().rstrip("/")
+
+
+LOOPBACK = frozenset({"localhost", "127.0.0.1", "::1"})
+
+
+def check_server(url: str) -> str:
+    """``url`` as a server address, if it's one to send tokens to: HTTPS, or HTTP on this
+    computer only (anything else would carry them in the clear). ValueError otherwise."""
+    parts = urlsplit(normal_server(url))
+    host = (parts.hostname or "").lower()
+    if parts.scheme == "https" and host:
+        return normal_server(url)
+    if parts.scheme == "http" and host in LOOPBACK:
+        return normal_server(url)
+    raise ValueError(f"{url} isn't an https:// address (http:// is only for this computer)")
 
 
 def load() -> Config:

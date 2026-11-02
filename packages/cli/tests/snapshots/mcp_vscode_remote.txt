@@ -1,12 +1,12 @@
 Run:
-  code --add-mcp '{"name":"repo-sensei","type":"http","url":"http://sensei.test/mcp"}'
+  code --add-mcp '{"name":"repo-sensei","type":"http","url":"https://sensei.test/mcp"}'
 
 or put this in .vscode/mcp.json:
 {
   "servers": {
     "repo-sensei": {
       "type": "http",
-      "url": "http://sensei.test/mcp"
+      "url": "https://sensei.test/mcp"
     }
   }
 }

@@ -479,3 +479,19 @@ def test_the_live_view_shows_what_is_being_done_then_the_text() -> None:
     answer.take({"type": "text-delta", "id": "text-1", "delta": "It **hashes**."})
     console.print(main.live_view(answer))
     assert "It hashes." in shown.getvalue()
+
+
+def test_tokens_go_only_to_https_servers_or_this_computer(
+    cli: Cli, server: FakeServer, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    refused = cli.run("login", "--server", "http://sensei.example.com")
+    assert refused.exit_code == 1
+    assert "isn't an https:// address" in refused.output
+    assert server.seen == []  # nothing was sent
+    monkeypatch.setenv("SENSEI_URL", "http://10.0.0.5:3000")
+    assert cli.run("whoami").exit_code == 1
+    from sensei_cli.config import check_server  # noqa: PLC0415
+
+    assert check_server("http://localhost:3000/") == "http://localhost:3000"
+    assert check_server("http://127.0.0.1:3000") == "http://127.0.0.1:3000"
+    assert check_server("https://app.example.com") == "https://app.example.com"

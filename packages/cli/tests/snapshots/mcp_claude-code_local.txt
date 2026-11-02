@@ -1,5 +1,5 @@
 Run:
-  claude mcp add --env SENSEI_URL=http://sensei.test --env SENSEI_API_KEY="$SENSEI_API_KEY" --transport stdio repo-sensei -- sensei-mcp
+  claude mcp add --env SENSEI_URL=https://sensei.test --env SENSEI_API_KEY="$SENSEI_API_KEY" --transport stdio repo-sensei -- sensei-mcp
 
 or put this in .mcp.json:
 {
@@ -8,7 +8,7 @@ or put this in .mcp.json:
       "type": "stdio",
       "command": "sensei-mcp",
       "env": {
-        "SENSEI_URL": "http://sensei.test",
+        "SENSEI_URL": "https://sensei.test",
         "SENSEI_API_KEY": "${SENSEI_API_KEY}"
       }
     }
@@ -16,4 +16,4 @@ or put this in .mcp.json:
 }
 
 Set SENSEI_API_KEY in the environment Claude Code starts from.
-Create an API key at http://sensei.test/<org>/settings/api-keys.
+Create an API key at https://sensei.test/<org>/settings/api-keys.

@@ -1,12 +1,12 @@
 Run:
-  claude mcp add --transport http repo-sensei http://sensei.test/mcp
+  claude mcp add --transport http repo-sensei https://sensei.test/mcp
 
 or put this in .mcp.json:
 {
   "mcpServers": {
     "repo-sensei": {
       "type": "http",
-      "url": "http://sensei.test/mcp"
+      "url": "https://sensei.test/mcp"
     }
   }
 }

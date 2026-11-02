@@ -118,10 +118,18 @@ def handled[**P](command: Callable[P, None]) -> Callable[P, None]:
 # ---------------------------------------------------------------- signing in
 
 
+def _server(url: str) -> str:
+    try:
+        return config_module.check_server(url)
+    except ValueError as error:
+        raise CliError(str(error), hint="Tokens are only sent over HTTPS.") from None
+
+
 def _config() -> config_module.Config:
     found = config_module.load()
     if server := os.environ.get("SENSEI_URL"):
-        found.server = config_module.normal_server(server)
+        found.server = server
+    found.server = _server(found.server)
     return found
 
 
@@ -166,18 +174,20 @@ def login(
 ) -> None:
     """Sign in: approve a code on the web and choose the organization."""
     found = _config()
-    target = config_module.normal_server(server) if server else found.server
+    target = _server(server) if server else found.server
     out = _out()
     scopes = [*login_module.SCOPES, *([login_module.CONNECT] if connect else [])]
     with httpx.Client(transport=RUNTIME.transport, timeout=30.0) as http:
         where = login_module.discover(http, target)
         code = login_module.start(http, where, scopes)
-        out.print(Text(f"To sign in, open {code.verification_uri} and enter the code:"))
+        page = render.clean(code.verification_uri)
+        out.print(Text(f"To sign in, open {page} and enter the code:"))
         out.print()
         out.print(Text(f"    {code.user_code}", "bold"))
         out.print()
-        if browser and out.is_terminal and code.verification_uri_complete:
-            RUNTIME.open_browser(code.verification_uri_complete)
+        link = code.verification_uri_complete
+        if browser and out.is_terminal and link and link.startswith(("https://", "http://")):
+            RUNTIME.open_browser(link)
         out.print("Waiting for approval…")
         tokens = login_module.wait(http, where, code, sleep=RUNTIME.sleep, clock=RUNTIME.clock)
     keep = _credentials(target)
@@ -392,7 +402,8 @@ def ask(
         render.abstained(out, answer.abstained)
     if answer.text:
         text = render.clean(answer.text)
-        out.print(Markdown(text) if out.is_terminal else Text(text))
+        # No terminal hyperlinks: a link in an answer is shown, never made clickable.
+        out.print(Markdown(text, hyperlinks=False) if out.is_terminal else Text(text))
     render.citations(out, answer.cited)
     if answer.confidence:
         out.print(Text(f"Confidence: {render.clean(answer.confidence)}", "dim"))
@@ -403,7 +414,7 @@ def live_view(answer: Answer) -> Group:
     spinner = Spinner("dots", Text(answer.doing, "dim"))
     if not answer.text:
         return Group(spinner)
-    return Group(Markdown(render.clean(answer.text)), Text(), spinner)
+    return Group(Markdown(render.clean(answer.text), hyperlinks=False), Text(), spinner)
 
 
 @app.command()

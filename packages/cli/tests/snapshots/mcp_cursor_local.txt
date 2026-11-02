@@ -5,7 +5,7 @@ Put this in .cursor/mcp.json:
       "type": "stdio",
       "command": "sensei-mcp",
       "env": {
-        "SENSEI_URL": "http://sensei.test",
+        "SENSEI_URL": "https://sensei.test",
         "SENSEI_API_KEY": "${env:SENSEI_API_KEY}"
       }
     }
@@ -13,4 +13,4 @@ Put this in .cursor/mcp.json:
 }
 
 Set SENSEI_API_KEY in the environment Cursor starts from.
-Create an API key at http://sensei.test/<org>/settings/api-keys.
+Create an API key at https://sensei.test/<org>/settings/api-keys.
