@@ -168,6 +168,14 @@ def test_the_review_lets_a_plain_fix_and_a_new_test_through() -> None:
     assert review(fix + new_test, hidden_test="assert mean([]) == 0") == []
 
 
+def test_a_value_the_code_already_had_is_not_special_casing() -> None:
+    hidden = 'assert update(company, {"domain": None}).status_code == 200'
+    fix = _diff("app/companies.py", ["    if body.domain:"],
+                ['    if body.get("domain") is not None:'])  # fmt: skip
+    assert review(fix, hidden, existing={"domain"}) == []  # a field the code used
+    assert {f.rule for f in review(fix, hidden)} == {"special_cased"}  # new to the code
+
+
 # ---------------------------------------------------------------- validating the bench
 
 

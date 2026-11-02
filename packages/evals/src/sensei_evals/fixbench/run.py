@@ -12,13 +12,14 @@ from __future__ import annotations
 import time
 from datetime import UTC, datetime
 from decimal import Decimal
+from pathlib import Path
 from typing import Literal
 
 from pydantic import BaseModel
 
 from sensei_evals.fixbench.bench import Bench, BenchError, Bug
 from sensei_evals.fixbench.pipelines import FixAttempt, FixPipeline, FixTask
-from sensei_evals.fixbench.review import parse_diff, review
+from sensei_evals.fixbench.review import FileChange, literals, parse_diff, review
 from sensei_evals.fixbench.runners import TestResult, TestRunner
 from sensei_evals.fixbench.workspace import PatchError, workspace
 
@@ -74,6 +75,20 @@ class BenchRun(BaseModel):
         return sum((r.cost_usd for r in self.results), Decimal(0))
 
 
+def existing_literals(root: Path, changes: list[FileChange]) -> set[str]:
+    """The literals the files a diff changes have before it (read from ``root``)."""
+    found: set[str] = set()
+    for change in changes:
+        if change.old_path is None:
+            continue
+        path = root / change.old_path
+        try:
+            found |= literals(path.read_text(encoding="utf-8", errors="replace"))
+        except OSError:
+            continue
+    return found
+
+
 async def judge(bench: Bench, bug: Bug, attempt: FixAttempt, runner: TestRunner) -> BugResult:
     """The verdict on what a pipeline returned for ``bug``."""
     base = BugResult(
@@ -83,17 +98,18 @@ async def judge(bench: Bench, bug: Bug, attempt: FixAttempt, runner: TestRunner)
     if attempt.outcome != "proposed":
         return base.model_copy(update={"verdict": attempt.outcome})
     changes = parse_diff(attempt.diff)
-    findings = [f"{f.rule}: {f.file}: {f.detail}" for f in review(attempt.diff, bug.hidden_source)]
     base = base.model_copy(
         update={
             "files_changed": len(changes),
             "lines_changed": sum(len(c.added) + len(c.removed) for c in changes),
-            "findings": findings,
         }
     )
     with workspace(bench.app_dir) as fresh:
         fresh.apply(bug.patch)
         fresh.commit("bug")
+        found = review(attempt.diff, bug.hidden_source, existing_literals(fresh.path, changes))
+        findings = [f"{f.rule}: {f.file}: {f.detail}" for f in found]
+        base = base.model_copy(update={"findings": findings})
         try:
             fresh.apply(attempt.diff)
         except PatchError as error:

@@ -16,7 +16,8 @@ import re
 from pydantic import BaseModel
 
 from sensei_evals.fixbench.bench import Bench, Bug
-from sensei_evals.fixbench.review import review
+from sensei_evals.fixbench.review import parse_diff, review
+from sensei_evals.fixbench.run import existing_literals
 from sensei_evals.fixbench.runners import TestRunner
 from sensei_evals.fixbench.workspace import PatchError, Workspace, workspace
 
@@ -80,7 +81,8 @@ async def check_bug(
         if not suite.passed and suite_passes:  # (if it fails on the clean app, that's said)
             check.warnings.append("the app's own tests already catch it")
         ws.commit("bug")
-        found = review(_gold_diff(bug, ws), bug.hidden_source)
+        gold = _gold_diff(bug, ws)
+        found = review(gold, bug.hidden_source, existing_literals(ws.path, parse_diff(gold)))
         check.problems.extend(f"the judge flags the gold fix: {f.rule}: {f.detail}" for f in found)
     return check
 
