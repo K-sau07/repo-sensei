@@ -34,6 +34,11 @@ def repos_file(root: Path) -> Path:
     return private_dir(root) / "repos.yaml"
 
 
+def fixbench_dir(root: Path) -> Path:
+    """The FixBench (8.1): its app, planted bugs and hidden tests (private)."""
+    return private_dir(root) / "fixbench"
+
+
 def checkouts_dir(root: Path) -> Path:
     """Checkouts of the pinned benchmark repositories (``.cache/`` is ignored by git)."""
     return root / ".cache" / "eval-repos"

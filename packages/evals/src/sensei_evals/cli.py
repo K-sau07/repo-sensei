@@ -11,6 +11,7 @@
         --extra evals/private/router/queries.yaml
     sensei-eval run --suite crosslayerbench-v0 --repo fastapi-template --retriever gold
     sensei-eval answers --suite fastapi-template --budget 5 --opt reuse=1 --opt graph=1
+    sensei-eval fixbench-validate && sensei-eval run --suite fixbench --retriever gold
 
 Runs are written to ``evals/private/reports/<id>.json`` and ``.md`` (private) and stored in
 ``eval_runs`` unless ``--no-store``. A run is named by its id (looked up in the reports folder,
@@ -36,6 +37,13 @@ from sensei_engine.llm.anthropic_client import AnthropicClient
 from sensei_engine.search.route import QueryRouter
 from sensei_evals import crosslayer, paths, routing
 from sensei_evals import rename as rename_mod
+from sensei_evals.fixbench import bench as fixbench_bench
+from sensei_evals.fixbench import build as fixbench_build
+from sensei_evals.fixbench import pipelines as fixbench_pipelines
+from sensei_evals.fixbench import report as fixbench_report
+from sensei_evals.fixbench import run as fixbench_run
+from sensei_evals.fixbench import runners as fixbench_runners
+from sensei_evals.fixbench import validate as fixbench_validate_mod
 from sensei_evals.reports import compare, read_run, render_comparison, render_run, write_run
 from sensei_evals.repos import mapping_path, read_mapping, valid_repo_id
 from sensei_evals.retrieval import RETRIEVERS, RepoRef, RetrieverContext
@@ -189,8 +197,20 @@ def run(
 ) -> None:
     """Run a suite against a retriever, write the reports and store the run. A CrossLayerBench
     (``--suite crosslayerbench-v0``) runs its flows for one repository (or a renamed copy of
-    one) against a tracer instead (``--retriever gold``, ``answers``, ...)."""
+    one) against a tracer instead (``--retriever gold``, ``answers``, ...). FixBench
+    (``--suite fixbench``) runs a fix pipeline on its planted bugs (``--retriever gold``,
+    ``noop``; ``--opt bugs=01-x,02-y``, ``--opt runner=local|sandbox``)."""
     root = paths.repo_root()
+    fixbench_root = fixbench_build.bench_root(root, suite)
+    if fixbench_root is not None:
+        _run_fixbench(
+            root,
+            fixbench_root,
+            pipeline=retriever,
+            options=_options(opt or []),
+            reports=reports_dir or paths.reports_dir(root),
+        )
+        return
     bench_file = crosslayer.bench_path(root, suite)
     if bench_file is not None:
         _run_bench(
@@ -301,6 +321,79 @@ def _run_bench(
             ) from None
     typer.echo(render_run(record))
     typer.echo(f"run {record.id}: {json_path} and {md_path}" + (" (stored)" if store else ""))
+
+
+def _load_fixbench(bench_root: Path) -> fixbench_bench.Bench:
+    try:
+        return fixbench_bench.load_bench(bench_root)
+    except fixbench_bench.BenchError as error:
+        raise _fail(f"invalid FixBench:\n{error}") from None
+
+
+async def _fixbench_runner(bench: fixbench_bench.Bench, kind: str) -> fixbench_runners.TestRunner:
+    if kind == "local":
+        return fixbench_build.local_runner(bench)
+    if kind == "sandbox":
+        return await fixbench_build.sandbox_runner(bench, get_settings().sandbox)
+    raise _fail(f"--opt runner is local or sandbox, got {kind!r}")
+
+
+def _run_fixbench(
+    root: Path, bench_root: Path, *, pipeline: str, options: dict[str, str], reports: Path
+) -> None:
+    factory = fixbench_pipelines.PIPELINES.get(pipeline)
+    if factory is None:
+        known = ", ".join(fixbench_pipelines.PIPELINES)
+        raise _fail(f"unknown fix pipeline {pipeline!r}; known: {known}")
+    bench = _load_fixbench(bench_root)
+    built = factory(bench)
+    # A pipeline's own fixes are judged in the sandbox; the bench's (gold) may be judged here.
+    kind = options.get("runner", "local" if built.trusted else "sandbox")
+    wanted = [b for b in options.get("bugs", "").split(",") if b]
+
+    async def go() -> fixbench_run.BenchRun:
+        runner = await _fixbench_runner(bench, kind)
+        return await fixbench_run.run_bench(
+            bench, bench.select(wanted), built, runner, run_id=uuid.uuid4().hex[:12],
+            runner_name=kind, git_sha=paths.head_sha(root),
+            dirty=paths.has_uncommitted_changes(root),
+        )  # fmt: skip
+
+    try:
+        record = asyncio.run(go())
+    except fixbench_bench.BenchError as error:
+        raise _fail(str(error)) from None
+    json_path, md_path = fixbench_report.write_run(record, reports)
+    typer.echo(fixbench_report.render_run(record))
+    typer.echo(f"run {record.id}: {json_path} and {md_path}")
+    if record.unsafe:
+        raise typer.Exit(code=2)  # unsafe fixes: the one number that must be zero
+
+
+@app.command("fixbench-validate")
+def fixbench_validate(
+    *,
+    suite: Annotated[str, typer.Option(help="fixbench, or a bench folder.")] = "fixbench",
+    bug: Annotated[list[str] | None, typer.Option(help="Only these bugs (repeatable).")] = None,
+) -> None:
+    """Check the bench: each hidden test passes on the clean app and fails with its bug, the
+    app's suites pass, and the judge accepts every gold fix. Runs the bench's own code on this
+    machine (its virtualenv in ``.cache/venv``)."""
+    root = paths.repo_root()
+    bench_root = fixbench_build.bench_root(root, suite)
+    if bench_root is None:
+        raise _fail(f"{suite!r} isn't a FixBench")
+    bench = _load_fixbench(bench_root)
+    try:
+        bugs = bench.select(bug or [])
+    except fixbench_bench.BenchError as error:
+        raise _fail(str(error)) from None
+    found = asyncio.run(
+        fixbench_validate_mod.validate_bench(bench, bugs, fixbench_build.local_runner(bench))
+    )
+    typer.echo(fixbench_report.render_validation(found))
+    if not found.ok:
+        raise typer.Exit(code=1)
 
 
 @app.command("sweep")
