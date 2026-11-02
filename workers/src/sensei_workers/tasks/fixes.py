@@ -11,6 +11,8 @@ from sensei_core.models import FixStage
 from sensei_fixer.budget import Budget
 from sensei_fixer.investigate import investigate_stage
 from sensei_fixer.pipeline import FixPipeline
+from sensei_fixer.reproduce import reproduce_stage
+from sensei_fixer.runs import sandbox_runner
 from sensei_fixer.stages import StageHandler, default_handlers
 from sensei_workers.app import celery_app
 from sensei_workers.base import SenseiTask
@@ -26,6 +28,12 @@ def handlers() -> dict[FixStage, StageHandler]:
     found = default_handlers()
     found[FixStage.INVESTIGATE] = investigate_stage(
         fix_workspace, lambda: runtime.anthropic, runtime.costs
+    )
+    found[FixStage.REPRODUCE] = reproduce_stage(
+        fix_workspace,
+        lambda root, setup: sandbox_runner(runtime.settings.sandbox, root, setup),
+        lambda: runtime.anthropic,
+        runtime.costs,
     )
     return found
 

@@ -21,6 +21,7 @@ from pydantic import BaseModel, Field
 
 Language = Literal["python", "javascript"]
 MAX_TEXT = 200_000  # characters of a paste looked at
+MAX_CONTEXTS = 3  # retries' added context kept, the latest
 MAX_FRAMES = 200
 MAX_LINE = 2_000  # characters: a longer line isn't a frame (and isn't matched)
 
@@ -68,6 +69,8 @@ class Ticket(BaseModel):
     frames: list[Frame] = Field(default_factory=list[Frame])
     versions: dict[str, str] = Field(default_factory=dict[str, str])
     text: str = ""  # what was given, trimmed
+    # What people added when trying it again (8.6), oldest first: "how to trigger it".
+    context: list[str] = Field(default_factory=list[str])
 
     @property
     def culprit(self) -> Frame | None:

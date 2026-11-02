@@ -151,6 +151,8 @@ class FixRun(IdMixin, OrgScopedMixin, TimestampMixin, Base):
     stage: Mapped[FixStage] = mapped_column(_enum(FixStage, "fix_stage"))
     repro_result: Mapped[ReproResult | None] = mapped_column(_enum(ReproResult, "repro_result"))
     root_cause: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    # The reproducing test and its runs (8.6): the patch stage writes it again, verify runs it.
+    repro: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
     plan: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
     diff_ref: Mapped[str | None] = mapped_column(Text)  # where the patch is stored
     risk: Mapped[FixRisk | None] = mapped_column(_enum(FixRisk, "fix_risk"))

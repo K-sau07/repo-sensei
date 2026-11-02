@@ -393,3 +393,39 @@ async def test_two_runs_from_one_issue_at_once_make_one(
     again, made = await racing.create(db_session, repo, parse_ticket(TRACE),
                                       source=FixSource.SENTRY, source_ref="88")  # fmt: skip
     assert (again.id, made, len(calls)) == (first.id, False, 2)  # the index refused a second
+
+
+async def test_a_fix_that_wasnt_reproduced_is_retried_with_more_context(
+    app: FastAPI, client: httpx.AsyncClient, db_session: AsyncSession
+) -> None:
+    owner, repo = await _org(app, db_session)
+    run = FixRun(
+        org_id=repo.org_id, repo_id=repo.id, source=FixSource.PASTE, title="KeyError",
+        ticket={"title": "KeyError", "text": TRACE}, status=FixStatus.NOT_REPRODUCED,
+        stage=FixStage.REPRODUCE, stop_reason="The test didn't fail for the reported reason.",
+        root_cause={"claim": "c"}, repro={"test": "t"},
+    )  # fmt: skip
+    db_session.add(run)
+    await db_session.flush()
+    url = f"{API}/orgs/acme/fixes/{run.id}/retry"
+    viewer = await _member(db_session, repo, Role.VIEWER)
+    _, theirs = await sign_in(app, client, db_session, viewer)
+    refused = await client.post(url, json={"context": "x"}, headers=theirs)
+    assert refused.status_code == 403
+    _, headers = await sign_in(app, client, db_session, owner)
+    empty = await client.post(url, json={"context": ""}, headers=headers)
+    assert empty.status_code == 422
+    retried = await client.post(url, json={"context": "  Only with an empty cart. "},
+                                headers=headers)  # fmt: skip
+    assert retried.status_code == 200, retried.text
+    body = retried.json()
+    assert (body["status"], body["stage"], body["stop_reason"], body["repro"]) == (
+        "queued", "investigate", None, None,
+    )  # fmt: skip
+    assert app.state.fix_jobs.sent == [(str(run.id), "investigate")]
+    await db_session.flush()  # the request's session is this one: what it changed, written
+    await db_session.refresh(run)
+    assert run.ticket["text"] == TRACE  # the report as it was
+    assert run.ticket["context"] == [f"From @{owner.login}: Only with an empty cart."]
+    twice = await client.post(url, json={"context": "again"}, headers=headers)
+    assert (twice.status_code, twice.json()["error"]["code"]) == (409, "fix_not_retryable")

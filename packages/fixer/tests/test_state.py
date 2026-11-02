@@ -76,3 +76,19 @@ def test_triage_waits_for_a_person_to_start_it() -> None:
     assert run.status is FixStatus.QUEUED
     with pytest.raises(FixStateError, match="can't start it"):
         machine.start()
+
+
+def test_a_fix_that_wasnt_reproduced_is_tried_again_from_the_investigation() -> None:
+    run = _run(FixStatus.RUNNING, FixStage.REPRODUCE)
+    run.root_cause = {"claim": "c"}
+    run.repro = {"test": "t"}
+    machine = FixStateMachine(run)
+    with pytest.raises(FixStateError, match="can't retry it"):
+        machine.retry()  # only a fix that stopped as not reproduced
+    machine.stop(FixStatus.NOT_REPRODUCED, "The test passed three times.")
+    machine.retry()
+    assert (run.stage, run.status, run.stop_reason, run.finished_at) == (
+        FixStage.INVESTIGATE, FixStatus.QUEUED, None, None,
+    )  # fmt: skip
+    assert (run.root_cause, run.repro, run.repro_result) == (None, None, None)
+    assert machine.events[-1]["type"] == "retrying"

@@ -238,6 +238,12 @@ def test_the_model_is_chosen_by_what_the_report_points_at() -> None:
     assert "Innermost repository frame: app/stats.py:2" in first_message(
         parse_ticket(TRACE, paths=[STATS])
     )
+    # What a retry added comes apart from the report, so a long trace can't crowd it out.
+    long = parse_ticket(TRACE + "x" * 9_000, paths=[STATS])
+    retried = long.model_copy(update={"context": ["From @ada: only with an empty cart"]})
+    said = first_message(retried)
+    assert "<context>\nFrom @ada: only with an empty cart\n</context>" in said
+    assert said.index("</report>") < said.index("<context>")
 
 
 # ---------------------------------------------------------------- the stage

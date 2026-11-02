@@ -113,6 +113,20 @@ class FixStateMachine:
         self.run.status = FixStatus.QUEUED
         self._event("replanning")
 
+    def retry(self) -> None:
+        """A run that couldn't be reproduced, tried again (with more context in its ticket):
+        from the investigation, its earlier findings and test dropped."""
+        if self.run.status is not FixStatus.NOT_REPRODUCED:
+            raise self._refuse("retry it")
+        self.run.stage = FixStage.INVESTIGATE
+        self.run.status = FixStatus.QUEUED
+        self.run.stop_reason = None
+        self.run.finished_at = None
+        self.run.root_cause = None
+        self.run.repro = None
+        self.run.repro_result = None
+        self._event("retrying")
+
     def stop(self, status: FixStatus, reason: str) -> None:
         """An end short of a pull request (any time before one, except twice)."""
         if status not in STOPS:

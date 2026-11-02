@@ -7,7 +7,7 @@ that was rolled back.
 
 Types: ``queued``, ``stage_started``, ``step`` (``name``, ``summary``), ``log`` (``level``,
 ``message``), ``stage_done`` (``finished``), ``awaiting_approval``, ``approved``,
-``replanning``, ``done`` (``pr_url``), and the stops: ``not_reproduced``, ``blocked``,
+``replanning``, ``retrying``, ``done`` (``pr_url``), and the stops: ``not_reproduced``, ``blocked``,
 ``failed``, ``rejected``, ``cancelled`` (``reason``).
 """
 

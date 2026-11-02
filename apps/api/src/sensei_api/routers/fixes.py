@@ -30,7 +30,7 @@ from sensei_core.db.engine import Database
 from sensei_core.db.tenancy import set_org_context
 from sensei_core.errors import ConflictError, InvalidError, NotFoundError
 from sensei_core.fixes.service import FixService, repo_index
-from sensei_core.fixes.tickets import MAX_TEXT, Frame, Ticket, parse_ticket
+from sensei_core.fixes.tickets import MAX_CONTEXTS, MAX_TEXT, Frame, Ticket, parse_ticket
 from sensei_core.github.client import Credential, GitHubError
 from sensei_core.jobs import FixJobs
 from sensei_core.models import (
@@ -117,14 +117,17 @@ class FixOut(FixSummaryOut):
     ticket: TicketOut
     repro_result: ReproResult | None
     root_cause: dict[str, Any] | None
+    repro: dict[str, Any] | None = Field(description="The reproducing test and its runs.")
     plan: dict[str, Any] | None
+    stop_reason: str | None = Field(description="Why it stopped short, when it did.")
 
     @classmethod
     def full(cls, run: FixRun, repo: Repo) -> FixOut:
         summary = FixSummaryOut.from_run(run, repo)
         return cls(
             **summary.model_dump(), ticket=TicketOut.build(Ticket.model_validate(run.ticket)),
-            repro_result=run.repro_result, root_cause=run.root_cause, plan=run.plan,
+            repro_result=run.repro_result, root_cause=run.root_cause, repro=run.repro,
+            plan=run.plan, stop_reason=run.stop_reason,
         )  # fmt: skip
 
 
@@ -348,6 +351,43 @@ async def cancel_fix(
     outbox = FixOutbox(run.org_id, run.id, run.repo_id)
     outbox.add(events)
     background.add_task(outbox.publish, redis)
+    return FixOut.full(run, repo)
+
+
+class RetryIn(BaseModel):
+    context: str = Field(min_length=1, max_length=4_000)
+
+
+@router.post("/fixes/{fix_id}/retry", response_model=FixOut)
+async def retry_fix(
+    *,
+    request: Request,
+    fix_id: uuid.UUID,
+    body: RetryIn,
+    access: OrgAccessDep,
+    db: DbSession,
+    readers: RepoAccessDep,
+    redis: RedisClient,
+    background: BackgroundTasks,
+) -> FixOut:
+    """Try a fix that couldn't be reproduced again, with more context (how to trigger it, the
+    data involved): from the investigation. Members."""
+    require_role(access, Role.MEMBER)
+    run, repo = await _visible(request, access, db, readers, fix_id)
+    run = await _locked(db, run)
+    machine = FixStateMachine(run)
+    try:
+        machine.retry()
+    except FixStateError as error:
+        raise ConflictError(str(error), code="fix_not_retryable") from None
+    ticket = Ticket.model_validate(run.ticket)
+    added = f"From @{access.user.login}: {body.context.strip()}"
+    run.ticket = ticket.model_copy(update={"context": [*ticket.context, added][-MAX_CONTEXTS:]}
+                                   ).model_dump(mode="json")  # fmt: skip
+    outbox = FixOutbox(run.org_id, run.id, run.repo_id)
+    outbox.add(machine.events)
+    background.add_task(outbox.publish, redis)
+    background.add_task(_jobs(request).run_stage, run.org_id, run.id, run.stage.value)
     return FixOut.full(run, repo)
 
 
