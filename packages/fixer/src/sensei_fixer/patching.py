@@ -59,6 +59,16 @@ async def write_file(root: Path, path: str, content: str) -> None:
     await asyncio.to_thread(_write, safe_path(root, path), content)
 
 
+def remove_file(root: Path, path: str) -> None:
+    """Delete ``path`` (if it is a file there, not reached through a link)."""
+    try:
+        target = safe_path(root, path)
+    except PatchError:
+        return  # never written
+    if target.is_file() and not target.is_symlink():
+        target.unlink()
+
+
 async def read_text(root: Path, path: str) -> str | None:
     """``path``'s text in the checkout (None: there is no such file)."""
     target = safe_path(root, path)

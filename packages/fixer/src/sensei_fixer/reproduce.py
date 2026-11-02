@@ -19,15 +19,14 @@ and verification runs it; the approval card shows its output.
 
 from __future__ import annotations
 
-import asyncio
 import re
 import time
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, field
 from decimal import Decimal
 from importlib import resources
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Protocol, cast
 
 from sensei_core.fixes.tickets import Ticket
@@ -38,7 +37,8 @@ from sensei_engine.agent.tools.base import ToolResult
 from sensei_engine.llm.anthropic_client import AnthropicClient, LLMTurn, Tier
 from sensei_fixer.frameworks import NoFramework, TestSetup, detect
 from sensei_fixer.history import GitHistory
-from sensei_fixer.investigate import READ_TOOLS, Hooks, first_message
+from sensei_fixer.investigate import READ_TOOLS, Hooks, fenced, first_message
+from sensei_fixer.patching import PatchError, remove_file, write_file
 from sensei_fixer.runs import FixRunner, RunResult, SetupFailed
 from sensei_fixer.stages import Advance, Outcome, StageContext, StageHandler, Step, Stop
 from sensei_fixer.tooling import guarded, settle, turn_cost
@@ -55,9 +55,11 @@ BROKEN = re.compile(
     r"no tests ran|No test files found|Cannot find module|Failed to load|"
     r"error: unrecognized arguments|fixture '[^']+' not found|ReferenceError: \w+ is not defined"
 )
+# A wrong result (no error reported): a failed assertion, as pytest, vitest and jest show one.
 FAILED = re.compile(
-    r"\bFAILED\b|AssertionError|\bassert\b|expected|\u2717|\u00d7|\bfailed\b|Error:",
-    re.IGNORECASE,
+    r"AssertionError|^\s*E\s+assert\b|expect\(received\)|\bexpected\b.{0,80}\bto\s+(be|equal|"
+    r"deeply equal|have|contain|match|throw)",
+    re.IGNORECASE | re.MULTILINE,
 )
 TOOLS: tuple[dict[str, Any], ...] = (
     {
@@ -108,20 +110,54 @@ def definitions() -> list[dict[str, Any]]:
 # ---------------------------------------------------------------- judging runs
 
 
-def for_the_reason(result: RunResult, ticket: Ticket) -> bool:
-    """``result`` is a failure because of the reported bug (not a pass, a timeout, or a test
-    that couldn't even run)."""
-    if result.passed or result.timed_out or BROKEN.search(result.output):
+def passes_through(output: str, paths: Collection[str]) -> bool:
+    """``output`` (a failure's) names one of ``paths``: its traceback ran through the file."""
+    for path in paths:
+        name = PurePosixPath(path).name
+        if path in output or f'/{name}"' in output or f"{name}:" in output:
+            return True
+    return False
+
+
+def _raised(output: str, name: str, message: str) -> bool:
+    """An exception line of ``output`` is ``name``'s (``E   ZeroDivisionError: ...``, the
+    traceback's last line, a JavaScript ``TypeError: ...``), or carries ``message`` as one: not
+    merely the word somewhere (the test's own source is in the output too)."""
+    typed = re.compile(rf"^\s*(E\s+)?([\w.]+\.)?{re.escape(name)}\b(:|\s*$)", re.MULTILINE)
+    if typed.search(output):
+        return True
+    if not message:
         return False
-    if ticket.error_type:
-        name = ticket.error_type.rsplit(".", 1)[-1]
-        message = (ticket.message or "").strip()[:60]
-        return name in result.output or bool(message and message in result.output)
-    return bool(FAILED.search(result.output))
+    said = re.compile(rf"^\s*(E\s+|\w*(Error|Exception)\w*:\s).*{re.escape(message)}", re.MULTILINE)
+    return bool(said.search(output))
 
 
-def classify(results: Sequence[RunResult], ticket: Ticket) -> ReproResult:
-    hits = [for_the_reason(r, ticket) for r in results]
+def for_the_reason(result: RunResult, ticket: Ticket, paths: Collection[str] = ()) -> bool:
+    """``result`` is a failure because of the reported bug: not a pass, a timeout, or a test
+    that couldn't even run. A reported error must be raised as an exception (its type, or its
+    message, on an exception line), and when ``paths`` are given (the report's frames in the
+    repository, the root cause's file), its traceback must run through one of them: a test that
+    raises the error itself reproduces nothing. A wrong result (no error reported) is a failed
+    assertion."""
+    output = result.full or result.output
+    if result.passed or result.timed_out:
+        return False
+    name = (ticket.error_type or "").rsplit(".", 1)[-1]
+    broken = BROKEN.search(output)
+    if broken and not (name and name in broken.group(0)):  # an ImportError is reportable too
+        return False
+    if not name:
+        return bool(FAILED.search(output))
+    message = (ticket.message or "").strip()[:60]
+    if not _raised(output, name, message):
+        return False
+    return not paths or passes_through(output, paths)
+
+
+def classify(
+    results: Sequence[RunResult], ticket: Ticket, paths: Collection[str] = ()
+) -> ReproResult:
+    hits = [for_the_reason(r, ticket, paths) for r in results]
     if hits and all(hits):
         return ReproResult.REPRODUCED
     if any(hits):
@@ -129,10 +165,10 @@ def classify(results: Sequence[RunResult], ticket: Ticket) -> ReproResult:
     return ReproResult.NOT_REPRODUCED
 
 
-def _run_json(result: RunResult, ticket: Ticket) -> dict[str, Any]:
+def _run_json(result: RunResult, ticket: Ticket, paths: Collection[str]) -> dict[str, Any]:
     return {
         "passed": result.passed, "exit_code": result.exit_code, "seconds": round(result.seconds, 2),
-        "timed_out": result.timed_out, "for_reason": for_the_reason(result, ticket),
+        "timed_out": result.timed_out, "for_reason": for_the_reason(result, ticket, paths),
         "output": result.output[-SHOWN_OUTPUT:],
     }  # fmt: skip
 
@@ -158,11 +194,12 @@ def _text(text: str, summary: str, *, error: bool = False) -> ToolResult:
 def brief(ticket: Ticket, root_cause: Mapping[str, Any] | None, setup: TestSetup, path: str) -> str:
     lines = [first_message(ticket), ""]
     if root_cause:
-        lines.append(f"The investigation's root cause: {root_cause.get('claim')} "
+        lines.append(f"The investigation's root cause: {fenced(str(root_cause.get('claim')))} "
                      f"({root_cause.get('path')}:{root_cause.get('start_line')}-"
                      f"{root_cause.get('end_line')})")  # fmt: skip
         for hypothesis in cast("list[Mapping[str, Any]]", root_cause.get("hypotheses") or [])[:3]:
-            lines.append(f"- {hypothesis.get('claim')} (likelihood {hypothesis.get('likelihood')})")
+            claim = fenced(str(hypothesis.get("claim")))
+            lines.append(f"- {claim} (likelihood {hypothesis.get('likelihood')})")
     lines += ["", f"Test framework: {setup.framework}, in the project {setup.project or '(root)'}.",
               f"Your test file: {path} (write_test sets its content)."]  # fmt: skip
     return "\n".join(lines)
@@ -178,11 +215,8 @@ class _Writing:
     test_path: str
     ticket: Ticket
     hooks: Hooks
+    paths: frozenset[str] = frozenset()  # the files its failure must run through
     attempt: Attempt = field(default_factory=Attempt)
-
-    @property
-    def target(self) -> Path:
-        return self.ctx.root / self.test_path
 
     async def call(self, name: str, args: Mapping[str, Any]) -> ToolResult:
         if name == "write_test":
@@ -203,7 +237,10 @@ class _Writing:
     async def write_test(self, content: str) -> ToolResult:
         if not content.strip() or len(content.encode()) > MAX_TEST_BYTES:
             return _text(f"A test file of 1 to {MAX_TEST_BYTES} bytes.", "bad test", error=True)
-        await asyncio.to_thread(_write, self.target, content)
+        try:
+            await write_file(self.ctx.root, self.test_path, content)  # never through a link
+        except PatchError as error:
+            return _text(str(error), "can't write the test", error=True)
         self.attempt.content = content
         return _text(f"Written to {self.test_path}.", f"wrote {len(content.splitlines())} lines")
 
@@ -215,8 +252,8 @@ class _Writing:
                          "no more runs", error=True)  # fmt: skip
         ran = await self.runner.run(self.setup.command(self.test_path))
         await self.hooks.spend(0, Decimal(0), ran.seconds)
-        self.attempt.tries.append(_run_json(ran, self.ticket))
-        if for_the_reason(ran, self.ticket):
+        self.attempt.tries.append(_run_json(ran, self.ticket, self.paths))
+        if for_the_reason(ran, self.ticket, self.paths):
             verdict = "It failed for the reported reason."
         elif ran.passed:
             verdict = "It passed: it doesn't reproduce the bug."
@@ -225,11 +262,6 @@ class _Writing:
         timed_out = " (timed out)" if ran.timed_out else ""
         body = f"Exit {ran.exit_code}{timed_out}. {verdict}\n\n{ran.output[-SHOWN_OUTPUT:]}"
         return _text(body, verdict)
-
-
-def _write(target: Path, content: str) -> None:
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(content, encoding="utf-8")
 
 
 @dataclass
@@ -288,6 +320,17 @@ class Runners(Protocol):
     ) -> AbstractAsyncContextManager[FixRunner]: ...
 
 
+def reported_paths(ticket: Ticket, root_cause: Mapping[str, Any] | None) -> frozenset[str]:
+    """The repository's files a reported error's traceback runs through (its frames there),
+    and the root cause's: a reproducing failure runs through one of them."""
+    if not ticket.error_type:
+        return frozenset()
+    found = {f.path for f in ticket.frames if f.in_repo and f.path}
+    if root_cause and root_cause.get("path"):
+        found.add(str(root_cause["path"]))
+    return frozenset(found)
+
+
 def reproduce_stage(
     workspace: Workspace,
     runners: Runners,
@@ -301,6 +344,7 @@ def reproduce_stage(
         root_cause = cast("Mapping[str, Any] | None", ctx.facts.get("root_cause"))
         culprit = (root_cause or {}).get("path") or (ctx.ticket.culprit.path
                                                        if ctx.ticket.culprit else None)  # fmt: skip
+        paths = reported_paths(ctx.ticket, root_cause)
         async with workspace(ctx) as (tools, _history):
             try:
                 setup = detect(tools.root, culprit)
@@ -309,24 +353,24 @@ def reproduce_stage(
             path = setup.test_path(ctx.fix_id.hex[:12])
             try:
                 async with runners(tools.root, setup) as runner:
-                    writing = _Writing(tools, runner, setup, path, ctx.ticket, hooks)
+                    writing = _Writing(tools, runner, setup, path, ctx.ticket, hooks, paths)
                     attempt = await TestWriter(client(), costs).write(writing, root_cause)
                     runs = await _judge(runner, setup, path, attempt, hooks)
             except SetupFailed as error:
                 return _stopped(str(error), None, [], setup)
             finally:
-                (tools.root / path).unlink(missing_ok=True)  # the checkout as it was
-        verdict = classify(runs, ctx.ticket) if runs else ReproResult.NOT_REPRODUCED
+                remove_file(tools.root, path)  # the checkout as it was
+        verdict = classify(runs, ctx.ticket, paths) if runs else ReproResult.NOT_REPRODUCED
         repro = {
             "framework": setup.framework, "project": setup.project, "test_path": path,
             "test": attempt.content, "command": list(setup.command(path)),
             "explanation": attempt.explanation, "tries": attempt.tries,
-            "runs": [_run_json(r, ctx.ticket) for r in runs],
+            "runs": [_run_json(r, ctx.ticket, paths) for r in runs],
         }  # fmt: skip
         updates = {"repro_result": verdict, "repro": repro}
         if verdict is ReproResult.REPRODUCED:
             return Advance(updates)
-        failing = sum(1 for r in runs if for_the_reason(r, ctx.ticket))
+        failing = sum(1 for r in runs if for_the_reason(r, ctx.ticket, paths))
         if verdict is ReproResult.FLAKY:
             reason = f"The test failed for the reported reason in {failing} of {RUNS} runs: flaky."
         elif not attempt.reproducible or attempt.content is None:

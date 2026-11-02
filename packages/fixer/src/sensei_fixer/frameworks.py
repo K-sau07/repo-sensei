@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import json
 import re
+import tomllib
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any, Literal, cast
@@ -67,7 +69,7 @@ class TestSetup:
         """The argv that runs the project's whole suite (8.7), saying which tests failed
         (:mod:`sensei_fixer.suites` reads it)."""
         if self.framework == "pytest":
-            return ("python", "-m", "pytest", "-q", "-p", "no:cacheprovider", "-rfE",
+            return ("python", "-m", "pytest", "-q", "-p", "no:cacheprovider", "-rA",
                     "--tb=short")  # fmt: skip
         if self.framework == "vitest":
             return ("npx", "vitest", "run")
@@ -85,20 +87,29 @@ def _read(root: Path, path: str) -> bytes | None:
         return None
 
 
-def _exists(root: Path, path: str) -> bool:
+def _real(root: Path, path: str) -> Path | None:
+    """``path`` under ``root``, if nothing on the way is a symbolic link (a repository's link
+    could point a test, written there, outside the checkout)."""
     try:
         target = root / check_path(path)
     except UnsafePathError:
-        return False
-    return target.exists() and not target.is_symlink()
+        return None
+    for step in [target, *target.parents]:
+        if step == root:
+            return target
+        if step.is_symlink():
+            return None
+    return None
+
+
+def _exists(root: Path, path: str) -> bool:
+    target = _real(root, path)
+    return target is not None and target.exists()
 
 
 def _is_dir(root: Path, path: str) -> bool:
-    try:
-        target = root / check_path(path)
-    except UnsafePathError:
-        return False
-    return target.is_dir() and not target.is_symlink()
+    target = _real(root, path)
+    return target is not None and target.is_dir()
 
 
 def _js_framework(package: bytes) -> Framework | None:
@@ -155,6 +166,46 @@ def detect(root: Path, culprit: str | None) -> TestSetup:
         "No pytest, vitest or jest project was found around "
         f"{culprit or 'the repository root'}: a reproducing test can't be written for it."
     )
+
+
+_REQUIREMENT = re.compile(r"^\s*([A-Za-z0-9][A-Za-z0-9._-]*)")
+
+
+def _names(specs: Iterable[object]) -> set[str]:
+    """Distribution names in requirement strings, as modules would be named (``PyYAML`` and
+    ``python-dateutil`` stay as they are: their import names differ, and aren't guessed)."""
+    found: set[str] = set()
+    for spec in specs:
+        match = _REQUIREMENT.match(str(spec)) if isinstance(spec, str) else None
+        if match:
+            found.add(match.group(1).lower().replace("-", "_").replace(".", "_"))
+    return found
+
+
+def dependencies(root: Path, project: str) -> frozenset[str]:
+    """The Python project's dependencies' names (its ``pyproject.toml`` and ``requirements*.txt``,
+    and the repository root's): a new module named like one would be imported instead of it."""
+    found: set[str] = set()
+    for folder in dict.fromkeys((project, "")):
+        raw = _read(root, _join(folder, "pyproject.toml"))
+        if raw is not None:
+            try:
+                spec = tomllib.loads(raw.decode("utf-8", "replace"))
+            except tomllib.TOMLDecodeError:
+                spec = {}
+            table = cast("dict[str, Any]", spec.get("project") or {})
+            found |= _names(cast("list[object]", table.get("dependencies") or []))
+            for extra in cast("dict[str, Any]", table.get("optional-dependencies") or {}).values():
+                found |= _names(cast("list[object]", extra or []))
+            poetry = cast("dict[str, Any]", cast("dict[str, Any]", spec.get("tool") or {}).get(
+                "poetry") or {})  # fmt: skip
+            found |= _names(list(cast("dict[str, Any]", poetry.get("dependencies") or {})))
+        for name in ("requirements.txt", "requirements-dev.txt", "requirements/base.txt"):
+            text = _read(root, _join(folder, name))
+            if text is not None:
+                found |= _names(text.decode("utf-8", "replace").splitlines())
+    found.discard("python")
+    return frozenset(found)
 
 
 def _test_dir(root: Path, project: str) -> str:

@@ -36,6 +36,8 @@ TRACE = (
     "    return sum(values) / len(values)\n"
     "ZeroDivisionError: division by zero\n"
 )
+# A failure through the reported code, as pytest shows it.
+THROUGH = "app/stats.py:2: ZeroDivisionError\nE   ZeroDivisionError: division by zero"
 BAD = "def mean(values):\n    return sum(values) / len(values)\n"
 REPRODUCING = "from app.stats import mean\n\n\ndef test_empty():\n    assert mean([]) == 0\n"
 PASSING = "from app.stats import mean\n\n\ndef test_two():\n    assert mean([1, 3]) == 2\n"
@@ -136,7 +138,7 @@ class Alternating:
     async def run(self, argv: Sequence[str]) -> RunResult:
         self.n += 1
         if self.n % 2:
-            return _ran(False, "E   ZeroDivisionError: division by zero\n1 failed")
+            return _ran(False, THROUGH + "\n1 failed")
         return _ran(True, "1 passed")
 
 
@@ -266,3 +268,32 @@ async def test_an_unreproducible_bug_or_no_framework_says_so(tmp_path: Path) -> 
     nothing = await _handler(bare, _fake())(_stage([]))
     assert isinstance(nothing, Stop)
     assert "No pytest, vitest or jest project" in nothing.reason
+
+
+def test_the_reason_is_an_exception_through_the_reported_code() -> None:
+    crash = parse_ticket(TRACE, paths=["app/stats.py"])
+    paths = ["app/stats.py"]
+    through = "app/stats.py:2: ZeroDivisionError\nE   ZeroDivisionError: division by zero"
+    assert for_the_reason(_ran(False, through + "\n1 failed"), crash, paths)
+    # The test raising the error itself: its traceback never reaches the reported code.
+    by_hand = "tests/test_x.py:4: ZeroDivisionError\nE   ZeroDivisionError: division by zero"
+    assert not for_the_reason(_ran(False, by_hand + "\n1 failed"), crash, paths)
+    # The error's name merely written somewhere (the test's own source, a message).
+    named = "    assert False, 'no ZeroDivisionError here'\nE   AssertionError\n1 failed"
+    assert not for_the_reason(_ran(False, named), crash)
+    # A reported ImportError can be reproduced (it isn't a test that couldn't run).
+    imports = parse_ticket("Traceback (most recent call last):\n"
+                           '  File "/srv/app/app/plugins.py", line 3, in load\n'
+                           "ModuleNotFoundError: No module named 'app.extras'\n",
+                           paths=["app/plugins.py"])  # fmt: skip
+    failing = ("app/plugins.py:3: in load\n"
+               "E   ModuleNotFoundError: No module named 'app.extras'\n1 failed")  # fmt: skip
+    assert for_the_reason(_ran(False, failing), imports, ["app/plugins.py"])
+
+
+def test_a_project_behind_a_symbolic_link_isnt_written_to(tmp_path: Path) -> None:
+    outside = _files(tmp_path / "outside", {"pyproject.toml": "[project]\nname='x'\n"})
+    root = _files(tmp_path / "repo", {"README.md": "x"})
+    (root / "evil").symlink_to(outside, target_is_directory=True)
+    with pytest.raises(NoFramework):
+        detect(root, "evil/app.py")  # its pyproject is outside the checkout: not a project
