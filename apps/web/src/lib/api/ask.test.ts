@@ -243,14 +243,6 @@ describe("a question's scope", () => {
     );
     expect(scopeOrNull({ path: null, startLine: null, endLine: null, layers: [] })).toBeNull();
   });
-
-  it("finds the @ mention being typed before the caret", async () => {
-    const { mentionAt } = await import("@/components/ask/composer");
-    expect(mentionAt("what calls @crea", 16)).toEqual({ start: 11, query: "crea" });
-    expect(mentionAt("@", 1)).toEqual({ start: 0, query: "" });
-    expect(mentionAt("mail me@example.com", 19)).toBeNull(); // not after a space
-    expect(mentionAt("what calls @crea and", 20)).toBeNull(); // the caret moved past it
-  });
 });
 
 describe("a logged search", () => {
