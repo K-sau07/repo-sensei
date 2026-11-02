@@ -21,6 +21,7 @@ The checkout is restored afterwards.
 
 from __future__ import annotations
 
+import asyncio
 import time
 from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager
@@ -31,21 +32,21 @@ from pathlib import Path
 from typing import Any, cast
 
 from sensei_core.fixes.tickets import Ticket
-from sensei_core.models import FixRisk, FixStatus
+from sensei_core.models import FixRisk, FixStatus, ReproResult
 from sensei_core.usage import CostCalculator
 from sensei_engine.agent.tools import BY_NAME, ToolContext, run_tool
 from sensei_engine.agent.tools.base import ToolResult
 from sensei_engine.llm.anthropic_client import AnthropicClient, Tier
 from sensei_fixer import antigaming
 from sensei_fixer.agents import Conversation
-from sensei_fixer.frameworks import NoFramework, TestSetup, detect
+from sensei_fixer.frameworks import NoFramework, TestSetup, dependencies, detect
 from sensei_fixer.investigate import READ_TOOLS, Hooks, fenced, first_message
 from sensei_fixer.patching import Diff, PatchError, diff_of, read_text, restore, write_file
 from sensei_fixer.reproduce import Runners, Workspace
 from sensei_fixer.risk import Areas, Risk, assess, code_areas, graph_areas, higher, path_areas
 from sensei_fixer.runs import FixRunner, RunResult, SetupFailed
 from sensei_fixer.stages import Advance, Outcome, StageContext, StageHandler, Step, Stop
-from sensei_fixer.suites import SuiteRun, SuiteVerdict, compare, read_suite
+from sensei_fixer.suites import SuiteRun, SuiteVerdict, compare, count_tests, passed, read_suite
 from sensei_fixer.tooling import text_result
 
 PROMPT_VERSION = "patch.v1"
@@ -141,12 +142,16 @@ class Approved:
     repro_path: str
     repro_test: str
     plan_text: str
+    repro_tests: int = 1  # the tests in the reproducing file: each must pass by its report
 
 
 def approved(facts: Mapping[str, Any]) -> Approved | str:
-    """The approved plan and reproducing test in ``facts`` (or why they're missing)."""
+    """The approved plan and reproducing test in ``facts`` (or why they're missing). No fix
+    goes on without a bug reproduced, whatever the stages before said."""
     plan = cast("Mapping[str, Any] | None", facts.get("plan"))
     repro = cast("Mapping[str, Any] | None", facts.get("repro"))
+    if facts.get("repro_result") not in (ReproResult.REPRODUCED, ReproResult.REPRODUCED.value):
+        return "The bug wasn't reproduced: no fix goes on without a reproducing test."
     if not plan or not plan.get("files"):
         return "There is no approved plan."
     if not repro or not repro.get("test") or not repro.get("test_path"):
@@ -156,11 +161,14 @@ def approved(facts: Mapping[str, Any]) -> Approved | str:
     steps = cast("list[Mapping[str, Any]]", plan.get("steps") or [])
     text = "\n".join([f"Summary: {plan.get('summary')}",
                       *(f"- {s.get('path')}: {s.get('description')}" for s in steps)])  # fmt: skip
+    framework = repro.get("framework")
+    test = str(repro["test"])
+    count = count_tests(framework, test) if framework in ("pytest", "vitest", "jest") else 1
     return Approved(
         planned=frozenset(str(f["path"]) for f in files),
         creates=frozenset(str(f["path"]) for f in files if f.get("change") == "create"),
-        risk=FixRisk(level), repro_path=str(repro["test_path"]), repro_test=str(repro["test"]),
-        plan_text=text,
+        risk=FixRisk(level), repro_path=str(repro["test_path"]), repro_test=test,
+        plan_text=text, repro_tests=count,
     )  # fmt: skip
 
 
@@ -195,6 +203,7 @@ class Job:
     hooks: Hooks
     client: AnthropicClient
     costs: CostCalculator | None
+    deps: frozenset[str] = frozenset()  # the project's dependencies (shadowing them is gaming)
 
     @property
     def areas(self) -> Mapping[str, str]:
@@ -206,13 +215,17 @@ class Job:
         await self.hooks.spend(0, Decimal(0), ran.seconds)
         return ran
 
+    def passes(self, ran: RunResult, *, at_least: int = 1) -> bool:
+        """``ran`` passed by its framework's report (not its exit code: :mod:`.suites`)."""
+        return passed(self.setup.framework, ran, at_least=at_least)
+
     def gaming(self, before: dict[str, str]) -> antigaming.Context:
         ticket = self.ctx.ticket
         return antigaming.Context(
             repro_path=self.plan.repro_path, repro_test=self.plan.repro_test,
             planned=self.plan.planned, before=before,
             reported=" ".join([ticket.title, ticket.text, ticket.message or ""]),
-            error_type=ticket.error_type,
+            error_type=ticket.error_type, dependencies=self.deps,
         )  # fmt: skip
 
 
@@ -232,8 +245,9 @@ async def working(
     async with workspace(ctx) as (tools, _history):
         try:
             setup = detect(tools.root, culprit)
+            deps = await asyncio.to_thread(dependencies, tools.root, setup.project)
             async with runners(tools.root, setup) as runner:
-                yield Job(ctx, tools, runner, setup, plan, root_cause, hooks, *model)
+                yield Job(ctx, tools, runner, setup, plan, root_cause, hooks, *model, deps)
         finally:
             await restore(tools.root)
 
@@ -312,6 +326,8 @@ class _Patching:
             or (antigaming.is_test_config(path))
         ):
             return f"{path} is a test or test setting: a fix leaves the tests as they are."
+        if antigaming.is_sensitive(path):
+            return f"{path} is CI, git or build configuration: a bug fix doesn't change it."
         if path not in plan.planned:
             names = ", ".join(sorted(plan.planned))
             return f"{path} isn't in the approved plan ({names}); change only those files."
@@ -387,17 +403,17 @@ class _Patching:
                                "no more runs", error=True)  # fmt: skip
         self.runs += 1
         ran = await self.job.run(self.job.setup.command(path))
-        said = "passed" if ran.passed else "failed"
+        said = "passed" if self.job.passes(ran) else "failed"
         return text_result(f"It {said}. {_shown(ran)}", f"{path} {said}")
 
     async def _run_checks(self) -> tuple[RunResult, SuiteRun | None, SuiteVerdict | None]:
         job = self.job
         repro = await job.run(job.setup.command(job.plan.repro_path))
-        if not repro.passed:
+        if not job.passes(repro, at_least=job.plan.repro_tests):
             return repro, None, None
         await job.hooks.check()
         suite = read_suite(job.setup.framework, await job.run(job.setup.suite()))
-        return repro, suite, compare(self.baseline, suite)
+        return repro, suite, compare(self.baseline, suite, repro_tests=job.plan.repro_tests)
 
     async def submit(self, summary: str, fixed: bool) -> ToolResult:
         if not fixed:
@@ -437,7 +453,7 @@ class _Patching:
 def brief(ticket: Ticket, root_cause: Mapping[str, Any], plan: Approved,
           repro: Mapping[str, Any], baseline: SuiteRun) -> str:  # fmt: skip
     lines = [first_message(ticket), "",
-             f"The root cause: {root_cause.get('claim')} ({root_cause.get('path')}:"
+             f"The root cause: {fenced(str(root_cause.get('claim')))} ({root_cause.get('path')}:"
              f"{root_cause.get('start_line')}-{root_cause.get('end_line')})", "",
              "The approved plan (change only its files):", "<plan>", fenced(plan.plan_text),
              "</plan>", "",

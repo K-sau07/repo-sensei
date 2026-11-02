@@ -283,9 +283,8 @@ async def test_breaking_another_test_fails_the_attempt(repo: Path) -> None:
     assert outcome.status is FixStatus.FAILED
     assert outcome.reason == "Couldn't produce a passing fix: Can't within the plan."
     first = outcome.updates["patch"]["attempts"][0]
-    assert (
-        "Tests that passed before fail with the fix: tests/test_ok.py::test_two"
-        in (first["reason"])
+    assert first["reason"] == (
+        "Tests that passed before don't pass with the fix: tests/test_ok.py::test_two."
     )
 
 
@@ -297,7 +296,7 @@ async def test_gaming_blocks_the_run_at_once(repo: Path) -> None:
     assert isinstance(outcome, Stop)
     assert outcome.status is FixStatus.BLOCKED
     assert outcome.reason.startswith("Anti-gaming: broad_except (app/stats.py")
-    assert [f["rule"] for f in outcome.updates["patch"]["findings"]] == ["broad_except"]
+    assert {f["rule"] for f in outcome.updates["patch"]["findings"]} == {"broad_except"}
 
 
 async def test_the_tools_refuse_tests_and_files_outside_the_plan(repo: Path) -> None:
@@ -417,3 +416,59 @@ async def test_a_plan_asked_to_change_is_the_next_revision(repo: Path) -> None:
     assert (
         "From @bo:\nCallers expect an error.\nTheir step: app/stats.py: Raise ValueError" in first
     )
+
+
+async def test_a_patch_that_forces_a_zero_exit_is_blocked(repo: Path) -> None:
+    # The bug left in, the test process ended with 0 after its failures were reported.
+    forced = (
+        "    import atexit, os\n    atexit.register(os._exit, 0)\n"
+        + FIXED_BODY.splitlines(True)[-1]
+    )
+    fake = _fake([_edit("e1", forced)], [_submit("s1")])
+    outcome = await _patch(repo, fake)
+    assert isinstance(outcome, Stop)
+    assert outcome.status is FixStatus.BLOCKED
+    assert "exit_forced" in {f["rule"] for f in outcome.updates["patch"]["findings"]}
+
+
+async def test_no_patch_without_a_reproduced_bug(repo: Path) -> None:
+    handler = patch_stage(_workspace(repo), _runners, _fake().client, None)
+    flaky = _stage(FixStage.PATCH, _facts(repro_result=ReproResult.FLAKY))
+    outcome = await handler(flaky)
+    assert isinstance(outcome, Stop)
+    assert outcome.reason.startswith("The bug wasn't reproduced")
+
+
+async def test_a_cancel_and_the_time_limit_stop_the_stage_not_the_tool() -> None:
+    from sensei_fixer.stages import Cancelled  # noqa: PLC0415
+    from sensei_fixer.tooling import guarded  # noqa: PLC0415
+
+    class SoftTimeLimitExceeded(Exception):  # Celery's, by name
+        pass
+
+    async def raising(error: Exception) -> Any:
+        raise error
+
+    with pytest.raises(Cancelled):
+        await guarded("read_code", raising(Cancelled("cancelled")))
+    with pytest.raises(SoftTimeLimitExceeded):
+        await guarded("read_code", raising(SoftTimeLimitExceeded()))
+    said = await guarded("read_code", raising(KeyError("path")))
+    assert said.is_error
+
+
+async def test_an_exit_the_rules_miss_is_still_no_pass(repo: Path) -> None:
+    # Obfuscated past the anti-gaming rules: pytest reports the failure, then exits 0. The
+    # report, not the exit code, decides: the attempt fails.
+    hidden = (
+        '    __import__("atexit").register(getattr(__import__("o" + "s"), "_e" + "xit"), 0)\n'
+        "    return sum(values) / len(values)\n"
+    )
+    fake = _fake([_edit("e1", hidden)], [_submit("s1")],
+                 [_tool("g1", "submit_patch", {"summary": "No.", "fixed": False})])  # fmt: skip
+    outcome = await _patch(repo, fake)
+    assert isinstance(outcome, Stop)
+    assert outcome.status is FixStatus.FAILED
+    [first] = outcome.updates["patch"]["attempts"]
+    assert first["reason"] == "The reproducing test still fails."
+    assert "Exit 0" in first["output"]  # it did exit 0

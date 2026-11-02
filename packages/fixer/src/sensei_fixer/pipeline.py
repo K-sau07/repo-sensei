@@ -90,7 +90,10 @@ class FixPipeline:
             outcome = None  # cancelled (dropped below) or over budget (stopped below)
         except Exception as error:
             log.exception("fix stage failed", fix_id=str(fix_id), stage=ctx.stage.value)
-            said = f"The {ctx.stage.value} stage failed ({type(error).__name__})."
+            if type(error).__name__ == "SoftTimeLimitExceeded":  # the worker's time limit
+                said = f"The {ctx.stage.value} stage ran out of time."
+            else:
+                said = f"The {ctx.stage.value} stage failed ({type(error).__name__})."
             outcome = Stop(FixStatus.FAILED, said)
         return await self._finish(org_id, fix_id, ctx.stage, outcome, outbox)
 

@@ -13,6 +13,7 @@ from sensei_core.usage import CostCalculator
 from sensei_engine.agent.tools import ToolContext
 from sensei_engine.agent.tools.base import ToolResult
 from sensei_engine.llm.anthropic_client import PROVIDER
+from sensei_fixer.stages import Cancelled
 
 log = get_logger(__name__)
 
@@ -21,12 +22,22 @@ def text_result(text: str, summary: str, *, error: bool = False) -> ToolResult:
     return ToolResult([{"type": "text", "text": text}], [], summary, is_error=error)
 
 
+# What stops a stage, never a tool call's error for the model: the worker's time limit (Celery's
+# soft limit, by name: the fixer doesn't depend on Celery).
+_STOPS_THE_STAGE = frozenset({"SoftTimeLimitExceeded", "TimeLimitExceeded"})
+
+
 async def guarded(name: str, call: Awaitable[ToolResult]) -> ToolResult:
     """``call``'s result; if it raises (arguments no schema stopped, a bug), an error result
-    saying so, so the model can go on."""
+    saying so, so the model can go on. A cancel (or the budget) and the worker's time limit
+    stop the stage instead."""
     try:
         return await call
+    except Cancelled:
+        raise
     except Exception as error:
+        if type(error).__name__ in _STOPS_THE_STAGE:
+            raise
         log.warning("fix tool call failed", tool=name, exc_info=True)
         said = f"{name} failed ({type(error).__name__}); check its arguments or try another way."
         return text_result(said, f"{name} failed", error=True)

@@ -141,9 +141,10 @@ class _Verifying:
             if len(self.tries) >= MAX_TRIES:
                 return text_result(f"That was the last of {MAX_TRIES} runs: submit_verdict now.",
                                    "no more runs", error=True)  # fmt: skip
-            ran = await self.run()
-            said = "passed" if ran.passed else "failed"
-            return text_result(f"They {said}. Exit {ran.exit_code}.\n\n{ran.output[-SHOWN:]}",
+            ok = await self.run()
+            said = "passed" if ok else "failed"
+            last = self.tries[-1]
+            return text_result(f"They {said}. Exit {last['exit_code']}.\n\n{last['output']}",
                                f"extra tests {said}")  # fmt: skip
         if name == SUBMIT:
             self.verdict = Verdict(
@@ -157,18 +158,20 @@ class _Verifying:
             return await run_tool(self.job.tools, name, args)
         return text_result(f"There is no tool {name!r}.", "unknown tool", error=True)
 
-    async def run(self) -> RunResult:
+    async def run(self) -> bool:
+        """The extra tests run once: whether they passed (by their report)."""
         ran = await self.job.run(self.job.setup.command(self.extra_path))
-        self.tries.append({"passed": ran.passed, "exit_code": ran.exit_code,
+        ok = self.job.passes(ran)
+        self.tries.append({"passed": ok, "exit_code": ran.exit_code,
                            "output": ran.output[-SHOWN:]})  # fmt: skip
-        return ran
+        return ok
 
 
 def brief(ticket: Ticket, root_cause: Mapping[str, Any], plan: Approved, diff: str,
           extra_path: str) -> str:  # fmt: skip
     return "\n".join([
         first_message(ticket), "",
-        f"The root cause: {root_cause.get('claim')} ({root_cause.get('path')}:"
+        f"The root cause: {fenced(str(root_cause.get('claim')))} ({root_cause.get('path')}:"
         f"{root_cause.get('start_line')}-{root_cause.get('end_line')})", "",
         "The approved plan:", "<plan>", fenced(plan.plan_text), "</plan>", "",
         f"The reproducing test ({plan.repro_path}): it failed before the fix and passes with it.",
@@ -219,16 +222,17 @@ async def _tests_pass(
         return Stop(FixStatus.BLOCKED, f"Anti-gaming: {antigaming.summary(findings)}",
                     {"verification": {"findings": antigaming.as_json(findings)}})  # fmt: skip
     record: dict[str, Any] = {"prompt": PROMPT_VERSION}
-    runs: list[RunResult] = []
+    runs: list[tuple[RunResult, bool]] = []
     for n in range(1, RUNS + 1):
         await job.hooks.check()
         ran = await job.run(job.setup.command(plan.repro_path))
+        ok = job.passes(ran, at_least=plan.repro_tests)
         await job.hooks.record(Step("verify", f"reproducing test, run {n} of {RUNS}",
-                                    "passed" if ran.passed else "failed"))  # fmt: skip
-        runs.append(ran)
-    record["repro_runs"] = [{"passed": r.passed, "exit_code": r.exit_code,
-                             "output": r.output[-SHOWN:]} for r in runs]  # fmt: skip
-    passing = sum(r.passed for r in runs)
+                                    "passed" if ok else "failed"))  # fmt: skip
+        runs.append((ran, ok))
+    record["repro_runs"] = [{"passed": ok, "exit_code": r.exit_code,
+                             "output": r.output[-SHOWN:]} for r, ok in runs]  # fmt: skip
+    passing = sum(ok for _, ok in runs)
     if passing < RUNS:
         return Stop(FixStatus.FAILED, f"Couldn't produce a passing fix: with the patch, the "
                     f"reproducing test passed in {passing} of {RUNS} runs.",
@@ -237,7 +241,7 @@ async def _tests_pass(
     ran = await job.run(job.setup.suite())
     suite = read_suite(job.setup.framework, ran)
     baseline = SuiteRun.from_json(cast("Mapping[str, Any]", patch.get("baseline") or {}))
-    verdict = compare(baseline, suite)
+    verdict = compare(baseline, suite, repro_tests=plan.repro_tests)
     record["suite"] = {**suite.json(), "verdict": verdict.reason}
     await job.hooks.record(Step("verify", "whole suite", verdict.reason[:200],
                                 ms=round(ran.seconds * 1000)))  # fmt: skip
@@ -264,7 +268,7 @@ async def _judged(
                     {"verification": record})  # fmt: skip
     extra_failed = False
     if verifying.content is not None:
-        extra_failed = not (await verifying.run()).passed  # the file as it was left, once more
+        extra_failed = not await verifying.run()  # the file as it was left, once more
     record.update({
         "verdict": {"test_shaped": verdict.test_shaped, "reason": verdict.reason,
                     "concerns": list(verdict.concerns), "unverified": list(verdict.unverified)},

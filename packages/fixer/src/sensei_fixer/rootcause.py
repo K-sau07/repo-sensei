@@ -11,20 +11,17 @@ the file): the approval card shows it, a reviewer weighs it. The plan and its ri
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from pathlib import PurePosixPath
 from typing import Any, cast
 
 from sensei_core.models import FixStatus
-from sensei_fixer.reproduce import Workspace
+from sensei_fixer.reproduce import Workspace, passes_through
 from sensei_fixer.risk import Areas, graph_areas, path_areas, text_areas
 from sensei_fixer.stages import Advance, Outcome, StageContext, StageHandler, Step, Stop
 
 
 def seen_in(runs: Sequence[Mapping[str, Any]], path: str) -> bool:
     """A run's output names ``path`` (the failure passed through the file)."""
-    name = PurePosixPath(path).name
-    outputs = [str(r.get("output", "")) for r in runs]
-    return any(path in out or f'/{name}"' in out or f"{name}:" in out for out in outputs)
+    return any(passes_through(str(r.get("output", "")), [path]) for r in runs)
 
 
 def root_cause_stage(workspace: Workspace) -> StageHandler:

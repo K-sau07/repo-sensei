@@ -13,10 +13,16 @@ no fix, so a patch that does any of these is blocked, whatever its tests say.
   file didn't have and the report didn't say (the fix is shaped like the test, not the bug);
 - ``assert_removed``: an ``assert`` (an invariant check) taken out of the code;
 - ``broad_except``: a catch-all added (``except:``, ``except Exception``, an empty ``catch``),
-  an exception clause widened, or the reported error swallowed (``except ZeroDivisionError:
-  pass``);
-- ``shadowing``: a new file that would be imported instead of a test tool or a standard module,
-  or a Python start-up hook (``sitecustomize``, ``.pth``);
+  an exception clause widened, the reported error (or a parent of it) caught or suppressed
+  (a fix prevents the error rather than catching it), or a ``catch`` that returns a constant;
+- ``exit_forced``: code that ends or signals the process (``os._exit``, ``sys.exit``,
+  ``atexit``, ``process.exit``...): a test run's exit code would say nothing;
+- ``fake_report``: code that writes what a test report says (``"3 passed in"``, ``Tests:``);
+- ``shadowing``: a new file that would be imported instead of a test tool, a standard module or
+  one of the project's dependencies, or a Python start-up hook (``sitecustomize``, ``.pth``);
+- ``sensitive_file``: CI or git configuration, build and install scripts (``.github/``,
+  ``.gitattributes``, a ``Dockerfile``, ``package.json``'s install hooks): not a bug fix's to
+  change, and what would run with the repository's secrets;
 - ``outside_plan``: a file changed that the approved plan doesn't name;
 - ``unreviewable``: a binary change, a symbolic link, a mode change (what these checks can't
   read).
@@ -28,6 +34,7 @@ can be passed by knowing the other.
 
 from __future__ import annotations
 
+import builtins
 import re
 import sys
 from collections.abc import Collection, Iterable
@@ -36,15 +43,41 @@ from pathlib import PurePosixPath
 from typing import Any, Literal
 
 Status = Literal["added", "modified", "deleted"]
-TEST_DIRS = frozenset({"tests", "test", "__tests__", "spec", "specs", "__mocks__", "testing"})
+TEST_DIRS = frozenset({
+    "tests", "test", "__tests__", "spec", "specs", "__mocks__", "testing", "__snapshots__",
+})  # fmt: skip
 _TEST_NAME = re.compile(
-    r"^(test_[^/]*\.py|[^/]*_test\.py|tests?\.py|[^/]*\.(test|spec)\.(ts|tsx|js|jsx|mjs|cjs|mts|cts))$"
+    r"^(test_[^/]*\.py|[^/]*_test\.py|tests?\.py|[^/]*\.(test|spec)\.(ts|tsx|js|jsx|mjs|cjs|mts|cts)|"
+    r"[^/]*\.snap)$"
 )
 _CONFIG_NAME = re.compile(
-    r"^(conftest\.py|pytest\.ini|tox\.ini|\.coveragerc|noxfile\.py|"
-    r"(vitest|jest|vite|vitest\.workspace|babel)\.config\.(ts|js|mjs|cjs|mts|cts|json)|"
+    r"^(conftest\.py|\.?pytest\.(ini|toml)|tox\.ini|\.coveragerc|noxfile\.py|"
+    r"(vitest|jest|vite|babel)\.config\.(ts|js|mjs|cjs|mts|cts|json)|"
+    r"vitest\.(workspace|projects)\.(ts|js|mjs|cjs|mts|json)|"
     r"jest\.(setup|preset)\.(ts|js|mjs|cjs)|vitest\.setup\.(ts|js|mjs)|"
-    r"setupTests\.(ts|tsx|js|jsx)|\.babelrc|\.mocharc\.\w+)$"
+    r"setupTests\.(ts|tsx|js|jsx)|\.babelrc|\.mocharc\.\w+|[jt]sconfig(\.[\w-]+)?\.json)$"
+)
+# CI, git and build configuration, and install scripts: never a bug fix's to change.
+_SENSITIVE = re.compile(
+    r"^\.github/|^\.gitlab-ci\.ya?ml$|^\.circleci/|^\.buildkite/|^azure-pipelines\.ya?ml$|"
+    r"(^|/)(\.gitattributes|\.gitmodules|\.gitignore|\.pre-commit-config\.yaml|Makefile|"
+    r"Dockerfile|[\w.-]+\.Dockerfile|docker-compose\.ya?ml|compose\.ya?ml|\.npmrc|\.yarnrc(\.yml)?|"
+    r"\.env[\w.-]*)$"
+)
+_INSTALL_HOOK = re.compile(r"[\"']((pre|post)?install|prepare|prepublish\w*)[\"']\s*:")
+_EXIT = re.compile(
+    r"\bos\._exit\(|\bsys\.exit\(|(?<![\w.])(exit|quit)\(|\batexit\.|\bos\.(kill|abort)\(|"
+    r"\bsignal\.(signal|alarm|raise_signal|setitimer|pthread_kill)\(|\bfaulthandler\.|"
+    r"\bprocess\.(exit|kill|abort|reallyExit)\(|\bprocess\.exitCode\b"
+)
+_FAKE_REPORT = re.compile(
+    r"[\"'`][^\"'`\n]*(\b\d+\s+passed\b|\bpassed in\b|test session starts|\bTests:\s|"
+    r"\bTest Files\b|collected \d+ items?|\bPASSED\b|\bTest Suites:)"
+)
+_JS_CATCH = re.compile(r"\bcatch\b\s*(\(\s*\w*\s*\))?\s*\{")
+_CONSTANT_RETURN = re.compile(
+    r"^\s*return\s+(null|undefined|None|0|-?1|false|true|False|True|''|\"\"|``|\[\]|\{\}|NaN)?"
+    r"\s*;?\s*(\}\s*)?$"
 )
 _MANIFESTS = frozenset({"pyproject.toml", "setup.cfg", "package.json"})
 _CONFIG_LINE = re.compile(
@@ -74,7 +107,7 @@ _BROAD = re.compile(
     r"void 0)\s*\)"
 )
 _EXCEPT = re.compile(r"^\s*except\s*\(?\s*([\w.,\s]+?)\s*\)?\s*(as\s+\w+\s*)?:")
-_SWALLOW = re.compile(r"^\s*(pass|\.\.\.|continue)\s*(#.*)?$")
+_SUPPRESS = re.compile(r"\bsuppress\(\s*([\w.,\s]+?)\s*\)")
 _STARTUP = frozenset({"sitecustomize", "usercustomize"})
 _TOOLS = frozenset({"pytest", "_pytest", "pluggy", "hypothesis", "xdist", "pytest_asyncio",
                     "unittest", "vitest", "jest"})  # fmt: skip
@@ -119,10 +152,15 @@ def is_test_config(path: str) -> bool:
     return bool(_CONFIG_NAME.match(PurePosixPath(path).name))
 
 
-def shadows(path: str) -> bool:
+def is_sensitive(path: str) -> bool:
+    """CI, git or build configuration (a fix never changes it: :data:`_SENSITIVE`)."""
+    return bool(_SENSITIVE.search(path))
+
+
+def shadows(path: str, dependencies: Collection[str] = ()) -> bool:
     """A new file Python would import instead of a test tool's module (anywhere), a standard
-    module (in a folder tests put on the import path: the root, a test folder, ``src``), or a
-    start-up hook."""
+    module or one of the project's ``dependencies`` (in a folder tests put on the import path:
+    the root, a test folder, ``src``), or a start-up hook."""
     pure = PurePosixPath(path)
     if pure.suffix == ".pth":
         return True
@@ -137,7 +175,7 @@ def shadows(path: str) -> bool:
     if module in _STARTUP or module in _TOOLS:
         return True
     on_path = not folder or folder[-1] in TEST_DIRS or folder[-1] == "src"
-    return on_path and module in sys.stdlib_module_names
+    return on_path and (module in sys.stdlib_module_names or module.lower() in dependencies)
 
 
 def parse_diff(diff: str) -> list[FileDiff]:
@@ -217,7 +255,8 @@ class Context:
     planned: Collection[str]  # the files the approved plan names
     before: dict[str, str] = field(default_factory=dict[str, str])  # changed files, as they were
     reported: str = ""  # the report's own words (a value it says is no special case)
-    error_type: str | None = None  # the reported error's type (swallowing it is a finding)
+    error_type: str | None = None  # the reported error's type (catching it is a finding)
+    dependencies: frozenset[str] = frozenset()  # the project's (a file named so shadows one)
 
 
 def check(diff: str, ctx: Context) -> list[Finding]:
@@ -245,8 +284,10 @@ def _file_findings(
         if change.status != "added" or added.strip() != ctx.repro_test.strip():
             found.append(Finding("repro_changed", path, "the reproducing test was changed"))
         return found
-    if change.status == "added" and shadows(path):
+    if change.status == "added" and shadows(path, ctx.dependencies):
         found.append(Finding("shadowing", path, "a new file imported instead of another"))
+    if is_sensitive(path):
+        found.append(Finding("sensitive_file", path, "CI, git or build configuration changed"))
     if is_test_config(path):
         found.append(Finding("test_config", path, "the test setup changed"))
     elif is_test_path(path):
@@ -256,6 +297,10 @@ def _file_findings(
         _CONFIG_LINE.search(text) for _, text in (*change.added, *change.removed)
     ):
         found.append(Finding("test_config", path, "test settings changed"))
+    if name == "package.json" and any(
+        _INSTALL_HOOK.search(text) for _, text in (*change.added, *change.removed)
+    ):
+        found.append(Finding("sensitive_file", path, "an install script changed"))
     if path not in ctx.planned:
         found.append(Finding("outside_plan", path, "a file the approved plan doesn't name"))
     found += _line_findings(change, watched - literals(ctx.before.get(path, "")))
@@ -274,6 +319,10 @@ def _line_findings(change: FileDiff, watched: set[str]) -> Iterable[Finding]:
             yield Finding("test_detection", path, text.strip())
         if _BROAD.search(text):
             yield Finding("broad_except", path, text.strip())
+        if not test_code and _EXIT.search(text):
+            yield Finding("exit_forced", path, text.strip())
+        if not test_code and _FAKE_REPORT.search(text):
+            yield Finding("fake_report", path, text.strip())
         if not test_code and _COMPARE.search(text):
             hits = sorted(literal for literal in watched if literal in text)
             if hits:
@@ -285,19 +334,43 @@ def _line_findings(change: FileDiff, watched: set[str]) -> Iterable[Finding]:
                 yield Finding("assert_removed", path, text.strip())
 
 
+def lineage(error: str | None) -> frozenset[str]:
+    """``error`` and the built-in exceptions it derives from (catching any of them catches it;
+    an error that isn't built in: itself)."""
+    if not error:
+        return frozenset()
+    found = getattr(builtins, error, None)
+    if isinstance(found, type) and issubclass(found, BaseException):
+        return frozenset(c.__name__ for c in found.__mro__ if issubclass(c, BaseException))
+    return frozenset({error})
+
+
+def _suppressed(line: str) -> frozenset[str]:
+    found = _SUPPRESS.search(line)
+    if not found:
+        return frozenset()
+    return frozenset(n.strip().rsplit(".", 1)[-1] for n in found.group(1).split(",") if n.strip())
+
+
 def _widened(change: FileDiff, reported_error: str | None) -> Iterable[Finding]:
-    """Exception clauses a hunk widened, and the reported error swallowed where it's added."""
+    """Exception clauses a hunk widened, the reported error (or a parent of it) caught or
+    suppressed where it's added, and a JavaScript ``catch`` that returns a constant."""
+    caught = lineage(reported_error)
     for removed, added in change.hunks:
         before = [_excepted(line) for line in removed]
         for i, line in enumerate(added):
-            types = _excepted(line)
+            following = next((t for t in added[i + 1 :] if t.strip()), "")
+            if _JS_CATCH.search(line) and _CONSTANT_RETURN.match(following):
+                said = f"the error caught and a constant returned: {line.strip()}"
+                yield Finding("broad_except", change.path, said)
+            types = _excepted(line) | _suppressed(line)
             if not types:
                 continue
             if any(old and old < types for old in before):
                 yield Finding("broad_except", change.path, f"widened: {line.strip()}")
-            following = next((t for t in added[i + 1 :] if t.strip()), "")
-            if reported_error and reported_error in types and _SWALLOW.match(following):
-                said = f"the reported {reported_error} swallowed: {line.strip()}"
+            hit = sorted(types & caught)
+            if hit:
+                said = f"the reported {reported_error} caught (as {hit[0]}): {line.strip()}"
                 yield Finding("broad_except", change.path, said)
 
 

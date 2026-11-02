@@ -9,7 +9,7 @@ from pathlib import Path
 
 from sensei_fixer import frameworks
 from sensei_fixer.runs import RunResult
-from sensei_fixer.suites import SuiteRun, compare, read_suite
+from sensei_fixer.suites import SuiteRun, compare, count_tests, passed, read_suite
 
 VITEST = """
  \u276f tests/sum.test.ts (3 tests | 1 failed) 5ms
@@ -82,36 +82,77 @@ def test_vitests_and_jests_failures_are_read() -> None:
 
 
 def _suite(failed: set[str] | None = None, total: int = 10, *, exit_code: int | None = None,
-           readable: bool = True) -> SuiteRun:  # fmt: skip
+           readable: bool = True, passed: int | None = None,
+           passing: set[str] | None = None) -> SuiteRun:  # fmt: skip
     failed = failed or set()
     code = exit_code if exit_code is not None else (1 if failed else 0)
-    return SuiteRun(ok=code == 0, exit_code=code, failed=frozenset(failed), total=total,
-                    readable=readable)  # fmt: skip
+    return SuiteRun(
+        ok=code == 0 and not failed, exit_code=code, failed=frozenset(failed), total=total,
+        readable=readable, passed=total - len(failed) if passed is None else passed,
+        passing=frozenset(passing or ()),
+    )  # fmt: skip
 
 
 def test_a_fix_is_held_to_the_suite_as_it_was() -> None:
+    # The run after a fix has the reproducing test's one test too.
     clean, known = _suite(), _suite({"t::needs_db"})
     assert compare(clean, _suite(total=11)).passed
     held = compare(known, _suite({"t::needs_db"}, total=11))
     assert held.passed
     assert held.known_failures == ("t::needs_db",)
-    broke = compare(known, _suite({"t::needs_db", "t::totals"}, total=11))
+    broke = compare(known, _suite({"t::needs_db", "t::totals"}, total=12, passed=10))
     assert not broke.passed
     assert broke.new_failures == ("t::totals",)
     fewer = compare(clean, _suite(total=7))
     assert not fewer.passed
     assert "Fewer tests ran" in fewer.reason
-    unread = compare(clean, _suite(exit_code=1, readable=False))
+    unread = compare(clean, _suite(total=11, exit_code=1, readable=False))
     assert not unread.passed
     assert "couldn't be read" in unread.reason
     timed_out = SuiteRun(False, None, frozenset(), None, readable=False, timed_out=True)
     assert not compare(clean, timed_out).passed
     # Exiting non-zero with no failures named: fine only when it did so before the fix too.
     floor = _suite(exit_code=2)
-    assert compare(floor, _suite(exit_code=2)).passed
-    assert not compare(clean, _suite(exit_code=2)).passed
+    assert compare(floor, _suite(total=11, exit_code=2)).passed
+    assert not compare(clean, _suite(total=11, exit_code=2)).passed
+
+
+def test_a_test_that_stops_passing_is_lost_however_it_goes() -> None:
+    # A skip (vitest, jest: counted, not named) leaves the total as it was: fewer pass.
+    skipped = compare(_suite(total=10), _suite(total=11, passed=10), repro_tests=1)
+    assert not skipped.passed
+    assert skipped.reason.startswith("Fewer tests pass with the fix (9")
+    # pytest names what passed: one skipped or deselected is one gone, whatever the counts say.
+    before = _suite(total=3, passing={"t::a", "t::b", "t::c"})
+    after = _suite(total=4, passing={"t::a", "t::c", "t::repro", "t::repro2"})
+    gone = compare(before, after, repro_tests=1)
+    assert not gone.passed
+    assert gone.reason == "Tests that passed before don't pass with the fix: t::b."
+    # A run that printed no report proves nothing, whatever its exit code.
+    silent = SuiteRun(True, 0, frozenset(), None, readable=False)
+    assert (
+        compare(_suite(), silent).reason == "The suite (exit 0) printed no report of what passed."
+    )
+
+
+def test_a_pass_is_the_report_not_the_exit_code() -> None:
+    failing = "FAILED t.py::test_a - ZeroDivisionError\n==== 1 failed, 2 passed in 0.10s ===="
+    forced = RunResult(True, 0, failing, 1.0)  # os._exit(0) after the summary
+    assert not passed("pytest", forced)
+    assert not read_suite("pytest", forced).ok
+    assert read_suite("pytest", forced).failed == {"t.py::test_a"}
+    killed = RunResult(True, 0, "collecting ...", 1.0)  # os._exit(0) before any summary
+    assert not passed("pytest", killed)
+    assert not read_suite("pytest", killed).readable
+    fine = RunResult(True, 0, "==== 2 passed in 0.10s ====", 1.0)
+    assert passed("pytest", fine)
+    assert not passed("pytest", fine, at_least=3)  # the reproducing file holds three tests
+    assert passed("vitest", RunResult(True, 0, "      Tests  2 passed (2)", 1.0))
+    assert not passed("jest", RunResult(True, 0, "Tests:       1 failed, 1 passed, 2 total", 1.0))
+    assert count_tests("pytest", "def test_a():\n    pass\n\nasync def test_b():\n    pass\n") == 2
+    assert count_tests("vitest", "it('a', () => {})\ntest('b', () => {})\nit.skip('c')") == 2
 
 
 def test_a_baseline_round_trips_through_the_run() -> None:
-    known = _suite({"t::needs_db"}, total=12)
+    known = _suite({"t::needs_db"}, total=12, passing={"t::a"})
     assert SuiteRun.from_json(known.json()) == known
