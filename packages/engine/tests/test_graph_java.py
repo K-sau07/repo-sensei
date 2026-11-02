@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pickle
 import time
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any, cast
 
@@ -944,13 +944,29 @@ def test_supertypes_named_through_a_chain_of_member_types_resolve_without_recurs
     assert len(extends) == 199
 
 
-def test_six_thousand_methods_key_their_calls_in_linear_time() -> None:
-    methods = "".join(f"  int m{i}(int a) {{ return h(a) + {i}; }}\n" for i in range(6000))
+def _big_class(n: int) -> Any:
+    methods = "".join(f"  int m{i}(int a) {{ return h(a) + {i}; }}\n" for i in range(n))
     source = f"package p;\npublic class Big {{\n  int h(int a) {{ return a; }}\n{methods}}}\n"
-    parsed = parse_file("src/p/Big.java", source.encode(), timeout_seconds=60)
-    started = time.monotonic()
+    return parse_file("src/p/Big.java", source.encode(), timeout_seconds=60)
+
+
+def _seconds(work: Callable[[], object]) -> float:
+    """The quickest of three runs of ``work`` (the least disturbed by the machine)."""
+    best = float("inf")
+    for _ in range(3):
+        started = time.perf_counter()
+        work()
+        best = min(best, time.perf_counter() - started)
+    return best
+
+
+def test_six_thousand_methods_key_their_calls_in_linear_time() -> None:
+    """Four times the methods take about four times as long to extract (quadratic work would
+    take sixteen), however fast the machine."""
+    small, parsed = _big_class(1500), _big_class(6000)
+    ratio = _seconds(lambda: java.extract(parsed)) / _seconds(lambda: java.extract(small))
+    assert ratio < 8, f"4x the methods took {ratio:.1f}x as long"
     facts = java.extract(parsed)
-    assert time.monotonic() - started < 2
     assert facts is not None
     sources = {c.source for c in facts.calls}
     assert len(sources) == 6000  # each call is its own method's
