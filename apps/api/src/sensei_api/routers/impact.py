@@ -15,7 +15,6 @@ from fastapi import APIRouter, Query, Request, Response
 from pydantic import BaseModel
 
 from sensei_api.deps import DbSession, RedisClient
-from sensei_api.graphs import GraphStore
 from sensei_api.orgs import OrgAccessDep
 from sensei_api.repos import RepoDep
 from sensei_api.routers.browse import COMMIT_HEADER, RefParam
@@ -24,6 +23,7 @@ from sensei_core.errors import InvalidError, NotFoundError
 from sensei_core.indexing.snapshots import resolve_snapshot
 from sensei_core.storage import ObjectStorage
 from sensei_engine.graph.snapshot import GraphSnapshot, Node
+from sensei_engine.graph.store import GraphStore
 from sensei_engine.graph.trace import TraceError, resolve_entry
 from sensei_engine.impact import CATEGORIES, MIN_CONF, Affected, changed_nodes, impact
 

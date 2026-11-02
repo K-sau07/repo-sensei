@@ -41,10 +41,11 @@ from sensei_fixer.state import FixStateMachine
 log = get_logger(__name__)
 Sessions = Callable[[], AbstractAsyncContextManager[AsyncSession]]
 # What a stage may set on the run (anything else in its updates is a bug, and refused).
-SETTABLE = frozenset(
-    {"root_cause", "plan", "repro_result", "risk", "merge_readiness", "diff_ref", "pr_url"}
-)
-FACTS = ("root_cause", "plan", "repro_result", "risk", "merge_readiness", "diff_ref", "pr_url")
+FACTS = (
+    "commit_sha", "root_cause", "plan", "repro_result", "risk", "merge_readiness", "diff_ref",
+    "pr_url",
+)  # fmt: skip
+SETTABLE = frozenset(FACTS)
 
 
 def utcnow() -> datetime:

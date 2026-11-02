@@ -20,7 +20,6 @@ from sensei_api import __version__, mcp
 from sensei_api.auth import key_access
 from sensei_api.browse import ConstellationCache, TreeCache
 from sensei_api.errors import install_error_handlers
-from sensei_api.graphs import GraphStore
 from sensei_api.middleware import RequestIdMiddleware
 from sensei_api.routers import (
     api_keys,
@@ -79,6 +78,7 @@ from sensei_core.redis import make_redis, ping_redis
 from sensei_core.security.crypto import TokenCipher
 from sensei_core.storage import ObjectStorage
 from sensei_core.telemetry import init_telemetry, instrument_engine, scrub_server_span
+from sensei_engine.graph.store import GraphStore
 from sensei_engine.search.grep import ExactSearch
 from sensei_engine.snapshots import SnapshotCache
 

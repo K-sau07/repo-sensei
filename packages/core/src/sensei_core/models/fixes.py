@@ -144,6 +144,9 @@ class FixRun(IdMixin, OrgScopedMixin, TimestampMixin, Base):
     source_ref: Mapped[str | None] = mapped_column(String(500))
     title: Mapped[str] = mapped_column(Text)
     ticket: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    # The commit being fixed: the last index's when the investigation began (every later stage
+    # reproduces, patches and verifies at it).
+    commit_sha: Mapped[str | None] = mapped_column(String(64))
     status: Mapped[FixStatus] = mapped_column(_enum(FixStatus, "fix_status"))
     stage: Mapped[FixStage] = mapped_column(_enum(FixStage, "fix_stage"))
     repro_result: Mapped[ReproResult | None] = mapped_column(_enum(ReproResult, "repro_result"))

@@ -131,15 +131,16 @@ class GitRunner:
     # ------------------------------------------------------------------ the checkout
 
     def checkout(
-        self, source: CloneSource, commit_sha: str, dest: Path, *, deadline: float
+        self, source: CloneSource, commit_sha: str, dest: Path, *, deadline: float, depth: int = 1
     ) -> Checkout:
-        """``dest`` at exactly ``commit_sha`` (and nothing else: earlier files are cleaned). The
+        """``dest`` at exactly ``commit_sha`` (and nothing else: earlier files are cleaned), with
+        ``depth`` commits of history (one for an index; a fix's investigation reads more). The
         caller holds the repository's cache lock (:func:`sensei_workers.ingest.cache.repo_lock`)."""
         if not _SHA.fullmatch(commit_sha):
             raise CloneError("invalid_commit", f"Not a commit id: {commit_sha!r}.")
         self._check_url(source.url)
         try:
-            return self._checkout(source, commit_sha, dest, deadline=deadline)
+            return self._checkout(source, commit_sha, dest, deadline=deadline, depth=depth)
         except TransientGitError:
             raise
         except (CloneError, GitCommandError) as exc:
@@ -149,10 +150,10 @@ class GitRunner:
                 raise
             # A copy a killed run left behind (locks, half a checkout): once more, from nothing.
             shutil.rmtree(dest, ignore_errors=True)
-            return self._checkout(source, commit_sha, dest, deadline=deadline)
+            return self._checkout(source, commit_sha, dest, deadline=deadline, depth=depth)
 
     def _checkout(
-        self, source: CloneSource, commit_sha: str, dest: Path, *, deadline: float
+        self, source: CloneSource, commit_sha: str, dest: Path, *, deadline: float, depth: int
     ) -> Checkout:
         git_dir = dest / ".git"
         if (
@@ -167,7 +168,7 @@ class GitRunner:
         for stale in git_dir.glob("*.lock"):  # left by a killed git; ours run one at a time
             stale.unlink(missing_ok=True)
         self.run(["config", "remote.origin.url", source.url], cwd=dest, deadline=deadline)
-        self._fetch(source, commit_sha, dest, deadline=deadline)
+        self._fetch(source, commit_sha, dest, deadline=deadline, depth=depth)
         fetched = self.run(["rev-parse", "FETCH_HEAD^{commit}"], cwd=dest, deadline=deadline)
         if fetched.strip() != commit_sha:
             raise CloneError("commit_mismatch", "The server returned a different commit.")
@@ -181,8 +182,12 @@ class GitRunner:
         (git_dir / CHECKED_OUT_MARKER).write_text(commit_sha)
         return Checkout(dest, commit_sha, size, files, submodules)
 
-    def _fetch(self, source: CloneSource, commit_sha: str, dest: Path, *, deadline: float) -> None:
-        args = ["fetch", "--depth=1", "--no-tags", "--no-recurse-submodules", "--quiet"]
+    def _fetch(
+        self, source: CloneSource, commit_sha: str, dest: Path, *, deadline: float, depth: int
+    ) -> None:
+        args = [
+            "fetch", f"--depth={max(1, depth)}", "--no-tags", "--no-recurse-submodules", "--quiet",
+        ]  # fmt: skip
         try:
             self.run([*args, "origin", commit_sha], cwd=dest, deadline=deadline, token=source.token)
         except GitCommandError as exc:

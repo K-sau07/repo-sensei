@@ -231,7 +231,7 @@ async def _step(
             scope.machine.log(log_line)
 
 
-async def _token(target: Target) -> str | None:
+async def clone_token(target: Target) -> str | None:
     """A token that can read only this repository (None for public imports)."""
     if target.source is RepoSource.PUBLIC_URL:
         return None
@@ -387,7 +387,7 @@ def clone_snapshot(self: IngestTask, *, job_id: str, org_id: str, repo_id: str) 
                 f"The repository is {target.size_kb / 1024**2:.1f} GB on GitHub, too large to "
                 "index.",
             )
-        token = runtime.run(_token(target))
+        token = runtime.run(clone_token(target))
         # A push names its commit; otherwise the branch's head, as GitHub has it now.
         sha = target.sha or runtime.run(_resolve(target, token))
         runtime.run(_step(self, org_id, job, 1))

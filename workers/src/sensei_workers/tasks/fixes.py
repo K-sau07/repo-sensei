@@ -7,14 +7,27 @@ import uuid
 
 from sensei_core.jobs import TaskName, fix_stage_message
 from sensei_core.logging import get_logger
+from sensei_core.models import FixStage
 from sensei_fixer.budget import Budget
+from sensei_fixer.investigate import investigate_stage
 from sensei_fixer.pipeline import FixPipeline
-from sensei_fixer.stages import default_handlers
+from sensei_fixer.stages import StageHandler, default_handlers
 from sensei_workers.app import celery_app
 from sensei_workers.base import SenseiTask
+from sensei_workers.fixes_workspace import fix_workspace
 from sensei_workers.runtime import get_runtime
 
 log = get_logger(__name__)
+
+
+def handlers() -> dict[FixStage, StageHandler]:
+    """The stages built so far; the rest stop, saying so."""
+    runtime = get_runtime()
+    found = default_handlers()
+    found[FixStage.INVESTIGATE] = investigate_stage(
+        fix_workspace, lambda: runtime.anthropic, runtime.costs
+    )
+    return found
 
 
 @celery_app.task(
@@ -30,7 +43,7 @@ def run_fix_stage(self: SenseiTask, *, org_id: str, fix_id: str, stage: str) -> 
     pipeline = FixPipeline(
         sessions=runtime.database.session,
         redis=runtime.redis,
-        handlers=default_handlers(),
+        handlers=handlers(),
         budget=Budget.from_settings(runtime.settings.fixer),
     )
     following = runtime.run(pipeline.run_stage(uuid.UUID(org_id), uuid.UUID(fix_id)))

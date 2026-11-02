@@ -19,7 +19,6 @@ from fastapi import APIRouter, Query, Request, Response
 from pydantic import BaseModel
 
 from sensei_api.deps import DbSession, RedisClient
-from sensei_api.graphs import GraphStore
 from sensei_api.orgs import OrgAccessDep
 from sensei_api.ratelimit import TokenBucket
 from sensei_api.repos import RepoDep
@@ -31,6 +30,7 @@ from sensei_core.models import EdgeType, Provenance
 from sensei_core.storage import ObjectStorage
 from sensei_engine.graph.confidence import path_confidence
 from sensei_engine.graph.snapshot import MAX_DEPTH, MAX_LIMIT, GraphSnapshot, Hop, Node
+from sensei_engine.graph.store import GraphStore
 from sensei_engine.search.route import Lane
 
 router = APIRouter(prefix="/orgs/{org}/repos/{repo}/graph", tags=["graph"])

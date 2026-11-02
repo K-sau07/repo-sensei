@@ -9,10 +9,9 @@ from typing import Any, cast
 
 import pytest
 
-from sensei_api import graphs
-from sensei_api.graphs import MB, GraphStore
 from sensei_core.models import Snapshot
 from sensei_core.storage import ObjectStorage, artifact_key
+from sensei_engine.graph import store as graphs
 from sensei_engine.graph.snapshot import (
     ARTIFACT_NAME,
     CODE_NODE_BYTES,
@@ -20,6 +19,7 @@ from sensei_engine.graph.snapshot import (
     GraphSnapshot,
     Node,
 )
+from sensei_engine.graph.store import MB, GraphStore
 
 VERSION = "v1"
 

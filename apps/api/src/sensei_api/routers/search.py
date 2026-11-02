@@ -36,7 +36,6 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from sensei_api.deps import DbSession, RedisClient
-from sensei_api.graphs import GraphStore
 from sensei_api.orgs import OrgAccessDep
 from sensei_api.ratelimit import TokenBucket
 from sensei_api.repos import RepoDep
@@ -58,6 +57,7 @@ from sensei_engine.embed.provider import EmbeddingProvider
 from sensei_engine.embed.provider import usage_ledger as embedding_ledger
 from sensei_engine.embed.voyage import VoyageClient
 from sensei_engine.graph.snapshot import GraphSnapshot
+from sensei_engine.graph.store import GraphStore
 from sensei_engine.llm.anthropic_client import AnthropicClient
 from sensei_engine.llm.ledger import usage_ledger as llm_ledger
 from sensei_engine.search.bm25 import Filters

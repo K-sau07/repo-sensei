@@ -258,3 +258,18 @@ def test_the_private_directory_is_removed(settings: IngestSettings) -> None:
     private = git.environment()["GIT_ASKPASS"]
     git.close()
     assert not Path(private).exists()
+
+
+async def test_a_fixs_checkout_has_history_an_index_doesnt(
+    runner: GitRunner, bare_repo: Any, tmp_path: Path
+) -> None:
+    from sensei_fixer.history import GitHistory  # noqa: PLC0415
+
+    index = tmp_path / "index"
+    runner.checkout(_source(bare_repo), bare_repo.second, index, deadline=_deadline())
+    assert [c.subject for c in await GitHistory(index, bare_repo.second).log()] == ["second"]
+    fix = tmp_path / "fix"
+    runner.checkout(_source(bare_repo), bare_repo.second, fix, deadline=_deadline(), depth=200)
+    commits = await GitHistory(fix, bare_repo.second).log()
+    assert [c.subject for c in commits] == ["second", "first"]
+    assert await GitHistory(fix, bare_repo.second).exists(bare_repo.first)

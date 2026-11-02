@@ -27,7 +27,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from sensei_api import streams
 from sensei_api.browse import TreeCache
-from sensei_api.graphs import GraphStore
 from sensei_api.routers import index_jobs
 from sensei_core.auth.github_login import store_tokens
 from sensei_core.config import GitHubSettings, Settings
@@ -71,6 +70,7 @@ from sensei_engine.graph import python as python_graph
 from sensei_engine.graph.snapshot import ARTIFACT_NAME as GRAPH_ARTIFACT
 from sensei_engine.graph.snapshot import GraphSnapshot
 from sensei_engine.graph.stage import load_project, resolve_graph, write_graph
+from sensei_engine.graph.store import GraphStore
 from sensei_engine.ingest.constellation import (
     LIVE_BATCH,
     Constellation,

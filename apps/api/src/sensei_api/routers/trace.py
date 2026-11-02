@@ -34,7 +34,6 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 
 from sensei_api.deps import DbSession, RedisClient
-from sensei_api.graphs import GraphStore, links_done
 from sensei_api.orgs import OrgAccessDep
 from sensei_api.repos import RepoDep
 from sensei_api.routers.browse import COMMIT_HEADER, RefParam
@@ -44,6 +43,7 @@ from sensei_core.indexing.snapshots import resolve_snapshot
 from sensei_core.models import CodeNode, EdgeType, NodeKind, Provenance, Snapshot
 from sensei_core.storage import ObjectStorage
 from sensei_engine.graph.snapshot import GraphSnapshot, Node
+from sensei_engine.graph.store import GraphStore, links_done
 from sensei_engine.graph.trace import (
     BreakKind,
     Direction,

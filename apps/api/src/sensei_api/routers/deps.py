@@ -38,7 +38,6 @@ from pydantic import BaseModel
 from sqlalchemy import select
 
 from sensei_api.deps import DbSession, RedisClient
-from sensei_api.graphs import GraphStore
 from sensei_api.orgs import OrgAccessDep
 from sensei_api.repos import RepoDep
 from sensei_api.routers.browse import COMMIT_HEADER, RefParam
@@ -66,6 +65,7 @@ from sensei_engine.deps import (
     layout,
 )
 from sensei_engine.graph.snapshot import GraphSnapshot
+from sensei_engine.graph.store import GraphStore
 from sensei_engine.third_party import USED_IN, PackageInUse, packages_in_use, usage
 
 router = APIRouter(prefix="/orgs/{org}/repos/{repo}", tags=["deps"])

@@ -5,7 +5,7 @@ traversals that answer in milliseconds.
 from the database; :meth:`GraphSnapshot.dumps` writes them as the snapshot's ``graph.bin``
 artifact (lines of JSON arrays, zlib-compressed: a few MB for a large repository) and
 :meth:`GraphSnapshot.loads` reads it back (the API keeps graphs in memory:
-:mod:`sensei_api.graphs`).
+:mod:`sensei_engine.graph.store`).
 
 Operations (edge confidence is the weight; ``min_conf`` drops what is less sure):
 
