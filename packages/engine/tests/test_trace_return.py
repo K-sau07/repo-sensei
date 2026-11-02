@@ -6,7 +6,7 @@ graph and links stages link them (a FastAPI backend for the login, so its path r
 from __future__ import annotations
 
 import time
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import cast
 
@@ -499,15 +499,32 @@ def test_two_outcomes_of_a_kind_and_target_on_one_line_are_two_nodes() -> None:
     assert key == "client_outcome storage t a.tsx:4 sessionStorage.setItem after 3-3"
 
 
-def test_a_function_of_two_thousand_awaits_is_scanned_in_linear_time() -> None:
-    """Each await is read once per function, and each outcome finds its own from the end."""
+def _awaits(n: int) -> str:
     body = "".join(
-        f"    const r{i} = await api.get('/x{i}')\n    setItems{i}(r{i}.data)\n"
-        for i in range(2000)
+        f"    const r{i} = await api.get('/x{i}')\n    setItems{i}(r{i}.data)\n" for i in range(n)
     )
-    page = f"export default function Page() {{\n  const load = async () => {{\n{body}  }}\n}}\n"
-    started = time.monotonic()
-    sites = _scan("web/Big.tsx", page)
-    assert time.monotonic() - started < 2
+    return f"export default function Page() {{\n  const load = async () => {{\n{body}  }}\n}}\n"
+
+
+def _seconds(work: Callable[[], object]) -> float:
+    """The quickest of three runs of ``work`` (the least disturbed by the machine)."""
+    best = float("inf")
+    for _ in range(3):
+        started = time.perf_counter()
+        work()
+        best = min(best, time.perf_counter() - started)
+    return best
+
+
+def test_a_function_of_two_thousand_awaits_is_scanned_in_linear_time() -> None:
+    """Each await is read once per function, and each outcome finds its own from the end: four
+    times the awaits take about four times as long (quadratic work would take sixteen), however
+    fast the machine."""
+    small, large = _awaits(500), _awaits(2000)
+    sites = _scan("web/Big.tsx", large)
     assert len(sites) == 2000
     assert sites[-1].ties[0] == (4001, 4001)  # its own await, the line before
+    ratio = _seconds(lambda: _scan("web/Big.tsx", large)) / _seconds(
+        lambda: _scan("web/Big.tsx", small)
+    )
+    assert ratio < 8, f"4x the awaits took {ratio:.1f}x as long"
