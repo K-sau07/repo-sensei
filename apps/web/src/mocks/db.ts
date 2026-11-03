@@ -87,6 +87,8 @@ export interface MockDb {
   apiKeys?: MockApiKey[];
   /** Each person's inbox in each org, by "<org>:<user id>" (see handlers/inbox.ts). */
   inbox?: Record<string, InboxItem[]>;
+  /** Each org's Slack, by org slug (see handlers/inbox.ts): the webhook kept whole here. */
+  slack?: Record<string, { webhook_url: string; channel: string; kinds: NotificationKind[] }>;
   /** Each person's notification preferences, per kind (see handlers/inbox.ts). */
   notificationPrefs?: Record<
     string,

@@ -10,6 +10,7 @@ export type OrgSection =
   | "settings"
   | "settings/general"
   | "settings/members"
+  | "settings/integrations"
   | "settings/api-keys"
   | "settings/mcp";
 

@@ -16,6 +16,7 @@ export const ORG_PAGE_TITLES: Record<string, string> = {
   "repos/new": "Connect a repository",
   "settings/general": "Organization settings",
   "settings/members": "Members",
+  "settings/integrations": "Integrations",
 };
 
 /** Names a slug can't have, because org pages use them (`/[org]/repos` isn't a repository). */

@@ -130,3 +130,35 @@ test.describe("connecting an editor", () => {
     await expect(result).toContainText("TimeoutError");
   });
 });
+
+test.describe("Slack", () => {
+  test("an admin connects the org's Slack, sees only the webhook's end, and disconnects it", async ({
+    page,
+  }) => {
+    await page.goto("/acme/settings/integrations");
+    await page
+      .getByLabel("Incoming webhook URL")
+      .fill("https://hooks.slack.com/services/T0001/B0002/abcDEF1234");
+    await page.getByLabel("Channel name (to show here)").fill("#eng-alerts");
+    await page.getByRole("button", { name: "Connect Slack" }).click();
+    await expect(page.getByTestId("slack-connected")).toContainText("#eng-alerts");
+    await expect(page.getByTestId("slack-connected")).toContainText("…1234");
+    await noAxeViolations(page);
+    await page.reload();
+    await expect(page.getByTestId("slack-connected")).toContainText("…1234");
+    await page.getByRole("button", { name: "Disconnect" }).click();
+    await page.getByRole("alertdialog").getByRole("button", { name: "Disconnect" }).click();
+    await expect(page.getByRole("button", { name: "Connect Slack" })).toBeVisible();
+  });
+
+  test("members and viewers are pointed to their own notification settings", async ({
+    page,
+    context,
+  }) => {
+    await useMockScenario(context, "as-viewer");
+    await page.goto("/acme/settings/integrations");
+    await expect(page.getByTestId("slack-admins-only")).toBeVisible();
+    await page.getByRole("link", { name: "your notification settings" }).click();
+    await expect(page).toHaveURL(/\/settings\/notifications$/);
+  });
+});

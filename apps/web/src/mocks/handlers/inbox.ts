@@ -1,10 +1,11 @@
 import { http, HttpResponse, sse } from "msw";
 
 import type { InboxItem, InboxPage, NotificationKind, Preferences } from "@/lib/api/inbox";
-import { db, OCTO, saveDb } from "@/mocks/db";
+import { atLeast, db, OCTO, roleIn, saveDb } from "@/mocks/db";
 
+import { apiError } from "./errors";
 import { orgAccess } from "./orgs";
-import { currentUser } from "./session";
+import { currentUser, insufficientRole } from "./session";
 
 const FIX = (n: number) =>
   `/acme/api/fixes/0199f000-0000-7000-8000-00000000f${String(n).padStart(3, "0")}`;
@@ -197,4 +198,73 @@ export const inboxHandlers = [
     saveDb();
     return HttpResponse.json(preferencesOf(user.id));
   }),
+
+  // ------------------------------------------------------------ the org's Slack (admins)
+
+  http.get<{ org: string }>("*/api/v1/orgs/:org/integrations/slack", ({ params }) => {
+    const admin = slackAdmin(params.org);
+    if (admin) return admin;
+    const found = db.slack?.[params.org];
+    if (!found) return apiError(404, "slack_not_connected", "Slack isn't connected.");
+    return HttpResponse.json(slackOut(found));
+  }),
+
+  http.put<{ org: string }>(
+    "*/api/v1/orgs/:org/integrations/slack",
+    async ({ params, request }) => {
+      const admin = slackAdmin(params.org);
+      if (admin) return admin;
+      const body = (await request.json()) as {
+        webhook_url?: string | null;
+        channel?: string;
+        kinds?: NotificationKind[];
+      };
+      const url = body.webhook_url?.trim();
+      if (url && !SLACK_WEBHOOK.test(url)) {
+        return apiError(422, "slack_webhook",
+        "That isn't a Slack incoming webhook (https://hooks.slack.com/services/…)."); // prettier-ignore
+      }
+      const found = db.slack?.[params.org];
+      if (!found && !url) {
+        return apiError(422, "slack_webhook", "Connecting Slack needs its incoming webhook's URL.");
+      }
+      db.slack ??= {};
+      const saved = {
+        webhook_url: url ?? found?.webhook_url ?? "",
+        channel: (body.channel ?? "").trim(),
+        kinds: [...new Set(body.kinds ?? [])].sort(),
+      };
+      db.slack[params.org] = saved;
+      saveDb();
+      return HttpResponse.json(slackOut(saved));
+    },
+  ),
+
+  http.delete<{ org: string }>("*/api/v1/orgs/:org/integrations/slack", ({ params }) => {
+    const admin = slackAdmin(params.org);
+    if (admin) return admin;
+    if (db.slack)
+      db.slack = Object.fromEntries(Object.entries(db.slack).filter(([org]) => org !== params.org));
+    saveDb();
+    return new HttpResponse(null, { status: 204 });
+  }),
 ];
+
+const SLACK_WEBHOOK =
+  /^https:\/\/hooks\.slack\.com\/services\/[A-Za-z0-9_-]+(\/[A-Za-z0-9_-]+){1,3}$/;
+
+/** A refusal for someone who isn't the org's admin (null: go on). */
+function slackAdmin(org: string): Response | null {
+  const access = orgAccess(org);
+  if (access instanceof Response) return access;
+  const role = roleIn(org, access.user.id);
+  return atLeast(role, "admin") ? null : insufficientRole("admin", role ?? "none");
+}
+
+function slackOut(found: { webhook_url: string; channel: string; kinds: NotificationKind[] }) {
+  return {
+    channel: found.channel,
+    kinds: found.kinds,
+    webhook_hint: `…${found.webhook_url.slice(-4)}`,
+  };
+}
