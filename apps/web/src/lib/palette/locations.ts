@@ -17,6 +17,7 @@ export const ORG_PAGE_TITLES: Record<string, string> = {
   "settings/general": "Organization settings",
   "settings/members": "Members",
   "settings/integrations": "Integrations",
+  "settings/security": "Audit log",
   "settings/danger": "Danger zone",
 };
 

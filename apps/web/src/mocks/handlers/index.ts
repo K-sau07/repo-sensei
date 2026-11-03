@@ -1,5 +1,6 @@
 import { apiKeyHandlers } from "./api-keys";
 import { askHandlers } from "./ask";
+import { auditHandlers } from "./audit";
 import { browseHandlers } from "./browse";
 import { changeHandlers } from "./changes";
 import { constellationHandlers } from "./constellation";
@@ -39,6 +40,7 @@ export const handlers = [
   ...galaxyHandlers,
   ...traceHandlers,
   ...askHandlers,
+  ...auditHandlers,
   ...refHandlers,
   ...diagramHandlers,
   ...inboxHandlers,
