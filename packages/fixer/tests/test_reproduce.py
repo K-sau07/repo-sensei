@@ -297,3 +297,17 @@ def test_a_project_behind_a_symbolic_link_isnt_written_to(tmp_path: Path) -> Non
     (root / "evil").symlink_to(outside, target_is_directory=True)
     with pytest.raises(NoFramework):
         detect(root, "evil/app.py")  # its pyproject is outside the checkout: not a project
+
+
+def test_only_a_traceback_frame_says_where_a_failure_ran() -> None:
+    crash = parse_ticket(TRACE, paths=["app/stats.py"])
+    # The test raising the error itself, a comment naming the reported file: no frame there.
+    commented = (
+        "    def test_x():\n        # app/stats.py\n>       raise ZeroDivisionError\n"
+        "E   ZeroDivisionError\n\ntests/test_x.py:4: ZeroDivisionError\n1 failed"
+    )
+    assert not for_the_reason(_ran(False, commented), crash, ["app/stats.py"])
+    js = "TypeError: Cannot read it\n    at total (/work/web/src/lib/money.ts:12:5)"
+    from sensei_fixer.reproduce import frames_in  # noqa: PLC0415
+
+    assert frames_in(js) == ["/work/web/src/lib/money.ts"]

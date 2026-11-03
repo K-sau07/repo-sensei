@@ -26,7 +26,7 @@ from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, field
 from decimal import Decimal
 from importlib import resources
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from typing import Any, Protocol, cast
 
 from sensei_core.fixes.tickets import Ticket
@@ -110,12 +110,29 @@ def definitions() -> list[dict[str, Any]]:
 # ---------------------------------------------------------------- judging runs
 
 
+# A traceback's frame, as a runner prints it: Python's ``File "…", line N``, pytest's
+# ``path:N: …`` at the start of a line, a JavaScript stack's ``at … (path:N:M)``, and vitest's
+# marked ``path:N:M``. Only these name where a failure ran (the test's own source, printed beside
+# them, can say any path in a comment).
+_FRAME = re.compile(
+    r'File "(?P<py>[^"\n]+)", line \d+|^(?P<pyt>[^\s:]+\.\w+):\d+:|'
+    r"\bat (?:[^\s()]+ )?\(?(?P<js>[^\s()]+?):\d+:\d+\)?|\u276f (?P<vt>[^\s:]+):\d+:\d+",
+    re.MULTILINE,
+)
+
+
+def frames_in(output: str) -> list[str]:
+    """The files a failure's traceback runs through, as printed (absolute or relative)."""
+    return [next(g for g in m.groups() if g) for m in _FRAME.finditer(output)]
+
+
 def passes_through(output: str, paths: Collection[str]) -> bool:
-    """``output`` (a failure's) names one of ``paths``: its traceback ran through the file."""
+    """A frame of ``output``'s traceback is one of ``paths``' files (the failure ran there)."""
+    frames = [f.replace("\\", "/") for f in frames_in(output)]
     for path in paths:
-        name = PurePosixPath(path).name
-        if path in output or f'/{name}"' in output or f"{name}:" in output:
-            return True
+        for frame in frames:
+            if frame == path or frame.endswith(f"/{path}") or path.endswith(f"/{frame}"):
+                return True
     return False
 
 
