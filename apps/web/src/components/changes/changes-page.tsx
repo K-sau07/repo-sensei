@@ -24,7 +24,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { roleAtLeast, useOrgRole } from "@/hooks/use-org-role";
-import { STAGE_LABELS } from "@/lib/api/fixes";
+import { STAGE_LABELS, prLink } from "@/lib/api/fixes";
 import { STAGE_LABELS as INDEX_STAGES } from "@/lib/indexing";
 import { repoPath } from "@/lib/routes";
 
@@ -132,9 +132,9 @@ function Changes() {
                   )}
                 </TableCell>
                 <TableCell>
-                  {change.pr_url ? (
+                  {prLink(change.pr_url) ? (
                     <a
-                      href={change.pr_url}
+                      href={prLink(change.pr_url) ?? undefined}
                       target="_blank"
                       rel="noreferrer"
                       className="inline-flex items-center gap-1 text-xs hover:underline"

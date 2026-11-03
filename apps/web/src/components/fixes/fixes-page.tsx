@@ -41,6 +41,7 @@ import {
   type FixRisk,
   type FixSource,
   type FixSummary,
+  prLink,
 } from "@/lib/api/fixes";
 import { STAGE_LABELS as INDEX_STAGES } from "@/lib/indexing";
 import { repoPath } from "@/lib/routes";
@@ -243,9 +244,9 @@ function FixTable({ fixes }: { fixes: FixSummary[] }) {
               )}
             </TableCell>
             <TableCell>
-              {fix.pr_url ? (
+              {prLink(fix.pr_url) ? (
                 <a
-                  href={fix.pr_url}
+                  href={prLink(fix.pr_url) ?? undefined}
                   target="_blank"
                   rel="noreferrer"
                   className="inline-flex items-center gap-1 text-xs hover:underline"

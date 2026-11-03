@@ -10,17 +10,17 @@ ZeroDivisionError: integer division or modulo by zero`;
 test.describe("fixes", () => {
   test("the list is filtered by status, source and risk, kept in the address", async ({ page }) => {
     await page.goto("/acme/api/fixes");
-    await expect(page.getByTestId("fix-row")).toHaveCount(4);
+    await expect(page.getByTestId("fix-row")).toHaveCount(6);
     await page.getByRole("combobox", { name: "Status" }).click();
     await page.getByRole("option", { name: "Awaiting approval" }).click();
     await expect(page).toHaveURL(/status=awaiting_approval/);
-    await expect(page.getByTestId("fix-row")).toHaveCount(1);
+    await expect(page.getByTestId("fix-row")).toHaveCount(2);
     await page.getByRole("combobox", { name: "Status" }).click();
     await page.getByRole("option", { name: "Any status" }).click();
     await page.getByRole("combobox", { name: "Risk" }).click();
     await page.getByRole("option", { name: "High risk" }).click();
-    await expect(page.getByTestId("fix-row")).toHaveCount(1);
-    await expect(page.getByTestId("fix-row")).toContainText("Invoice totals");
+    await expect(page.getByTestId("fix-row")).toHaveCount(2);
+    await expect(page.getByTestId("fix-row").filter({ hasText: "Invoice totals" })).toHaveCount(1);
     await page.goto("/acme/api/fixes?source=sentry");
     await expect(page.getByTestId("fix-row")).toHaveCount(1);
     await expect(page.getByTestId("fix-row")).toContainText("Needs triage");
@@ -46,7 +46,7 @@ test.describe("fixes", () => {
     ).toBeVisible();
     await expect(page.getByTestId("fix-page").getByTestId("fix-status")).toHaveText("Queued");
     await page.getByTestId("fix-page").getByRole("link", { name: "Fixes" }).click();
-    await expect(page.getByTestId("fix-row")).toHaveCount(5);
+    await expect(page.getByTestId("fix-row")).toHaveCount(7);
   });
 
   test("a GitHub issue starts a fix, and one GitHub doesn't have says so", async ({ page }) => {
@@ -78,7 +78,7 @@ test.describe("fixes", () => {
   test("viewers follow fixes but can't start one", async ({ page, context }) => {
     await useMockScenario(context, "as-viewer");
     await page.goto("/acme/api/fixes");
-    await expect(page.getByTestId("fix-row")).toHaveCount(4);
+    await expect(page.getByTestId("fix-row")).toHaveCount(6);
     await expect(page.getByTestId("viewer-note")).toBeVisible();
     await expect(page.getByRole("link", { name: "New fix" })).toHaveCount(0);
     await page.goto("/acme/api/fixes/new");

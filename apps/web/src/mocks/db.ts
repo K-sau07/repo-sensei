@@ -20,6 +20,17 @@ import type { MockChange } from "./handlers/changes";
 import type { MockJob } from "./jobs";
 import { mockScenario } from "./scenario";
 
+export interface MockApproval {
+  id: string;
+  user_id: string;
+  login: string | null;
+  decision: "approve" | "request_changes" | "reject";
+  comment: string | null;
+  plan_edits: Record<string, unknown> | null;
+  plan_revision: number;
+  created_at: string;
+}
+
 export interface MockUser {
   id: string;
   login: string;
@@ -66,6 +77,9 @@ export interface MockDb {
   diagrams?: Record<string, Diagram[]>;
   /** Fixes per repository id (see handlers/fixes.ts). */
   fixes?: Record<string, Fix[]>;
+  /** The decisions on each fix's plans, and where a decided fix is (see handlers/fixes.ts). */
+  fixApprovals?: Record<string, MockApproval[]>;
+  fixPhases?: Record<string, { phase: "replanning" | "building"; since: number }>;
   /** Requested changes per repository id, each with where it is (see handlers/changes.ts). */
   changes?: Record<string, MockChange[]>;
   /** API keys, newest first (see handlers/api-keys.ts). */

@@ -3491,6 +3491,19 @@
             ],
             "title": "Root Cause"
           },
+          "run_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Its agent run (the timeline of its steps).",
+            "title": "Run Id"
+          },
           "source": {
             "$ref": "#/components/schemas/FixSource"
           },
@@ -3568,7 +3581,8 @@
           "patch",
           "verification",
           "stop_reason",
-          "approvals_needed"
+          "approvals_needed",
+          "run_id"
         ],
         "title": "FixOut",
         "type": "object"

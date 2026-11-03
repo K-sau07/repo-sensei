@@ -3435,6 +3435,11 @@ export interface components {
             root_cause: {
                 [key: string]: unknown;
             } | null;
+            /**
+             * Run Id
+             * @description Its agent run (the timeline of its steps).
+             */
+            run_id: string | null;
             source: components["schemas"]["FixSource"];
             /** Source Ref */
             source_ref: string | null;

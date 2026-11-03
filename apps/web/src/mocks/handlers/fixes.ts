@@ -5,7 +5,7 @@
  * or a GitHub issue (#404 is one GitHub doesn't have), and starting one Sentry left for triage.
  * Kept in the mock database per repository.
  */
-import { http, HttpResponse } from "msw";
+import { delay, http, HttpResponse } from "msw";
 
 import type { Fix, FixSummary, Frame, Ticket } from "@/lib/api/fixes";
 import { atLeast, db, HUBOT, NOW, OCTO, roleIn, saveDb, type MockRepo } from "@/mocks/db";
@@ -118,13 +118,93 @@ function made(
     verification: null,
     stop_reason: null,
     approvals_needed: null,
+    run_id: null,
     ...fields,
   };
 }
 
+const ROOT_CAUSE = {
+  claim: "count_items divides by per_page, which is 0 for an account with no items.",
+  path: "backend/app/crud.py", start_line: 58, end_line: 61, confidence: "high",
+  suspect_commit: "9f1c2d3e4b5a69788f7e6d5c4b3a291807f6e5d4", seen_in_repro: true,
+  hypotheses: [
+    { claim: "per_page is 0 when the account has no items", likelihood: 0.8,
+      evidence: [{ path: "backend/app/crud.py", start_line: 58, end_line: 61 },
+                 { path: "backend/app/api/routes/items.py", start_line: 30, end_line: 36 }] },
+    { claim: "the route passes a stale count", likelihood: 0.15,
+      evidence: [{ path: "backend/app/api/routes/items.py", start_line: 30, end_line: 36 }] },
+  ],
+  blast_radius: {
+    changed: ["py backend/app/crud.py/count_items"],
+    counts: { routes: 2, screens: 1, tests: 2, tables: 1, symbols: 3 },
+    top: { routes: [{ key: "r1", name: "GET /api/v1/items/", path: "backend/app/api/routes/items.py",
+                      score: 1, distance: 1 }] },
+    truncated: false,
+  },
+  areas: {},
+}; // prettier-ignore
+const FAILING =
+  "backend/app/crud.py:61: ZeroDivisionError\nE   ZeroDivisionError: integer division or modulo by zero\n1 failed in 0.12s";
+const PASSING = "1 passed in 0.10s";
+const REPRO = {
+  framework: "pytest", project: "backend", test_path: "backend/app/tests/test_sensei_repro_f001.py",
+  test: "def test_no_items(client, normal_user_token_headers):\n    r = client.get('/api/v1/items/', headers=normal_user_token_headers)\n    assert r.status_code == 200\n",
+  explanation: "An account with no items gets a 500.", tries: [],
+  runs: [1, 2, 3].map(() => ({ passed: false, exit_code: 1, for_reason: true, output: FAILING })),
+}; // prettier-ignore
+
+function planOf(summary: string, risk: "low" | "high") {
+  return {
+    summary, revision: 1,
+    steps: [{ description: "Return 0 pages when per_page is 0", path: "backend/app/crud.py" }],
+    files: [{ path: "backend/app/crud.py", change: "modify", why: "where the division is" }],
+    risks: ["Callers that expected an error for an empty account."],
+    risk: { level: risk, reasons: risk === "high" ? ["touches payments: backend/app/payments/refunds.py is payments code"] : ["1 file(s), a small change, no sensitive area"] },
+  }; // prettier-ignore
+}
+
+const DIFF = `diff --git a/backend/app/crud.py b/backend/app/crud.py
+index 1111111..2222222 100644
+--- a/backend/app/crud.py
++++ b/backend/app/crud.py
+@@ -58,4 +58,6 @@ def count_items(*, session, owner_id, per_page):
+     total = session.exec(select(func.count()).where(Item.owner_id == owner_id)).one()
++    if not per_page:
++        return 0
+     return total // per_page
+diff --git a/backend/app/tests/test_sensei_repro_f001.py b/backend/app/tests/test_sensei_repro_f001.py
+new file mode 100644
+--- /dev/null
++++ b/backend/app/tests/test_sensei_repro_f001.py
+@@ -0,0 +1,3 @@
++def test_no_items(client, normal_user_token_headers):
++    r = client.get('/api/v1/items/', headers=normal_user_token_headers)
++    assert r.status_code == 200
+`;
+
 function seed(repo: MockRepo): Fix[] {
   const id = (n: number) => `0199f000-0000-7000-8000-00000000f${String(n).padStart(3, "0")}`;
   return [
+    made(repo, id(5), {
+      title: "Refunds are applied twice when the request is retried",
+      status: "awaiting_approval",
+      stage: "awaiting_approval",
+      source: "paste",
+      risk: "high",
+      repro_result: "reproduced",
+      approvals_needed: 2,
+      root_cause: {
+        ...ROOT_CAUSE,
+        claim: "The refund isn't keyed by the request id: a retry refunds again.",
+        path: "backend/app/payments/refunds.py",
+        start_line: 12,
+        end_line: 20,
+      },
+      repro: REPRO,
+      plan: planOf("Key refunds by the request id, so a retry finds the first.", "high"),
+      run_id: "0199f000-0000-7000-8000-0000000000a5",
+      created_at: "2026-10-18T11:50:00Z",
+    }),
     made(repo, id(1), {
       title: "Items page crashes when an account has no items",
       status: "awaiting_approval",
@@ -134,6 +214,10 @@ function seed(repo: MockRepo): Fix[] {
       risk: "low",
       repro_result: "reproduced",
       approvals_needed: 1,
+      root_cause: ROOT_CAUSE,
+      repro: REPRO,
+      plan: planOf("Return 0 pages for an account with no items instead of dividing by 0.", "low"),
+      run_id: "0199f000-0000-7000-8000-0000000000a1",
       created_at: "2026-10-18T11:20:00Z",
     }),
     made(repo, id(2), {
@@ -152,6 +236,12 @@ function seed(repo: MockRepo): Fix[] {
       stage: "reproduce",
       source: "paste",
       repro_result: "not_reproduced",
+      repro: {
+        ...REPRO,
+        explanation: "It needs a real browser to expire the cookie.",
+        tries: [{ passed: true, exit_code: 0, output: "1 passed in 0.31s" }],
+        runs: [],
+      },
       stop_reason: "No reproducing test: it needs a real browser to expire the cookie.",
       created_by: HUBOT,
       author: "hubot",
@@ -171,7 +261,76 @@ function seed(repo: MockRepo): Fix[] {
       created_at: "2026-10-16T09:10:00Z",
       finished_at: "2026-10-16T09:41:00Z",
     }),
+    made(repo, id(6), {
+      title: "Search returns nothing for an empty query",
+      status: "blocked",
+      stage: "patch",
+      source: "paste",
+      risk: "low",
+      repro_result: "reproduced",
+      repro: REPRO,
+      plan: planOf("Return every item for an empty query.", "low"),
+      patch: {
+        findings: [
+          {
+            rule: "broad_except",
+            path: "backend/app/api/routes/items.py",
+            detail: "except Exception:",
+          },
+        ],
+        attempts: [],
+      },
+      stop_reason: "Anti-gaming: broad_except (backend/app/api/routes/items.py: except Exception:)",
+      created_at: "2026-10-15T14:00:00Z",
+      finished_at: "2026-10-15T14:20:00Z",
+    }),
   ];
+}
+
+const PLAN_MS = 1_200;
+const BUILD_MS = 2_400;
+
+/** A fix moved on by the time passed since a person decided on it. */
+function now(fix: Fix): Fix {
+  db.fixPhases ??= {};
+  const phase = db.fixPhases[fix.id];
+  if (!phase) return fix;
+  const passed = Date.now() - phase.since;
+  const plan = fix.plan as {
+    revision: number;
+    steps: unknown[];
+    requests?: { edits?: { steps?: unknown[] } | null }[];
+  } | null;
+  if (phase.phase === "replanning") {
+    if (passed >= PLAN_MS && plan) {
+      const edits = plan.requests?.at(-1)?.edits;
+      fix.plan = { ...plan, revision: plan.revision + 1, steps: edits?.steps ?? plan.steps };
+      Object.assign(fix, { status: "awaiting_approval", stage: "awaiting_approval" });
+      Reflect.deleteProperty(db.fixPhases, fix.id);
+      saveDb();
+    } else {
+      Object.assign(fix, { status: "running", stage: "plan" });
+    }
+  } else if (passed >= BUILD_MS) {
+    Object.assign(fix, {
+      status: "succeeded", stage: "done", merge_readiness: 4, pr_url: "https://github.com/acme/api/pull/60",
+      finished_at: new Date().toISOString(),
+      patch: { diff: DIFF, files: ["backend/app/crud.py"], lines: 2, summary: "Return 0 for no items.", attempts: [], findings: [] },
+      verification: {
+        repro_runs: [1, 2, 3].map(() => ({ passed: true, exit_code: 0, output: PASSING })),
+        suite: { ok: true, verdict: "The whole suite passes." },
+        verdict: { test_shaped: false, reason: "It guards the division at its cause.", concerns: [] },
+        readiness: { score: 4, reason: "No extra tests on the changed lines." },
+        unverified: ["Accounts created before the per_page setting existed."],
+        findings: [], risk: fix.plan ? (fix.plan as { risk: unknown }).risk : null,
+      },
+    }); // prettier-ignore
+    Reflect.deleteProperty(db.fixPhases, fix.id);
+    saveDb();
+  } else {
+    Object.assign(fix, { status: "running", stage: passed >= BUILD_MS / 2 ? "verify" : "patch" });
+  }
+  return fix;
 }
 
 function fixesOf(repo: MockRepo): Fix[] {
@@ -202,7 +361,7 @@ function found(org: string, id: string): Fix | Response {
   if (access instanceof Response) return access;
   for (const repo of reposOf(org)) {
     const fix = fixesOf(repo).find((f) => f.id === id);
-    if (fix) return fix;
+    if (fix) return now(fix);
   }
   return apiError(404, "fix_not_found", "No such fix.");
 }
@@ -228,6 +387,7 @@ export const fixHandlers = [
     if (repo instanceof Response) return repo;
     const status = new URL(request.url).searchParams.get("status");
     const fixes = fixesOf(repo)
+      .map(now)
       .filter((fix) => !status || fix.status === status)
       .sort((a, b) => b.created_at.localeCompare(a.created_at));
     return HttpResponse.json(fixes.map(summary));
@@ -292,6 +452,115 @@ export const fixHandlers = [
     fix.status = "queued";
     saveDb();
     return HttpResponse.json(fix);
+  }),
+
+  http.get<Params>("*/api/v1/orgs/:org/fixes/:id/approvals", ({ params }) => {
+    const fix = found(params.org, params.id);
+    if (fix instanceof Response) return fix;
+    db.fixApprovals ??= {};
+    return HttpResponse.json(db.fixApprovals[fix.id] ?? []);
+  }),
+
+  http.post<Params>("*/api/v1/orgs/:org/fixes/:id/approval", async ({ params, request }) => {
+    const who = member(params.org);
+    if (who instanceof Response) return who;
+    const fix = found(params.org, params.id);
+    if (fix instanceof Response) return fix;
+    const body = (await request.json()) as {
+      decision: "approve" | "request_changes" | "reject";
+      plan_revision: number;
+      comment?: string | null;
+      plan_edits?: { steps?: unknown[] } | null;
+    };
+    const plan = fix.plan as { revision: number; requests?: unknown[] } | null;
+    if (fix.status !== "awaiting_approval")
+      return apiError(409, "fix_not_awaiting_approval", "The fix isn't waiting for approval.");
+    if (plan?.revision !== body.plan_revision)
+      return apiError(409, "fix_plan_changed", "The plan changed: read it again.");
+    db.fixApprovals ??= {};
+    db.fixPhases ??= {};
+    const decisions = (db.fixApprovals[fix.id] ??= []);
+    const approved = decisions.filter(
+      (a) => a.decision === "approve" && a.plan_revision === plan.revision,
+    );
+    if (body.decision === "approve" && approved.some((a) => a.user_id === who.id))
+      return apiError(409, "fix_already_approved", "You have approved this plan already.");
+    decisions.push({
+      id: crypto.randomUUID(), user_id: who.id, login: who.login, decision: body.decision,
+      comment: body.comment ?? null, plan_edits: body.plan_edits ?? null,
+      plan_revision: plan.revision, created_at: new Date().toISOString(),
+    }); // prettier-ignore
+    if (body.decision === "reject") {
+      const why = body.comment ? `: ${body.comment}` : ".";
+      Object.assign(fix, { status: "rejected", stop_reason: `Rejected by @${who.login}${why}`,
+                           finished_at: new Date().toISOString() }); // prettier-ignore
+    } else if (body.decision === "request_changes") {
+      const asked = {
+        by: who.login,
+        comment: body.comment ?? null,
+        edits: body.plan_edits ?? null,
+      };
+      fix.plan = { ...plan, requests: [...(plan.requests ?? []), asked] };
+      Object.assign(fix, { status: "queued", stage: "plan" });
+      db.fixPhases[fix.id] = { phase: "replanning", since: Date.now() };
+    } else if (approved.length + 1 >= (fix.approvals_needed ?? 1)) {
+      Object.assign(fix, { status: "queued", stage: "patch" });
+      db.fixPhases[fix.id] = { phase: "building", since: Date.now() };
+    }
+    saveDb();
+    return HttpResponse.json(fix);
+  }),
+
+  http.post<Params>("*/api/v1/orgs/:org/fixes/:id/retry", async ({ params, request }) => {
+    const who = member(params.org);
+    if (who instanceof Response) return who;
+    const fix = found(params.org, params.id);
+    if (fix instanceof Response) return fix;
+    if (fix.status !== "not_reproduced")
+      return apiError(409, "fix_not_retryable", `The fix is ${fix.status}, not retryable.`);
+    const body = (await request.json()) as { context: string };
+    Object.assign(fix, {
+      status: "queued", stage: "investigate", stop_reason: null, finished_at: null, repro: null,
+      repro_result: null, root_cause: null,
+      ticket: { ...fix.ticket, text: `${fix.ticket.text}\n\nFrom @${who.login}: ${body.context}` },
+    }); // prettier-ignore
+    saveDb();
+    return HttpResponse.json(fix);
+  }),
+
+  http.post<Params>("*/api/v1/orgs/:org/fixes/:id/cancel", ({ params }) => {
+    const who = member(params.org);
+    if (who instanceof Response) return who;
+    const fix = found(params.org, params.id);
+    if (fix instanceof Response) return fix;
+    Object.assign(fix, { status: "cancelled", stop_reason: `Cancelled by @${who.login}.` });
+    saveDb();
+    return HttpResponse.json(fix);
+  }),
+
+  http.get<Params>("*/api/v1/orgs/:org/fixes/:id/events", ({ params, request }) => {
+    const fix = found(params.org, params.id);
+    if (fix instanceof Response) return fix;
+    const encoder = new TextEncoder();
+    const again = request.headers.get("last-event-id") !== null;
+    const steps = [
+      { name: "turn 1", summary: "read_code, grep" },
+      { name: "edit_file", summary: "edited backend/app/crud.py" },
+      { name: "attempt 1 of 4", summary: "passed: The whole suite passes." },
+    ];
+    const stream = new ReadableStream({
+      async start(controller) {
+        if (!again) {
+          steps.forEach((step, i) => {
+            const data = { type: "step", fix_id: fix.id, ...step, ts: new Date().toISOString() };
+            const text = `id: ${String(i + 1)}\nevent: step\ndata: ${JSON.stringify(data)}\n\n`;
+            controller.enqueue(encoder.encode(text));
+          });
+        }
+        await delay("infinite"); // open, as the API's is while the fix goes on
+      },
+    });
+    return new HttpResponse(stream, { headers: { "content-type": "text/event-stream" } });
   }),
 
   http.get<Params>("*/api/v1/orgs/:org/integrations/sentry", ({ params }) => {

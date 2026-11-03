@@ -78,7 +78,7 @@ export const List: Story = {
   play: async ({ canvas }) => {
     // The list waits for the repository's index state (slower on a shared CI runner).
     const rows = await canvas.findAllByTestId("fix-row", {}, { timeout: LOAD_MS });
-    await expect(rows).toHaveLength(4);
+    await expect(rows).toHaveLength(6);
     await expect(within(rows[0] ?? document.body).getByTestId("fix-status")).toHaveTextContent(
       "Awaiting approval",
     );
@@ -87,10 +87,10 @@ export const List: Story = {
       "https://github.com/acme/api/pull/51",
     );
     // Sentry's issue: from Sentry, asked for by Sentry (no person), waiting for triage.
-    const sentry = within(rows[1] ?? document.body);
+    const sentry = within(rows[2] ?? document.body);
     await expect(sentry.getAllByText("Sentry")).toHaveLength(2);
     await expect(sentry.getByTestId("fix-status")).toHaveTextContent("Needs triage");
-    await expect(within(rows[2] ?? document.body).getByText("@hubot")).toBeVisible();
+    await expect(within(rows[3] ?? document.body).getByText("@hubot")).toBeVisible();
     await expect(canvas.getByRole("link", { name: "New fix" })).toBeVisible();
   },
 };

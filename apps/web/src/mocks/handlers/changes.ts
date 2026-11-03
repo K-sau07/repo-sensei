@@ -118,6 +118,7 @@ function made(repo: MockRepo, id: string, request: string, fields: Partial<Chang
     verification: null,
     stop_reason: null,
     approvals_needed: null,
+    run_id: null,
     ...fields,
   };
 }

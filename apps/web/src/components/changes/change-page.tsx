@@ -23,7 +23,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { roleAtLeast, useOrgRole } from "@/hooks/use-org-role";
 import { editsOf, planOf, type Change, type ChangePlan } from "@/lib/api/changes";
 import { ApiError } from "@/lib/api/errors";
-import { isOpen } from "@/lib/api/fixes";
+import { isOpen, prLink } from "@/lib/api/fixes";
 import { repoPath } from "@/lib/routes";
 
 import { draftOf, PlanCanvas, type Draft } from "./plan-canvas";
@@ -65,8 +65,13 @@ function Loaded({ change }: { change: Change }) {
           {change.risk && <RiskBadge risk={change.risk} />}
           <span>{change.author ? `@${change.author}` : "—"}</span>
           <RelativeTime date={change.created_at} className="text-fg-faint" />
-          {change.pr_url && (
-            <a href={change.pr_url} target="_blank" rel="noreferrer" className="hover:underline">
+          {prLink(change.pr_url) && (
+            <a
+              href={prLink(change.pr_url) ?? undefined}
+              target="_blank"
+              rel="noreferrer"
+              className="hover:underline"
+            >
               Draft pull request<span className="sr-only"> (opens GitHub)</span>
             </a>
           )}
