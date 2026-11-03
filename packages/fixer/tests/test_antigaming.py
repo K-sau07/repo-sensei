@@ -230,3 +230,18 @@ def test_a_changes_own_tests_are_held_to_the_codes_rules() -> None:
     )
     rules = {f.rule for f in antigaming.check(diff, ctx)}
     assert {"shadowing", "test_config", "exit_forced"} <= rules
+
+
+def test_a_changes_tests_may_check_a_cli_or_a_reporter() -> None:
+    # What a test of a CLI, a signal handler or a test reporter does is no gaming: reading the
+    # exit code, expecting "PASSED" in what it checks. Ending the process, printing a report is.
+    path = "tests/test_cli.py"
+    lines = ["def test_cli(run):", "    out = run('--report')", "    assert 'PASSED' in out",
+             "    assert '3 passed in' in out", "    assert process.exitCode == 1"]  # fmt: skip
+    body = "".join(f"+{line}\n" for line in lines)
+    diff = (f"diff --git a/{path} b/{path}\nnew file mode 100644\n--- /dev/null\n+++ b/{path}\n"
+            f"@@ -0,0 +1,{len(lines)} @@\n{body}")  # fmt: skip
+    ctx = antigaming.Context(None, "", planned={"app/cli.py"}, new_tests=frozenset({path}))
+    assert [f.rule for f in antigaming.check(diff, ctx)] == []
+    faked = diff.replace("+    assert '3 passed in' in out", "+    print('3 passed in 0.1s')")
+    assert "fake_report" in {f.rule for f in antigaming.check(faked, ctx)}

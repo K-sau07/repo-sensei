@@ -26,6 +26,7 @@ test the change. The rest is the same.
 
 from __future__ import annotations
 
+import ast
 import asyncio
 import re
 import time
@@ -518,7 +519,7 @@ class _Patching:
             return failing, output, None, None
         await job.hooks.check()
         # The rest of the suite, without the new tests (run apart above).
-        ran = await job.run(job.setup.suite(exclude=job.plan.tests))
+        ran = await run_suite(job)
         suite = read_suite(job.setup.framework, ran)
         return None, "", suite, compare(self.baseline, suite, repro_tests=0)
 
@@ -587,25 +588,86 @@ class _Patching:
         return text_result(body, f"attempt {n} failed", error=True)
 
 
-_PY_ASSERTION = re.compile(r"\bassert\b|pytest\.raises|self\.assert\w+\(")
 _JS_ASSERTION = re.compile(r"\bexpect\s*\(|\bassert(\.\w+)?\s*\(")
-# An assertion that holds whatever the code does.
-_TRIVIAL = re.compile(
-    r"^\s*assert\s+(True|1|not\s+False|\(?\s*\)?)\s*(,.*)?$|"
-    r"expect\(\s*(true|1)\s*\)\.(toBe|toEqual|toBeTruthy)\(\s*(true|1)?\s*\)",
-    re.MULTILINE,
-)
+# A JavaScript assertion that holds whatever the code does.
+_JS_TRIVIAL = re.compile(r"expect\(\s*(true|1)\s*\)\.(toBe|toEqual|toBeTruthy)\(\s*(true|1)?\s*\)")
+_RAISES = frozenset({"raises", "warns", "deprecated_call", "assertRaises", "assertRaisesRegex",
+                     "assertWarns", "assertWarnsRegex", "assertLogs"})  # fmt: skip
 
 
 def asserts_nothing(framework: str, content: str) -> str | None:
     """Why a new test checks nothing (None: it asserts something that could fail)."""
-    assertion = _PY_ASSERTION if framework == "pytest" else _JS_ASSERTION
-    if not assertion.search(content):
+    if framework == "pytest":
+        return _py_asserts_nothing(content)
+    if not _JS_ASSERTION.search(content):
         return "asserts nothing"
-    trivial = _TRIVIAL.search(content)
+    trivial = _JS_TRIVIAL.search(content)
     if trivial:
         return f"asserts what always holds ({trivial.group(0).strip()[:60]})"
     return None
+
+
+def _py_asserts_nothing(content: str) -> str | None:
+    """A Python test's assertions, read from its syntax: an ``assert`` of something that could
+    be false, ``pytest.raises`` (or ``assertRaises``...), or a call to an ``assert*`` helper
+    (``self.assertEqual``, ``np.testing.assert_allclose``, ``mock.assert_called_once``)."""
+    try:
+        tree = ast.parse(content)
+    except SyntaxError:
+        return None  # it fails to run, with the change or without: said when it's run
+    trivial: ast.Assert | None = None
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assert):
+            if not _always_true(node.test):
+                return None
+            trivial = trivial or node
+        elif isinstance(node, ast.Call):
+            name = _called(node.func)
+            if name in _RAISES or (name or "").startswith("assert"):
+                return None
+    if trivial is not None:
+        said = ast.get_source_segment(content, trivial) or "assert True"
+        return f"asserts what always holds ({said.strip()[:60]})"
+    return "asserts nothing"
+
+
+def _called(func: ast.expr) -> str | None:
+    if isinstance(func, ast.Attribute):
+        return func.attr
+    return func.id if isinstance(func, ast.Name) else None
+
+
+def _always_true(test: ast.expr) -> bool:
+    """Whether an assertion's test holds whatever the code does (a true constant, ``x or
+    True``, ``not False``, a constant compared with itself)."""
+    if isinstance(test, ast.Constant):
+        return bool(test.value)
+    if isinstance(test, ast.Tuple):
+        return bool(test.elts)  # assert (x, "why"): a tuple is always true
+    if isinstance(test, ast.UnaryOp) and isinstance(test.op, ast.Not):
+        return isinstance(test.operand, ast.Constant) and not test.operand.value
+    if isinstance(test, ast.BoolOp):  # x or True; True and not False
+        holds = any if isinstance(test.op, ast.Or) else all
+        return holds(_always_true(value) for value in test.values)
+    if isinstance(test, ast.Compare) and len(test.comparators) == 1:
+        left, right = test.left, test.comparators[0]
+        same = ast.dump(left) == ast.dump(right)
+        return same and isinstance(left, ast.Constant) and isinstance(test.ops[0], (ast.Eq, ast.Is))
+    return False
+
+
+async def run_suite(job: Job) -> RunResult:
+    """The project's whole suite without the patch's new tests (a fix's reproducing test, a
+    change's test files): run apart, so code they run as they're collected can't touch how the
+    rest fares. They're moved aside while it runs, then put back, rather than left out by a
+    framework's option: Jest's would replace the project's own ignore patterns, running tests
+    the baseline never ran."""
+    root = job.tools.root
+    hidden = await swap(root, dict.fromkeys(job.plan.tests))
+    try:
+        return await job.run(job.setup.suite())
+    finally:
+        await swap(root, hidden)
 
 
 async def without_the_change(

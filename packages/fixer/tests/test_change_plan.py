@@ -191,3 +191,25 @@ async def test_a_new_test_must_be_a_test_file_in_one_project(tmp_path: Path) -> 
         assert "different projects" in str(error)  # noqa: PT017
     else:
         raise AssertionError("tests in two projects were taken")
+
+
+async def test_a_changes_code_is_in_its_tests_project(tmp_path: Path) -> None:
+    # Only the tests' project's suite is run: code of another project with tests of its own
+    # would change with none of them run.
+    from sensei_fixer.change_plan import check_change_plan  # noqa: PLC0415
+    from sensei_fixer.plan import PlanError  # noqa: PLC0415
+
+    root = _repo(tmp_path)
+    (root / "web/src").mkdir(parents=True)
+    (root / "web/package.json").write_text('{"devDependencies": {"vitest": "5.0.0"}}')
+    across = {
+        **GOOD,
+        "files": [*GOOD["files"], {"path": "web/src/limit.ts", "change": "create", "why": "x"}],
+    }
+    try:
+        await check_change_plan(_tools(root), across)
+    except PlanError as error:
+        assert "web/src/limit.ts is in web" in str(error)  # noqa: PT017
+    else:
+        raise AssertionError("code of another project was taken")
+    assert (await check_change_plan(_tools(root), GOOD))["files"]

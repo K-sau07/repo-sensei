@@ -76,6 +76,19 @@ _FAKE_REPORT = re.compile(
     r"[\"'`][^\"'`\n]*(\b\d+\s+passed\b|\bpassed in\b|test session starts|\bTests:\s|"
     r"\bTest Files\b|collected \d+ items?|\bPASSED\b|\bTest Suites:)"
 )
+# A change's own new test, held to the code's rules where they'd change how it fares: what ends
+# the process from inside a test, and a report printed. Not what a test of a CLI, a signal
+# handler or a reporter does: reading process.exitCode, sys.exit under pytest.raises, expecting
+# "PASSED" in the output it checks.
+_EXIT_IN_TEST = re.compile(
+    r"\bos\._exit\(|\bos\.(kill|abort)\(|\batexit\.register\b|"
+    r"\bsignal\.(alarm|raise_signal|setitimer|pthread_kill)\(|"
+    r"\bprocess\.(exit|kill|abort|reallyExit)\(|\bprocess\.exitCode\s*=(?!=)"
+)
+_PRINTED_REPORT = re.compile(
+    r"\b(print|console\.(log|info|warn|error)|(sys|process)\.(stdout|stderr)\.write)\s*\(.*"
+    + _FAKE_REPORT.pattern
+)
 _JS_CATCH = re.compile(r"\bcatch\b\s*(\(\s*\w*\s*\))?\s*\{")
 _CONSTANT_RETURN = re.compile(
     r"^\s*return\s+(null|undefined|None|0|-?1|false|true|False|True|''|\"\"|``|\[\]|\{\}|NaN)?"
@@ -346,6 +359,7 @@ def _line_findings(
     values the file didn't have). ``strict``: a test held to the code's rules too (a change's
     own new test: ending the process or faking a report is gaming wherever it is)."""
     path, test_code = change.path, is_test_path(change.path) and not strict
+    exits, reports = (_EXIT_IN_TEST, _PRINTED_REPORT) if strict else (_EXIT, _FAKE_REPORT)
     for _, text in change.added:
         if _SKIP.search(text):
             yield Finding("skip_added", path, text.strip())
@@ -353,9 +367,9 @@ def _line_findings(
             yield Finding("test_detection", path, text.strip())
         if _BROAD.search(text):
             yield Finding("broad_except", path, text.strip())
-        if not test_code and _EXIT.search(text):
+        if not test_code and exits.search(text):
             yield Finding("exit_forced", path, text.strip())
-        if not test_code and _FAKE_REPORT.search(text):
+        if not test_code and reports.search(text):
             yield Finding("fake_report", path, text.strip())
         if not test_code and _COMPARE.search(text):
             hits = sorted(literal for literal in watched if literal in text)

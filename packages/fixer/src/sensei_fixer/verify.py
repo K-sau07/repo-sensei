@@ -48,6 +48,7 @@ from sensei_fixer.patch import (
     approved,
     asserts_nothing,
     diff_risk,
+    run_suite,
     without_the_change,
     working,
 )
@@ -190,8 +191,9 @@ def brief(ticket: Ticket, root_cause: Mapping[str, Any], plan: Approved, diff: s
           extra_path: str, *, record: Mapping[str, Any] | None = None) -> str:  # fmt: skip
     if plan.kind is FixKind.CHANGE:
         said = {"fails": "fails (a test of it failed: it needs the change)",
-                "inconclusive": "couldn't run (it imports what the change adds): not shown "
-                "to test it; check that its assertions would catch a wrong change"}  # fmt: skip
+                "inconclusive": "couldn't run, or failed only because what the change adds "
+                "isn't there (an import, a missing name): not shown to test it; check that its "
+                "assertions would catch a wrong change"}  # fmt: skip
         outcomes = cast("list[Mapping[str, Any]]", (record or {}).get("without_change") or [])
         without = [f"- {o.get('path')}: {said.get(str(o.get('outcome')), o.get('outcome'))}"
                    for o in outcomes]  # fmt: skip
@@ -286,7 +288,7 @@ async def _tests_pass(
     await job.hooks.check()
     # The rest of the suite, without the new tests (run apart above: code they run as they're
     # collected can't touch how the rest fares).
-    ran = await job.run(job.setup.suite(exclude=plan.tests))
+    ran = await run_suite(job)
     suite = read_suite(job.setup.framework, ran)
     baseline = SuiteRun.from_json(cast("Mapping[str, Any]", patch.get("baseline") or {}))
     verdict = compare(baseline, suite, repro_tests=0)
@@ -303,8 +305,9 @@ async def _tests_need_the_change(
     job: Job, tests: list[str], originals: Mapping[str, str | None], record: dict[str, Any]
 ) -> Stop | None:
     """A change's new tests run with its code put back as it was: none may pass (it wouldn't
-    test the change), and whether any failed by a test of its own (proven) or none could even
-    run (unproven: they import what the change adds) is recorded."""
+    test the change), and whether each failed on what it checks (proven) or some couldn't tell
+    (unproven: they import, or call, what the change adds) is recorded. Proven means every
+    file: one that proves it doesn't vouch for another that couldn't."""
     for path in tests:
         content = await read_text(job.tools.root, path) or ""
         empty = asserts_nothing(job.setup.framework, content)
@@ -317,7 +320,7 @@ async def _tests_need_the_change(
          "output": ran.output[-SHOWN:]}
         for path, (outcome, ran) in outcomes.items()
     ]  # fmt: skip
-    record["proven"] = any(outcome == "fails" for outcome, _ in outcomes.values())
+    record["proven"] = bool(outcomes) and all(o == "fails" for o, _ in outcomes.values())
     passing = [path for path, (outcome, _) in outcomes.items() if outcome == "passes"]
     if passing:
         said = (f"Couldn't produce a passing change: its new test {passing[0]} passes without "
@@ -393,7 +396,7 @@ async def _judged(
     unverified = list(verdict.unverified)
     if unproven:
         unverified.append("whether its new tests check the change: without it they couldn't "
-                          "even run (they import what it adds)")  # fmt: skip
+                          "run, or failed only because what it adds isn't there")  # fmt: skip
     if known:
         unverified.append(f"{known} test(s) that already failed in the sandbox before the fix")
     if covered is False:

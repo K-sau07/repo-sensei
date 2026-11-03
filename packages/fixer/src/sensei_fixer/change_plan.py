@@ -223,8 +223,10 @@ def _tests(
     return added
 
 
-def _one_project(ctx: ToolContext, tests: list[str]) -> None:
-    """The new tests are one project's, run by one framework (where the patch runs them)."""
+def _one_project(ctx: ToolContext, tests: list[str], files: list[str]) -> None:
+    """The new tests are one project's, run by one framework (where the patch runs them), and
+    so is the code the change edits: only that project's suite is run, so a file of another
+    project with tests of its own would change with none of them run."""
     setups: set[tuple[str, str]] = set()
     for path in tests:
         try:
@@ -237,6 +239,19 @@ def _one_project(ctx: ToolContext, tests: list[str]) -> None:
     if len(setups) > 1:
         found = ", ".join(f"{p} ({f})" for p, f in sorted(setups))
         raise PlanError(f"The new tests are in different projects ({found}): keep them to one.")
+    if not setups:
+        return  # no new tests: said where they're asked for
+    [(project, _)] = setups
+    for path in files:
+        try:
+            other = detect(ctx.root, path).project or "(the root)"
+        except NoFramework:
+            continue  # in no project with tests: no suite of another to run
+        if other != project:
+            raise PlanError(
+                f"{path} is in {other}, its tests in {project}: only {project}'s suite runs, "
+                "so keep the change to one project (or ask for two changes)."
+            )
 
 
 def _steps(raw: Any, places: set[str]) -> list[dict[str, str]]:
@@ -265,7 +280,7 @@ async def check_change_plan(
         raise PlanError("Say in a sentence or two what the change does (summary).")
     planned = _files(ctx, args.get("files"), deps)
     added = _tests(ctx, args.get("tests"), planned, deps)
-    _one_project(ctx, [t["path"] for t in added])
+    _one_project(ctx, [t["path"] for t in added], [f["path"] for f in planned])
     patterns = items_of(args.get("patterns"))
     if not 1 <= len(patterns) <= MAX_PATTERNS:
         raise PlanError(

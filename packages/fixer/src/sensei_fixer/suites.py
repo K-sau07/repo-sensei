@@ -49,8 +49,19 @@ _JEST_COUNTS = re.compile(r"^Tests:\s+(.+?),\s*(\d+) total", re.MULTILINE)
 _JEST_NOT_A_TEST = re.compile(r"^(Test suite failed to run|Console)\b")
 _COUNT = re.compile(r"(\d+) (\w+)")
 _JS_LOAD = re.compile(r"Failed to load url|Failed to resolve import|Error: Transform failed")
+# A jest file's block: its FAIL (or PASS) line and what follows, up to the next file's.
+_JEST_BLOCK = re.compile(r"^\s*(?:FAIL|PASS)\s+(\S+)(.*?)(?=^\s*(?:FAIL|PASS)\s|\Z)",
+                         re.MULTILINE | re.DOTALL)  # fmt: skip
 _PY_TEST = re.compile(r"^\s*(?:async\s+)?def (test\w*)\s*\(", re.MULTILINE)
 _JS_TEST = re.compile(r"(?<![\w.])(?:it|test)\s*\(")
+# Failures that say only that what the change adds isn't there yet (a name, an import, a
+# function): a test failing so with the change put back proves nothing of what it does.
+_MISSING = re.compile(
+    r"\b(AttributeError|NameError|ImportError|ModuleNotFoundError)\b|"
+    r"\bis not a function\b|\bis not defined\b|\bis not a constructor\b|"
+    r"Cannot find module|does not provide an export|has no exported member|"
+    r"Cannot read propert(y|ies) of undefined"
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -89,8 +100,11 @@ def _vitest(output: str) -> Report | None:
         return None
     words, total = found[-1]
     counts = _counted(words)
-    # A file that couldn't load fails with no test of its own run (its tests aren't counted).
-    errors = len(_JS_LOAD.findall(output))
+    # A file that couldn't load fails with no test of its own run (its tests aren't counted):
+    # each once, however often its error is printed (its FAIL line names it, without a test).
+    loads = set(_JS_LOAD.findall(output))
+    files = {f.split(" [", 1)[0] for f in _VITEST_FAILED.findall(output) if " > " not in f}
+    errors = (len(files) or len(loads)) if loads else 0
     return Report(counts.get("passed", 0), counts.get("failed", 0) + errors, int(total),
                   frozenset(_VITEST_FAILED.findall(output)), frozenset(), errors)  # fmt: skip
 
@@ -102,7 +116,10 @@ def _jest(output: str) -> Report | None:
     words, total = found[-1]
     counts = _counted(words)
     tests = {t for t in _JEST_TEST.findall(output) if not _JEST_NOT_A_TEST.match(t)}
-    errors = output.count("Test suite failed to run")
+    # Each file that couldn't run, once: jest prints its block again in the summary of all
+    # failing tests (past 20 files).
+    blocks = _JEST_BLOCK.findall(output)
+    errors = len({file for file, body in blocks if "Test suite failed to run" in body})
     failing = frozenset({*_JEST_FILE.findall(output), *tests})
     return Report(counts.get("passed", 0), counts.get("failed", 0) + errors, int(total),
                   failing, frozenset(), errors)  # fmt: skip
@@ -130,13 +147,16 @@ Without = Literal["passes", "fails", "inconclusive"]
 
 def without_change(framework: Framework, result: RunResult) -> Without:
     """A change's new test, run with the change's code put back as it was: ``passes`` (it
-    doesn't test the change), ``fails`` (a test of it failed: it needs the change), or
-    ``inconclusive`` (it couldn't even run: an import of what the change adds, a collection
-    error; that proves nothing either way)."""
+    doesn't test the change), ``fails`` (a test of it failed on what it checks: it needs the
+    change), or ``inconclusive`` (it couldn't even run, an import of what the change adds, a
+    collection error; or it failed only because what the change adds isn't there, an
+    AttributeError, "is not a function": that proves nothing of what the change does)."""
     if passed(framework, result):
         return "passes"
     report = read_report(framework, result)
     if report is None or report.errors > 0 or report.total == 0:
+        return "inconclusive"
+    if _MISSING.search(result.full or result.output):
         return "inconclusive"
     return "fails" if report.failed - report.errors > 0 else "inconclusive"
 

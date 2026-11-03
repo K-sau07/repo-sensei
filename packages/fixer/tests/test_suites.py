@@ -156,3 +156,44 @@ def test_a_pass_is_the_report_not_the_exit_code() -> None:
 def test_a_baseline_round_trips_through_the_run() -> None:
     known = _suite({"t::needs_db"}, total=12, passing={"t::a"})
     assert SuiteRun.from_json(known.json()) == known
+
+
+def test_a_file_that_couldnt_run_is_one_error_however_often_it_is_printed() -> None:
+    broken = (
+        "FAIL src/broken.test.js\n  ● Test suite failed to run\n\n    Cannot find module './gone'\n"
+    )
+    summary = "\nSummary of all failing tests\n" + broken
+    jest = (
+        broken
+        + "PASS src/ok.test.js\n"
+        + summary
+        + ("\nTest Suites: 1 failed, 1 passed, 2 total\nTests:       3 passed, 3 total\n")
+    )
+    run = read_suite("jest", RunResult(False, 1, jest, 1.0))
+    assert (run.readable, run.failed) == (True, frozenset({"src/broken.test.js"}))
+    load = "Error: Failed to load url ./gone (resolved id: ./gone)"
+    vitest = (f" FAIL  tests/broken.test.ts [ tests/broken.test.ts ]\n{load}\n\n{load}\n"
+              " Test Files  1 failed | 1 passed (2)\n      Tests  3 passed (3)\n")  # fmt: skip
+    found = read_suite("vitest", RunResult(False, 1, vitest, 1.0))
+    assert found.readable
+
+
+def test_a_new_test_failing_only_on_whats_missing_proves_nothing() -> None:
+    from sensei_fixer.suites import without_change  # noqa: PLC0415
+
+    def ran(error: str) -> RunResult:
+        out = (f"FAILED tests/test_m.py::test_m - {error}\n"
+               "==== 1 failed in 0.1s ====")  # fmt: skip
+        return RunResult(False, 1, out, 0.1, full=out)
+
+    assert without_change("pytest", ran("AttributeError: module has no 'median'")) == "inconclusive"
+    assert without_change("pytest", ran("assert 2.0 == 2.5")) == "fails"
+    assert without_change("pytest", ran("ZeroDivisionError: division by zero")) == "fails"
+
+
+def test_the_suite_runs_as_the_project_configures_it() -> None:
+    # No option leaves the new tests out (Jest's would replace the project's own ignores):
+    # they're moved aside while it runs.
+    for framework in ("pytest", "vitest", "jest"):
+        argv = frameworks.TestSetup(framework, "", "", "python").suite()  # type: ignore[arg-type]
+        assert not any("ignore" in a.lower() or a == "--exclude" for a in argv), argv

@@ -196,9 +196,10 @@ async def test_a_built_change_is_verified_from_a_clean_checkout(repo: Path) -> N
     assert isinstance(outcome, Advance), outcome
     found = outcome.updates["verification"]
     assert [r["passed"] for r in found["repro_runs"]] == [True, True, True]
-    # Its tests need it: with median() taken out, a test of it fails (proven, not an import).
-    assert [r["outcome"] for r in found["without_change"]] == ["fails"]
-    assert found["proven"] is True
+    # With median() taken out its tests fail, but only as stats has no median: that says nothing
+    # of what median() does (a new function's tests can't be proven so: unproven, not refused).
+    assert [r["outcome"] for r in found["without_change"]] == ["inconclusive"]
+    assert found["proven"] is False
     assert found["suite"]["ok"] is True
     assert found["prompt"] == "change_verify.v1"
     assert outcome.updates["risk"] is FixRisk.LOW
@@ -245,4 +246,22 @@ async def test_tests_that_only_import_the_change_are_unproven(repo: Path) -> Non
     assert outcome.updates["merge_readiness"] <= 2
     assert any(u.startswith("whether its new tests check the change") for u in found["unverified"])
     brief = fake.bodies("/v1/messages")[0]["messages"][0]["content"]
-    assert "couldn't run (it imports what the change adds)" in brief
+    assert "couldn't run, or failed only because what the change adds isn't there" in brief
+
+
+def test_what_a_python_test_asserts_is_read_from_its_syntax() -> None:
+    from sensei_fixer.patch import asserts_nothing  # noqa: PLC0415
+
+    real = [
+        "def test_x():\n    assert (\n        stats.median([1, 2])\n        == 1.5\n    )\n",
+        "def test_x():\n    np.testing.assert_allclose(stats.median([1.0]), 1.0)\n",
+        "def test_x(self):\n    self.assertEqual(stats.median([1]), 1)\n",
+        "def test_x():\n    with pytest.raises(ValueError):\n        stats.median([])\n",
+    ]
+    for content in real:
+        assert asserts_nothing("pytest", content) is None, content
+    assert asserts_nothing("pytest", "def test_x():\n    stats.median([1])\n") == "asserts nothing"
+    for always in ("assert stats.median([1]) or True", "assert (stats.median([1]), 'why')"):
+        said = asserts_nothing("pytest", f"def test_x():\n    {always}\n")
+        assert said is not None
+        assert said.startswith("asserts what always holds")
