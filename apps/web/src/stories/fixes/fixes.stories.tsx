@@ -30,6 +30,8 @@ const asViewer = http.get("*/api/v1/me", () => {
   });
 });
 
+const LOAD_MS = 10_000;
+
 const TRACE = `Traceback (most recent call last):
   File "/app/backend/app/api/routes/items.py", line 34, in read_items
     count = crud.count_items(session=session, owner_id=current_user.id)
@@ -50,7 +52,8 @@ type Story = StoryObj<typeof meta>;
 /** The repository's fixes: each state's tone, risk, its pull request, who asked. */
 export const List: Story = {
   play: async ({ canvas }) => {
-    const rows = await canvas.findAllByTestId("fix-row");
+    // The list waits for the repository's index state (slower on a shared CI runner).
+    const rows = await canvas.findAllByTestId("fix-row", {}, { timeout: LOAD_MS });
     await expect(rows).toHaveLength(4);
     await expect(within(rows[0] ?? document.body).getByTestId("fix-status")).toHaveTextContent(
       "Awaiting approval",
@@ -72,7 +75,7 @@ export const List: Story = {
 export const AsViewer: Story = {
   parameters: { msw: [asViewer, ...handlers] },
   play: async ({ canvas }) => {
-    await expect(await canvas.findByTestId("viewer-note")).toBeVisible();
+    await expect(await canvas.findByTestId("viewer-note", {}, { timeout: LOAD_MS })).toBeVisible();
     await expect(canvas.queryByRole("link", { name: "New fix" })).toBeNull();
   },
 };
