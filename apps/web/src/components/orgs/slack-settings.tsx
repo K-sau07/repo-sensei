@@ -242,7 +242,8 @@ function SlackForm({ saved }: { saved: Slack | null }) {
           <Button
             type="button"
             variant="ghost"
-            disabled={remove.isPending}
+            // While a save is under way the form is about to start again from what it saved.
+            disabled={remove.isPending || save.isPending}
             onClick={() => {
               setConfirming(true);
             }}
