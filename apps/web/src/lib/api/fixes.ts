@@ -113,6 +113,10 @@ export function riskTone(risk: FixRisk): Tone {
 }
 
 /** Still going (it can be cancelled), as opposed to finished one way or another. */
+/** While a plan waits, others may decide on it (approve, ask for changes, reject): its page
+ * reads it again this often, so what's shown, and its buttons, stay true. */
+export const WAITING_MS = 10_000;
+
 export function isOpen(status: FixStatus): boolean {
   return ["needs_triage", "queued", "running", "awaiting_approval"].includes(status);
 }

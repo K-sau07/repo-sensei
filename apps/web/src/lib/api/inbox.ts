@@ -40,8 +40,12 @@ export const KIND_LABELS: Record<NotificationKind, string> = {
   cost_cap: "Spend near the cap",
 };
 
-export function inGroup(item: InboxItem, group: InboxGroup | null): boolean {
-  return group === null || KIND_GROUP[item.kind] === group;
+/** The kinds in ``group`` (null: every kind), as the API filters them. */
+export function kindsOf(group: InboxGroup | null): NotificationKind[] | null {
+  if (group === null) return null;
+  return (Object.keys(KIND_GROUP) as NotificationKind[]).filter(
+    (kind) => KIND_GROUP[kind] === group,
+  );
 }
 
 /** An item that waits on someone's approval, and says where (the `a` key opens it). */
@@ -49,8 +53,13 @@ export function isApproval(item: InboxItem): boolean {
   return item.kind === "approval_needed" && item.link !== null;
 }
 
-/** A link into the app, or none: only paths are followed (never another site). */
+/** A link into the app, or none: only paths are followed, never another site (``//host``, or
+ * ``/\host``, which browsers read as ``//host``; control characters are dropped by them too). */
+export function appPath(link: string | null | undefined): string | null {
+  if (!link?.startsWith("/") || link.startsWith("//")) return null;
+  return /[\\\u0000-\u001f\u007f]/.test(link) ? null : link;
+}
+
 export function inboxHref(item: InboxItem): string | null {
-  const link = item.link;
-  return link?.startsWith("/") && !link.startsWith("//") ? link : null;
+  return appPath(item.link);
 }

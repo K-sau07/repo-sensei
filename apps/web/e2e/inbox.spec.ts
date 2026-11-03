@@ -26,16 +26,19 @@ test.describe("the inbox", () => {
   });
 
   test("everything, a group at a time, kept in the URL", async ({ page }) => {
-    await page.goto("/acme/inbox?show=all&group=failures");
+    await page.goto("/acme/inbox?show=all&group=finished");
     const inbox = page.getByTestId("inbox");
     await expect(inbox.getByTestId("inbox-item")).toHaveCount(2);
-    await inbox.getByRole("button", { name: "Finished" }).click();
-    await expect(page).toHaveURL(/group=finished/);
+    await inbox.getByRole("button", { name: "Failures" }).click();
+    await expect(page).toHaveURL(/group=failures/);
     await expect(inbox.getByTestId("inbox-item")).toHaveCount(2);
+    // Read all of what's shown: the plans waiting elsewhere stay unread.
     await inbox.getByRole("button", { name: "Mark all read" }).click();
-    await expect(inbox.getByTestId("inbox-unread")).toHaveText("Nothing unread");
+    await expect(inbox.getByTestId("inbox-unread")).toHaveText("2 unread");
     await inbox.getByRole("button", { name: "Unread" }).click();
     await expect(inbox.getByText("You're all caught up")).toBeVisible();
+    await inbox.getByRole("button", { name: "Approvals" }).click();
+    await expect(inbox.getByTestId("inbox-item")).toHaveCount(2);
   });
 
   test("preferences: per kind, saved as they're flipped", async ({ page }) => {

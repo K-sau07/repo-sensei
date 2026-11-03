@@ -20,7 +20,7 @@ import {
   X,
 } from "lucide-react";
 import Link from "next/link";
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 
 import { BlastRadius } from "@/components/changes/blast-radius";
 import { RiskBadge } from "@/components/fixes/fix-badges";
@@ -106,7 +106,8 @@ export function ApprovalCard({ fix }: { fix: Fix }) {
           <p className="text-xs text-fg-muted">Listed once the patch is verified.</p>
         )}
       </section>
-      {plan && <Actions fix={fix} plan={plan} />}
+      {/* A new revision starts the editor and the note again, from it. */}
+      {plan && <Actions key={plan.revision} fix={fix} plan={plan} />}
     </section>
   );
 }
@@ -267,18 +268,22 @@ function RiskPanel({ fix, plan }: { fix: Fix; plan: FixPlan | null }) {
   );
 }
 
+const MAX_STEPS = 10; // as the API takes them
+
 function Actions({ fix, plan }: { fix: Fix; plan: FixPlan }) {
   const id = useId();
+  const section = useRef<HTMLElement>(null);
   const { org, repo } = useRepoSlug();
   const { role, me } = useOrgRole();
+  const waiting = fix.status === "awaiting_approval";
   const actions = useFixActions(fix.id);
-  const approvals = useFixApprovals(fix.id);
+  const approvals = useFixApprovals(fix.id, waiting);
   const [comment, setComment] = useState("");
   const [editing, setEditing] = useState(false);
   const [steps, setSteps] = useState<Step[]>(plan.steps);
   const [confirming, setConfirming] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const waiting = fix.status === "awaiting_approval";
+  const stepPath = plan.files[0]?.path ?? steps.at(-1)?.path ?? "";
   const member = roleAtLeast(role, "member");
   const mine = (approvals.data ?? []).some(
     (a) =>
@@ -288,32 +293,42 @@ function Actions({ fix, plan }: { fix: Fix; plan: FixPlan }) {
     (a) => a.decision === "approve" && a.plan_revision === plan.revision,
   ).length;
   const said = comment.trim() || null;
-  const act = async (go: () => Promise<unknown>) => {
+  const act = async (go: () => Promise<unknown>, after?: () => void) => {
+    if (actions.busy) return; // one decision at a time (a second click, a second Enter)
     setError(null);
     try {
       await go();
       setConfirming(false);
+      after?.();
     } catch (caught) {
+      setConfirming(false);
       setError(caught instanceof ApiError ? caught.message : "That didn't go through.");
     }
   };
-  // ⌘↵ (Ctrl+Enter) asks to approve, as the button does.
+  // ⌘↵ (Ctrl+Enter) asks to approve, as the button does, when the button could: not while the
+  // plan is being edited or a decision is on its way, nor from another dialog (the palette, Ask)
+  // or a field outside this card.
+  const canApprove = waiting && member && !mine && !editing && !actions.busy;
   useEffect(() => {
-    if (!waiting || !member || mine) return;
+    if (!canApprove) return;
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
-        event.preventDefault();
-        setConfirming(true);
-      }
+      if (event.key !== "Enter" || !(event.metaKey || event.ctrlKey)) return;
+      const target = event.target instanceof HTMLElement ? event.target : null;
+      if (target?.closest('[role="dialog"], [role="alertdialog"]')) return;
+      const typing = target?.matches("input, textarea, select, [contenteditable]") ?? false;
+      if (typing && !section.current?.contains(target)) return;
+      event.preventDefault();
+      setConfirming(true);
     };
     window.addEventListener("keydown", onKey);
     return () => {
       window.removeEventListener("keydown", onKey);
     };
-  }, [waiting, member, mine]);
+  }, [canApprove]);
   const timeline = fix.run_id ? repoPath(org, repo, `runs/${fix.run_id}`) : null;
   return (
     <section
+      ref={section}
       aria-label="Decide on the plan"
       className="flex flex-col gap-2 border-t border-line pt-4"
     >
@@ -349,16 +364,19 @@ function Actions({ fix, plan }: { fix: Fix; plan: FixPlan }) {
               type="button"
               size="sm"
               variant="outline"
+              disabled={steps.length >= MAX_STEPS || !stepPath}
               onClick={() => {
-                setSteps([
-                  ...steps,
-                  { description: "", path: plan.files[0]?.path ?? steps.at(-1)?.path ?? "" },
-                ]);
+                setSteps([...steps, { description: "", path: stepPath }]);
               }}
             >
               <Plus aria-hidden />
               Add a step
             </Button>
+            {steps.length >= MAX_STEPS && (
+              <span className="ml-2 text-xs text-fg-muted">
+                A plan has at most {MAX_STEPS} steps.
+              </span>
+            )}
           </div>
         </div>
       )}
@@ -401,15 +419,26 @@ function Actions({ fix, plan }: { fix: Fix; plan: FixPlan }) {
               variant="outline"
               disabled={actions.busy || (!editing && said === null)}
               onClick={() =>
-                void act(() =>
-                  actions.decide({
-                    decision: "request_changes",
-                    plan_revision: plan.revision,
-                    comment: said,
-                    ...(editing
-                      ? { plan_edits: { steps: steps.filter((s) => s.description.trim()) } }
-                      : {}),
-                  }),
+                void act(
+                  () =>
+                    actions.decide({
+                      decision: "request_changes",
+                      plan_revision: plan.revision,
+                      comment: said,
+                      ...(editing
+                        ? {
+                            plan_edits: {
+                              steps: steps.filter((s) => s.description.trim() && s.path),
+                            },
+                          }
+                        : {}),
+                    }),
+                  () => {
+                    // Asked: what was said and edited went with it.
+                    setEditing(false);
+                    setComment("");
+                    setSteps(plan.steps);
+                  },
                 )
               }
             >
@@ -474,6 +503,7 @@ function Actions({ fix, plan }: { fix: Fix; plan: FixPlan }) {
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction
+              disabled={actions.busy}
               onClick={() =>
                 void act(() =>
                   actions.decide({

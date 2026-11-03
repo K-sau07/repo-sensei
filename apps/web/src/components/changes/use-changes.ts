@@ -6,7 +6,7 @@ import { keepPreviousData, useQueryClient } from "@tanstack/react-query";
 
 import { useRepoSlug } from "@/components/repo/use-repo";
 import { $api } from "@/lib/api/client";
-import { isOpen, type FixStatus } from "@/lib/api/fixes";
+import { isOpen, WAITING_MS, type FixStatus } from "@/lib/api/fixes";
 
 const LIST = "/api/v1/orgs/{org}/repos/{repo}/changes" as const;
 const ONE = "/api/v1/orgs/{org}/changes/{fix_id}" as const;
@@ -25,7 +25,8 @@ export function useChanges(status: FixStatus | null = null) {
   );
 }
 
-/** One change, read again while a stage works on it (waiting for people, or over: once). */
+/** One change, read again while a stage works on it, less often while its plan waits for people
+ * (who may decide meanwhile), never once it's over. */
 export function useChange(id: string) {
   const { org } = useRepoSlug();
   return $api.useQuery(
@@ -35,7 +36,8 @@ export function useChange(id: string) {
     {
       refetchInterval: (query) => {
         const status = query.state.data?.status;
-        return status && isOpen(status) && status !== "awaiting_approval" ? FOLLOW_MS : false;
+        if (!status || !isOpen(status)) return false;
+        return status === "awaiting_approval" ? WAITING_MS : FOLLOW_MS;
       },
     },
   );
@@ -74,9 +76,10 @@ export function useChangeActions(id: string) {
   const { org } = useRepoSlug();
   const refresh = useRefresh(id);
   const path = { org, fix_id: id };
-  const edit = $api.useMutation("patch", PLAN, { onSuccess: refresh });
-  const decide = $api.useMutation("post", DECIDE, { onSuccess: refresh });
-  const cancel = $api.useMutation("post", CANCEL, { onSuccess: refresh });
+  // Read again however it went: a refusal says what's shown is out of date.
+  const edit = $api.useMutation("patch", PLAN, { onSettled: refresh });
+  const decide = $api.useMutation("post", DECIDE, { onSettled: refresh });
+  const cancel = $api.useMutation("post", CANCEL, { onSettled: refresh });
   return {
     edit: (body: Parameters<typeof edit.mutateAsync>[0]["body"]) =>
       edit.mutateAsync({ params: { path }, body }),

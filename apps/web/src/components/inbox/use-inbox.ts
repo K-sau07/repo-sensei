@@ -6,23 +6,29 @@ import { useEffect, useState } from "react";
 import { toast } from "sonner";
 
 import { api } from "@/lib/api/client";
-import type { InboxPage } from "@/lib/api/inbox";
+import { appPath, kindsOf, type InboxGroup, type InboxPage } from "@/lib/api/inbox";
 import { followStream } from "@/lib/event-stream";
 import { queryKeys } from "@/lib/query/keys";
 
 const PAGE = 50;
 
 /** The signed-in person's inbox in ``org``, newest first, a page at a time (``unread``: only
- * what they haven't read). */
-export function useInbox(org: string, unread: boolean) {
+ * what they haven't read; ``group``: only its kinds, filtered by the API so every page is full). */
+export function useInbox(org: string, unread: boolean, group: InboxGroup | null = null) {
   return useInfiniteQuery({
-    queryKey: queryKeys.inboxList(org, unread),
+    queryKey: queryKeys.inboxList(org, unread, group),
     initialPageParam: null as string | null,
     queryFn: async ({ pageParam, signal }) => {
+      const kinds = kindsOf(group);
       const { data } = await api.GET("/api/v1/orgs/{org}/inbox", {
         params: {
           path: { org },
-          query: { unread, limit: PAGE, ...(pageParam ? { before: pageParam } : {}) },
+          query: {
+            unread,
+            limit: PAGE,
+            ...(kinds ? { kinds } : {}),
+            ...(pageParam ? { before: pageParam } : {}),
+          },
         },
         signal,
       });
@@ -47,16 +53,18 @@ export function useInboxUnread(org: string | null) {
   });
 }
 
-/** Mark some items read (``ids``), or all of them; the inbox and its badge read again. */
+/** Mark some items read (``ids``), or all of them (of ``group``'s kinds, if given); the inbox
+ * and its badge read again. */
 export function useInboxRead(org: string) {
   const queryClient = useQueryClient();
   const [busy, setBusy] = useState(false);
-  const read = async (ids?: string[]) => {
+  const read = async (ids?: string[], group: InboxGroup | null = null) => {
     setBusy(true);
+    const kinds = kindsOf(group);
     try {
       await api.POST("/api/v1/orgs/{org}/inbox/read", {
         params: { path: { org } },
-        body: ids ? { ids } : {},
+        body: ids ? { ids } : kinds ? { kinds } : {},
       });
     } finally {
       setBusy(false);
@@ -92,7 +100,7 @@ export function useInboxEvents(org: string | null) {
       if (event.type !== "inbox.new") return;
       if (message.lastEventId) lastId = message.lastEventId;
       void queryClient.invalidateQueries({ queryKey: queryKeys.inbox(org) });
-      const link = event.link?.startsWith("/") && !event.link.startsWith("//") ? event.link : null;
+      const link = appPath(event.link);
       toast(event.title, {
         id: `inbox:${event.key}`,
         ...(link

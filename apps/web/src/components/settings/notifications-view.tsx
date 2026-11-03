@@ -19,12 +19,48 @@ import { queryKeys } from "@/lib/query/keys";
 
 const PATH = "/api/v1/me/notifications";
 
+type Flips = Partial<Record<NotificationKind, { in_app?: boolean | null; email?: boolean | null }>>;
+
+/** ``current`` with ``flips`` applied (``undo``: each one turned back). */
+function flipped(current: Preferences, flips: Flips, undo = false): Preferences {
+  return {
+    ...current,
+    kinds: current.kinds.map((k) => {
+      const flip = flips[k.kind];
+      if (!flip) return k;
+      const next = { ...k };
+      for (const channel of ["in_app", "email"] as const) {
+        const on = flip[channel];
+        if (typeof on === "boolean") next[channel] = undo ? !on : on;
+      }
+      return next;
+    }),
+  };
+}
+
 export function NotificationsView() {
   const preferences = $api.useQuery("get", PATH);
   const queryClient = useQueryClient();
+  const key = queryKeys.myNotifications();
+  // Each flip shows at once and is undone alone if it can't be saved; flips in quick succession
+  // each keep theirs. Once the last one settles, the saved preferences are read again.
   const save = $api.useMutation("patch", PATH, {
-    onSuccess: (data) => {
-      queryClient.setQueryData(queryKeys.myNotifications(), data);
+    onMutate: async ({ body }) => {
+      await queryClient.cancelQueries({ queryKey: key });
+      queryClient.setQueryData<Preferences>(key, (current) =>
+        current ? flipped(current, body.kinds) : current,
+      );
+    },
+    onError: (error, { body }) => {
+      queryClient.setQueryData<Preferences>(key, (current) =>
+        current ? flipped(current, body.kinds, true) : current,
+      );
+      toast.error(error instanceof ApiError ? error.message : "That couldn't be saved.");
+    },
+    onSettled: () => {
+      if (queryClient.isMutating({ mutationKey: ["patch", PATH] }) <= 1) {
+        void queryClient.invalidateQueries({ queryKey: key });
+      }
     },
   });
   if (preferences.isPending) {
@@ -46,25 +82,7 @@ export function NotificationsView() {
   }
   const data = preferences.data;
   const change = (kind: NotificationKind, channel: "in_app" | "email", on: boolean) => {
-    const before = queryClient.getQueryData<Preferences>(queryKeys.myNotifications());
-    // Flipped at once; put back if it couldn't be saved.
-    queryClient.setQueryData<Preferences>(queryKeys.myNotifications(), (current) =>
-      current
-        ? {
-            ...current,
-            kinds: current.kinds.map((k) => (k.kind === kind ? { ...k, [channel]: on } : k)),
-          }
-        : current,
-    );
-    save.mutate(
-      { body: { kinds: { [kind]: { [channel]: on } } } },
-      {
-        onError: (error) => {
-          queryClient.setQueryData(queryKeys.myNotifications(), before);
-          toast.error(error instanceof ApiError ? error.message : "That couldn't be saved.");
-        },
-      },
-    );
+    save.mutate({ body: { kinds: { [kind]: { [channel]: on } } } });
   };
   return (
     <section aria-labelledby="notifications-heading" className="flex flex-col gap-4">

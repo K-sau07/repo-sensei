@@ -8,7 +8,7 @@ import { useEffect, useRef, useState } from "react";
 import { useRepoSlug } from "@/components/repo/use-repo";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { $api } from "@/lib/api/client";
-import { isOpen, type FixStatus } from "@/lib/api/fixes";
+import { isOpen, WAITING_MS, type FixStatus } from "@/lib/api/fixes";
 import { followStream } from "@/lib/event-stream";
 
 const LIST = "/api/v1/orgs/{org}/repos/{repo}/fixes" as const;
@@ -40,7 +40,8 @@ export function useFixes(status: FixStatus | null = null) {
   );
 }
 
-/** One fix, read again while a stage works on it (waiting for people, or over: once). */
+/** One fix, read again while a stage works on it, less often while its plan waits for people
+ * (who may decide meanwhile), never once it's over or waiting for triage. */
 export function useFix(id: string) {
   const { org } = useRepoSlug();
   return $api.useQuery(
@@ -50,20 +51,22 @@ export function useFix(id: string) {
     {
       refetchInterval: (query) => {
         const status = query.state.data?.status;
-        return status &&
-          isOpen(status) &&
-          status !== "awaiting_approval" &&
-          status !== "needs_triage"
-          ? FOLLOW_MS
-          : false;
+        if (!status || !isOpen(status) || status === "needs_triage") return false;
+        return status === "awaiting_approval" ? WAITING_MS : FOLLOW_MS;
       },
     },
   );
 }
 
-export function useFixApprovals(id: string) {
+/** Who decided on the plan; read again while it waits (``waiting``). */
+export function useFixApprovals(id: string, waiting = false) {
   const { org } = useRepoSlug();
-  return $api.useQuery("get", APPROVALS, { params: { path: { org, fix_id: id } } });
+  return $api.useQuery(
+    "get",
+    APPROVALS,
+    { params: { path: { org, fix_id: id } } },
+    { refetchInterval: waiting ? WAITING_MS : false },
+  );
 }
 
 export interface LiveStep {
@@ -127,9 +130,11 @@ export function useFixActions(id: string) {
     });
   };
   const path = { org, fix_id: id };
-  const decide = $api.useMutation("post", DECIDE, { onSuccess: refresh });
-  const retry = $api.useMutation("post", RETRY, { onSuccess: refresh });
-  const cancel = $api.useMutation("post", CANCEL, { onSuccess: refresh });
+  // Read again however it went: a refusal (someone decided first, the plan changed) says what's
+  // shown is out of date.
+  const decide = $api.useMutation("post", DECIDE, { onSettled: refresh });
+  const retry = $api.useMutation("post", RETRY, { onSettled: refresh });
+  const cancel = $api.useMutation("post", CANCEL, { onSettled: refresh });
   return {
     decide: (body: Parameters<typeof decide.mutateAsync>[0]["body"]) =>
       decide.mutateAsync({ params: { path }, body }),

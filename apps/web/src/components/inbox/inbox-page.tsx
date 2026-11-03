@@ -39,7 +39,6 @@ import {
   GROUP_LABELS,
   GROUPS,
   inboxHref,
-  inGroup,
   isApproval,
   KIND_LABELS,
   type InboxGroup,
@@ -74,24 +73,26 @@ export function InboxPage() {
     "group",
     parseAsStringLiteral(GROUPS).withOptions({ history: "replace" }),
   );
-  const inbox = useInbox(org, show === "unread");
+  const inbox = useInbox(org, show === "unread", group);
   const { read, busy } = useInboxRead(org);
   const listRef = useRef<HTMLUListElement>(null);
 
   const pages = inbox.data?.pages ?? [];
-  const items = pages.flatMap((page) => page.items).filter((item) => inGroup(item, group));
+  const items = pages.flatMap((page) => page.items);
   const unread = pages[0]?.unread ?? 0;
 
   const rows = () => [...(listRef.current?.querySelectorAll<HTMLElement>(ROW) ?? [])];
+  // The item focus is in: its row's link, or its Done button beside it.
+  const holds = (row: HTMLElement) => row.closest("li")?.contains(document.activeElement) ?? false;
   const focused = (): { row: HTMLElement; item: InboxItem } | null => {
-    const row = document.activeElement?.closest<HTMLElement>(ROW);
+    const row = rows().find(holds);
     const item = row ? items.find((candidate) => candidate.id === row.dataset.id) : undefined;
     return row && item ? { row, item } : null;
   };
   const move = (step: 1 | -1) => {
     const all = rows();
     if (all.length === 0) return;
-    const at = all.findIndex((row) => row.contains(document.activeElement));
+    const at = all.findIndex(holds);
     const next = at === -1 ? (step === 1 ? 0 : all.length - 1) : at + step;
     all[Math.max(0, Math.min(all.length - 1, next))]?.focus();
   };
@@ -144,7 +145,8 @@ export function InboxPage() {
           className="ml-auto"
           disabled={busy || unread === 0}
           onClick={() => {
-            void read().catch((caught: unknown) => {
+            // Of the kinds shown: what isn't on the page stays as it was.
+            void read(undefined, group).catch((caught: unknown) => {
               toast.error(caught instanceof ApiError ? caught.message : "Couldn't mark them read.");
             });
           }}

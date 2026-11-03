@@ -56,6 +56,11 @@ export const Triage: Story = {
     await expect(
       within(first).getByRole("link", { name: /Refunds are applied twice/ }),
     ).toHaveFocus();
+    // From its Done button too: the item's.
+    within(first).getByRole("button", { name: /^Done/ }).focus();
+    await userEvent.keyboard("j");
+    await expect(within(second).getByRole("link", { name: /Items page crashes/ })).toHaveFocus();
+    await userEvent.keyboard("k");
     await userEvent.keyboard("e");
     await waitFor(() => expect(canvas.getByTestId("inbox-unread")).toHaveTextContent("2 unread"));
     await waitFor(() => expect(canvas.getAllByTestId("inbox-item")).toHaveLength(2));
@@ -80,14 +85,12 @@ export const AllByGroup: Story = {
     await canvas.findAllByTestId("inbox-item");
     await userEvent.click(canvas.getByRole("button", { name: "All" }));
     await waitFor(() => expect(canvas.getAllByTestId("inbox-item")).toHaveLength(6));
+    // A group's kinds are asked of the API: every page it sends is theirs.
+    const kinds = () => canvas.getAllByTestId("inbox-item").map((item) => item.dataset.kind);
     await userEvent.click(canvas.getByRole("button", { name: "Failures" }));
-    const failures = canvas.getAllByTestId("inbox-item");
-    await expect(failures.map((item) => item.dataset.kind)).toEqual(["fix_failed", "cost_cap"]);
+    await waitFor(() => expect(kinds()).toEqual(["fix_failed", "cost_cap"]));
     await userEvent.click(canvas.getByRole("button", { name: "Finished" }));
-    await expect(canvas.getAllByTestId("inbox-item").map((i) => i.dataset.kind)).toEqual([
-      "pr_opened",
-      "index_done",
-    ]);
+    await waitFor(() => expect(kinds()).toEqual(["pr_opened", "index_done"]));
     await userEvent.click(canvas.getByRole("button", { name: "Everything" }));
     await userEvent.click(canvas.getByRole("button", { name: "Mark all read" }));
     await waitFor(() =>

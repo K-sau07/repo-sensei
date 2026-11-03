@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { GROUPS, inboxHref, inGroup, isApproval, KIND_GROUP, type InboxItem } from "./inbox";
+import { GROUPS, inboxHref, isApproval, KIND_GROUP, kindsOf, type InboxItem } from "./inbox";
 
 const item = (over: Partial<InboxItem> = {}): InboxItem => ({
   id: "0199f000-0000-7000-8000-000000000101",
@@ -19,11 +19,11 @@ describe("the inbox's kinds", () => {
     for (const group of Object.values(KIND_GROUP)) expect(GROUPS).toContain(group);
   });
 
-  it("filters by group, or not at all", () => {
-    expect(inGroup(item(), "approvals")).toBe(true);
-    expect(inGroup(item(), "failures")).toBe(false);
-    expect(inGroup(item({ kind: "cost_cap" }), "failures")).toBe(true);
-    expect(inGroup(item({ kind: "index_done" }), null)).toBe(true);
+  it("asks for a group's kinds, or every kind", () => {
+    expect(kindsOf("approvals")).toEqual(["approval_needed"]);
+    expect(kindsOf("failures")).toEqual(["fix_failed", "index_failed", "cost_cap"]);
+    expect(kindsOf("finished")).toEqual(["pr_opened", "index_done"]);
+    expect(kindsOf(null)).toBeNull();
   });
 
   it("opens only approvals that say where", () => {
@@ -36,6 +36,8 @@ describe("the inbox's kinds", () => {
     expect(inboxHref(item())).toBe("/acme/api/fixes/1");
     expect(inboxHref(item({ link: "//evil.example/x" }))).toBeNull();
     expect(inboxHref(item({ link: "https://evil.example/x" }))).toBeNull();
+    expect(inboxHref(item({ link: "/\\evil.example/x" }))).toBeNull();
+    expect(inboxHref(item({ link: "/acme\tapi" }))).toBeNull();
     expect(inboxHref(item({ link: null }))).toBeNull();
   });
 });

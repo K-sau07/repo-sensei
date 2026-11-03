@@ -142,9 +142,11 @@ export const inboxHandlers = [
     const query = new URL(request.url).searchParams;
     const limit = Math.min(100, Number(query.get("limit") ?? 50));
     const before = query.get("before");
+    const kinds = query.getAll("kinds");
     const all = inboxOf(params.org, access.user.id);
     const shown = all
       .filter((item) => query.get("unread") !== "true" || !item.read)
+      .filter((item) => kinds.length === 0 || kinds.includes(item.kind))
       .filter((item) => !before || item.id < before)
       .sort((a, b) => b.id.localeCompare(a.id));
     const page = shown.slice(0, limit);
@@ -158,10 +160,13 @@ export const inboxHandlers = [
   http.post<{ org: string }>("*/api/v1/orgs/:org/inbox/read", async ({ params, request }) => {
     const access = orgAccess(params.org);
     if (access instanceof Response) return access;
-    const body = (await request.json()) as { ids?: string[] | null };
+    const body = (await request.json()) as { ids?: string[] | null; kinds?: string[] | null };
     const all = inboxOf(params.org, access.user.id);
     for (const item of all) {
-      if (!body.ids || body.ids.includes(item.id)) item.read = true;
+      const picked = body.ids
+        ? body.ids.includes(item.id)
+        : !body.kinds?.length || body.kinds.includes(item.kind);
+      if (picked) item.read = true;
     }
     saveDb();
     return HttpResponse.json({ unread: all.filter((item) => !item.read).length });

@@ -542,7 +542,11 @@ export const fixHandlers = [
     const fix = found(params.org, params.id);
     if (fix instanceof Response) return fix;
     const encoder = new TextEncoder();
-    const again = request.headers.get("last-event-id") !== null;
+    // A reconnect says where it was (the header, or the query the app's streams reopen with), as
+    // the API reads it: nothing is sent twice.
+    const again =
+      request.headers.get("last-event-id") !== null ||
+      new URL(request.url).searchParams.has("last_event_id");
     const steps = [
       { name: "turn 1", summary: "read_code, grep" },
       { name: "edit_file", summary: "edited backend/app/crud.py" },
