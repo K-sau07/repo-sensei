@@ -228,6 +228,8 @@ def request_text(request: Mapping[str, Any]) -> str:
         lines.append(f"Their file: {item.get('path')} ({item.get('change')}): {item.get('why')}")
     for step in cast("list[Mapping[str, Any]]", edits.get("steps") or []):
         lines.append(f"Their step: {step.get('path')}: {step.get('description')}")
+    for test in cast("list[Mapping[str, Any]]", edits.get("tests") or []):
+        lines.append(f"Their new test: {test.get('path')}: {test.get('checks')}")
     return "\n".join(lines)
 
 

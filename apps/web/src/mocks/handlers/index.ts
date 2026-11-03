@@ -1,6 +1,7 @@
 import { apiKeyHandlers } from "./api-keys";
 import { askHandlers } from "./ask";
 import { browseHandlers } from "./browse";
+import { changeHandlers } from "./changes";
 import { constellationHandlers } from "./constellation";
 import { depsHandlers } from "./deps";
 import { diagramHandlers } from "./diagrams";
@@ -40,6 +41,7 @@ export const handlers = [
   ...refHandlers,
   ...diagramHandlers,
   ...fixHandlers,
+  ...changeHandlers,
   ...runsHandlers,
   ...overviewHandlers,
   ...searchHandlers,

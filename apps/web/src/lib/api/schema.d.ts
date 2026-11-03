@@ -4328,7 +4328,8 @@ export interface components {
         };
         /**
          * PlanEdits
-         * @description The plan as a person edited it (each part left out stays as the planner had it).
+         * @description The plan as a person edited it (each part left out stays as the planner had it; a
+         *     change's plan has its new tests too).
          */
         PlanEdits: {
             /** Files */
@@ -4337,6 +4338,8 @@ export interface components {
             steps?: components["schemas"]["StepEdit"][] | null;
             /** Summary */
             summary?: string | null;
+            /** Tests */
+            tests?: components["schemas"]["TestEdit"][] | null;
         };
         /**
          * Provenance
@@ -5072,6 +5075,16 @@ export interface components {
             query: string;
             /** Results */
             results: components["schemas"]["SymbolOut"][];
+        };
+        /** TestEdit */
+        TestEdit: {
+            /**
+             * Checks
+             * @default
+             */
+            checks: string;
+            /** Path */
+            path: string;
         };
         /** TicketOut */
         TicketOut: {

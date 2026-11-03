@@ -1,14 +1,14 @@
 import type { Metadata } from "next";
 import { Suspense } from "react";
 
-import { TabPlaceholder } from "@/components/repo/tab-placeholder";
+import { ChangesPage } from "@/components/changes/changes-page";
 
 export const metadata: Metadata = { title: "Changes" };
 
-export default function ChangesPage() {
+export default function Page() {
   return (
     <Suspense>
-      <TabPlaceholder tab="changes" />
+      <ChangesPage />
     </Suspense>
   );
 }

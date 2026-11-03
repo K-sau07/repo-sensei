@@ -16,6 +16,7 @@ import type {
   SessionInfo,
 } from "@/lib/api/types";
 
+import type { MockChange } from "./handlers/changes";
 import type { MockJob } from "./jobs";
 import { mockScenario } from "./scenario";
 
@@ -65,6 +66,8 @@ export interface MockDb {
   diagrams?: Record<string, Diagram[]>;
   /** Fixes per repository id (see handlers/fixes.ts). */
   fixes?: Record<string, Fix[]>;
+  /** Requested changes per repository id, each with where it is (see handlers/changes.ts). */
+  changes?: Record<string, MockChange[]>;
   /** API keys, newest first (see handlers/api-keys.ts). */
   apiKeys?: MockApiKey[];
 }

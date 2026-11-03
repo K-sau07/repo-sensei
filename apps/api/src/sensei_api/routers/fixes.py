@@ -470,12 +470,19 @@ class FileEdit(BaseModel):
     why: str = Field(default="", max_length=500)
 
 
+class TestEdit(BaseModel):
+    path: str = Field(min_length=1, max_length=500)
+    checks: str = Field(default="", max_length=500)
+
+
 class PlanEdits(BaseModel):
-    """The plan as a person edited it (each part left out stays as the planner had it)."""
+    """The plan as a person edited it (each part left out stays as the planner had it; a
+    change's plan has its new tests too)."""
 
     summary: str | None = Field(default=None, max_length=2_000)
     steps: list[StepEdit] | None = Field(default=None, max_length=10)
-    files: list[FileEdit] | None = Field(default=None, max_length=8)
+    files: list[FileEdit] | None = Field(default=None, max_length=12)
+    tests: list[TestEdit] | None = Field(default=None, max_length=5)
 
 
 class ApprovalIn(BaseModel):
