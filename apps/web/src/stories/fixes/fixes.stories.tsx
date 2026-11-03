@@ -4,6 +4,7 @@ import { expect, userEvent, waitFor, within } from "storybook/test";
 
 import { FixesPage } from "@/components/fixes/fixes-page";
 import { NewFixPage } from "@/components/fixes/new-fix-page";
+import type { IndexJob } from "@/lib/api/types";
 import { db, OCTO } from "@/mocks/db";
 import { handlers } from "@/mocks/handlers";
 import { meOf } from "@/mocks/handlers/me";
@@ -32,6 +33,29 @@ const asViewer = http.get("*/api/v1/me", () => {
 
 const LOAD_MS = 10_000;
 
+/** The repository indexed already, fixes unlocked (the mock otherwise replays a run in time). */
+const indexed = http.get("*/api/v1/orgs/:org/repos/:repo/index-jobs", () =>
+  HttpResponse.json<IndexJob[]>([
+    {
+      id: "0199f000-0000-7000-8000-0000000000ad",
+      repo_id: "0199f000-0000-7000-8000-0000000000ae",
+      kind: "full",
+      status: "succeeded",
+      stage: null,
+      progress: 1,
+      eta_s: null,
+      features: ["keyword_search", "ask", "graph_view", "trace", "diagrams", "fixes"],
+      partial: {},
+      stages: {},
+      error: null,
+      snapshot_id: "0199f000-0000-7000-8000-0000000000af",
+      created_at: "2026-10-18T11:00:00Z",
+      started_at: "2026-10-18T11:00:00Z",
+      finished_at: "2026-10-18T11:05:00Z",
+    },
+  ]),
+);
+
 const TRACE = `Traceback (most recent call last):
   File "/app/backend/app/api/routes/items.py", line 34, in read_items
     count = crud.count_items(session=session, owner_id=current_user.id)
@@ -43,7 +67,7 @@ ZeroDivisionError: integer division or modulo by zero`;
 const meta = {
   title: "Fixes/Fixes",
   component: FixesPage,
-  parameters: { nextjs: navigation("fixes"), msw: handlers },
+  parameters: { nextjs: navigation("fixes"), msw: [indexed, ...handlers] },
 } satisfies Meta<typeof FixesPage>;
 
 export default meta;
@@ -73,7 +97,7 @@ export const List: Story = {
 
 /** A viewer follows fixes; members start them. */
 export const AsViewer: Story = {
-  parameters: { msw: [asViewer, ...handlers] },
+  parameters: { msw: [indexed, asViewer, ...handlers] },
   play: async ({ canvas }) => {
     await expect(await canvas.findByTestId("viewer-note", {}, { timeout: LOAD_MS })).toBeVisible();
     await expect(canvas.queryByRole("link", { name: "New fix" })).toBeNull();
