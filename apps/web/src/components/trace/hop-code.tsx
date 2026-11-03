@@ -34,8 +34,9 @@ const CodeViewer = dynamic(
   { ssr: false, loading: () => <CodeSkeleton waiting="viewer" /> },
 );
 
-/** ``waiting``: for the file, or for the viewer's own code (its chunk), to tell them apart. */
-function CodeSkeleton({ waiting }: { waiting: "file" | "viewer" }) {
+/** ``waiting``: for the repository (before the file can be asked for), the file, or the
+ * viewer's own code (its chunk), to tell them apart. */
+function CodeSkeleton({ waiting }: { waiting: "repository" | "file" | "viewer" }) {
   return (
     <div
       role="status"
@@ -91,7 +92,8 @@ function Viewer({ place }: { place: HopPlace }) {
       </div>
     );
   }
-  return <CodeSkeleton waiting="file" />;
+  // Not asked yet (idle): the file waits for the repository to be read.
+  return <CodeSkeleton waiting={file.fetchStatus === "idle" ? "repository" : "file"} />;
 }
 
 export function HopCode({
