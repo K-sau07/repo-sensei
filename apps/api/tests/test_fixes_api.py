@@ -297,7 +297,7 @@ async def test_sentry_is_connected_by_admins_and_its_webhook_starts_fixes(
         await client.post(f"{API}/webhooks/sentry/acme", content=body, headers=signed)
         body, signed = _signed(_alert("4501"))  # again, while the first is going
         await client.post(f"{API}/webhooks/sentry/acme", content=body, headers=signed)
-    runs = (await db_session.scalars(select(FixRun).order_by(FixRun.created_at))).all()
+    runs = (await db_session.scalars(select(FixRun).order_by(FixRun.id))).all()
     assert [(r.source_ref, r.status.value) for r in runs] == [
         ("4501", "queued"), ("4502", "needs_triage"),
     ]  # fmt: skip
