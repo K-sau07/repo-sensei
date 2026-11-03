@@ -22,6 +22,9 @@ export function contentSecurityPolicy(nonce: string, { dev }: { dev: boolean }):
     `connect-src 'self'${dev ? " ws:" : ""}`,
     // 'strict-dynamic' ignores 'self' for scripts, so workers (the dev mock API) need their own.
     "worker-src 'self'",
+    // Cloudflare Turnstile's check, on the public gallery's Ask bar (10.2), is a frame of its
+    // own (its script is loaded by ours, which 'strict-dynamic' trusts).
+    "frame-src https://challenges.cloudflare.com",
     "frame-ancestors 'none'",
     "base-uri 'self'",
     "form-action 'self'",

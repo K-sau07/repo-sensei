@@ -23,6 +23,11 @@ export function orgPath(org: string, section: OrgSection = ""): Route {
   return (section ? `${base}/${section}` : base) as Route;
 }
 
+/** A published repository's page in the public gallery (10.2). */
+export function explorePath(owner: string, name: string): Route {
+  return `/explore/${encodeURIComponent(owner)}/${encodeURIComponent(name)}` as Route;
+}
+
 /** A repository's pages: `/[org]/[repo]` and its tabs. */
 export function repoPath(org: string, repo: string, section = ""): Route {
   const base = `/${encodeURIComponent(org)}/${encodeURIComponent(repo)}`;

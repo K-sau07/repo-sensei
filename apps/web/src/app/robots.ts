@@ -6,5 +6,6 @@ import type { MetadataRoute } from "next";
 export default function robots(): MetadataRoute.Robots {
   return {
     rules: { userAgent: "*", allow: "/", disallow: ["/settings/", "/onboarding", "/logout"] },
+    sitemap: `${process.env.SENSEI_WEB_ORIGIN ?? "http://localhost:3000"}/sitemap.xml`,
   };
 }

@@ -61,6 +61,8 @@ describe("content security policy", () => {
     expect(policy).toContain("frame-ancestors 'none'");
     expect(policy).toContain("object-src 'none'");
     expect(policy).toContain("upgrade-insecure-requests");
+    // Frames only from Cloudflare's human check: nothing else is framed here.
+    expect(policy).toContain("frame-src https://challenges.cloudflare.com;");
   });
 
   it("adds what the dev server needs only in development", () => {

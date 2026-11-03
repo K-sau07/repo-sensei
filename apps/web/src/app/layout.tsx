@@ -8,6 +8,8 @@ import { fontVariables } from "@/fonts";
 import "./globals.css";
 
 export const metadata: Metadata = {
+  // Where the pages' social images and canonical links are absolute from.
+  metadataBase: new URL(process.env.SENSEI_WEB_ORIGIN ?? "http://localhost:3000"),
   title: { default: "repo-sensei", template: "%s · repo-sensei" },
   description: "Understand any codebase, with answers you can verify.",
 };

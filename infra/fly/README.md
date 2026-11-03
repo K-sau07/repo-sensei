@@ -36,6 +36,12 @@ so the browser only ever talks to one origin (cookies stay first-party).
    `fly scale count worker=1 beat=1`. Beat must run exactly once (it schedules the webhook sweep).
 8. **Web on Vercel**: project root `apps/web`; set `SENSEI_API_PROXY_ORIGIN` to the API's URL
    (e.g. `https://repo-sensei-api-staging.fly.dev`). Next's rewrite forwards `/api/*` there.
+   - `SENSEI_WEB_ORIGIN`: the site's own URL (canonical links, social images, the sitemap).
+   - The public gallery (10.2): `SENSEI_EXPLORE_ORG` (and `SENSEI_EXPLORE_TURNSTILE_SECRET`) on
+     the API, `NEXT_PUBLIC_TURNSTILE_SITE_KEY` on the web (no key: its Ask bar says questions
+     aren't open). Through Vercel's rewrite the API sees Vercel's address, not the visitor's, so
+     the per-address question limits are shared by everyone until `/api/*` reaches the API
+     directly (the Turnstile check and the explore org's daily cap still hold).
 
 ## After every deploy
 

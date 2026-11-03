@@ -12,6 +12,7 @@
  */
 import { delay, http, HttpResponse } from "msw";
 
+import { DUMMY_TOKEN } from "@/lib/api/explore";
 import { mockAbstainParts, mockAnswerParts } from "@/mocks/ask";
 import { apiError } from "@/mocks/handlers/errors";
 import { MOCK_RUN_ID } from "@/mocks/runs";
@@ -130,6 +131,29 @@ function assembled(parts: Record<string, unknown>[]): Record<string, unknown>[] 
   return [{ type: "text", text }, ...parts.filter((p) => String(p.type).startsWith("data-"))];
 }
 
+/** The answer's parts as the UI Message Stream, a part every few milliseconds. */
+function streamed(id: string, messageId: string, parts: Record<string, unknown>[]): Response {
+  const wait = slow() ? SLOW_MS : PART_MS;
+  const encoder = new TextEncoder();
+  const stream = new ReadableStream({
+    async start(controller) {
+      for (const part of [{ type: "start", messageId }, ...parts]) {
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify(part)}\n\n`));
+        await delay(wait);
+      }
+      controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+      controller.close();
+    },
+  });
+  return new HttpResponse(stream, {
+    headers: {
+      "content-type": "text/event-stream",
+      "x-vercel-ai-ui-message-stream": "v1",
+      "x-conversation-id": id,
+    },
+  });
+}
+
 export const askHandlers = [
   http.post("/api/v1/orgs/:org/repos/:repo/ask", async ({ request, params }) => {
     const body = (await request.json()) as {
@@ -181,25 +205,22 @@ export const askHandlers = [
     held.updated_at = new Date().toISOString();
     conversations.set(id, held);
     save();
-    const wait = slow() ? SLOW_MS : PART_MS;
-    const encoder = new TextEncoder();
-    const stream = new ReadableStream({
-      async start(controller) {
-        for (const part of [{ type: "start", messageId }, ...parts]) {
-          controller.enqueue(encoder.encode(`data: ${JSON.stringify(part)}\n\n`));
-          await delay(wait);
-        }
-        controller.enqueue(encoder.encode("data: [DONE]\n\n"));
-        controller.close();
-      },
-    });
-    return new HttpResponse(stream, {
-      headers: {
-        "content-type": "text/event-stream",
-        "x-vercel-ai-ui-message-stream": "v1",
-        "x-conversation-id": id,
-      },
-    });
+    return streamed(id, messageId, parts);
+  }),
+  // A public gallery page's question (10.2): answered the same way, as no one's (nothing kept).
+  // A token that isn't Turnstile's dummy one fails its check, as the API's would.
+  http.post("/api/v1/public/repos/:owner/:name/ask", async ({ request }) => {
+    const body = (await request.json()) as { message?: string; turnstile_token?: string };
+    if (body.turnstile_token !== DUMMY_TOKEN) {
+      return apiError(
+        403,
+        "human_check_failed",
+        "The check that you're a person didn't pass. Try again.",
+      );
+    }
+    const id = crypto.randomUUID();
+    const parts = askScenario() === "abstain" ? mockAbstainParts(id) : mockAnswerParts(id);
+    return streamed(id, crypto.randomUUID(), parts);
   }),
   http.get("/api/v1/orgs/:org/repos/:repo/conversations", ({ params, request }) => {
     const q = (new URL(request.url).searchParams.get("q") ?? "").toLowerCase();
