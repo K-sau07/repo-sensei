@@ -42,7 +42,8 @@ class Conversation(IdMixin, OrgScopedMixin, TimestampMixin, Base):
     )
 
     repo_id: Mapped[uuid.UUID] = mapped_column()
-    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    # Who asked (None: someone not signed in, on a public gallery page, 10.2: no one's to list).
+    user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
     title: Mapped[str] = mapped_column(Text, default="", server_default="")
     # The commit it was first asked at (later questions may be asked at a newer one).
     snapshot_id: Mapped[uuid.UUID | None] = mapped_column(

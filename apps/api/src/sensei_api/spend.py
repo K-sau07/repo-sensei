@@ -62,13 +62,13 @@ async def remaining_today(
     settings: AgentSettings,
     *,
     org_id: uuid.UUID,
-    user_id: uuid.UUID,
+    user_id: uuid.UUID | None,
     warn_in: Sessions,
     now: datetime | None = None,
 ) -> Decimal | None:
     """What the org may still spend today (None: no cap); past the cap, an error saying when
-    it resets. At the warning share, the org is told once a day (in a session of
-    ``warn_in``'s, committed then)."""
+    it resets (``user_id``: who is asking, None for someone not signed in). At the warning
+    share, the org is told once a day (in a session of ``warn_in``'s, committed then)."""
     cap = settings.daily_cost_cap_usd
     if cap <= 0:
         return None
@@ -168,7 +168,7 @@ async def _warn(
     redis: Redis,
     *,
     org_id: uuid.UUID,
-    user_id: uuid.UUID,
+    user_id: uuid.UUID | None,
     spent: Decimal,
     cap: Decimal,
     day: datetime,

@@ -19,6 +19,7 @@ import httpx2
 import pytest
 from fakeredis import FakeAsyncRedis
 from fastapi import FastAPI, Request
+from pydantic import SecretStr
 from sqlalchemy import delete, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -1060,3 +1061,133 @@ async def test_a_question_scoped_to_a_directory_and_layers_says_so(
     first = str(model.turns[before]["messages"][-1]["content"])  # the run's first turn
     assert "(Asked about the UI layer.)" in first
     assert "looking at" not in first
+
+
+# ---------------------------------------------------------------- the public gallery (10.2)
+
+
+class _Turnstile:
+    """Cloudflare's siteverify: a good token passes; what it was asked is kept."""
+
+    def __init__(self) -> None:
+        self.asked: list[dict[str, str]] = []
+
+    def __call__(self, request: httpx.Request) -> httpx.Response:
+        form = dict(httpx.QueryParams(request.content.decode()))
+        self.asked.append(form)
+        if form["response"] == "good":
+            return httpx.Response(200, json={"success": True, "error-codes": []})
+        return httpx.Response(
+            200, json={"success": False, "error-codes": ["invalid-input-response"]}
+        )
+
+
+async def _published(
+    app: FastAPI, client: httpx.AsyncClient, db: AsyncSession, **explore: Any
+) -> _Turnstile:
+    """The repository published by its org, the explore org; the client signed out."""
+    org, _ = await _setup(app, client, db)
+    repo = await db.scalar(select(Repo).where(Repo.full_name == "o/items"))
+    assert repo is not None
+    repo.published_at = datetime.now(UTC)
+    await db.flush()
+    settings = app.state.settings
+    found = settings.explore.model_copy(
+        update={"org": org.rsplit("/", 1)[-1], "turnstile_secret": SecretStr("s"), **explore}
+    )
+    app.state.settings = settings.model_copy(update={"explore": found})
+    checks = _Turnstile()
+    app.state.http = httpx.AsyncClient(transport=httpx.MockTransport(checks))
+    client.cookies.clear()  # someone not signed in
+    return checks
+
+
+async def _ask_publicly(
+    app: FastAPI, client: httpx.AsyncClient, *, passes: bool = True, **body: Any
+) -> tuple[httpx.Response, list[tuple[str | None, str]]]:
+    token = "good" if passes else "bad"
+    sent = {"message": "Where are items saved?", "turnstile_token": token, **body}
+    response = await client.post(f"{API}/public/repos/o/items/ask", json=sent)
+    await asyncio.gather(*list(getattr(app.state, "ask_runs", ())))
+    return response, _events(response.text)
+
+
+async def test_anyone_asks_about_a_published_repository_a_few_times_a_day(
+    app: FastAPI, client: httpx.AsyncClient, db_session: AsyncSession, model: _Model
+) -> None:
+    checks = await _published(app, client, db_session, asks_per_day=2, asks_per_minute=100)
+    response, events = await _ask_publicly(app, client)
+    assert response.status_code == 200, response.text
+    parts = [json.loads(data) for _, data in events[:-1]]
+    assert parts[-1]["type"] == "finish"
+    assert ANSWER in "".join(p.get("delta", "") for p in parts)
+    assert checks.asked[0]["secret"] == "s"
+    assert checks.asked[0]["remoteip"] == "127.0.0.1"
+    # No one's: listed for no one, titled by its words (no call to the model for it).
+    conversation = await db_session.get(
+        Conversation, uuid.UUID(response.headers["x-conversation-id"])
+    )
+    assert conversation is not None
+    assert conversation.user_id is None
+    assert conversation.title == "Where are items saved?"
+    run = await db_session.get(AgentRun, uuid.UUID(response.headers["x-agent-run-id"]))
+    assert run is not None
+    assert run.user_id is None
+    assert run.mode == "fast"
+
+    refused, _ = await _ask_publicly(app, client, passes=False)
+    assert refused.status_code == 403
+    assert refused.json()["error"]["code"] == "human_check_failed"
+    second, _ = await _ask_publicly(app, client)  # the refused one wasn't counted
+    assert second.status_code == 200
+    over, _ = await _ask_publicly(app, client)
+    assert over.status_code == 429
+    assert over.json()["error"]["code"] == "quota_exceeded"
+    assert len(checks.asked) == 3  # past the day's, Cloudflare isn't asked
+
+
+async def test_a_public_answer_is_served_from_the_cache_but_never_kept_there(
+    app: FastAPI, client: httpx.AsyncClient, db_session: AsyncSession
+) -> None:
+    streamed = _answers_citing(app)
+    await _published(app, client, db_session)
+    question = {"message": "What does the README say?"}
+    first, _ = await _ask_publicly(app, client, **question)
+    assert first.status_code == 200, first.text
+    assert len(streamed) == 3  # answered by a run
+    kept = await db_session.scalar(select(func.count()).select_from(AnswerCacheEntry))
+    assert kept == 0  # an asker no one knows doesn't write what others are served
+
+    # One the org's members' answer kept is served to anyone.
+    _answers_citing(app)
+    owner = await db_session.scalar(select(User).join(Membership, Membership.user_id == User.id))
+    _, headers = await sign_in(app, client, db_session, owner)
+    org = app.state.settings.explore.org
+    member, _ = await _ask(app, client, f"{API}/orgs/{org}", headers, **question)
+    assert member.status_code == 200
+    client.cookies.clear()
+    again, _ = await _ask_publicly(app, client, **question)
+    assert again.headers["x-answer-cache"] == "hit"
+
+
+async def test_public_questions_need_a_published_repository_a_secret_and_patience(
+    app: FastAPI, client: httpx.AsyncClient, db_session: AsyncSession
+) -> None:
+    await _published(app, client, db_session, asks_per_minute=2)
+    missing = await client.post(
+        f"{API}/public/repos/o/other/ask", json={"message": "x", "turnstile_token": "good"}
+    )
+    assert missing.status_code == 404
+    assert missing.json()["error"]["code"] == "public_repo_not_found"
+    first, _ = await _ask_publicly(app, client)
+    assert first.status_code == 200
+    soon, _ = await _ask_publicly(app, client)  # the third this minute
+    assert soon.status_code == 429
+    assert soon.json()["error"]["code"] == "rate_limited"
+    assert "retry-after" in soon.headers
+
+    explore = app.state.settings.explore.model_copy(update={"turnstile_secret": SecretStr("")})
+    app.state.settings = app.state.settings.model_copy(update={"explore": explore})
+    closed, _ = await _ask_publicly(app, client)  # closed before any limit is counted
+    assert closed.status_code == 503
+    assert closed.json()["error"]["code"] == "human_check_unavailable"

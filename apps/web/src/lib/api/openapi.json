@@ -6268,6 +6268,28 @@
         "title": "Provenance",
         "type": "string"
       },
+      "PublicAskRequest": {
+        "properties": {
+          "message": {
+            "maxLength": 1000,
+            "minLength": 1,
+            "title": "Message",
+            "type": "string"
+          },
+          "turnstile_token": {
+            "maxLength": 2048,
+            "minLength": 1,
+            "title": "Turnstile Token",
+            "type": "string"
+          }
+        },
+        "required": [
+          "message",
+          "turnstile_token"
+        ],
+        "title": "PublicAskRequest",
+        "type": "object"
+      },
       "PublicRepoList": {
         "properties": {
           "items": {
@@ -17887,6 +17909,65 @@
           }
         },
         "summary": "Public Repo",
+        "tags": [
+          "public"
+        ]
+      }
+    },
+    "/api/v1/public/repos/{owner}/{name}/ask": {
+      "post": {
+        "description": "Ask about a published repository, signed in or not: a short answer, streamed as it is\nwritten (as the org's Ask streams it). Per address, past a few a minute 429\n``rate_limited``, past the day's 429 ``quota_exceeded``; a check that didn't pass 403\n``human_check_failed``; with no Turnstile secret 503 ``human_check_unavailable``.",
+        "operationId": "public_ask_api_v1_public_repos__owner___name__ask_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "owner",
+            "required": true,
+            "schema": {
+              "maxLength": 100,
+              "pattern": "^[A-Za-z0-9_.-]+$",
+              "title": "Owner",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "maxLength": 100,
+              "pattern": "^[A-Za-z0-9_.-]+$",
+              "title": "Name",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PublicAskRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Public Ask",
         "tags": [
           "public"
         ]

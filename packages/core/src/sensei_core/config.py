@@ -475,11 +475,18 @@ class LimitsSettings(BaseSettings):
 
 class ExploreSettings(BaseSettings):
     """The public gallery (10.2): one org, the operator's, whose admins publish repositories it
-    imported by their public URL to ``/explore``, where anyone may read them."""
+    imported by their public URL to ``/explore``, where anyone may read them and ask about them.
+    A question asked there is billed to that org (within its caps) and answered briefly: a few
+    a minute and a day per address, each behind a Cloudflare Turnstile check (no secret: no
+    questions)."""
 
     model_config = _config("SENSEI_EXPLORE_")
 
     org: str = ""  # the org's slug (empty: no gallery)
+    asks_per_minute: int = Field(default=3, ge=1)  # per address
+    asks_per_day: int = Field(default=20, ge=0)  # per address (0: none)
+    max_answer_usd: Decimal = Field(default=Decimal("0.15"), gt=0)  # what one answer may spend
+    turnstile_secret: SecretStr = SecretStr("")
 
 
 class Settings(BaseSettings):

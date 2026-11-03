@@ -2,7 +2,8 @@
 the day once every org's spend together reaches the day's cap.
 
 - **Quotas** count in Redis, per person, name and UTC day (``quota:<name>:<user>:<day>``): what
-  they import by URL, the index runs they start, the questions they ask. Past one, an error says
+  they import by URL, the index runs they start, the questions they ask (and, for someone not
+  signed in, per address: :func:`address_key`). Past one, an error says
   when it resets (midnight UTC). Redis being unavailable lets the request through (logged), as
   the rate limits do: a quota isn't worth an outage of what it guards.
 - **Read-only**: a worker sums all orgs' LLM spend since midnight UTC every minute
@@ -13,6 +14,7 @@ the day once every org's spend together reaches the day's cap.
 
 from __future__ import annotations
 
+import hashlib
 import uuid
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -60,7 +62,7 @@ def _wait(now: datetime) -> dict[str, str]:
 async def check_quota(
     redis: Redis,
     name: str,
-    user_id: uuid.UUID,
+    who: uuid.UUID | str,
     per_day: int,
     *,
     what: str,
@@ -70,7 +72,7 @@ async def check_quota(
     (``what``: how it's said, "imports"); counts nothing. Check first, then count what went
     through (:func:`count_quota`): a request refused for another reason costs no quota."""
     moment = _now(now)
-    key = QUOTA.format(name=name, user=user_id, day=moment.date().isoformat())
+    key = QUOTA.format(name=name, user=who, day=moment.date().isoformat())
     try:
         taken = await redis.get(key)
     except RedisError as exc:
@@ -81,11 +83,11 @@ async def check_quota(
 
 
 async def count_quota(
-    redis: Redis, name: str, user_id: uuid.UUID, *, now: datetime | None = None
+    redis: Redis, name: str, who: uuid.UUID | str, *, now: datetime | None = None
 ) -> None:
     """Count one of ``name`` against the person's day (it went through)."""
     moment = _now(now)
-    key = QUOTA.format(name=name, user=user_id, day=moment.date().isoformat())
+    key = QUOTA.format(name=name, user=who, day=moment.date().isoformat())
     try:
         async with redis.pipeline(transaction=True) as pipe:
             pipe.incr(key)
@@ -93,6 +95,12 @@ async def count_quota(
             await pipe.execute()  # pyright: ignore[reportUnknownMemberType]
     except RedisError as exc:
         log.warning("quota unavailable", name=name, error=type(exc).__name__)
+
+
+def address_key(address: str | None) -> str:
+    """Who someone not signed in is, for a quota: their address, hashed (no address is kept
+    in Redis), or one shared by every request without one."""
+    return "ip-" + hashlib.sha256((address or "unknown").encode()).hexdigest()[:32]
 
 
 def _refuse(name: str, per_day: int, what: str, moment: datetime) -> None:
@@ -106,7 +114,7 @@ def _refuse(name: str, per_day: int, what: str, moment: datetime) -> None:
 async def take_quota(
     redis: Redis,
     name: str,
-    user_id: uuid.UUID,
+    who: uuid.UUID | str,
     per_day: int,
     *,
     what: str,
@@ -115,7 +123,7 @@ async def take_quota(
     """Count one of ``name`` against the person's day, refusing past ``per_day``
     (:class:`QuotaExceededError`): for what can't be checked first."""
     moment = _now(now)
-    key = QUOTA.format(name=name, user=user_id, day=moment.date().isoformat())
+    key = QUOTA.format(name=name, user=who, day=moment.date().isoformat())
     try:
         async with redis.pipeline(transaction=True) as pipe:
             pipe.incr(key)

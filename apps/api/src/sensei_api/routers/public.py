@@ -6,6 +6,10 @@ imported by their public URL (``PUT /orgs/{org}/repos/{repo}/published``). One i
 is indexed, at its last index, while it is still public: a repository that went private on
 GitHub (access lost) or was disconnected is gone from the gallery at once. With no explore org
 the gallery is empty and every page not found.
+
+Anyone may ask about one too: a short answer (the fast mode, a first question, within
+``SENSEI_EXPLORE_MAX_ANSWER_USD``) billed to the explore org within its caps. Per address, a
+few a minute and a day; each behind a Cloudflare Turnstile check (:mod:`sensei_api.turnstile`).
 """
 
 from __future__ import annotations
@@ -14,18 +18,25 @@ from datetime import datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Path, Request, Response
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import Select, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sse_starlette import EventSourceResponse
 
-from sensei_api.deps import DbSession, RedisClient
+from sensei_api import streams, turnstile
+from sensei_api.deps import DbSession, RedisClient, Writable
+from sensei_api.ratelimit import TokenBucket
+from sensei_api.routers.ask import answer_anonymously
 from sensei_api.routers.feature_maps import FeatureMapList, maps_of
 from sensei_api.routers.overview import OverviewOut, overview_of
-from sensei_core.config import ExploreSettings
+from sensei_api.spend import remaining_today
+from sensei_core.config import ExploreSettings, Settings
+from sensei_core.context import current_client_ip
 from sensei_core.db.tenancy import set_org_context
-from sensei_core.errors import DomainError, NotFoundError
+from sensei_core.errors import DomainError, NotFoundError, RateLimitedError
 from sensei_core.indexing.jobs import repo_summaries
 from sensei_core.indexing.snapshots import resolve_snapshot
+from sensei_core.limits import address_key, check_quota, count_quota
 from sensei_core.models import Org, Repo, Snapshot
 from sensei_core.repos.access import open_to_all
 
@@ -57,6 +68,11 @@ class PublicRepoOut(BaseModel):
 
 class PublicRepoList(BaseModel):
     items: list[PublicRepoOut]
+
+
+class PublicAskRequest(BaseModel):
+    message: str = Field(min_length=1, max_length=1_000)
+    turnstile_token: str = Field(min_length=1, max_length=turnstile.MAX_TOKEN_CHARS)
 
 
 class PublicRepoPage(BaseModel):
@@ -117,6 +133,52 @@ async def public_feature_maps(
     _, snapshot = await published_repo(request, db, owner, name)
     response.headers["Cache-Control"] = CACHE_CONTROL
     return await maps_of(db, snapshot)
+
+
+@router.post(
+    "/repos/{owner}/{name}/ask", response_class=EventSourceResponse, dependencies=[Writable]
+)
+async def public_ask(
+    *,
+    request: Request,
+    db: DbSession,
+    redis: RedisClient,
+    owner: Owner,
+    name: Name,
+    body: PublicAskRequest,
+) -> EventSourceResponse:
+    """Ask about a published repository, signed in or not: a short answer, streamed as it is
+    written (as the org's Ask streams it). Per address, past a few a minute 429
+    ``rate_limited``, past the day's 429 ``quota_exceeded``; a check that didn't pass 403
+    ``human_check_failed``; with no Turnstile secret 503 ``human_check_unavailable``."""
+    settings: Settings = request.app.state.settings
+    explore = settings.explore
+    turnstile.require(explore.turnstile_secret)  # closed: nothing counted
+    address = current_client_ip()
+    who = address_key(address)
+    wait = await TokenBucket(redis, name="explore-ask", per_minute=explore.asks_per_minute).take(
+        who
+    )
+    if wait is not None:
+        raise RateLimitedError(
+            "Too many questions at once; try again in a moment.",
+            headers={"Retry-After": str(wait)},
+        )
+    await check_quota(redis, "explore_asks", who, explore.asks_per_day,
+                      what="questions on public pages")  # fmt: skip
+    repo, snapshot = await published_repo(request, db, owner, name)
+    await turnstile.verify(request.app.state.http, explore.turnstile_secret,
+                           body.turnstile_token, address)  # fmt: skip
+    remaining = await remaining_today(
+        db, redis, settings.agent, org_id=repo.org_id, user_id=None,
+        warn_in=lambda: streams.short_session(request),
+    )  # fmt: skip
+    await count_quota(redis, "explore_asks", who)
+    cap = explore.max_answer_usd if remaining is None else min(explore.max_answer_usd, remaining)
+    return await answer_anonymously(
+        request, db, redis, repo=repo, snapshot=snapshot, message=body.message, cap=cap,
+        held=remaining is not None,
+    )  # fmt: skip
 
 
 async def published_repo(

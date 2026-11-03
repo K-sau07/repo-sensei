@@ -80,7 +80,8 @@ async def shared(
     repo = await db.get(Repo, found.repo_id)
     if repo is None or repo.deleted_at is not None:
         raise _gone()
-    if not await _member(db, found.user_id, found.org_id):  # who shared it has left the org
+    # Who shared it has left the org (or no one did: a public gallery page's question).
+    if found.user_id is None or not await _member(db, found.user_id, found.org_id):
         raise _gone()
     readable = await _can_read(request, db, oauth, viewer, repo)
     messages = [

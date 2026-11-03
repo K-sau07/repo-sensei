@@ -2255,6 +2255,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/public/repos/{owner}/{name}/ask": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Public Ask
+         * @description Ask about a published repository, signed in or not: a short answer, streamed as it is
+         *     written (as the org's Ask streams it). Per address, past a few a minute 429
+         *     ``rate_limited``, past the day's 429 ``quota_exceeded``; a check that didn't pass 403
+         *     ``human_check_failed``; with no Turnstile secret 503 ``human_check_unavailable``.
+         */
+        post: operations["public_ask_api_v1_public_repos__owner___name__ask_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/public/repos/{owner}/{name}/feature-maps": {
         parameters: {
             query?: never;
@@ -4626,6 +4649,13 @@ export interface components {
          * @enum {string}
          */
         Provenance: "scip" | "lsp" | "runtime" | "contract" | "import_resolved" | "receiver_heuristic" | "url_literal" | "name_unique" | "name_ambiguous" | "llm_inferred";
+        /** PublicAskRequest */
+        PublicAskRequest: {
+            /** Message */
+            message: string;
+            /** Turnstile Token */
+            turnstile_token: string;
+        };
         /** PublicRepoList */
         PublicRepoList: {
             /** Items */
@@ -10421,6 +10451,40 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["PublicRepoPage"];
                 };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    public_ask_api_v1_public_repos__owner___name__ask_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                owner: string;
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PublicAskRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Validation Error */
             422: {

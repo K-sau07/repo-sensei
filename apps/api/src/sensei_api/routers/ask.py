@@ -326,7 +326,71 @@ async def ask(
     earlier = await _exchanges(db, conversation.id)
     scope = await _scope(db, snapshot, body.scope)
     await count_quota(redis, "asks", access.user.id)
-    asked: list[dict[str, Any]] = [{"type": "text", "text": body.message}]
+    return await _respond(
+        request, db, redis, repo=repo, snapshot=snapshot, conversation=conversation,
+        message=body.message, mode=body.mode, earlier=earlier, scope=scope, user_id=user.id,
+        cap=_capped(Budget().max_cost_usd, remaining), held=remaining is not None, keep=True,
+    )  # fmt: skip
+
+
+async def answer_anonymously(
+    request: Request,
+    db: AsyncSession,
+    redis: Redis,
+    *,
+    repo: Repo,
+    snapshot: Snapshot,
+    message: str,
+    cap: Decimal,
+    held: bool,
+) -> EventSourceResponse:
+    """A question asked on a public gallery page (10.2) by someone not signed in: answered as a
+    first question in the fast mode, within ``cap`` (``held``: from the org's day, which has a
+    cap), in a conversation that is no one's. Served
+    from the answer cache when it can be; its own answer isn't kept there (an asker no one knows
+    doesn't write what others are served)."""
+    if snapshot.symbol_count is None or snapshot.chunk_count is None:
+        raise ConflictError("This repository isn't indexed for questions yet.", code="not_indexed")
+    conversation = Conversation(
+        org_id=repo.org_id, repo_id=repo.id, user_id=None, title=_title(message),
+        snapshot_id=snapshot.id,
+    )  # fmt: skip
+    db.add(conversation)
+    await db.flush()
+    return await _respond(
+        request, db, redis, repo=repo, snapshot=snapshot, conversation=conversation,
+        message=message, mode=Mode.FAST, earlier=[], scope=None, user_id=None, cap=cap,
+        held=held, keep=False,
+    )  # fmt: skip
+
+
+def _capped(cap: Decimal | None, remaining: Decimal | None) -> Decimal | None:
+    if remaining is None:
+        return cap
+    return remaining if cap is None else min(cap, remaining)
+
+
+async def _respond(
+    request: Request,
+    db: AsyncSession,
+    redis: Redis,
+    *,
+    repo: Repo,
+    snapshot: Snapshot,
+    conversation: Conversation,
+    message: str,
+    mode: Mode,
+    earlier: list[Exchange],
+    scope: dict[str, Any] | None,
+    user_id: uuid.UUID | None,
+    cap: Decimal | None,
+    held: bool,
+    keep: bool,
+) -> EventSourceResponse:
+    """The question stored and its answer streamed: a kept one (a first question, not scoped),
+    or a run's, started once the response is, spending up to ``cap`` (``held``: set aside from
+    the org's day while it runs; ``keep``: whether its answer may be kept)."""
+    asked: list[dict[str, Any]] = [{"type": "text", "text": message}]
     if scope is not None:
         asked.append({"type": "data-scope", "id": "scope", "data": scope})
     question = ConversationMessage(
@@ -341,13 +405,13 @@ async def ask(
     # A scoped question means its file and lines too: answered afresh, and not kept.
     embedding = None
     if not earlier and scope is None:
-        embedding = await _embedded(request, db, repo.org_id, body.message)
+        embedding = await _embedded(request, db, repo.org_id, message)
         kept = await answer_cache.lookup(
             db,
             repo_id=repo.id,
             snapshot_id=snapshot.id,
-            mode=body.mode.value,
-            question=body.message,
+            mode=mode.value,
+            question=message,
             embedding=embedding,
         )
         if kept is not None:
@@ -355,17 +419,15 @@ async def ask(
     record = AgentRun(
         org_id=repo.org_id,
         repo_id=repo.id,
-        user_id=user.id,
+        user_id=user_id,
         kind="ask",
-        question=body.message,
-        mode=body.mode.value,
+        question=message,
+        mode=mode.value,
         created_at=datetime.now(UTC),
     )
     db.add(record)
     await db.flush()
-    cap = Budget().max_cost_usd
-    if remaining is not None:
-        cap = remaining if cap is None else min(cap, remaining)
+    if held and cap is not None:
         await hold(redis, repo.org_id, record.id, cap)  # released as the run ends
     answer = ConversationMessage(
         org_id=repo.org_id,
@@ -387,19 +449,19 @@ async def ask(
         client=_client(request),
         redis=redis,
         org_id=repo.org_id,
-        user_id=user.id,
+        user_id=user_id,
         repo_id=repo.id,
         snapshot_id=snapshot.id,
         conversation_id=conversation.id,
         message_id=answer.id,
-        question=_scoped(body.message, scope),
-        mode=body.mode,
+        question=_scoped(message, scope),
+        mode=mode,
         earlier=earlier,
         repo_name=f"{repo.owner}/{repo.name}",
         run_id=record.id,
         cap=cap,
         embedding=embedding,
-        keep=not earlier and scope is None,
+        keep=keep and not earlier and scope is None,
     )
     key = f"{STREAM_PREFIX}{answer.id}"
     headers = {
@@ -631,7 +693,7 @@ class _Run:
     client: AnthropicClient
     redis: Redis
     org_id: uuid.UUID
-    user_id: uuid.UUID
+    user_id: uuid.UUID | None  # None: someone not signed in (a public gallery page's question)
     repo_id: uuid.UUID
     snapshot_id: uuid.UUID
     conversation_id: uuid.UUID
@@ -644,6 +706,11 @@ class _Run:
     cap: Decimal | None  # what the run may spend (held from the org's day while it runs)
     embedding: list[float] | None  # the question's, for the answer cache (a first question's)
     keep: bool  # whether the answer may be kept in the cache (a first question, not scoped)
+
+    async def _scoped(self, db: AsyncSession) -> None:
+        if self.user_id is not None:
+            await set_user_context(db, self.user_id)
+        await set_org_context(db, self.org_id)
 
     def start(self) -> None:
         task = asyncio.create_task(self._run())
@@ -660,8 +727,7 @@ class _Run:
                 key, [*stream.start(), _conversation(self.conversation_id, self.run_id)]
             )
             async with self.sessions() as db:
-                await set_user_context(db, self.user_id)
-                await set_org_context(db, self.org_id)
+                await self._scoped(db)
                 failure = await self._answer(db, key, stream)
         except BaseException as exc:  # stored, then a cancellation goes on
             failure = exc
@@ -731,8 +797,7 @@ class _Run:
         fails, or is stopped, has still spent it, and the day's cap counts it."""
         costs = search.cost_calculator(self.request)
         async with self.sessions() as db:
-            await set_user_context(db, self.user_id)
-            await set_org_context(db, self.org_id)
+            await self._scoped(db)
             ledger = usage_ledger(
                 db,
                 costs,
@@ -831,8 +896,7 @@ class _Run:
     async def _failed(self, stream: UIStream, error: str) -> None:
         try:
             async with self.sessions() as db:
-                await set_user_context(db, self.user_id)
-                await set_org_context(db, self.org_id)
+                await self._scoped(db)
                 await db.execute(
                     update(ConversationMessage)
                     .where(ConversationMessage.id == self.message_id)
@@ -849,8 +913,8 @@ class _Run:
     async def _retitle(self, db: AsyncSession) -> None:
         """A first question's conversation titled in a few words (the fast model; its first
         words until then, and if the model can't)."""
-        if self.earlier or not self.client.configured:
-            return
+        if self.earlier or self.user_id is None or not self.client.configured:
+            return  # (a question no one's: its first words, a call spared)
         request = LLMRequest(
             f"Question: {self.question}",
             system=(
