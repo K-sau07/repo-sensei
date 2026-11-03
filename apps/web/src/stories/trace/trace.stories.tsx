@@ -7,6 +7,7 @@ import { expect, userEvent, waitFor, within } from "storybook/test";
 import { TracePage } from "@/components/trace/trace-page";
 import type { Trace } from "@/lib/api/trace";
 import { BROWSE_COMMIT } from "@/mocks/browse";
+import { resetMockDb } from "@/mocks/db";
 import fixture from "@/mocks/fixtures/trace.json";
 import { handlers } from "@/mocks/handlers";
 import { AMBIGUOUS_ENTRY, GAP_ENTRY, LOGIN_ENTRY } from "@/mocks/trace";
@@ -42,6 +43,11 @@ const meta = {
   title: "Trace/Trace view",
   component: TracePage,
   parameters: { nextjs, msw: handlers },
+  // The seeded repository, indexed: another story's run left in storage would be replayed, and
+  // each of its stages makes the code viewer read its file again.
+  beforeEach: () => {
+    resetMockDb();
+  },
 } satisfies Meta<typeof TracePage>;
 
 export default meta;
