@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { connection } from "next/server";
 import { Suspense } from "react";
 
 import { Gallery } from "@/components/explore/gallery";
@@ -24,6 +25,7 @@ export default function ExplorePage() {
 }
 
 async function Listed() {
+  await connection(); // the API's, read when asked: never at build (there is no API then)
   return <Gallery repos={await publicRepos()} />;
 }
 
