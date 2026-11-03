@@ -12,13 +12,15 @@ from pydantic import BaseModel, Field
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from sensei_api.deps import DbSession, RedisClient
+from sensei_api.deps import DbSession, RedisClient, Writable
 from sensei_api.orgs import OrgAccessDep
 from sensei_api.repos import RepoAccessDep, RepoDep, RepoServiceDep, ViewerDep, checked
 from sensei_api.routers.index_jobs import dispatch_index
+from sensei_core.config import LimitsSettings
 from sensei_core.indexing.events import JobOutbox
 from sensei_core.indexing.jobs import IndexJobService, RepoSummary, repo_summaries
 from sensei_core.jobs import RepoJobs
+from sensei_core.limits import take_quota
 from sensei_core.models import JobKind, JobStatus, Repo, RepoSource, RepoStatus, Stage
 from sensei_core.orgs.service import OrgAccess
 from sensei_core.repos.service import RepoSettings
@@ -214,7 +216,9 @@ async def available_repos(
     return AvailablePage(items=items, page=page, per_page=per_page, total=len(found))
 
 
-@router.post("/repos", response_model=RepoOut, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/repos", response_model=RepoOut, status_code=status.HTTP_201_CREATED, dependencies=[Writable]
+)
 async def connect_repo(
     *,
     request: Request,
@@ -257,7 +261,12 @@ async def _first_index(
     return RepoOut.build(repo, index_job_id=job.id)
 
 
-@router.post("/repos/import", response_model=RepoOut, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/repos/import",
+    response_model=RepoOut,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Writable],
+)
 async def import_repo(
     *,
     request: Request,
@@ -269,10 +278,15 @@ async def import_repo(
     viewer: ViewerDep,
     background: BackgroundTasks,
 ) -> RepoOut:
-    """Import a public GitHub repository by URL (admins). Private ones answer 422
-    ``repo_not_public``: they connect through the GitHub App. Indexing starts right away unless
-    the repository's settings say not to."""
-    repo = await repos.import_public(db, access, body.url, viewer)
+    """Import a public GitHub repository by URL (admins): the free tier (10.1). Private ones
+    answer 422 ``repo_not_public``: they connect through the GitHub App. One over the tier's
+    lines answers 422 ``too_large_for_public``, a blocked one 403 ``repo_blocked``, past the
+    person's imports for the day 429 ``quota_exceeded``. Indexing starts right away unless the
+    repository's settings say not to."""
+    limits: LimitsSettings = request.app.state.settings.limits
+    await take_quota(redis, "public_imports", access.user.id, limits.public_imports_per_day,
+                     what="imports by URL")  # fmt: skip
+    repo = await repos.import_public(db, access, body.url, viewer, limits)
     return await _first_index(request, db, access, repo, redis=redis, background=background)
 
 

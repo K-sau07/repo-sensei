@@ -26,7 +26,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 
 from sensei_api import streams
-from sensei_api.deps import DbSession, RedisClient
+from sensei_api.deps import DbSession, RedisClient, Writable
 from sensei_api.orgs import OrgAccessDep
 from sensei_api.ratelimit import TokenBucket
 from sensei_api.repos import RepoDep
@@ -197,7 +197,7 @@ def _subgraph(graph: GraphSnapshot, body: DiagramIn) -> tuple[Subgraph, DiagramS
     return from_entries(graph, entries, question), DiagramSource.QUESTION
 
 
-@router.post("/diagrams", response_model=DiagramOut, status_code=201)
+@router.post("/diagrams", response_model=DiagramOut, status_code=201, dependencies=[Writable])
 async def create_diagram(
     *,
     request: Request,

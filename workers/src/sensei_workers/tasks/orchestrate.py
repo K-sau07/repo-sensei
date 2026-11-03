@@ -28,11 +28,12 @@ from celery import chain
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from sensei_core.db.tenancy import set_org_context
 from sensei_core.indexing.events import JobOutbox
 from sensei_core.indexing.jobs import JOB_USAGE_REF, settle_repo
 from sensei_core.indexing.snapshots import point_ref, ref_heads
 from sensei_core.indexing.state import IndexJobStateMachine
-from sensei_core.jobs import TaskName, chain_key
+from sensei_core.jobs import DEFAULT_PRIORITY, PUBLIC_PRIORITY, TaskName, chain_key
 from sensei_core.logging import get_logger
 from sensei_core.models import (
     ACTIVE_JOB_STATUSES,
@@ -40,6 +41,7 @@ from sensei_core.models import (
     JobKind,
     JobStatus,
     Repo,
+    RepoSource,
     Snapshot,
     Stage,
 )
@@ -281,6 +283,19 @@ def run_index_job(self: SenseiTask, *, job_id: str, org_id: str, repo_id: str) -
     return task_ids
 
 
+def _priority(org_id: str, repo_id: str) -> int:
+    """A public repository's stages (the free tier) go after everything else (10.1)."""
+    runtime = get_runtime()
+
+    async def source() -> RepoSource | None:
+        async with runtime.database.session() as db:
+            await set_org_context(db, uuid.UUID(org_id))
+            return await db.scalar(select(Repo.source).where(Repo.id == uuid.UUID(repo_id)))
+
+    public = runtime.run(source()) is RepoSource.PUBLIC_URL
+    return PUBLIC_PRIORITY if public else DEFAULT_PRIORITY
+
+
 def _sent_key(job_id: str) -> str:
     return f"{chain_key(job_id)}:sent-at"
 
@@ -297,8 +312,9 @@ def send_stages(
     kwargs: dict[str, Any] = {"job_id": job_id, "org_id": org_id, "repo_id": repo_id}
     stages = STAGES[first:]
     task_ids = [str(uuid.uuid4()) for _ in stages]
+    priority = _priority(org_id, repo_id)
     signatures = [
-        stage.si(**kwargs).set(task_id=task_id)
+        stage.si(**kwargs).set(task_id=task_id, priority=priority)
         for stage, task_id in zip(stages, task_ids, strict=True)
     ]
     redis = get_runtime().sync_redis

@@ -20,7 +20,14 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from sensei_core.audit import AuditAction, audit
-from sensei_core.errors import ConflictError, DomainError, InvalidError, NotFoundError
+from sensei_core.config import LimitsSettings
+from sensei_core.errors import (
+    ConflictError,
+    DomainError,
+    ForbiddenError,
+    InvalidError,
+    NotFoundError,
+)
 from sensei_core.github.app import GitHubApp
 from sensei_core.github.client import Credential, GitHubClient, GitHubError, RateLimited, as_object
 from sensei_core.logging import get_logger
@@ -146,6 +153,28 @@ def _repo_object(body: object) -> dict[str, Any]:
     if repo is None or not isinstance(repo.get("id"), int) or not repo.get("full_name"):
         raise GitHubUnavailableError("GitHub sent an unexpected response.")
     return repo
+
+
+BYTES_PER_LINE = 45  # code's, on the generous side: a repository near the cap isn't refused
+
+
+def estimated_lines(facts: RepoFacts) -> int:
+    """About how many lines of code a repository has, from GitHub's bytes per language."""
+    return sum(facts.languages.values()) // BYTES_PER_LINE
+
+
+def within_public_tier(facts: RepoFacts, limits: LimitsSettings) -> None:
+    full_name = str(facts.body.get("full_name") or "").lower()
+    if full_name in {blocked.lower() for blocked in limits.blocked_repos}:
+        raise ForbiddenError("This repository can't be imported.", code="repo_blocked")
+    lines = estimated_lines(facts)
+    if lines > limits.public_max_loc:
+        raise InvalidError(
+            f"{facts.body.get('full_name')} has about {lines:,} lines of code; a public repository "
+            f"imported by its URL may have up to {limits.public_max_loc:,}.",
+            code="too_large_for_public",
+            details={"estimated_lines": lines, "max_lines": limits.public_max_loc},
+        )
 
 
 def _languages(body: object) -> dict[str, int]:
@@ -313,10 +342,20 @@ class RepoService:
         return await self._save(db, access, facts, RepoSource.GITHUB_APP)
 
     async def import_public(
-        self, db: AsyncSession, access: OrgAccess, url: str, viewer: Credential | None
+        self,
+        db: AsyncSession,
+        access: OrgAccess,
+        url: str,
+        viewer: Credential | None,
+        limits: LimitsSettings | None = None,
     ) -> Repo:
+        """Connect a public repository by its URL: the free tier (10.1, ``limits``): not one
+        that's blocked, nor one larger than the tier's lines (as far as GitHub's language bytes
+        tell; the index run counts them and stops one over)."""
         require_role(access, Role.ADMIN)
         facts = await self._facts_public(url, viewer)
+        if limits is not None:
+            within_public_tier(facts, limits)
         return await self._save(db, access, facts, RepoSource.PUBLIC_URL)
 
     async def estimate(

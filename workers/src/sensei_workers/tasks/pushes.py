@@ -17,6 +17,7 @@ from sensei_core.indexing import pushes
 from sensei_core.indexing.events import JobOutbox
 from sensei_core.indexing.snapshots import ref_heads
 from sensei_core.jobs import TaskName
+from sensei_core.limits import ReadOnlyError, require_writable
 from sensei_core.logging import get_logger
 from sensei_core.models import IndexJob, Repo
 from sensei_engine.chunk.store import prune_chunks
@@ -80,6 +81,17 @@ async def begin(
     return (outcome, None) if job is None else (Outcome.STARTED, job)
 
 
+READ_ONLY_WAIT_SECONDS = 900
+
+
+async def _read_only(redis: Redis) -> bool:
+    try:
+        await require_writable(redis)
+    except ReadOnlyError:
+        return True
+    return False
+
+
 @celery_app.task(
     bind=True,
     base=SenseiTask,
@@ -90,6 +102,13 @@ def start_push_index(
     self: SenseiTask, *, org_id: str, repo_id: str, branch: str, token: str
 ) -> str:
     runtime = get_runtime()
+    kwargs = {"org_id": org_id, "repo_id": repo_id, "branch": branch, "token": token}
+    if runtime.run(_read_only(runtime.redis)):
+        # Past the global spend cap (10.1): asked again later, until the day's flag lapses (a
+        # newer push supersedes this one meanwhile, by its token).
+        start_push_index.apply_async(kwargs=kwargs, countdown=READ_ONLY_WAIT_SECONDS)
+        log.info("push index waits: read-only", branch=branch)
+        return "read_only"
     outcome, job = runtime.run(
         begin(
             self,
@@ -100,7 +119,6 @@ def start_push_index(
             token=token,
         )
     )
-    kwargs = {"org_id": org_id, "repo_id": repo_id, "branch": branch, "token": token}
     if outcome is Outcome.WAITING:
         start_push_index.apply_async(kwargs=kwargs, countdown=pushes.WAIT_SECONDS)
     elif job is not None:

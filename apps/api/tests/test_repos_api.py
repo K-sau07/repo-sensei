@@ -29,7 +29,7 @@ from sensei_api import streams
 from sensei_api.browse import TreeCache
 from sensei_api.routers import index_jobs
 from sensei_core.auth.github_login import store_tokens
-from sensei_core.config import GitHubSettings, Settings
+from sensei_core.config import GitHubSettings, LimitsSettings, Settings
 from sensei_core.db.tenancy import set_org_context
 from sensei_core.github.client import Credential, GitHubClient
 from sensei_core.github.oauth import GitHubTokens
@@ -515,6 +515,39 @@ async def test_import_a_public_repository(
     row = await db_session.scalar(select(Repo).where(Repo.github_repo_id == 201))
     assert row is not None
     assert row.installation_id is None
+
+
+async def test_a_public_import_is_the_free_tier(
+    app: FastAPI, client: httpx.AsyncClient, db_session: AsyncSession, fake: FakeGitHub
+) -> None:
+    # 10.1: none blocked, none over the tier's lines (GitHub says 10,000 bytes of code, about
+    # 222 lines), a few a day per person; past the global spend cap, none at all.
+    _, headers = await _admin_org(app, client, db_session)
+    url = {"url": "https://github.com/langflow-ai/langflow"}
+    settings: Settings = app.state.settings
+
+    def limits(**changes: object) -> None:
+        app.state.settings = settings.model_copy(
+            update={"limits": LimitsSettings(**changes)}  # type: ignore[arg-type]
+        )
+
+    limits(blocked_repos=["Langflow-AI/langflow"])
+    blocked = await client.post(f"{API}/orgs/acme/repos/import", json=url, headers=headers)
+    assert (blocked.status_code, blocked.json()["error"]["code"]) == (403, "repo_blocked")
+    limits(public_max_loc=200)
+    large = await client.post(f"{API}/orgs/acme/repos/import", json=url, headers=headers)
+    assert (large.status_code, large.json()["error"]["code"]) == (422, "too_large_for_public")
+    assert large.json()["error"]["details"]["estimated_lines"] == 222
+    limits(public_imports_per_day=3)  # the two refused above counted
+    third = await client.post(f"{API}/orgs/acme/repos/import", json=url, headers=headers)
+    assert third.status_code == 201, third.text
+    again = await client.post(f"{API}/orgs/acme/repos/import", json=url, headers=headers)
+    assert (again.status_code, again.json()["error"]["code"]) == (429, "quota_exceeded")
+    assert int(again.headers["retry-after"]) > 0
+    limits()
+    await app.state.redis.set(f"limits:read-only:{datetime.now(UTC).date().isoformat()}", "1")
+    closed = await client.post(f"{API}/orgs/acme/repos/import", json=url, headers=headers)
+    assert (closed.status_code, closed.json()["error"]["code"]) == (503, "read_only")
 
 
 async def _device_token(

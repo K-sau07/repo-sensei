@@ -455,6 +455,24 @@ class NotifySettings(BaseSettings):
     max_attempts: int = Field(default=8, ge=1, le=12)
 
 
+class LimitsSettings(BaseSettings):
+    """What anyone may do (10.1). A repository imported by its public URL is the free tier: one
+    up to ``public_max_loc`` lines, indexed after the connected repositories' runs. Each person
+    has a day's quotas (UTC), and all orgs' spend together a day's cap: past it nothing new that
+    costs starts (asks, diagrams, fixes, index runs) until midnight UTC; reading goes on."""
+
+    model_config = _config("SENSEI_LIMITS_")
+
+    public_max_loc: int = Field(default=300_000, gt=0)
+    public_imports_per_day: int = Field(default=5, ge=0)  # per person (0: none)
+    index_runs_per_day: int = Field(default=30, ge=0)  # runs a person starts by hand
+    asks_per_day: int = Field(default=200, ge=0)  # questions per person
+    # Every org's LLM spend today together, past which the service is read-only (0: no cap).
+    global_daily_spend_cap_usd: Decimal = Field(default=Decimal(0), ge=0)
+    # Repositories nobody may import by URL ("owner/name", any case).
+    blocked_repos: list[str] = Field(default_factory=list[str])
+
+
 class Settings(BaseSettings):
     """Root settings object. Use :func:`get_settings` instead of constructing directly."""
 
@@ -486,6 +504,7 @@ class Settings(BaseSettings):
     agent: AgentSettings = Field(default_factory=AgentSettings)
     fixer: FixerSettings = Field(default_factory=FixerSettings)
     notify: NotifySettings = Field(default_factory=NotifySettings)
+    limits: LimitsSettings = Field(default_factory=LimitsSettings)
 
     @model_validator(mode="after")
     def _refuse_dev_secrets_outside_dev(self) -> Settings:

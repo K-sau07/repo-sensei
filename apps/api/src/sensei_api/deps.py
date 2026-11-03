@@ -10,6 +10,7 @@ from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from sensei_core.db import Database
+from sensei_core.limits import require_writable
 
 
 def get_database(request: Request) -> Database:
@@ -36,3 +37,12 @@ def get_redis(request: Request) -> Redis:
 
 DbSession = Annotated[AsyncSession, Depends(get_db, scope="function")]
 RedisClient = Annotated[Redis, Depends(get_redis)]
+
+
+async def writable(redis: RedisClient) -> None:
+    """Refuses (503 ``read_only``) while every org's spend today is past the global cap (10.1):
+    on what starts something that costs (an ask, a diagram, a fix or change, an index run)."""
+    await require_writable(redis)
+
+
+Writable = Depends(writable)

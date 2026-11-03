@@ -14,15 +14,17 @@ from sse_starlette import EventSourceResponse, ServerSentEvent
 
 from sensei_api import stream_access, streams
 from sensei_api.auth import RequiredSession
-from sensei_api.deps import DbSession, RedisClient
+from sensei_api.deps import DbSession, RedisClient, Writable
 from sensei_api.orgs import OrgAccessDep
 from sensei_api.repos import RepoDep
 from sensei_api.routers.auth import GitHubOAuthDep
+from sensei_core.config import LimitsSettings
 from sensei_core.db.tenancy import set_org_context
 from sensei_core.indexing.events import TERMINAL, EventType, JobOutbox, job_stream, org_stream
 from sensei_core.indexing.features import Feature, unlocked
 from sensei_core.indexing.jobs import IndexJobService
 from sensei_core.jobs import RepoJobs, chain_key
+from sensei_core.limits import take_quota
 from sensei_core.models import (
     ACTIVE_JOB_STATUSES,
     IndexJob,
@@ -147,7 +149,10 @@ async def get_index_job(request: Request, repo: RepoDep, job: JobId, db: DbSessi
 
 
 @router.post(
-    "/repos/{repo}/reindex", response_model=IndexJobOut, status_code=status.HTTP_202_ACCEPTED
+    "/repos/{repo}/reindex",
+    response_model=IndexJobOut,
+    status_code=status.HTTP_202_ACCEPTED,
+    dependencies=[Writable],
 )
 async def reindex(
     *,
@@ -159,7 +164,11 @@ async def reindex(
     background: BackgroundTasks,
 ) -> IndexJobOut:
     """Index the repository again at its branch's current commit (admins). 409
-    ``index_job_running`` while a run is queued or running."""
+    ``index_job_running`` while a run is queued or running; 429 ``quota_exceeded`` past the
+    person's runs for the day."""
+    limits: LimitsSettings = request.app.state.settings.limits
+    await take_quota(redis, "index_runs", access.user.id, limits.index_runs_per_day,
+                     what="index runs")  # fmt: skip
     outbox = JobOutbox()
     job = await _service(request).start(db, access, repo, outbox)
     background.add_task(

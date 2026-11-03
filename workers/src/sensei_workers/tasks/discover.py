@@ -29,6 +29,7 @@ from sensei_core.logging import get_logger
 from sensei_core.models import (
     ACTIVE_JOB_STATUSES,
     Repo,
+    RepoSource,
     Snapshot,
     SnapshotStatus,
     Stage,
@@ -65,6 +66,7 @@ class Target:
     snapshot_id: uuid.UUID
     commit_sha: str
     ignore_globs: tuple[str, ...]
+    max_loc: int | None = None  # a public repository's (the free tier's) cap on lines
 
 
 class SnapshotRef(Protocol):
@@ -112,6 +114,11 @@ async def _begin(task: SenseiTask, org_id: str, job_id: uuid.UUID) -> Target | N
             snapshot_id=snapshot.id,
             commit_sha=snapshot.commit_sha,
             ignore_globs=tuple(settings.ignore_globs),
+            max_loc=(
+                get_runtime().settings.limits.public_max_loc
+                if repo.source is RepoSource.PUBLIC_URL
+                else None
+            ),
         )
 
 
@@ -298,6 +305,18 @@ async def _save(
         return True
 
 
+def _too_large(target: Target, files: Sequence[DiscoveredFile]) -> str | None:
+    """Why a public repository is too large for the free tier (None: it isn't)."""
+    lines = sum(file.loc or 0 for file in files)
+    if target.max_loc is None or lines <= target.max_loc:
+        return None
+    return (
+        f"The repository has {lines:,} lines to index; a public repository imported by its URL "
+        f"may have up to {target.max_loc:,}. Add ignore patterns in the repository settings to "
+        "leave generated or vendored code out."
+    )
+
+
 @celery_app.task(
     bind=True,
     base=IngestTask,
@@ -352,7 +371,10 @@ def discover_files(self: IngestTask, *, job_id: str, org_id: str, repo_id: str) 
         return None
     except FileChangedError as exc:
         raise RetryableError("the working copy changed while it was read") from exc
-    if not runtime.run(_save(self, target, job, found, sky)):
+    too_large = _too_large(target, found.files)
+    if too_large is not None:
+        runtime.run(fail_job(self, org_id, job, "too_large_for_public", too_large))
+    if too_large is not None or not runtime.run(_save(self, target, job, found, sky)):
         return None
     runtime.run(sky.live.done())
     log.info("files discovered", files=len(found.files), frameworks=len(found.frameworks))

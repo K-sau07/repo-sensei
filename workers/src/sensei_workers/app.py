@@ -41,6 +41,7 @@ TASK_MODULES = [
     "sensei_workers.tasks.maintenance",
     "sensei_workers.tasks.fixes",
     "sensei_workers.tasks.notifications",
+    "sensei_workers.tasks.limits",
 ]
 
 settings = get_settings()

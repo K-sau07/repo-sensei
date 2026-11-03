@@ -391,6 +391,24 @@ async def test_asking_too_often_or_past_the_days_budget_is_refused(
     assert int(second.headers["retry-after"]) >= 1
 
 
+async def test_a_persons_questions_for_the_day_are_counted(
+    app: FastAPI, client: httpx.AsyncClient, db_session: AsyncSession
+) -> None:
+    org, headers = await _setup(app, client, db_session)
+    settings = app.state.settings
+    app.state.settings = settings.model_copy(
+        update={"limits": settings.limits.model_copy(update={"asks_per_day": 1})}
+    )
+    first, _ = await _ask(app, client, org, headers, message="Where are items saved?")
+    assert first.status_code == 200
+    second = await client.post(
+        f"{org}/repos/items/ask", json={"message": "And deleted?"}, headers=headers
+    )
+    assert second.status_code == 429
+    assert second.json()["error"]["code"] == "quota_exceeded"
+    assert second.json()["error"]["details"]["quota"] == "asks"
+
+
 async def test_an_org_past_its_daily_cap_starts_no_run(
     app: FastAPI, client: httpx.AsyncClient, db_session: AsyncSession
 ) -> None:

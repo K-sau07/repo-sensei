@@ -33,7 +33,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sse_starlette import EventSourceResponse, ServerSentEvent
 
 from sensei_api import answer_cache, streams
-from sensei_api.deps import DbSession, RedisClient
+from sensei_api.deps import DbSession, RedisClient, Writable
 from sensei_api.orgs import OrgAccessDep
 from sensei_api.ratelimit import TokenBucket
 from sensei_api.repos import RepoDep
@@ -48,6 +48,7 @@ from sensei_core.config import Settings
 from sensei_core.db.tenancy import set_org_context, set_user_context
 from sensei_core.errors import ConflictError, InvalidError, NotFoundError, RateLimitedError
 from sensei_core.indexing.snapshots import resolve_snapshot
+from sensei_core.limits import take_quota
 from sensei_core.models import (
     AgentRun,
     AnswerCacheEntry,
@@ -278,7 +279,7 @@ def _runs(request: Request) -> set[asyncio.Task[None]]:
 # ---------------------------------------------------------------- ask
 
 
-@router.post("/repos/{repo}/ask", response_class=EventSourceResponse)
+@router.post("/repos/{repo}/ask", response_class=EventSourceResponse, dependencies=[Writable])
 async def ask(
     *,
     request: Request,
@@ -297,6 +298,9 @@ async def ask(
             "Too many questions at once; try again in a moment.",
             headers={"Retry-After": str(wait)},
         )
+    # A person's questions today (10.1), after the per-minute bucket.
+    limits = settings.limits
+    await take_quota(redis, "asks", access.user.id, limits.asks_per_day, what="questions")
     remaining = await remaining_today(
         db, redis, settings.agent, org_id=repo.org_id, user_id=access.user.id,
         warn_in=lambda: streams.short_session(request),

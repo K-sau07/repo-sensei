@@ -24,7 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sse_starlette import EventSourceResponse, ServerSentEvent
 
 from sensei_api import streams
-from sensei_api.deps import DbSession, RedisClient
+from sensei_api.deps import DbSession, RedisClient, Writable
 from sensei_api.orgs import OrgAccessDep
 from sensei_api.repos import RepoAccessDep, RepoDep, checked, get_viewer, github_client
 from sensei_core.audit import AuditAction, audit
@@ -248,7 +248,12 @@ async def parse_fix(body: ParseIn, access: OrgAccessDep, repo: RepoDep, db: DbSe
     return TicketOut.build(await _parse(db, repo, body.text))
 
 
-@router.post("/repos/{repo}/fixes", response_model=FixOut, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/repos/{repo}/fixes",
+    response_model=FixOut,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Writable],
+)
 async def create_fix(
     *,
     request: Request,
@@ -359,7 +364,7 @@ async def _locked(db: AsyncSession, run: FixRun) -> FixRun:
     return found
 
 
-@router.post("/fixes/{fix_id}/start", response_model=FixOut)
+@router.post("/fixes/{fix_id}/start", response_model=FixOut, dependencies=[Writable])
 async def start_fix(
     *,
     request: Request,
@@ -417,7 +422,7 @@ class RetryIn(BaseModel):
     context: str = Field(min_length=1, max_length=4_000)
 
 
-@router.post("/fixes/{fix_id}/retry", response_model=FixOut)
+@router.post("/fixes/{fix_id}/retry", response_model=FixOut, dependencies=[Writable])
 async def retry_fix(
     *,
     request: Request,
@@ -496,7 +501,7 @@ class ApprovalOut(BaseModel):
     created_at: datetime
 
 
-@router.post("/fixes/{fix_id}/approval", response_model=FixOut)
+@router.post("/fixes/{fix_id}/approval", response_model=FixOut, dependencies=[Writable])
 async def decide_fix(
     *,
     request: Request,

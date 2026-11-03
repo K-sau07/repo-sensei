@@ -59,7 +59,11 @@ class TaskName(enum.StrEnum):
     PRUNE_OAUTH = "sensei.maintenance.prune_oauth"
     RUN_FIX_STAGE = "sensei.agent.run_fix_stage"
     DELIVER_NOTIFICATIONS = "sensei.default.deliver_notifications"
+    CHECK_GLOBAL_SPEND = "sensei.maintenance.check_global_spend"
 
+
+DEFAULT_PRIORITY = 0  # Redis's order: 0 first
+PUBLIC_PRIORITY = 9  # a public repository's index stages (the free tier): after all else
 
 # Tasks go to the queue named by the second part of their name ("sensei.<queue>.<task>").
 TASK_ROUTES = {f"sensei.{queue.value}.*": {"queue": queue.value} for queue in Queue}
@@ -95,7 +99,15 @@ def celery_config(settings: Settings) -> dict[str, Any]:
         "worker_prefetch_multiplier": 1,
         "task_soft_time_limit": worker.soft_time_limit_seconds,
         "task_time_limit": worker.time_limit_seconds,
-        "broker_transport_options": {"visibility_timeout": worker.visibility_timeout_seconds},
+        # Messages have priorities (Redis keeps a list per step, 0 first): a public repository's
+        # index stages wait behind everything else (10.1).
+        "broker_transport_options": {
+            "visibility_timeout": worker.visibility_timeout_seconds,
+            "queue_order_strategy": "priority",
+            "priority_steps": list(range(10)),
+            "sep": ":",
+        },
+        "task_default_priority": DEFAULT_PRIORITY,
         "broker_connection_retry_on_startup": True,
         "task_default_queue": Queue.DEFAULT.value,
         "task_queues": [KombuQueue(queue.value) for queue in Queue],

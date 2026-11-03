@@ -26,4 +26,10 @@ BEAT_SCHEDULE: dict[str, dict[str, Any]] = {
         "schedule": 60.0,
         "options": {"expires": 55},
     },
+    # Every org's spend today against the global cap (10.1): past it, read-only until midnight.
+    "check-global-spend": {
+        "task": TaskName.CHECK_GLOBAL_SPEND.value,
+        "schedule": 60.0,
+        "options": {"expires": 55},
+    },
 }

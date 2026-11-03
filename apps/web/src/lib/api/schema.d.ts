@@ -1356,9 +1356,11 @@ export interface paths {
         put?: never;
         /**
          * Import Repo
-         * @description Import a public GitHub repository by URL (admins). Private ones answer 422
-         *     ``repo_not_public``: they connect through the GitHub App. Indexing starts right away unless
-         *     the repository's settings say not to.
+         * @description Import a public GitHub repository by URL (admins): the free tier (10.1). Private ones
+         *     answer 422 ``repo_not_public``: they connect through the GitHub App. One over the tier's
+         *     lines answers 422 ``too_large_for_public``, a blocked one 403 ``repo_blocked``, past the
+         *     person's imports for the day 429 ``quota_exceeded``. Indexing starts right away unless the
+         *     repository's settings say not to.
          */
         post: operations["import_repo_api_v1_orgs__org__repos_import_post"];
         delete?: never;
@@ -2010,7 +2012,8 @@ export interface paths {
         /**
          * Reindex
          * @description Index the repository again at its branch's current commit (admins). 409
-         *     ``index_job_running`` while a run is queued or running.
+         *     ``index_job_running`` while a run is queued or running; 429 ``quota_exceeded`` past the
+         *     person's runs for the day.
          */
         post: operations["reindex_api_v1_orgs__org__repos__repo__reindex_post"];
         delete?: never;
