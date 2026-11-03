@@ -91,6 +91,9 @@ export function repoOf(org: string, slug: string): MockRepo | Response {
     : apiError(404, "repo_not_found_or_no_access", "Repository not found.");
 }
 
+/** The mock explore org (10.2): its repositories imported by URL may be published. */
+export const EXPLORE_ORG = "acme";
+
 export function reposOf(org: string): MockRepo[] {
   db.repos[org] ??= [];
   return db.repos[org];
@@ -114,6 +117,9 @@ function connect(org: string, fields: Partial<Repo> & Pick<Repo, "full_name">): 
     name,
     source: fields.source ?? "github_app",
     visibility: fields.visibility ?? "private",
+    // The mock "acme" is the explore org: what it imports by URL may go in the public gallery.
+    publishable: org === EXPLORE_ORG && fields.source === "public_url",
+    published_at: null,
     default_branch: "main",
     status: "pending",
     size_kb: fields.size_kb ?? 1024,
@@ -531,4 +537,71 @@ export const repoHandlers = [
     if (!repo) return apiError(404, "repo_not_found_or_no_access", "Repository not found.");
     return HttpResponse.json<Repo>(syncRepo(repo));
   }),
+
+  http.patch<{ org: string; repo: string }>(
+    "*/api/v1/orgs/:org/repos/:repo",
+    async ({ params, request }) => {
+      const found = adminRepo(params.org, params.repo);
+      if (found instanceof Response) return found;
+      const changes = (await request.json()) as Partial<Repo["settings"]>;
+      const branches = changes.tracked_branches ?? found.settings.tracked_branches ?? [];
+      const bad = branches.find((b) => !/^[A-Za-z0-9._/-]+$/.test(b) || b.includes(".."));
+      if (bad !== undefined) {
+        return apiError(422, "invalid_settings", "Those settings aren't valid.", {
+          problems: [`Value error, not a valid branch name: '${bad}'`],
+        });
+      }
+      found.settings = { ...found.settings, ...changes, tracked_branches: [...new Set(branches)] };
+      found.updated_at = new Date().toISOString();
+      saveDb();
+      return HttpResponse.json<Repo>(syncRepo(found));
+    },
+  ),
+
+  http.put<{ org: string; repo: string }>(
+    "*/api/v1/orgs/:org/repos/:repo/published",
+    ({ params }) => {
+      const found = adminRepo(params.org, params.repo);
+      if (found instanceof Response) return found;
+      if (!found.publishable) {
+        return apiError(
+          403,
+          "not_explore_org",
+          "Only the explore organization publishes repositories.",
+        );
+      }
+      found.published_at ??= new Date().toISOString();
+      saveDb();
+      return HttpResponse.json<Repo>(syncRepo(found));
+    },
+  ),
+
+  http.delete<{ org: string; repo: string }>(
+    "*/api/v1/orgs/:org/repos/:repo/published",
+    ({ params }) => {
+      const found = adminRepo(params.org, params.repo);
+      if (found instanceof Response) return found;
+      found.published_at = null;
+      saveDb();
+      return new HttpResponse(null, { status: 204 });
+    },
+  ),
+
+  http.delete<{ org: string; repo: string }>("*/api/v1/orgs/:org/repos/:repo", ({ params }) => {
+    const found = adminRepo(params.org, params.repo);
+    if (found instanceof Response) return found;
+    db.repos[params.org] = reposOf(params.org).filter((r) => r.id !== found.id);
+    saveDb();
+    return new HttpResponse(null, { status: 204 });
+  }),
 ];
+
+/** The org's repository, for a change only its admins may make. */
+function adminRepo(org: string, slug: string): MockRepo | Response {
+  const access = orgAccess(org);
+  if (access instanceof Response) return access;
+  const repo = reposOf(org).find((r) => r.slug === slug);
+  if (!repo) return apiError(404, "repo_not_found_or_no_access", "Repository not found.");
+  if (!atLeast(access.role, "admin")) return insufficientRole("admin", access.role);
+  return repo;
+}

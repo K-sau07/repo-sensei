@@ -208,6 +208,8 @@ function seedRepo(): MockRepo {
     name: "api",
     source: "github_app",
     visibility: "private",
+    publishable: false, // the GitHub App's: not anyone's to read
+    published_at: null,
     default_branch: "main",
     status: "ready",
     size_kb: 2048,
