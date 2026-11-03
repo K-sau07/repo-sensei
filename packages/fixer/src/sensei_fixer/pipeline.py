@@ -32,7 +32,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sensei_core.db.tenancy import set_org_context
 from sensei_core.fixes.tickets import Ticket
 from sensei_core.logging import get_logger
-from sensei_core.models import AgentRun, AgentStep, FixRun, FixStage, FixStatus
+from sensei_core.models import AgentRun, AgentStep, FixKind, FixRun, FixStage, FixStatus
 from sensei_core.models.fixes import TERMINAL
 from sensei_fixer.budget import Budget
 from sensei_fixer.events import FixOutbox
@@ -109,9 +109,10 @@ class FixPipeline:
             machine = FixStateMachine(run, self.clock)
             stage = machine.begin_stage()
             if run.run_id is None:
+                kind = (run.kind or FixKind.FIX).value
                 agent = AgentRun(
-                    org_id=run.org_id, repo_id=run.repo_id, user_id=run.created_by, kind="fix",
-                    mode="fix", question=run.title,
+                    org_id=run.org_id, repo_id=run.repo_id, user_id=run.created_by, kind=kind,
+                    mode=kind, question=run.title,
                 )  # fmt: skip
                 db.add(agent)
                 await db.flush()
@@ -122,11 +123,13 @@ class FixPipeline:
             facts = {name: _value(getattr(run, name)) for name in FACTS}
             ticket = Ticket.model_validate(run.ticket)
             repo_id = run.repo_id
+            kind = run.kind or FixKind.FIX
         await outbox.publish(self.redis)
         ctx = StageContext(
             fix_id=fix_id, org_id=org_id, repo_id=repo_id, stage=stage, ticket=ticket,
             facts=facts, record=self._recorder(org_id, fix_id, agent_id, repo_id),
             spend=self._spender(org_id, fix_id, agent_id), check=self._checker(org_id, fix_id),
+            kind=kind,
         )  # fmt: skip
         return ctx, outbox
 

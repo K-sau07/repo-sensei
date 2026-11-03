@@ -44,6 +44,16 @@ class FixSource(enum.StrEnum):
     PASTE = "paste"
     GITHUB_ISSUE = "github_issue"
     SENTRY = "sentry"
+    REQUEST = "request"  # a change described in words (9.1)
+
+
+class FixKind(enum.StrEnum):
+    """What a run does (9.1): fix a reported bug (reproduced first), or make a requested change
+    (planned from the request). Both go through the same pipeline: approval, patch, verify,
+    pull request."""
+
+    FIX = "fix"
+    CHANGE = "change"
 
 
 class FixStatus(enum.StrEnum):
@@ -113,7 +123,7 @@ def _enum(kind: type[enum.StrEnum], name: str) -> Enum:
 class FixRun(IdMixin, OrgScopedMixin, TimestampMixin, Base):
     __tablename__ = "fix_runs"
     __table_args__ = (
-        Index("ix_fix_runs_repo_created", "repo_id", "created_at"),
+        Index("ix_fix_runs_repo_created", "repo_id", "kind", "created_at"),
         Index("ix_fix_runs_org_status", "org_id", "status"),
         Index("ix_fix_runs_source_ref", "org_id", "source", "source_ref"),
         # One run at a time per issue: two deliveries at once can't both start one.
@@ -139,6 +149,9 @@ class FixRun(IdMixin, OrgScopedMixin, TimestampMixin, Base):
     )
 
     repo_id: Mapped[uuid.UUID] = mapped_column()
+    kind: Mapped[FixKind] = mapped_column(
+        _enum(FixKind, "fix_kind"), default=FixKind.FIX, server_default=FixKind.FIX.value
+    )
     source: Mapped[FixSource] = mapped_column(_enum(FixSource, "fix_source"))
     # The issue's URL, the Sentry issue's id: what the run came from (None for a paste).
     source_ref: Mapped[str | None] = mapped_column(String(500))

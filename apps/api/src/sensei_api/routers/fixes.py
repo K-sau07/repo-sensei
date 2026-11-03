@@ -39,6 +39,7 @@ from sensei_core.jobs import FixJobs
 from sensei_core.models import (
     ApprovalDecision,
     FixApproval,
+    FixKind,
     FixRisk,
     FixRun,
     FixSource,
@@ -81,6 +82,7 @@ class TicketOut(BaseModel):
     frames: list[FrameOut]
     versions: dict[str, str]
     culprit: FrameOut | None = Field(description="The innermost frame in the repository.")
+    text: str = Field(default="", description="What was given: the paste, the issue, a request.")
 
     @classmethod
     def build(cls, ticket: Ticket) -> TicketOut:
@@ -92,11 +94,13 @@ class TicketOut(BaseModel):
             title=ticket.title, language=ticket.language, error_type=ticket.error_type,
             message=ticket.message, frames=[frame(f) for f in ticket.frames],
             versions=ticket.versions, culprit=frame(culprit) if culprit else None,
+            text=ticket.text,
         )  # fmt: skip
 
 
 class FixSummaryOut(BaseModel):
     id: uuid.UUID
+    kind: FixKind = Field(description="A fix (a reported bug) or a change (a request).")
     repo: str
     title: str
     source: FixSource
@@ -114,7 +118,8 @@ class FixSummaryOut(BaseModel):
     @classmethod
     def from_run(cls, run: FixRun, repo: Repo, author: str | None = None) -> FixSummaryOut:
         return cls(
-            id=run.id, repo=repo.slug, title=run.title, source=run.source,
+            id=run.id, kind=run.kind or FixKind.FIX, repo=repo.slug, title=run.title,
+            source=run.source,
             source_ref=run.source_ref, status=run.status, stage=run.stage, risk=run.risk,
             merge_readiness=run.merge_readiness, pr_url=run.pr_url, created_by=run.created_by,
             author=author, created_at=run.created_at, finished_at=run.finished_at,
@@ -181,7 +186,7 @@ class FixIn(BaseModel):
         return self
 
 
-def _jobs(request: Request) -> FixJobs:
+def jobs_of(request: Request) -> FixJobs:
     jobs: FixJobs = request.app.state.fix_jobs
     return jobs
 
@@ -195,7 +200,7 @@ def _short_session(request: Request) -> AbstractAsyncContextManager[AsyncSession
     return database.session()
 
 
-def _service(request: Request) -> FixService:
+def service_of(request: Request) -> FixService:
     found: FixService | None = getattr(request.app.state, "fix_service", None)
     return found or FixService()
 
@@ -276,13 +281,13 @@ async def create_fix(
         title, text, url = await _issue_text(request, repo, number, viewer)
         ticket = await _parse(db, repo, f"{title}\n\n{text}", title)
         source, ref = FixSource.GITHUB_ISSUE, url
-    run, new = await _service(request).create(db, repo, ticket, source=source, source_ref=ref,
+    run, new = await service_of(request).create(db, repo, ticket, source=source, source_ref=ref,
                                               access=access)  # fmt: skip
     if not new:
         response.status_code = status.HTTP_200_OK
     elif run.status is FixStatus.QUEUED:
         # After the commit (the worker must find the row): sent once the response is.
-        background.add_task(_jobs(request).run_stage, run.org_id, run.id, run.stage.value)
+        background.add_task(jobs_of(request).run_stage, run.org_id, run.id, run.stage.value)
     return await full(db, run, repo)
 
 
@@ -294,7 +299,7 @@ async def list_fixes(
     status_filter: Annotated[FixStatus | None, Query(alias="status")] = None,
 ) -> list[FixSummaryOut]:
     """The repository's fixes, newest first."""
-    runs = await _service(request).list(db, repo, status=status_filter)
+    runs = await service_of(request).list(db, repo, status=status_filter, kind=FixKind.FIX)
     runs = list(runs)
     known = await authors(db, runs)
     return [
@@ -303,18 +308,37 @@ async def list_fixes(
     ]
 
 
+def kind_of(request: Request) -> FixKind:
+    """The kind of run a route is for: ``/changes/...`` routes (9.1) a change's, the rest a
+    fix's. The run's controls (read, events, cancel, decide) are the same endpoints under both."""
+    route = request.scope.get("route")
+    path = str(getattr(route, "path", request.url.path))
+    return FixKind.CHANGE if "/changes" in path else FixKind.FIX
+
+
+def not_found(kind: FixKind) -> NotFoundError:
+    return NotFoundError(f"No such {kind.value}.", code=f"{kind.value}_not_found")
+
+
 async def _visible(
     request: Request, access: OrgAccess, db: AsyncSession, readers: RepoAccess, fix_id: uuid.UUID
 ) -> tuple[FixRun, Repo]:
-    run = await _service(request).get(db, access.org.id, fix_id)
+    """The run (of the route's kind: a fix's route finds no change) and its repository, if the
+    user can read it."""
+    kind = kind_of(request)
+    try:
+        run = await service_of(request).get(db, access.org.id, fix_id)
+    except NotFoundError:
+        raise not_found(kind) from None
     repo = await db.get(Repo, run.repo_id)
-    # As its repository: a fix on one the user can't read on GitHub looks like no fix.
+    # As its repository: a run on one the user can't read on GitHub looks like none.
     if (
-        repo is None
+        (run.kind or FixKind.FIX) is not kind
+        or repo is None
         or repo.deleted_at is not None
         or not await checked(readers, access.user, [repo])
     ):
-        raise NotFoundError("No such fix.", code="fix_not_found")
+        raise not_found(kind)
     return run, repo
 
 
@@ -367,7 +391,7 @@ async def start_fix(
     outbox = FixOutbox(run.org_id, run.id, run.repo_id)
     outbox.add(machine.events)
     background.add_task(outbox.publish, redis)
-    background.add_task(_jobs(request).run_stage, run.org_id, run.id, run.stage.value)
+    background.add_task(jobs_of(request).run_stage, run.org_id, run.id, run.stage.value)
     return await full(db, run, repo)
 
 
@@ -431,7 +455,7 @@ async def retry_fix(
     outbox = FixOutbox(run.org_id, run.id, run.repo_id)
     outbox.add(machine.events)
     background.add_task(outbox.publish, redis)
-    background.add_task(_jobs(request).run_stage, run.org_id, run.id, run.stage.value)
+    background.add_task(jobs_of(request).run_stage, run.org_id, run.id, run.stage.value)
     return await full(db, run, repo)
 
 
@@ -493,7 +517,7 @@ async def decide_fix(
     run, repo = await _visible(request, access, db, readers, fix_id)
     if not await readers.can_write(access.user, repo):
         raise ForbiddenError(
-            "Deciding on a fix needs write access to the repository on GitHub.",
+            "Deciding on its plan needs write access to the repository on GitHub.",
             code="github_write_required",
         )
     run = await _locked(db, run)
@@ -514,7 +538,7 @@ async def decide_fix(
     outbox.add(done.events)
     background.add_task(outbox.publish, redis)
     if done.queue:
-        background.add_task(_jobs(request).run_stage, run.org_id, run.id, run.stage.value)
+        background.add_task(jobs_of(request).run_stage, run.org_id, run.id, run.stage.value)
     return await full(db, run, repo)
 
 

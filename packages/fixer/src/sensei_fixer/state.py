@@ -6,6 +6,9 @@ Stages only move forward::
                                                                       │ (a person approves)
     done ◄─ pr ◄─ verify ◄─ patch ◄───────────────────────────────────┘
 
+A requested change (9.1) has nothing to investigate or reproduce: it goes from intake straight
+to its plan, then on as a fix does (``intake ─► plan ─► awaiting_approval ─► patch ─► ...``).
+
 Status says what that means: ``queued`` (its next stage is waiting for a worker), ``running``
 (a stage is), ``awaiting_approval``, ``succeeded`` (done: a draft pull request), or a stop:
 ``not_reproduced``, ``blocked`` (a rule), ``failed``, ``rejected`` (a person said no),
@@ -22,11 +25,18 @@ from datetime import UTC, datetime
 from itertools import pairwise
 from typing import Any
 
-from sensei_core.models import FixRun, FixStage, FixStatus
+from sensei_core.models import FixKind, FixRun, FixStage, FixStatus
 from sensei_core.models.fixes import TERMINAL
 
 STAGES: tuple[FixStage, ...] = tuple(FixStage)
+CHANGE_STAGES: tuple[FixStage, ...] = tuple(
+    s for s in FixStage if s not in (FixStage.INVESTIGATE, FixStage.REPRODUCE, FixStage.ROOT_CAUSE)
+)
+ORDER: dict[FixKind, tuple[FixStage, ...]] = {FixKind.FIX: STAGES, FixKind.CHANGE: CHANGE_STAGES}
 NEXT: dict[FixStage, FixStage] = dict(pairwise(STAGES))
+NEXT_BY_KIND: dict[FixKind, dict[FixStage, FixStage]] = {
+    kind: dict(pairwise(order)) for kind, order in ORDER.items()
+}
 STOPS = frozenset(TERMINAL - {FixStatus.SUCCEEDED})
 
 
@@ -83,7 +93,7 @@ class FixStateMachine:
         if self.run.status is not FixStatus.RUNNING:
             raise self._refuse("finish a stage")
         finished = self.run.stage
-        self.run.stage = NEXT[finished]
+        self.run.stage = NEXT_BY_KIND[self.run.kind or FixKind.FIX][finished]
         if self.run.stage is FixStage.AWAITING_APPROVAL:
             self.run.status = FixStatus.AWAITING_APPROVAL
         elif self.run.stage is FixStage.DONE:

@@ -21,7 +21,16 @@ from sensei_core.audit import AuditAction, audit
 from sensei_core.errors import NotFoundError
 from sensei_core.fixes.tickets import PathIndex, Ticket
 from sensei_core.indexing.snapshots import resolve_snapshot
-from sensei_core.models import FixRun, FixSource, FixStage, FixStatus, Repo, RepoFile, Role
+from sensei_core.models import (
+    FixKind,
+    FixRun,
+    FixSource,
+    FixStage,
+    FixStatus,
+    Repo,
+    RepoFile,
+    Role,
+)
 from sensei_core.models.fixes import TERMINAL
 from sensei_core.orgs.service import OrgAccess, require_role
 
@@ -102,6 +111,7 @@ class FixService:
         source_ref: str | None = None,
         access: OrgAccess | None = None,
         status: FixStatus = FixStatus.QUEUED,
+        kind: FixKind = FixKind.FIX,
     ) -> tuple[FixRun, bool]:
         """The run, and whether it is new (False: one from the same issue is going already).
         ``access`` is the person starting it (a member); None for the org itself (Sentry)."""
@@ -112,7 +122,7 @@ class FixService:
             if existing is not None:
                 return existing, False
         run = FixRun(
-            org_id=repo.org_id, repo_id=repo.id, source=source, source_ref=source_ref,
+            org_id=repo.org_id, repo_id=repo.id, kind=kind, source=source, source_ref=source_ref,
             title=ticket.title, ticket=ticket.model_dump(mode="json"), status=status,
             stage=FixStage.INTAKE, created_by=access.user.id if access else None,
         )  # fmt: skip
@@ -130,14 +140,20 @@ class FixService:
         await audit(
             db, AuditAction.FIX_CREATE, actor_user_id=access.user.id if access else None,
             org_id=repo.org_id, target_type="fix_run", target_id=run.id,
-            meta={"repo": repo.slug, "source": source.value, "status": status.value},
+            meta={"repo": repo.slug, "kind": kind.value, "source": source.value,
+                  "status": status.value},
         )  # fmt: skip
         return run, True
 
     async def list(
-        self, db: AsyncSession, repo: Repo, *, status: FixStatus | None = None
+        self,
+        db: AsyncSession,
+        repo: Repo,
+        *,
+        status: FixStatus | None = None,
+        kind: FixKind = FixKind.FIX,
     ) -> list[FixRun]:
-        query = select(FixRun).where(FixRun.repo_id == repo.id)
+        query = select(FixRun).where(FixRun.repo_id == repo.id, FixRun.kind == kind)
         if status is not None:
             query = query.where(FixRun.status == status)
         found = await db.scalars(

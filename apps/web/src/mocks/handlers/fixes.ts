@@ -79,6 +79,7 @@ export function mockParse(text: string, title?: string | null): Ticket {
     frames,
     versions: {},
     culprit,
+    text: text.trim(),
   };
 }
 
@@ -98,6 +99,7 @@ function made(
   const ticket = mockParse(TRACE, fields.title);
   return {
     id,
+    kind: "fix",
     repo: repo.slug,
     source_ref: null,
     risk: null,

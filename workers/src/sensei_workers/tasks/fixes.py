@@ -18,10 +18,11 @@ from pathlib import Path
 from sensei_core.db.tenancy import set_org_context
 from sensei_core.jobs import TaskName, fix_stage_message
 from sensei_core.logging import get_logger
-from sensei_core.models import FixRun, FixStage
+from sensei_core.models import FixKind, FixRun, FixStage
 from sensei_core.models.fixes import TERMINAL
 from sensei_engine.llm.anthropic_client import AnthropicClient
 from sensei_fixer.budget import Budget
+from sensei_fixer.change_plan import change_plan_stage
 from sensei_fixer.frameworks import TestSetup
 from sensei_fixer.investigate import investigate_stage
 from sensei_fixer.patch import patch_stage
@@ -30,7 +31,7 @@ from sensei_fixer.plan import plan_stage
 from sensei_fixer.reproduce import reproduce_stage
 from sensei_fixer.rootcause import root_cause_stage
 from sensei_fixer.runs import FixRunner, sandbox_runner
-from sensei_fixer.stages import StageHandler, default_handlers
+from sensei_fixer.stages import StageHandler, by_kind, default_handlers
 from sensei_fixer.sweep import RESEND_EVERY_SECONDS, sweep_stalled
 from sensei_fixer.verify import verify_stage
 from sensei_workers.app import celery_app
@@ -55,9 +56,16 @@ def handlers() -> dict[FixStage, StageHandler]:
     found[FixStage.INVESTIGATE] = investigate_stage(fix_workspace, client, runtime.costs)
     found[FixStage.REPRODUCE] = reproduce_stage(fix_workspace, runners, client, runtime.costs)
     found[FixStage.ROOT_CAUSE] = root_cause_stage(fix_workspace)
-    found[FixStage.PLAN] = plan_stage(fix_workspace, client, runtime.costs)
-    found[FixStage.PATCH] = patch_stage(fix_workspace, runners, client, runtime.costs)
-    found[FixStage.VERIFY] = verify_stage(fix_workspace, runners, client, runtime.costs)
+    found[FixStage.PLAN] = by_kind({
+        FixKind.FIX: plan_stage(fix_workspace, client, runtime.costs),
+        FixKind.CHANGE: change_plan_stage(fix_workspace, client, runtime.costs),
+    })  # fmt: skip
+    found[FixStage.PATCH] = by_kind(
+        {FixKind.FIX: patch_stage(fix_workspace, runners, client, runtime.costs)}
+    )
+    found[FixStage.VERIFY] = by_kind(
+        {FixKind.FIX: verify_stage(fix_workspace, runners, client, runtime.costs)}
+    )
     return found
 
 

@@ -1144,6 +1144,34 @@
         "title": "Case",
         "type": "string"
       },
+      "ChangeIn": {
+        "properties": {
+          "request": {
+            "description": "The change: what it should do, and why.",
+            "maxLength": 4000,
+            "minLength": 1,
+            "title": "Request",
+            "type": "string"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          }
+        },
+        "required": [
+          "request"
+        ],
+        "title": "ChangeIn",
+        "type": "object"
+      },
       "CitationOut": {
         "properties": {
           "end_line": {
@@ -3294,6 +3322,15 @@
         "title": "FixIn",
         "type": "object"
       },
+      "FixKind": {
+        "description": "What a run does (9.1): fix a reported bug (reproduced first), or make a requested change\n(planned from the request). Both go through the same pipeline: approval, patch, verify,\npull request.",
+        "enum": [
+          "fix",
+          "change"
+        ],
+        "title": "FixKind",
+        "type": "string"
+      },
       "FixOut": {
         "properties": {
           "approvals_needed": {
@@ -3353,6 +3390,10 @@
             "format": "uuid",
             "title": "Id",
             "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/FixKind",
+            "description": "A fix (a reported bug) or a change (a request)."
           },
           "merge_readiness": {
             "anyOf": [
@@ -3505,6 +3546,7 @@
         },
         "required": [
           "id",
+          "kind",
           "repo",
           "title",
           "source",
@@ -3544,7 +3586,8 @@
         "enum": [
           "paste",
           "github_issue",
-          "sentry"
+          "sentry",
+          "request"
         ],
         "title": "FixSource",
         "type": "string"
@@ -3629,6 +3672,10 @@
             "title": "Id",
             "type": "string"
           },
+          "kind": {
+            "$ref": "#/components/schemas/FixKind",
+            "description": "A fix (a reported bug) or a change (a request)."
+          },
           "merge_readiness": {
             "anyOf": [
               {
@@ -3692,6 +3739,7 @@
         },
         "required": [
           "id",
+          "kind",
           "repo",
           "title",
           "source",
@@ -8041,6 +8089,12 @@
             ],
             "title": "Message"
           },
+          "text": {
+            "default": "",
+            "description": "What was given: the paste, the issue, a request.",
+            "title": "Text",
+            "type": "string"
+          },
           "title": {
             "title": "Title",
             "type": "string"
@@ -10389,6 +10443,291 @@
         ]
       }
     },
+    "/api/v1/orgs/{org}/changes/{fix_id}": {
+      "get": {
+        "description": "A change: its request, plan, patch and verification as they stand.",
+        "operationId": "get_change_api_v1_orgs__org__changes__fix_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "fix_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Fix Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Organization slug",
+            "in": "path",
+            "name": "org",
+            "required": true,
+            "schema": {
+              "description": "Organization slug",
+              "title": "Org",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FixOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Change",
+        "tags": [
+          "changes"
+        ]
+      }
+    },
+    "/api/v1/orgs/{org}/changes/{fix_id}/approval": {
+      "post": {
+        "description": "Approve the change's plan, ask for changes (planned again), or reject it. Members who can write to the repository on GitHub; a high-risk change needs two of them.",
+        "operationId": "decide_change_api_v1_orgs__org__changes__fix_id__approval_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "fix_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Fix Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Organization slug",
+            "in": "path",
+            "name": "org",
+            "required": true,
+            "schema": {
+              "description": "Organization slug",
+              "title": "Org",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApprovalIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FixOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Decide Change",
+        "tags": [
+          "changes"
+        ]
+      }
+    },
+    "/api/v1/orgs/{org}/changes/{fix_id}/approvals": {
+      "get": {
+        "description": "The decisions on the change's plans, oldest first.",
+        "operationId": "list_change_approvals_api_v1_orgs__org__changes__fix_id__approvals_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "fix_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Fix Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Organization slug",
+            "in": "path",
+            "name": "org",
+            "required": true,
+            "schema": {
+              "description": "Organization slug",
+              "title": "Org",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ApprovalOut"
+                  },
+                  "title": "Response List Change Approvals Api V1 Orgs  Org  Changes  Fix Id  Approvals Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Change Approvals",
+        "tags": [
+          "changes"
+        ]
+      }
+    },
+    "/api/v1/orgs/{org}/changes/{fix_id}/cancel": {
+      "post": {
+        "description": "Cancel a change that hasn't finished. Members.",
+        "operationId": "cancel_change_api_v1_orgs__org__changes__fix_id__cancel_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "fix_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Fix Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Organization slug",
+            "in": "path",
+            "name": "org",
+            "required": true,
+            "schema": {
+              "description": "Organization slug",
+              "title": "Org",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FixOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Cancel Change",
+        "tags": [
+          "changes"
+        ]
+      }
+    },
+    "/api/v1/orgs/{org}/changes/{fix_id}/events": {
+      "get": {
+        "description": "The change's progress as server-sent events (as a fix's: queued, stage_started, step, awaiting_approval, approved, replanning, done, failed...).",
+        "operationId": "change_events_api_v1_orgs__org__changes__fix_id__events_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "fix_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Fix Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Organization slug",
+            "in": "path",
+            "name": "org",
+            "required": true,
+            "schema": {
+              "description": "Organization slug",
+              "title": "Org",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "text/event-stream": {}
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Change Events",
+        "tags": [
+          "changes"
+        ]
+      }
+    },
     "/api/v1/orgs/{org}/conversations/{conversation_id}": {
       "delete": {
         "description": "Delete a conversation, its messages and their citations.",
@@ -12399,6 +12738,148 @@
         "summary": "Resume",
         "tags": [
           "ask"
+        ]
+      }
+    },
+    "/api/v1/orgs/{org}/repos/{repo}/changes": {
+      "get": {
+        "description": "The repository's requested changes, newest first.",
+        "operationId": "list_changes_api_v1_orgs__org__repos__repo__changes_get",
+        "parameters": [
+          {
+            "description": "Repository slug",
+            "in": "path",
+            "name": "repo",
+            "required": true,
+            "schema": {
+              "description": "Repository slug",
+              "maxLength": 201,
+              "title": "Repo",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Organization slug",
+            "in": "path",
+            "name": "org",
+            "required": true,
+            "schema": {
+              "description": "Organization slug",
+              "title": "Org",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/FixStatus"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/FixSummaryOut"
+                  },
+                  "title": "Response List Changes Api V1 Orgs  Org  Repos  Repo  Changes Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Changes",
+        "tags": [
+          "changes"
+        ]
+      },
+      "post": {
+        "description": "Start a change from a request: it is planned, then waits for approval. Members.",
+        "operationId": "create_change_api_v1_orgs__org__repos__repo__changes_post",
+        "parameters": [
+          {
+            "description": "Organization slug",
+            "in": "path",
+            "name": "org",
+            "required": true,
+            "schema": {
+              "description": "Organization slug",
+              "title": "Org",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Repository slug",
+            "in": "path",
+            "name": "repo",
+            "required": true,
+            "schema": {
+              "description": "Repository slug",
+              "maxLength": 201,
+              "title": "Repo",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChangeIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FixOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Change",
+        "tags": [
+          "changes"
         ]
       }
     },

@@ -16,7 +16,7 @@ from decimal import Decimal
 from typing import Any, Protocol
 
 from sensei_core.fixes.tickets import Ticket
-from sensei_core.models import FixStage, FixStatus
+from sensei_core.models import FixKind, FixStage, FixStatus
 
 
 class Cancelled(Exception):
@@ -66,10 +66,25 @@ class StageContext:
     record: Callable[[Step], Awaitable[None]]
     spend: Callable[[int, Decimal, float], Awaitable[None]]
     check: Callable[[], Awaitable[None]]
+    kind: FixKind = FixKind.FIX  # a fix, or a requested change (9.1)
 
 
 class StageHandler(Protocol):
     async def __call__(self, ctx: StageContext, /) -> Outcome: ...
+
+
+def by_kind(handlers: Mapping[FixKind, StageHandler]) -> StageHandler:
+    """One stage done one way for a fix and another for a change (the plan: a fix's from its
+    root cause, a change's from its request); a kind with none stops, saying so."""
+
+    async def handler(ctx: StageContext) -> Outcome:
+        found = handlers.get(ctx.kind)
+        if found is None:
+            stage = ctx.stage.value.replace("_", " ")
+            return Stop(FixStatus.FAILED, f"A {ctx.kind.value} has no {stage} stage.")
+        return await found(ctx)
+
+    return handler
 
 
 async def intake(ctx: StageContext) -> Outcome:

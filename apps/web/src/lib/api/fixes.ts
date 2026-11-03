@@ -76,6 +76,7 @@ export const SOURCE_LABELS: Record<FixSource, string> = {
   paste: "Pasted trace",
   github_issue: "GitHub issue",
   sentry: "Sentry",
+  request: "Request",
 };
 
 export const RISK_LABELS: Record<FixRisk, string> = {

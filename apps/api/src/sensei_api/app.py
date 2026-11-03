@@ -26,6 +26,7 @@ from sensei_api.routers import (
     ask,
     auth,
     browse,
+    changes,
     constellation,
     deps,
     diagrams,
@@ -236,6 +237,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         api_keys,
         mcp_setup,
         fixes,
+        changes,
         sentry,
         oauth,
     ):  # the order routes are matched in

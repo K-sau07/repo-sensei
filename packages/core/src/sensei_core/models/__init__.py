@@ -22,6 +22,7 @@ from sensei_core.models.files import RepoFile
 from sensei_core.models.fixes import (
     ApprovalDecision,
     FixApproval,
+    FixKind,
     FixRisk,
     FixRun,
     FixSource,
@@ -94,6 +95,7 @@ __all__ = [
     "EvalRun",
     "FeatureMap",
     "FixApproval",
+    "FixKind",
     "FixRisk",
     "FixRun",
     "FixSource",

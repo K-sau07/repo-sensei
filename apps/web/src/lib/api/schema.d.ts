@@ -637,6 +637,106 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/orgs/{org}/changes/{fix_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Change
+         * @description A change: its request, plan, patch and verification as they stand.
+         */
+        get: operations["get_change_api_v1_orgs__org__changes__fix_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/changes/{fix_id}/approval": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Decide Change
+         * @description Approve the change's plan, ask for changes (planned again), or reject it. Members who can write to the repository on GitHub; a high-risk change needs two of them.
+         */
+        post: operations["decide_change_api_v1_orgs__org__changes__fix_id__approval_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/changes/{fix_id}/approvals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Change Approvals
+         * @description The decisions on the change's plans, oldest first.
+         */
+        get: operations["list_change_approvals_api_v1_orgs__org__changes__fix_id__approvals_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/changes/{fix_id}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Cancel Change
+         * @description Cancel a change that hasn't finished. Members.
+         */
+        post: operations["cancel_change_api_v1_orgs__org__changes__fix_id__cancel_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/changes/{fix_id}/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Change Events
+         * @description The change's progress as server-sent events (as a fix's: queued, stage_started, step, awaiting_approval, approved, replanning, done, failed...).
+         */
+        get: operations["change_events_api_v1_orgs__org__changes__fix_id__events_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/orgs/{org}/conversations/{conversation_id}": {
         parameters: {
             query?: never;
@@ -1200,6 +1300,30 @@ export interface paths {
         get: operations["resume_api_v1_orgs__org__repos__repo__ask_messages__message_id__stream_get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/repos/{repo}/changes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Changes
+         * @description The repository's requested changes, newest first.
+         */
+        get: operations["list_changes_api_v1_orgs__org__repos__repo__changes_get"];
+        put?: never;
+        /**
+         * Create Change
+         * @description Start a change from a request: it is planned, then waits for approval. Members.
+         */
+        post: operations["create_change_api_v1_orgs__org__repos__repo__changes_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2361,6 +2485,16 @@ export interface components {
          * @enum {string}
          */
         Case: "sensitive" | "insensitive" | "smart";
+        /** ChangeIn */
+        ChangeIn: {
+            /**
+             * Request
+             * @description The change: what it should do, and why.
+             */
+            request: string;
+            /** Title */
+            title?: string | null;
+        };
         /** CitationOut */
         CitationOut: {
             /** End Line */
@@ -3213,6 +3347,14 @@ export interface components {
             /** Title */
             title?: string | null;
         };
+        /**
+         * FixKind
+         * @description What a run does (9.1): fix a reported bug (reproduced first), or make a requested change
+         *     (planned from the request). Both go through the same pipeline: approval, patch, verify,
+         *     pull request.
+         * @enum {string}
+         */
+        FixKind: "fix" | "change";
         /** FixOut */
         FixOut: {
             /**
@@ -3239,6 +3381,8 @@ export interface components {
              * Format: uuid
              */
             id: string;
+            /** @description A fix (a reported bug) or a change (a request). */
+            kind: components["schemas"]["FixKind"];
             /** Merge Readiness */
             merge_readiness: number | null;
             /**
@@ -3299,7 +3443,7 @@ export interface components {
          * FixSource
          * @enum {string}
          */
-        FixSource: "paste" | "github_issue" | "sentry";
+        FixSource: "paste" | "github_issue" | "sentry" | "request";
         /**
          * FixStage
          * @enum {string}
@@ -3331,6 +3475,8 @@ export interface components {
              * Format: uuid
              */
             id: string;
+            /** @description A fix (a reported bug) or a change (a request). */
+            kind: components["schemas"]["FixKind"];
             /** Merge Readiness */
             merge_readiness: number | null;
             /** Pr Url */
@@ -4906,6 +5052,12 @@ export interface components {
             language: ("python" | "javascript") | null;
             /** Message */
             message: string | null;
+            /**
+             * Text
+             * @description What was given: the paste, the issue, a request.
+             * @default
+             */
+            text: string;
             /** Title */
             title: string;
             /** Versions */
@@ -6248,6 +6400,175 @@ export interface operations {
             };
         };
     };
+    get_change_api_v1_orgs__org__changes__fix_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                fix_id: string;
+                /** @description Organization slug */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FixOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    decide_change_api_v1_orgs__org__changes__fix_id__approval_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                fix_id: string;
+                /** @description Organization slug */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ApprovalIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FixOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_change_approvals_api_v1_orgs__org__changes__fix_id__approvals_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                fix_id: string;
+                /** @description Organization slug */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApprovalOut"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    cancel_change_api_v1_orgs__org__changes__fix_id__cancel_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                fix_id: string;
+                /** @description Organization slug */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FixOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    change_events_api_v1_orgs__org__changes__fix_id__events_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                fix_id: string;
+                /** @description Organization slug */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/event-stream": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     conversation_api_v1_orgs__org__conversations__conversation_id__get: {
         parameters: {
             query?: never;
@@ -7512,6 +7833,80 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_changes_api_v1_orgs__org__repos__repo__changes_get: {
+        parameters: {
+            query?: {
+                status?: components["schemas"]["FixStatus"] | null;
+            };
+            header?: never;
+            path: {
+                /** @description Repository slug */
+                repo: string;
+                /** @description Organization slug */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FixSummaryOut"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_change_api_v1_orgs__org__repos__repo__changes_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization slug */
+                org: string;
+                /** @description Repository slug */
+                repo: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ChangeIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FixOut"];
+                };
             };
             /** @description Validation Error */
             422: {
