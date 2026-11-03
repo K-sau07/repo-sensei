@@ -1151,8 +1151,8 @@ async def test_a_public_answer_is_served_from_the_cache_but_never_kept_there(
 ) -> None:
     streamed = _answers_citing(app)
     await _published(app, client, db_session)
-    question = {"message": "What does the README say?"}
-    first, _ = await _ask_publicly(app, client, **question)
+    question = "What does the README say?"
+    first, _ = await _ask_publicly(app, client, message=question)
     assert first.status_code == 200, first.text
     assert len(streamed) == 3  # answered by a run
     kept = await db_session.scalar(select(func.count()).select_from(AnswerCacheEntry))
@@ -1163,10 +1163,10 @@ async def test_a_public_answer_is_served_from_the_cache_but_never_kept_there(
     owner = await db_session.scalar(select(User).join(Membership, Membership.user_id == User.id))
     _, headers = await sign_in(app, client, db_session, owner)
     org = app.state.settings.explore.org
-    member, _ = await _ask(app, client, f"{API}/orgs/{org}", headers, **question)
+    member, _ = await _ask(app, client, f"{API}/orgs/{org}", headers, message=question)
     assert member.status_code == 200
     client.cookies.clear()
-    again, _ = await _ask_publicly(app, client, **question)
+    again, _ = await _ask_publicly(app, client, message=question)
     assert again.headers["x-answer-cache"] == "hit"
 
 
