@@ -14,7 +14,9 @@ import { AMBIGUOUS_ENTRY, GAP_ENTRY, LOGIN_ENTRY } from "@/mocks/trace";
 import { expectCodeLine } from "../code-lines";
 
 // The viewer's editor loads as its own chunk: on a busy machine that can take a while.
-const VIEWER_MS = 5000;
+// How long the code viewer may take to show a line (a wait, not a budget: a shared CI runner
+// highlights slower).
+const VIEWER_MS = 15_000;
 
 const nextjs = {
   appDirectory: true,
