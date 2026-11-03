@@ -24,7 +24,7 @@ from sensei_core.indexing.events import TERMINAL, EventType, JobOutbox, job_stre
 from sensei_core.indexing.features import Feature, unlocked
 from sensei_core.indexing.jobs import IndexJobService
 from sensei_core.jobs import RepoJobs, chain_key
-from sensei_core.limits import take_quota
+from sensei_core.limits import check_quota, count_quota
 from sensei_core.models import (
     ACTIVE_JOB_STATUSES,
     IndexJob,
@@ -167,10 +167,11 @@ async def reindex(
     ``index_job_running`` while a run is queued or running; 429 ``quota_exceeded`` past the
     person's runs for the day."""
     limits: LimitsSettings = request.app.state.settings.limits
-    await take_quota(redis, "index_runs", access.user.id, limits.index_runs_per_day,
-                     what="index runs")  # fmt: skip
+    await check_quota(redis, "index_runs", access.user.id, limits.index_runs_per_day,
+                      what="index runs")  # fmt: skip
     outbox = JobOutbox()
     job = await _service(request).start(db, access, repo, outbox)
+    await count_quota(redis, "index_runs", access.user.id)  # started (not refused)
     background.add_task(
         dispatch_index,
         redis,

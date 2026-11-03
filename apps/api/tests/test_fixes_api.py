@@ -306,6 +306,30 @@ async def test_sentry_is_connected_by_admins_and_its_webhook_starts_fixes(
     assert (culprit["line"], culprit["function"]) == (12, "unit_price")
 
 
+async def test_past_the_global_spend_cap_a_sentry_alert_waits_for_triage(
+    app: FastAPI, client: httpx.AsyncClient, db_session: AsyncSession, fake_redis: FakeAsyncRedis
+) -> None:
+    # 10.1: read-only, nothing starts by itself; the fix waits for a person to start it.
+    owner, _ = await _org(app, db_session)
+    setup = {"sentry_org": "acme-sentry", "token": "sntrys_secret_token", "client_secret": SECRET,
+             "projects": {"backend": "items"}, "auto_run": True, "min_events": 10}  # fmt: skip
+    _, headers = await sign_in(app, client, db_session, owner)
+    connected = await client.put(f"{API}/orgs/acme/integrations/sentry", json=setup,
+                                 headers=headers)  # fmt: skip
+    assert connected.status_code == 200
+    client.cookies.clear()
+    await fake_redis.set(f"limits:read-only:{datetime.now(UTC).date().isoformat()}", "1")
+    with respx.mock(assert_all_called=False) as sentry:
+        base = "https://sentry.io/api/0/organizations/acme-sentry/issues"
+        sentry.get(f"{base}/4501/").respond(json={"stats": {"14d": [[1, 30]]}})  # busy
+        body, signed = _signed(_alert("4501"))
+        busy = await client.post(f"{API}/webhooks/sentry/acme", content=body, headers=signed)
+        assert busy.status_code == 202
+    runs = (await db_session.scalars(select(FixRun))).all()
+    assert [(r.source_ref, r.status.value) for r in runs] == [("4501", "needs_triage")]
+    assert app.state.fix_jobs.sent == []
+
+
 async def test_a_new_fix_goes_to_a_worker_and_can_be_cancelled_once(
     app: FastAPI, client: httpx.AsyncClient, db_session: AsyncSession
 ) -> None:

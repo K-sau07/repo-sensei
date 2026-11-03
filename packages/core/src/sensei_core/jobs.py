@@ -100,10 +100,10 @@ def celery_config(settings: Settings) -> dict[str, Any]:
         "task_soft_time_limit": worker.soft_time_limit_seconds,
         "task_time_limit": worker.time_limit_seconds,
         # Messages have priorities (Redis keeps a list per step, 0 first): a public repository's
-        # index stages wait behind everything else (10.1).
+        # index stages wait behind everything else (10.1). Not queue_order_strategy: that orders
+        # the queues a worker reads, and "priority" would let one queue's backlog starve the rest.
         "broker_transport_options": {
             "visibility_timeout": worker.visibility_timeout_seconds,
-            "queue_order_strategy": "priority",
             "priority_steps": list(range(10)),
             "sep": ":",
         },

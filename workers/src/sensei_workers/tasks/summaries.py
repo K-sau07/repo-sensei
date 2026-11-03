@@ -53,6 +53,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from sensei_core.indexing.jobs import JOB_USAGE_REF
 from sensei_core.jobs import TaskName
+from sensei_core.limits import READ_ONLY_SKIP, read_only
 from sensei_core.logging import get_logger
 from sensei_core.models import (
     ACTIVE_JOB_STATUSES,
@@ -219,8 +220,15 @@ async def _begin(task: IngestTask, org_id: str, job_id: uuid.UUID) -> Target | N
                 machine.log("File summaries are off: this server has no Anthropic API key.")
                 return None  # finalize passes the stage over
             machine.advance(STAGE)
-        elif not configured:
-            _skip(scope, "not_configured", "this server no longer has an Anthropic API key")
+        held = (
+            None
+            if configured
+            else ("not_configured", "this server no longer has an Anthropic API key")
+        )
+        if held is None and await read_only(get_runtime().redis):  # the global spend cap (10.1)
+            held = ("read_only", READ_ONLY_SKIP)
+        if held is not None:
+            _skip(scope, *held)
             return None
         details: dict[str, Any] = stages.get(STAGE.value, {}).get("details", {})
         found = (snapshot.summary or {}).get("frameworks", [])

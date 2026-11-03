@@ -17,6 +17,9 @@ from sensei_core.limits import (
     QuotaExceededError,
     ReadOnlyError,
     check_global_spend,
+    check_quota,
+    count_quota,
+    read_only,
     require_writable,
     spent_today_everywhere,
     take_quota,
@@ -45,6 +48,18 @@ async def test_a_quota_counts_a_persons_day_and_says_when_it_resets(
     await take_quota(fake_redis, "asks", other, 2, what="questions", now=NOON)
     tomorrow = NOON.replace(day=4)
     await take_quota(fake_redis, "asks", person, 2, what="questions", now=tomorrow)
+
+
+async def test_a_quota_checked_first_counts_only_what_went_through(
+    fake_redis: FakeAsyncRedis,
+) -> None:
+    person = uuid.uuid4()
+    for _ in range(5):  # refused for other reasons: checked, never counted
+        await check_quota(fake_redis, "imports", person, 1, what="imports", now=NOON)
+    await count_quota(fake_redis, "imports", person, now=NOON)
+    with pytest.raises(QuotaExceededError):
+        await check_quota(fake_redis, "imports", person, 1, what="imports", now=NOON)
+    assert await read_only(fake_redis, now=NOON) is False
 
 
 async def test_past_the_global_cap_nothing_new_starts_until_midnight(

@@ -32,7 +32,7 @@ def test_messages_have_priorities_and_public_repositories_wait() -> None:
 
     config = celery_config(Settings(env="test"))
     options = config["broker_transport_options"]
-    assert options["queue_order_strategy"] == "priority"
+    assert "queue_order_strategy" not in options  # the queues read in turn: none starves
     assert options["priority_steps"] == list(range(10))
     assert config["task_default_priority"] == DEFAULT_PRIORITY
     assert DEFAULT_PRIORITY < PUBLIC_PRIORITY <= 9  # Redis takes 0 first

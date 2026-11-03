@@ -20,7 +20,7 @@ from sensei_core.config import LimitsSettings
 from sensei_core.indexing.events import JobOutbox
 from sensei_core.indexing.jobs import IndexJobService, RepoSummary, repo_summaries
 from sensei_core.jobs import RepoJobs
-from sensei_core.limits import take_quota
+from sensei_core.limits import check_quota, count_quota
 from sensei_core.models import JobKind, JobStatus, Repo, RepoSource, RepoStatus, Stage
 from sensei_core.orgs.service import OrgAccess
 from sensei_core.repos.service import RepoSettings
@@ -231,7 +231,11 @@ async def connect_repo(
     background: BackgroundTasks,
 ) -> RepoOut:
     """Connect a repository one of the org's installations covers and the admin can read on
-    GitHub (admins). Indexing starts right away unless the repository's settings say not to."""
+    GitHub (admins). Indexing starts right away unless the repository's settings say not to (a
+    run of the person's day, 10.1: connecting again and again is no way around it)."""
+    limits: LimitsSettings = request.app.state.settings.limits
+    await check_quota(redis, "index_runs", access.user.id, limits.index_runs_per_day,
+                      what="index runs")  # fmt: skip
     repo = await repos.connect(db, access, body.github_repo_id, viewer)
     return await _first_index(request, db, access, repo, redis=redis, background=background)
 
@@ -249,6 +253,7 @@ async def _first_index(
         return RepoOut.build(repo)
     outbox = JobOutbox()
     job = await IndexJobService().start(db, access, repo, outbox)
+    await count_quota(redis, "index_runs", access.user.id)
     background.add_task(
         dispatch_index,
         redis,
@@ -284,9 +289,10 @@ async def import_repo(
     person's imports for the day 429 ``quota_exceeded``. Indexing starts right away unless the
     repository's settings say not to."""
     limits: LimitsSettings = request.app.state.settings.limits
-    await take_quota(redis, "public_imports", access.user.id, limits.public_imports_per_day,
-                     what="imports by URL")  # fmt: skip
+    await check_quota(redis, "public_imports", access.user.id, limits.public_imports_per_day,
+                      what="imports by URL")  # fmt: skip
     repo = await repos.import_public(db, access, body.url, viewer, limits)
+    await count_quota(redis, "public_imports", access.user.id)  # imported (not refused)
     return await _first_index(request, db, access, repo, redis=redis, background=background)
 
 

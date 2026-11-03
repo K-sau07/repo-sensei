@@ -35,6 +35,7 @@ from datetime import UTC, datetime, timedelta
 
 from sensei_core.indexing.jobs import JOB_USAGE_REF
 from sensei_core.jobs import TaskName
+from sensei_core.limits import READ_ONLY_SKIP, read_only
 from sensei_core.logging import get_logger
 from sensei_core.models import ACTIVE_JOB_STATUSES, Repo, Snapshot, Stage
 from sensei_core.repos.access import open_to_all
@@ -116,8 +117,13 @@ async def _begin(task: IngestTask, org_id: str, job_id: uuid.UUID) -> Target | N
                 machine.log("Semantic search is off: this server has no Voyage API key.")
                 return None  # the next stage passes this one over
             machine.advance(STAGE)
-        elif not configured:
-            _skip(scope, "not_configured", "this server no longer has a Voyage API key")
+        held = (
+            None if configured else ("not_configured", "this server no longer has a Voyage API key")
+        )
+        if held is None and await read_only(get_runtime().redis):  # the global spend cap (10.1)
+            held = ("read_only", READ_ONLY_SKIP)
+        if held is not None:
+            _skip(scope, *held)
             return None
         partition = await chunk_partition(db, repo.id)
         generation = snapshot.chunk_generation

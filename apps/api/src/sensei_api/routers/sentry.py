@@ -24,6 +24,7 @@ from typing import Annotated, Any, cast
 import httpx
 from fastapi import APIRouter, BackgroundTasks, Header, Request, Response, status
 from pydantic import BaseModel, Field
+from redis.asyncio import Redis
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -47,6 +48,7 @@ from sensei_core.fixes.sentry import (
 from sensei_core.fixes.service import FixService, repo_paths
 from sensei_core.fixes.tickets import parse_ticket
 from sensei_core.jobs import FixJobs
+from sensei_core.limits import ReadOnlyError, require_writable
 from sensei_core.logging import get_logger
 from sensei_core.models import FixSource, FixStatus, Org, Repo, Role, SentryIntegration
 from sensei_core.orgs.service import require_role
@@ -189,6 +191,7 @@ async def start_from_sentry(
     jobs: FixJobs | None = None,
     hosts: Sequence[str] = ("sentry.io",),
     now: datetime | None = None,
+    redis: Redis | None = None,
 ) -> uuid.UUID | None:
     """A fix from a verified delivery (its id), or None when it isn't one to make; a started
     one is sent to a worker once it is committed. Runs after the delivery was answered:
@@ -196,10 +199,17 @@ async def start_from_sentry(
     issue = parse_webhook(resource, payload)
     if issue is None:
         return None
+    # Past the global spend cap (10.1) nothing starts by itself: it waits for triage instead.
+    paused = False
+    if redis is not None:
+        try:
+            await require_writable(redis)
+        except ReadOnlyError:
+            paused = True
     try:
         return await _start(
             sessions, cipher=cipher, http=http, org_id=org_id, issue=issue, jobs=jobs,
-            hosts=hosts, now=now,
+            hosts=hosts, now=now, paused=paused,
         )  # fmt: skip
     except Exception:
         log.exception("a Sentry delivery made no fix", org_id=str(org_id), issue=issue.id)
@@ -216,6 +226,7 @@ async def _start(
     jobs: FixJobs | None,
     hosts: Sequence[str],
     now: datetime | None,
+    paused: bool = False,
 ) -> uuid.UUID | None:
     async with sessions() as db:
         await set_org_context(db, org_id)
@@ -242,7 +253,7 @@ async def _start(
             if event
             else parse_ticket(issue.title, title=issue.title, paths=paths)
         )
-        go = should_auto_run(
+        go = not paused and should_auto_run(
             enabled=found.auto_run, events_14d=events, last_seen=issue.last_seen,
             now=now or datetime.now(UTC), min_events=found.min_events,
         )  # fmt: skip
@@ -295,6 +306,6 @@ async def sentry_webhook(
         start_from_sentry, sessions=_sessions(request), cipher=cipher,
         http=request.app.state.http, org_id=org_id, resource=sentry_hook_resource,
         payload=payload, jobs=request.app.state.fix_jobs,
-        hosts=request.app.state.settings.fixer.sentry_hosts,
+        hosts=request.app.state.settings.fixer.sentry_hosts, redis=request.app.state.redis,
     )  # fmt: skip
     return Response(status_code=status.HTTP_202_ACCEPTED)

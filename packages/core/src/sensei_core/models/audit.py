@@ -80,7 +80,11 @@ class UsageEvent(IdMixin, Base):
     """One billable unit of work (an LLM call, an embedding batch, sandbox time...)."""
 
     __tablename__ = "usage_events"
-    __table_args__ = (Index("ix_usage_events_org_id_created_at", "org_id", "created_at"),)
+    __table_args__ = (
+        Index("ix_usage_events_org_id_created_at", "org_id", "created_at"),
+        # Every org's spend today (the global cap, 10.1), read each minute.
+        Index("ix_usage_events_created_at", "created_at"),
+    )
 
     # Token counts follow the provider's usage report; cache reads and writes are priced apart.
 

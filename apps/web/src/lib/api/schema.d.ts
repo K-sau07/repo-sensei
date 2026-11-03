@@ -1316,7 +1316,8 @@ export interface paths {
         /**
          * Connect Repo
          * @description Connect a repository one of the org's installations covers and the admin can read on
-         *     GitHub (admins). Indexing starts right away unless the repository's settings say not to.
+         *     GitHub (admins). Indexing starts right away unless the repository's settings say not to (a
+         *     run of the person's day, 10.1: connecting again and again is no way around it).
          */
         post: operations["connect_repo_api_v1_orgs__org__repos_post"];
         delete?: never;

@@ -305,9 +305,21 @@ async def _save(
         return True
 
 
+# Not code, as GitHub's languages (the import's estimate) don't count it either.
+_NOT_CODE = frozenset({
+    "asciidoc", "csv", "dotenv", "gitattributes", "ignore", "ini", "json", "markdown", "mdx",
+    "procfile", "properties", "rst", "svg", "text", "toml", "xml", "yaml",
+})  # fmt: skip
+
+
 def _too_large(target: Target, files: Sequence[DiscoveredFile]) -> str | None:
-    """Why a public repository is too large for the free tier (None: it isn't)."""
-    lines = sum(file.loc or 0 for file in files)
+    """Why a public repository is too large for the free tier (None: it isn't): its lines of
+    code, without generated, vendored, binary or documentation files, nor data and lockfiles."""
+    lines = sum(
+        file.loc or 0
+        for file in files
+        if not file.flags and file.language is not None and file.language not in _NOT_CODE
+    )
     if target.max_loc is None or lines <= target.max_loc:
         return None
     return (

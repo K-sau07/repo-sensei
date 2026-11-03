@@ -48,7 +48,7 @@ from sensei_core.config import Settings
 from sensei_core.db.tenancy import set_org_context, set_user_context
 from sensei_core.errors import ConflictError, InvalidError, NotFoundError, RateLimitedError
 from sensei_core.indexing.snapshots import resolve_snapshot
-from sensei_core.limits import take_quota
+from sensei_core.limits import check_quota, count_quota
 from sensei_core.models import (
     AgentRun,
     AnswerCacheEntry,
@@ -298,9 +298,9 @@ async def ask(
             "Too many questions at once; try again in a moment.",
             headers={"Retry-After": str(wait)},
         )
-    # A person's questions today (10.1), after the per-minute bucket.
+    # A person's questions today (10.1), after the per-minute bucket; counted once it's asked.
     limits = settings.limits
-    await take_quota(redis, "asks", access.user.id, limits.asks_per_day, what="questions")
+    await check_quota(redis, "asks", access.user.id, limits.asks_per_day, what="questions")
     remaining = await remaining_today(
         db, redis, settings.agent, org_id=repo.org_id, user_id=access.user.id,
         warn_in=lambda: streams.short_session(request),
@@ -325,6 +325,7 @@ async def ask(
             raise NotFoundError("Conversation not found.", code="conversation_not_found")
     earlier = await _exchanges(db, conversation.id)
     scope = await _scope(db, snapshot, body.scope)
+    await count_quota(redis, "asks", access.user.id)
     asked: list[dict[str, Any]] = [{"type": "text", "text": body.message}]
     if scope is not None:
         asked.append({"type": "data-scope", "id": "scope", "data": scope})

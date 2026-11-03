@@ -292,7 +292,11 @@ def _priority(org_id: str, repo_id: str) -> int:
             await set_org_context(db, uuid.UUID(org_id))
             return await db.scalar(select(Repo.source).where(Repo.id == uuid.UUID(repo_id)))
 
-    public = runtime.run(source()) is RepoSource.PUBLIC_URL
+    try:
+        public = runtime.run(source()) is RepoSource.PUBLIC_URL
+    except Exception as exc:  # a priority is worth no failed send (the sweeper's, a chain's)
+        log.warning("index priority unknown", error=type(exc).__name__)
+        return DEFAULT_PRIORITY
     return PUBLIC_PRIORITY if public else DEFAULT_PRIORITY
 
 

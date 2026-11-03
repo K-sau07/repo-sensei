@@ -17,6 +17,7 @@ from pathlib import Path
 
 from sensei_core.db.tenancy import set_org_context
 from sensei_core.jobs import TaskName, fix_stage_message
+from sensei_core.limits import READ_ONLY_WAIT_SECONDS, read_only
 from sensei_core.logging import get_logger
 from sensei_core.models import FixKind, FixRun, FixStage
 from sensei_core.models.fixes import TERMINAL
@@ -73,8 +74,15 @@ def handlers() -> dict[FixStage, StageHandler]:
     requires=("org_id", "fix_id", "stage"),
 )
 def run_fix_stage(self: SenseiTask, *, org_id: str, fix_id: str, stage: str) -> str | None:
-    """Run the fix's stage; queue the next one (its name), if there is one."""
+    """Run the fix's stage; queue the next one (its name), if there is one. Past the global
+    spend cap (10.1) the stage waits: it's sent again later, until the day's flag lapses."""
     runtime = get_runtime()
+    if runtime.run(read_only(runtime.redis)):
+        message = fix_stage_message(uuid.UUID(org_id), uuid.UUID(fix_id), stage)
+        self.app.send_task(message["name"], kwargs=message["kwargs"], queue=message["queue"],
+                           countdown=READ_ONLY_WAIT_SECONDS)  # fmt: skip
+        log.info("fix stage waits: read-only", fix_id=fix_id, stage=stage)
+        return None
     pipeline = FixPipeline(
         sessions=runtime.database.session,
         redis=runtime.redis,

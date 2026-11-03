@@ -538,9 +538,9 @@ async def test_a_public_import_is_the_free_tier(
     large = await client.post(f"{API}/orgs/acme/repos/import", json=url, headers=headers)
     assert (large.status_code, large.json()["error"]["code"]) == (422, "too_large_for_public")
     assert large.json()["error"]["details"]["estimated_lines"] == 222
-    limits(public_imports_per_day=3)  # the two refused above counted
-    third = await client.post(f"{API}/orgs/acme/repos/import", json=url, headers=headers)
-    assert third.status_code == 201, third.text
+    limits(public_imports_per_day=1)  # the two refused above cost nothing
+    first = await client.post(f"{API}/orgs/acme/repos/import", json=url, headers=headers)
+    assert first.status_code == 201, first.text
     again = await client.post(f"{API}/orgs/acme/repos/import", json=url, headers=headers)
     assert (again.status_code, again.json()["error"]["code"]) == (429, "quota_exceeded")
     assert int(again.headers["retry-after"]) > 0
