@@ -5,10 +5,11 @@ import { expect, waitFor } from "storybook/test";
 function described(root: HTMLElement): string {
   const lines = [...root.querySelectorAll<HTMLElement>(".cm-line")].map((el) => el.textContent);
   const editor = root.querySelector(".cm-editor") !== null;
-  const loading = root.querySelector('[aria-label="Loading the code"]') !== null;
+  const skeleton = root.querySelector<HTMLElement>('[aria-label="Loading the code"]');
+  const loading = skeleton ? (skeleton.dataset.waiting ?? "something") : null;
   const first = lines.slice(0, 3).map((text) => JSON.stringify(text.slice(0, 60)));
   return [
-    `editor: ${editor ? "yes" : "no"}${loading ? " (still loading)" : ""}`,
+    `editor: ${editor ? "yes" : "no"}${loading ? ` (still waiting for the ${loading})` : ""}`,
     `${String(lines.length)} lines drawn${first.length ? `, from ${first.join(", ")}` : ""}`,
     `page ${document.visibilityState}`,
   ].join("; ");

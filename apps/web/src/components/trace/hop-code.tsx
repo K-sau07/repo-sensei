@@ -31,12 +31,18 @@ import { kindLabel, TRACE_LANES } from "./meta";
 // CodeMirror runs in the browser only, in its own chunk (the code browser's).
 const CodeViewer = dynamic(
   () => import("@/components/code/code-viewer").then((module) => module.CodeViewer),
-  { ssr: false, loading: () => <CodeSkeleton /> },
+  { ssr: false, loading: () => <CodeSkeleton waiting="viewer" /> },
 );
 
-function CodeSkeleton() {
+/** ``waiting``: for the file, or for the viewer's own code (its chunk), to tell them apart. */
+function CodeSkeleton({ waiting }: { waiting: "file" | "viewer" }) {
   return (
-    <div role="status" aria-label="Loading the code" className="flex flex-col gap-2 p-4">
+    <div
+      role="status"
+      aria-label="Loading the code"
+      data-waiting={waiting}
+      className="flex flex-col gap-2 p-4"
+    >
       {Array.from({ length: 6 }, (_, index) => (
         <Skeleton
           key={index}
@@ -85,7 +91,7 @@ function Viewer({ place }: { place: HopPlace }) {
       </div>
     );
   }
-  return <CodeSkeleton />;
+  return <CodeSkeleton waiting="file" />;
 }
 
 export function HopCode({

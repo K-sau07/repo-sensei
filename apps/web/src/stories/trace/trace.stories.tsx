@@ -6,7 +6,7 @@ import { expect, userEvent, waitFor, within } from "storybook/test";
 
 import { TracePage } from "@/components/trace/trace-page";
 import type { Trace } from "@/lib/api/trace";
-import { BROWSE_COMMIT } from "@/mocks/browse";
+import { BROWSE_COMMIT, contentFiles } from "@/mocks/browse";
 import { resetMockDb } from "@/mocks/db";
 import fixture from "@/mocks/fixtures/trace.json";
 import { handlers } from "@/mocks/handlers";
@@ -48,6 +48,14 @@ const meta = {
   beforeEach: () => {
     resetMockDb();
   },
+  // The code viewer's chunk and the files' fixture, loaded before the story starts: on a busy
+  // runner their first load can outlast the wait for a line, which is the drawing's alone.
+  loaders: [
+    async () => {
+      await Promise.all([import("@/components/code/code-viewer"), contentFiles()]);
+      return {};
+    },
+  ],
 } satisfies Meta<typeof TracePage>;
 
 export default meta;
