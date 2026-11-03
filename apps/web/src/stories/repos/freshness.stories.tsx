@@ -52,7 +52,7 @@ export const RefSwitcherOpen: Story = {
 /** Searching the refs by name. */
 export const RefSwitcherSearch: Story = {
   play: async ({ canvas, canvasElement }) => {
-    await userEvent.click(canvas.getByTestId("ref-switcher"));
+    await userEvent.click(await canvas.findByTestId("ref-switcher"));
     const body = within(canvasElement.ownerDocument.body);
     await body.findByRole("option", { name: /release/ });
     await userEvent.type(body.getByPlaceholderText("Find a branch or pull request…"), "nope");
