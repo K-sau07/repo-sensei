@@ -39,6 +39,8 @@ export default defineConfig({
         plugins: [storybookTest({ configDir: path.join(root, ".storybook") })],
         test: {
           name: "storybook",
+          // Above the longest wait in a story (the code viewer's, 15 s on a shared CI runner).
+          testTimeout: 30_000,
           browser: {
             enabled: true,
             headless: true,
