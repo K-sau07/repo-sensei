@@ -16,6 +16,7 @@ from sensei_core.errors import ForbiddenError, InvalidError
 from sensei_core.limits import (
     QuotaExceededError,
     ReadOnlyError,
+    address_key,
     check_global_spend,
     check_quota,
     count_quota,
@@ -100,3 +101,15 @@ def test_a_public_import_is_refused_blocked_or_too_large() -> None:
     with pytest.raises(ForbiddenError) as blocked:
         within_public_tier(_facts("spam/repo", 10), limits)
     assert blocked.value.code == "repo_blocked"
+
+
+def test_an_address_is_kept_as_its_network_and_never_as_itself() -> None:
+    secret = b"k" * 32
+    one = address_key("2001:db8:1:2::1", secret)
+    assert one == address_key("2001:db8:1:2:ffff::9", secret)  # the same /64: one subscriber
+    assert one != address_key("2001:db8:1:3::1", secret)
+    assert address_key("::ffff:203.0.113.9", secret) == address_key("203.0.113.9", secret)
+    assert address_key("203.0.113.9", secret) != address_key("203.0.113.10", secret)
+    assert address_key("203.0.113.9", secret) != address_key("203.0.113.9", b"o" * 32)
+    assert "203.0.113" not in address_key("203.0.113.9", secret)
+    assert address_key(None, secret) == address_key("", secret)

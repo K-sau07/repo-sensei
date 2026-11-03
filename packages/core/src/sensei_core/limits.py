@@ -15,6 +15,8 @@ the day once every org's spend together reaches the day's cap.
 from __future__ import annotations
 
 import hashlib
+import hmac
+import ipaddress
 import uuid
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -97,10 +99,26 @@ async def count_quota(
         log.warning("quota unavailable", name=name, error=type(exc).__name__)
 
 
-def address_key(address: str | None) -> str:
-    """Who someone not signed in is, for a quota: their address, hashed (no address is kept
-    in Redis), or one shared by every request without one."""
-    return "ip-" + hashlib.sha256((address or "unknown").encode()).hexdigest()[:32]
+def address_key(address: str | None, secret: bytes) -> str:
+    """Who someone not signed in is, for a quota: their address (an IPv6 one by its /64, what
+    one subscriber or machine is usually given, so its 2^64 addresses are one), keyed with
+    ``secret`` so the key can't be read back to an address; one key for every request
+    without one."""
+    return "ip-" + hmac.new(secret, _network(address).encode(), hashlib.sha256).hexdigest()[:32]
+
+
+def _network(address: str | None) -> str:
+    if not address:
+        return "unknown"
+    try:
+        ip = ipaddress.ip_address(address)
+    except ValueError:
+        return address
+    if isinstance(ip, ipaddress.IPv6Address):
+        if ip.ipv4_mapped is not None:
+            return str(ip.ipv4_mapped)
+        return str(ipaddress.ip_network(f"{ip}/64", strict=False))
+    return str(ip)
 
 
 def _refuse(name: str, per_day: int, what: str, moment: datetime) -> None:

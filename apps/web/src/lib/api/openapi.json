@@ -17838,7 +17838,7 @@
     },
     "/api/v1/public/repos": {
       "get": {
-        "description": "The gallery: the published repositories that are indexed, newest first.",
+        "description": "The gallery: the published repositories that are indexed, newest first. Which ones is\nread each time (a repository gone private is gone at once); what each does is kept a few\nminutes while they're the same ones at the same commits, and worked out by one request at\na time: reading each one's overview again (after an index, a deploy, a day) is the costly\npart, and anyone may ask for it.",
         "operationId": "public_repos_api_v1_public_repos_get",
         "responses": {
           "200": {

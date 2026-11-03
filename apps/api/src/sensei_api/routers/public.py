@@ -14,11 +14,16 @@ few a minute and a day; each behind a Cloudflare Turnstile check (:mod:`sensei_a
 
 from __future__ import annotations
 
+import asyncio
+from contextlib import suppress
 from datetime import datetime
 from typing import Annotated
+from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Path, Request, Response
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
+from redis.asyncio import Redis
+from redis.exceptions import RedisError
 from sqlalchemy import Select, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sse_starlette import EventSourceResponse
@@ -29,11 +34,11 @@ from sensei_api.ratelimit import TokenBucket
 from sensei_api.routers.ask import answer_anonymously
 from sensei_api.routers.feature_maps import FeatureMapList, maps_of
 from sensei_api.routers.overview import OverviewOut, overview_of
-from sensei_api.spend import remaining_today
+from sensei_api.spend import CostCapReachedError, remaining_today
 from sensei_core.config import ExploreSettings, Settings
 from sensei_core.context import current_client_ip
 from sensei_core.db.tenancy import set_org_context
-from sensei_core.errors import DomainError, NotFoundError, RateLimitedError
+from sensei_core.errors import ConflictError, DomainError, NotFoundError, RateLimitedError
 from sensei_core.indexing.jobs import repo_summaries
 from sensei_core.indexing.snapshots import resolve_snapshot
 from sensei_core.limits import address_key, check_quota, count_quota
@@ -43,6 +48,11 @@ from sensei_core.repos.access import open_to_all
 router = APIRouter(prefix="/public", tags=["public"])
 
 MAX_REPOS = 60  # the gallery's, newest first
+GALLERY_PREFIX = "public:gallery:v1:"
+GALLERY_SECONDS = 300
+GALLERY_LOCK_SECONDS = 30
+GALLERY_WAITS = 25  # a request finding the gallery being worked out waits this many times...
+GALLERY_WAIT_SECONDS = 0.2  # ...this long each, then works it out itself
 # Indexed snapshots don't change: a page may be kept a minute, and served stale while
 # fetched again.
 CACHE_CONTROL = "public, max-age=60, stale-while-revalidate=600"
@@ -84,10 +94,46 @@ class PublicRepoPage(BaseModel):
 async def public_repos(
     *, request: Request, response: Response, db: DbSession, redis: RedisClient
 ) -> PublicRepoList:
-    """The gallery: the published repositories that are indexed, newest first."""
+    """The gallery: the published repositories that are indexed, newest first. Which ones is
+    read each time (a repository gone private is gone at once); what each does is kept a few
+    minutes while they're the same ones at the same commits, and worked out by one request at
+    a time: reading each one's overview again (after an index, a deploy, a day) is the costly
+    part, and anyone may ask for it."""
     response.headers["Cache-Control"] = CACHE_CONTROL
-    if await _explore_org(request, db) is None:
+    org = await _explore_org(request, db)
+    if org is None:
         return PublicRepoList(items=[])
+    shown = await _shown(db)
+    signature = [_signed(repo, snapshot) for repo, snapshot in shown]
+    key = f"{GALLERY_PREFIX}{org.id}"
+    kept = await _kept_gallery(redis, key, signature)
+    if kept is not None:
+        return kept
+    try:
+        mine = bool(await redis.set(f"{key}:lock", "1", nx=True, ex=GALLERY_LOCK_SECONDS))
+    except RedisError:
+        mine = True
+    if not mine:  # another request is working it out: its answer, when it has one
+        for _ in range(GALLERY_WAITS):
+            await asyncio.sleep(GALLERY_WAIT_SECONDS)
+            kept = await _kept_gallery(redis, key, signature)
+            if kept is not None:
+                return kept
+    found = PublicRepoList(
+        items=[
+            _out(repo, snapshot, await overview_of(request, repo, db, redis, snapshot))
+            for repo, snapshot in shown
+        ]
+    )
+    with suppress(RedisError):
+        await redis.set(key, found.model_dump_json(), ex=GALLERY_SECONDS)
+        if mine:
+            await redis.delete(f"{key}:lock")
+    return found
+
+
+async def _shown(db: AsyncSession) -> list[tuple[Repo, Snapshot]]:
+    """The gallery's repositories (the transaction the explore org's) at their last index."""
     repos = list(
         await db.scalars(
             _published().order_by(Repo.published_at.desc(), Repo.full_name).limit(MAX_REPOS)
@@ -95,14 +141,31 @@ async def public_repos(
     )
     shown = [repo for repo in repos if open_to_all(repo)]
     summaries = await repo_summaries(db, shown)
-    items: list[PublicRepoOut] = []
-    for repo in shown:
-        snapshot = summaries[repo.id].snapshot
-        if snapshot is None:
-            continue
-        found = await overview_of(request, repo, db, redis, snapshot)
-        items.append(_out(repo, snapshot, found))
-    return PublicRepoList(items=items)
+    return [
+        (repo, snapshot) for repo in shown if (snapshot := summaries[repo.id].snapshot) is not None
+    ]
+
+
+def _signed(repo: Repo, snapshot: Snapshot) -> tuple[str, str, str]:
+    return (repo.full_name, snapshot.commit_sha, str(repo.published_at))
+
+
+async def _kept_gallery(
+    redis: Redis, key: str, signature: list[tuple[str, str, str]]
+) -> PublicRepoList | None:
+    """The kept gallery, if it is of these repositories at these commits."""
+    try:
+        kept = await redis.get(key)
+    except RedisError:
+        return None
+    if kept is None:
+        return None
+    try:
+        found = PublicRepoList.model_validate_json(kept)
+    except ValidationError:  # kept in a shape this code doesn't read: worked out again
+        return None
+    same = [(i.full_name, i.sha, str(i.published_at)) for i in found.items] == signature
+    return found if same else None
 
 
 @router.get("/repos/{owner}/{name}", response_model=PublicRepoPage)
@@ -155,7 +218,7 @@ async def public_ask(
     explore = settings.explore
     turnstile.require(explore.turnstile_secret)  # closed: nothing counted
     address = current_client_ip()
-    who = address_key(address)
+    who = address_key(address, settings.auth.token_encryption_key.get_secret_value().encode())
     wait = await TokenBucket(redis, name="explore-ask", per_minute=explore.asks_per_minute).take(
         who
     )
@@ -167,12 +230,23 @@ async def public_ask(
     await check_quota(redis, "explore_asks", who, explore.asks_per_day,
                       what="questions on public pages")  # fmt: skip
     repo, snapshot = await published_repo(request, db, owner, name)
+    if snapshot.symbol_count is None or snapshot.chunk_count is None:  # before anything counts
+        raise ConflictError("This repository isn't indexed for questions yet.", code="not_indexed")
+    try:
+        remaining = await remaining_today(
+            db, redis, settings.agent, org_id=repo.org_id, user_id=None,
+            warn_in=lambda: streams.short_session(request),
+        )  # fmt: skip
+    except CostCapReachedError as exc:  # said without the org's budget: it's the org's to know
+        resets = (exc.details or {}).get("resets_at")
+        raise CostCapReachedError(
+            "Questions here are paused for today.",
+            details={"resets_at": resets} if resets else None,
+            headers=exc.headers,
+        ) from None
+    # Last, once the rest would let it through: a token is good once.
     await turnstile.verify(request.app.state.http, explore.turnstile_secret,
-                           body.turnstile_token, address)  # fmt: skip
-    remaining = await remaining_today(
-        db, redis, settings.agent, org_id=repo.org_id, user_id=None,
-        warn_in=lambda: streams.short_session(request),
-    )  # fmt: skip
+                           body.turnstile_token, address, hostname=_hostname(settings))  # fmt: skip
     await count_quota(redis, "explore_asks", who)
     cap = explore.max_answer_usd if remaining is None else min(explore.max_answer_usd, remaining)
     return await answer_anonymously(
@@ -237,6 +311,11 @@ def _out(repo: Repo, snapshot: Snapshot, overview: OverviewOut) -> PublicRepoOut
         summary=overview.summary.text if overview.summary is not None else None,
         published_at=repo.published_at or repo.updated_at,  # only published ones are read
     )
+
+
+def _hostname(settings: Settings) -> str | None:
+    """The site's host, where Turnstile's check must have been passed."""
+    return urlsplit(settings.web.origin).hostname
 
 
 def _not_found() -> NotFoundError:

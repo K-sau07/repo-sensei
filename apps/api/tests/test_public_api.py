@@ -15,6 +15,7 @@ from fastapi import FastAPI
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from sensei_api.routers import public
 from sensei_core.config import ExploreSettings
 from sensei_core.db.tenancy import set_org_context
 from sensei_core.errors import ForbiddenError, InvalidError
@@ -115,6 +116,14 @@ async def test_a_published_repository_is_read_by_anyone(
     assert item["sha"] == repo.last_indexed_sha
     assert item["summary"] == "An items service."
     assert item["files"] is not None
+
+    # Asked again (the same repositories at the same commits): what each does is the kept one.
+    def costly(*_: object) -> None:
+        raise AssertionError("worked out again")
+
+    with pytest.MonkeyPatch.context() as patched:
+        patched.setattr(public, "overview_of", costly)
+        assert (await client.get(f"{API}/public/repos")).json() == listed.json()
 
     page = await client.get(f"{API}/public/repos/O/Items")  # GitHub's names are any case
     assert page.status_code == 200, page.text

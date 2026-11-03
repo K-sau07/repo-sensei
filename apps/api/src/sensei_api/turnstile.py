@@ -9,6 +9,7 @@ nothing through: it guards spend).
 from __future__ import annotations
 
 import uuid
+from typing import cast
 
 import httpx
 from pydantic import SecretStr
@@ -21,6 +22,9 @@ log = get_logger(__name__)
 VERIFY_URL = "https://challenges.cloudflare.com/turnstile/v0/siteverify"
 MAX_TOKEN_CHARS = 2_048  # Cloudflare's
 TIMEOUT_SECONDS = 5.0
+ACTION = "ask"  # what the page's widget says it is for
+# Cloudflare's test secrets (pass, fail, already spent): they answer for any page.
+TEST_SECRETS = frozenset(f"{n}x0000000000000000000000000000000AA" for n in (1, 2, 3))
 
 
 class HumanCheckFailedError(DomainError):
@@ -34,10 +38,17 @@ class HumanCheckUnavailableError(DomainError):
 
 
 async def verify(
-    http: httpx.AsyncClient, secret: SecretStr, token: str, address: str | None
+    http: httpx.AsyncClient,
+    secret: SecretStr,
+    token: str,
+    address: str | None,
+    *,
+    hostname: str | None = None,
 ) -> None:
-    """:class:`HumanCheckFailedError` unless Cloudflare says ``token`` is good;
-    :class:`HumanCheckUnavailableError` when it can't be asked (or there is no secret)."""
+    """:class:`HumanCheckFailedError` unless Cloudflare says ``token`` is good, for the page's
+    question (``ACTION``) on ``hostname`` (the site's: a token from a page elsewhere that uses
+    the same key isn't); :class:`HumanCheckUnavailableError` when it can't be asked (or there is
+    no secret). Cloudflare's test secrets pass any host and action."""
     require(secret)
     if not token or len(token) > MAX_TOKEN_CHARS:
         raise _failed()
@@ -53,16 +64,25 @@ async def verify(
         try:
             response = await http.post(VERIFY_URL, data=form, timeout=TIMEOUT_SECONDS)
             response.raise_for_status()
-            said = response.json()
+            body: object = response.json()
         except (httpx.HTTPError, ValueError) as exc:
             log.warning("turnstile unavailable", error=type(exc).__name__)
             continue
-        if isinstance(said, dict) and said.get("success") is True:  # pyright: ignore[reportUnknownMemberType]
+        said = cast("dict[str, object]", body) if isinstance(body, dict) else {}
+        if said.get("success") is not True:
+            log.info("turnstile refused", codes=said.get("error-codes"))
+            raise _failed()
+        if secret.get_secret_value() in TEST_SECRETS or _ours(said, hostname):
             return
-        codes = said.get("error-codes") if isinstance(said, dict) else None  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
-        log.info("turnstile refused", codes=codes)
+        log.info("turnstile elsewhere", hostname=said.get("hostname"), action=said.get("action"))
         raise _failed()
     raise HumanCheckUnavailableError("The check that you're a person can't be made right now.")
+
+
+def _ours(said: dict[str, object], hostname: str | None) -> bool:
+    if said.get("action") != ACTION:
+        return False
+    return hostname is None or str(said.get("hostname") or "").lower() == hostname.lower()
 
 
 def require(secret: SecretStr) -> None:

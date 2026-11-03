@@ -1076,7 +1076,11 @@ class _Turnstile:
         form = dict(httpx.QueryParams(request.content.decode()))
         self.asked.append(form)
         if form["response"] == "good":
-            return httpx.Response(200, json={"success": True, "error-codes": []})
+            passed = {"success": True, "hostname": "localhost", "action": "ask"}
+            return httpx.Response(200, json=passed)
+        if form["response"] == "elsewhere":  # passed on another site that uses the key
+            passed = {"success": True, "hostname": "evil.example", "action": "ask"}
+            return httpx.Response(200, json=passed)
         return httpx.Response(
             200, json={"success": False, "error-codes": ["invalid-input-response"]}
         )
@@ -1191,3 +1195,38 @@ async def test_public_questions_need_a_published_repository_a_secret_and_patienc
     closed, _ = await _ask_publicly(app, client)  # closed before any limit is counted
     assert closed.status_code == 503
     assert closed.json()["error"]["code"] == "human_check_unavailable"
+
+
+async def test_a_public_question_refused_before_it_costs_says_little_and_counts_nothing(
+    app: FastAPI, client: httpx.AsyncClient, db_session: AsyncSession, fake_redis: FakeAsyncRedis
+) -> None:
+    checks = await _published(app, client, db_session, asks_per_day=1, asks_per_minute=100)
+    repo = await db_session.scalar(select(Repo).where(Repo.full_name == "o/items"))
+    assert repo is not None
+    # A token passed on another site that uses the same key isn't this page's.
+    elsewhere = await client.post(
+        f"{API}/public/repos/o/items/ask", json={"message": "x", "turnstile_token": "elsewhere"}
+    )
+    assert elsewhere.status_code == 403
+    # The org's day spent: said without its budget, and before Cloudflare is asked.
+    _agent_settings(app, daily_cost_cap_usd=Decimal("1"))
+    await hold(fake_redis, repo.org_id, uuid.uuid4(), Decimal("1"))
+    asked = len(checks.asked)
+    capped, _ = await _ask_publicly(app, client)
+    assert capped.status_code == 429
+    error = capped.json()["error"]
+    assert error["code"] == "cost_cap_reached"
+    assert "cap_usd" not in (error.get("details") or {})
+    assert len(checks.asked) == asked
+    await fake_redis.delete(f"{HOLDS_PREFIX}{repo.org_id}")
+    # Not indexed for questions: refused before anything counts (the day's one is still there).
+    snapshot = await db_session.scalar(select(Snapshot).where(Snapshot.repo_id == repo.id))
+    assert snapshot is not None
+    snapshot.chunk_count = None
+    await db_session.flush()
+    refused, _ = await _ask_publicly(app, client)
+    assert refused.status_code == 409
+    snapshot.chunk_count = 1
+    await db_session.flush()
+    first, _ = await _ask_publicly(app, client)
+    assert first.status_code == 200, first.text

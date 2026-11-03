@@ -2223,7 +2223,11 @@ export interface paths {
         };
         /**
          * Public Repos
-         * @description The gallery: the published repositories that are indexed, newest first.
+         * @description The gallery: the published repositories that are indexed, newest first. Which ones is
+         *     read each time (a repository gone private is gone at once); what each does is kept a few
+         *     minutes while they're the same ones at the same commits, and worked out by one request at
+         *     a time: reading each one's overview again (after an index, a deploy, a day) is the costly
+         *     part, and anyone may ask for it.
          */
         get: operations["public_repos_api_v1_public_repos_get"];
         put?: never;

@@ -25,5 +25,7 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    # Row-level security off, so a role it would filter fails here instead of deleting nothing.
+    op.execute("SET LOCAL row_security = off")
     op.execute("DELETE FROM conversations WHERE user_id IS NULL")
     op.alter_column("conversations", "user_id", existing_type=sa.Uuid(), nullable=False)
