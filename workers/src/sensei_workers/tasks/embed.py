@@ -37,6 +37,7 @@ from sensei_core.indexing.jobs import JOB_USAGE_REF
 from sensei_core.jobs import TaskName
 from sensei_core.logging import get_logger
 from sensei_core.models import ACTIVE_JOB_STATUSES, Repo, Snapshot, Stage
+from sensei_core.repos.access import open_to_all
 from sensei_engine.embed import store
 from sensei_engine.embed.cache import embed_documents
 from sensei_engine.embed.provider import usage_ledger
@@ -73,6 +74,7 @@ class Target:
     job_id: uuid.UUID
     partition: str | None  # the repository's partition of chunks (None: no chunks)
     generation: int | None  # the snapshot's live chunks as the stage starts (None: no chunks)
+    shared: bool = False  # a public repository's: its vectors are kept for every org (10.1)
 
 
 @dataclass(slots=True)
@@ -119,7 +121,8 @@ async def _begin(task: IngestTask, org_id: str, job_id: uuid.UUID) -> Target | N
             return None
         partition = await chunk_partition(db, repo.id)
         generation = snapshot.chunk_generation
-        return Target(repo.org_id, repo.id, snapshot.id, job_id, partition, generation)
+        shared = open_to_all(repo)
+        return Target(repo.org_id, repo.id, snapshot.id, job_id, partition, generation, shared)
 
 
 def _skip(scope: JobScope, reason: str, why: str) -> None:
@@ -189,6 +192,7 @@ async def _embed_group(
             provider,
             [(chunk.content_hash, chunk.text) for chunk in chunks],
             org_id=target.org_id,
+            shared=target.shared,
             on_usage=sink,
         )
         await store.save(db, target.repo_id, {c.id: found.vectors[c.content_hash] for c in chunks})

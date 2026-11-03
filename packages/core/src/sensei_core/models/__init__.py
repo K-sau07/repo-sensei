@@ -16,7 +16,7 @@ from sensei_core.models.conversations import (
     MessageFeedback,
 )
 from sensei_core.models.diagrams import Diagram, DiagramKind, DiagramSource
-from sensei_core.models.embeddings import EmbeddingCache
+from sensei_core.models.embeddings import EmbeddingCache, PublicEmbeddingCache
 from sensei_core.models.evals import EvalRun
 from sensei_core.models.files import RepoFile
 from sensei_core.models.fixes import (
@@ -137,6 +137,7 @@ __all__ = [
     "OAuthToken",
     "Org",
     "Provenance",
+    "PublicEmbeddingCache",
     "Repo",
     "RepoFile",
     "RepoRef",

@@ -1,6 +1,8 @@
 """Document embeddings by content hash, per org: each chunk's text is embedded once per org,
 model and size, in any of the org's repositories or snapshots, and read back from
-``embedding_cache`` every other time. Orgs never share vectors (see the model).
+``embedding_cache`` every other time. Orgs never share vectors (see the model), but for public
+repositories' (``shared``): those are also kept once for every org (``public_embedding_cache``),
+and a public repository's chunk found there isn't embedded again, whoever indexed it first.
 
 :func:`embed_documents` looks the hashes up, embeds only the misses (each distinct hash once),
 stores them and returns every vector. Misses go to the provider :data:`EMBED_GROUP` at a time;
@@ -25,7 +27,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from sensei_core.db.types import half_precision
-from sensei_core.models import EmbeddingCache
+from sensei_core.models import EmbeddingCache, PublicEmbeddingCache
 from sensei_core.models.embeddings import CONTENT_HASH_BYTES
 from sensei_engine.embed.provider import EmbeddingProvider, InputType, UsageSink, model_key
 
@@ -61,6 +63,36 @@ async def lookup(
     return found
 
 
+async def lookup_public(
+    db: AsyncSession, model: str, dims: int, hashes: Sequence[bytes]
+) -> dict[bytes, list[float]]:
+    """Public repositories' vectors among ``hashes`` (every org's), for ``model`` at ``dims``."""
+    found: dict[bytes, list[float]] = {}
+    for chunk in batched(dict.fromkeys(hashes), LOOKUP_BATCH, strict=False):
+        rows = await db.execute(
+            select(PublicEmbeddingCache.content_hash, PublicEmbeddingCache.embedding).where(
+                PublicEmbeddingCache.model == model,
+                PublicEmbeddingCache.dims == dims,
+                PublicEmbeddingCache.content_hash.in_(chunk),
+            )
+        )
+        found.update({h: vector for h, vector in rows.tuples()})  # noqa: C416
+    return found
+
+
+async def store_public(
+    db: AsyncSession, model: str, dims: int, vectors: Mapping[bytes, Sequence[float]]
+) -> None:
+    """Add a public repository's ``vectors`` to every org's cache (in hash order, as
+    :func:`store`)."""
+    rows = [
+        {"content_hash": key, "model": model, "dims": dims, "embedding": vector}
+        for key, vector in sorted(vectors.items())
+    ]
+    for chunk in batched(rows, STORE_BATCH, strict=False):
+        await db.execute(insert(PublicEmbeddingCache).values(list(chunk)).on_conflict_do_nothing())
+
+
 async def store(
     db: AsyncSession,
     org_id: uuid.UUID,
@@ -86,12 +118,15 @@ async def embed_documents(
     items: Sequence[tuple[bytes, str]],
     *,
     org_id: uuid.UUID,
+    shared: bool = False,
     on_usage: UsageSink | None = None,
     checkpoint: Callable[[], Awaitable[None]] | None = None,
 ) -> CachedEmbeddings:
     """A vector for each ``(content hash, text)`` of the org's: from the cache where it has one,
-    embedded (as documents) and cached otherwise. ``checkpoint`` runs after each group of misses
-    is stored (commit there to keep it)."""
+    embedded (as documents) and cached otherwise. ``shared``: the texts are a public
+    repository's, so every org's public cache is read too (what's found there is copied to the
+    org's), and what's embedded is kept there as well. ``checkpoint`` runs after each group of
+    misses is stored (commit there to keep it)."""
     texts: dict[bytes, str] = {}
     for content_hash, text in items:
         if len(content_hash) != CONTENT_HASH_BYTES:
@@ -102,6 +137,12 @@ async def embed_documents(
         texts.setdefault(content_hash, text)
     model, dims = model_key(provider), provider.dims
     result = CachedEmbeddings(vectors=await lookup(db, org_id, model, dims, list(texts)))
+    if shared:
+        absent = [content_hash for content_hash in texts if content_hash not in result.vectors]
+        public = await lookup_public(db, model, dims, absent)
+        if public:
+            await store(db, org_id, model, dims, public)
+            result.vectors.update(public)
     result.hits = len(result.vectors)
     misses = [content_hash for content_hash in texts if content_hash not in result.vectors]
     for group in batched(misses, EMBED_GROUP, strict=False):
@@ -115,6 +156,8 @@ async def embed_documents(
             for content_hash, vector in zip(group, embedded, strict=True)
         }
         await store(db, org_id, model, dims, fresh)
+        if shared:
+            await store_public(db, model, dims, fresh)
         result.vectors.update(fresh)
         result.embedded += len(fresh)
         if checkpoint is not None:

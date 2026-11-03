@@ -19,7 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sensei_core.db.tenancy import set_org_context
 from sensei_core.db.types import half_precision
 from sensei_core.mail import MemoryMailer
-from sensei_core.models import EmbeddingCache, UsageEvent, UsageKind
+from sensei_core.models import EmbeddingCache, PublicEmbeddingCache, UsageEvent, UsageKind
 from sensei_core.orgs.service import OrgService
 from sensei_core.usage import DEFAULT_PRICE_TABLE, CostCalculator
 from sensei_engine.embed import cache
@@ -143,6 +143,31 @@ async def test_orgs_never_share_vectors(db_session: AsyncSession) -> None:
     with pytest.raises(DBAPIError):  # and it can't write into acme
         async with db_session.begin_nested():
             await cache.store(db_session, acme, "fake/m", 3, {_hash("y"): [1.0, 2.0, 3.0]})
+
+
+async def test_a_public_repositorys_vectors_are_kept_for_every_org(
+    db_session: AsyncSession,
+) -> None:
+    # 10.1: a popular public repository is embedded once, whichever org imports it first; a
+    # private repository's chunks never reach the shared cache.
+    text_ = "def handler(request): return ok"
+    public = [(_hash(text_), text_)]
+    acme = await _org(db_session, "acme")
+    first = FakeProvider()
+    await embed_documents(db_session, first, public, org_id=acme, shared=True)
+    private = [(_hash("secret = 42"), "secret = 42")]
+    await embed_documents(db_session, first, private, org_id=acme)
+    shared = set(await db_session.scalars(select(PublicEmbeddingCache.content_hash)))
+    assert shared == {_hash(text_)}
+
+    globex = await _org(db_session, "globex")
+    provider = FakeProvider()
+    found = await embed_documents(db_session, provider, public, org_id=globex, shared=True)
+    assert (found.hits, found.embedded, provider.calls) == (1, 0, [])
+    # Copied to globex's own cache; a private repository of globex's still embeds its own.
+    assert list(await lookup(db_session, globex, model_key(provider), 3, [_hash(text_)]))
+    again = await embed_documents(db_session, provider, private, org_id=globex)
+    assert again.embedded == 1
 
 
 async def test_a_failure_part_way_keeps_the_groups_already_stored(

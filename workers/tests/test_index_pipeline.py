@@ -48,6 +48,7 @@ from sensei_core.models import (
     Notification,
     NotificationKind,
     Org,
+    PublicEmbeddingCache,
     Repo,
     RepoSource,
     RepoStatus,
@@ -204,10 +205,19 @@ async def _cleanup(runtime: Runtime, org_id: uuid.UUID, repo_id: uuid.UUID) -> N
         await storage.delete_prefix(bucket, repo_prefix(bucket, org_id, repo_id))
     async with runtime.system_database.session() as db:
         await db.execute(delete(Org).where(Org.id == org_id))
+    await _forget_public_vectors(runtime)
+
+
+async def _forget_public_vectors(runtime: Runtime) -> None:
+    """The fixture's repository is public: its vectors go to the cache every org shares (10.1),
+    which no org's removal clears. Each test starts without them, so each embeds its own."""
+    async with runtime.system_database.session() as db:
+        await db.execute(delete(PublicEmbeddingCache))
 
 
 @pytest.fixture
 def ids(runtime: Runtime) -> Iterator[tuple[uuid.UUID, uuid.UUID, uuid.UUID]]:
+    runtime.run(_forget_public_vectors(runtime))
     found = runtime.run(_setup(runtime.system_database))
     yield found
     runtime.run(_cleanup(runtime, found[0], found[1]))
