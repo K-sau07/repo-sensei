@@ -34,7 +34,11 @@ export const instant = false;
 
 export default async function ExploreRepoPage({ params }: Props) {
   const { owner, repo } = await params;
-  const [page, maps] = await Promise.all([publicRepo(owner, repo), publicMaps(owner, repo)]);
+  // The maps are a part of the page: without them (the API failing them), it shows the rest.
+  const [page, maps] = await Promise.all([
+    publicRepo(owner, repo),
+    publicMaps(owner, repo).catch(() => null),
+  ]);
   if (page === null) notFound();
   return (
     <>

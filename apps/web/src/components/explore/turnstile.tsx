@@ -53,22 +53,30 @@ function loaded(): Promise<TurnstileApi> {
   return loading;
 }
 
+// Turnstile's flexible check is at least this wide; a narrower box gets the compact one.
+const FLEXIBLE_MIN_PX = 300;
+
 export function Turnstile({
   siteKey,
   round,
   onToken,
+  onUnavailable,
 }: {
   siteKey: string;
   /** Changed after each question: its token is spent, so the check starts again. */
   round: number;
-  /** A token once the check passes; null when it lapses or fails. */
+  /** A token once the check passes; null when it lapses or fails (or the check goes away). */
   onToken: (token: string | null) => void;
+  /** The check couldn't load (blocked, offline): nothing can be asked until it does. */
+  onUnavailable: () => void;
 }) {
   const box = useRef<HTMLDivElement>(null);
   const widget = useRef<string | null>(null);
   const told = useRef(onToken);
+  const failed = useRef(onUnavailable);
   useEffect(() => {
     told.current = onToken;
+    failed.current = onUnavailable;
   });
 
   useEffect(() => {
@@ -79,7 +87,7 @@ export function Turnstile({
         widget.current = api.render(box.current, {
           sitekey: siteKey,
           action: "ask",
-          size: "flexible",
+          size: box.current.clientWidth < FLEXIBLE_MIN_PX ? "compact" : "flexible",
           callback: (token) => {
             told.current(token);
           },
@@ -92,12 +100,16 @@ export function Turnstile({
         });
       })
       .catch(() => {
+        if (gone) return;
         told.current(null);
+        failed.current();
       });
     return () => {
       gone = true;
       if (widget.current !== null) window.turnstile?.remove(widget.current);
       widget.current = null;
+      // A hidden page keeps its state: a token kept past the widget would lapse unseen.
+      told.current(null);
     };
   }, [siteKey]);
 
@@ -107,5 +119,5 @@ export function Turnstile({
     window.turnstile?.reset(widget.current);
   }, [round]);
 
-  return <div ref={box} data-testid="turnstile" className="min-h-[65px]" />;
+  return <div ref={box} data-testid="turnstile" className="min-h-[65px] w-full" />;
 }

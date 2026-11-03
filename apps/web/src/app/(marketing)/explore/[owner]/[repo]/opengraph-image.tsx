@@ -1,3 +1,4 @@
+import { notFound } from "next/navigation";
 import { ImageResponse } from "next/og";
 
 import { shortSha } from "@/lib/api/explore";
@@ -17,8 +18,9 @@ export default async function Image({
 }) {
   const { owner, repo } = await params;
   const page = await publicRepo(owner, repo);
-  const name = page?.repo.full_name ?? `${owner}/${repo}`;
-  const summary = page?.repo.summary ?? "";
+  if (page === null) notFound(); // never a card in the site's name for what isn't published
+  const name = page.repo.full_name;
+  const summary = page.repo.summary ?? "";
   return new ImageResponse(
     <div
       style={{
@@ -42,7 +44,7 @@ export default async function Image({
         )}
       </div>
       <div style={{ display: "flex", fontSize: 26, color: "#a1a1aa" }}>
-        {page ? `Verified at ${shortSha(page.repo.sha)}` : ""}
+        {`Verified at ${shortSha(page.repo.sha)}`}
       </div>
     </div>,
     size,

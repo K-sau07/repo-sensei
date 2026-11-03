@@ -7,11 +7,12 @@
  * (`human`): its token is good for one question, so the check starts again after each.
  */
 import { useChat } from "@ai-sdk/react";
-import { ArrowUp, Loader2 } from "lucide-react";
+import { ArrowUp, ChevronDown, ChevronUp, Loader2 } from "lucide-react";
 import Link from "next/link";
-import { useMemo, useState, type SubmitEvent } from "react";
+import { useMemo, useRef, useState, type SubmitEvent } from "react";
 
 import { Answer, Question } from "@/components/ask/answer";
+import { useAnnouncement } from "@/components/ask/use-announcement";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { chipLabel, type AskMessage, type CitationData } from "@/lib/api/ask";
@@ -40,8 +41,21 @@ export function ExploreAsk({
 }) {
   const fullName = `${owner}/${name}`;
   const transport = useMemo(() => publicAskTransport(owner, name), [owner, name]);
-  const chat = useChat<AskMessage>({ transport });
+  const asked = useRef("");
+  const chat = useChat<AskMessage>({
+    transport,
+    // Refused (a limit, the check): the question back in the box, to ask again as it was.
+    onError: () => {
+      chat.setMessages((messages) =>
+        messages.at(-1)?.role === "user" ? messages.slice(0, -1) : messages,
+      );
+      setText((now) => now || asked.current);
+    },
+  });
   const [text, setText] = useState("");
+  const [folded, setFolded] = useState(false);
+  const [unavailable, setUnavailable] = useState(false);
+  const [attempt, setAttempt] = useState(0);
   const [token, setToken] = useState<string | null>(human.kind === "mock" ? DUMMY_TOKEN : null);
   const [round, setRound] = useState(0);
   const busy = chat.status === "submitted" || chat.status === "streaming";
@@ -51,8 +65,10 @@ export function ExploreAsk({
   const ask = (question: string) => {
     const words = question.trim();
     if (!words || !ready) return;
+    asked.current = words;
     void chat.sendMessage({ text: words }, { body: { token } });
     setText("");
+    setFolded(false);
     if (human.kind === "widget") {
       setToken(null); // spent: the check starts again for the next question
       setRound((n) => n + 1);
@@ -63,6 +79,8 @@ export function ExploreAsk({
     ask(text);
   };
   const last = chat.messages.at(-1);
+  const answered = chat.messages.some((message) => message.role === "assistant");
+  const announcement = useAnnouncement(last?.role === "assistant" ? last : undefined, busy);
 
   return (
     <section
@@ -71,10 +89,27 @@ export function ExploreAsk({
     >
       <div className="pointer-events-auto flex w-full max-w-2xl flex-col gap-2 rounded-xl border border-border bg-bg p-3 shadow-lg">
         {chat.messages.length > 0 && (
+          <div className="flex justify-end">
+            <Button
+              type="button"
+              variant="ghost"
+              size="xs"
+              aria-expanded={!folded}
+              aria-controls="explore-thread"
+              onClick={() => {
+                setFolded((was) => !was);
+              }}
+            >
+              {folded ? <ChevronUp aria-hidden /> : <ChevronDown aria-hidden />}
+              {folded ? "Show answers" : "Hide answers"}
+            </Button>
+          </div>
+        )}
+        {chat.messages.length > 0 && !folded && (
           <div
-            className="flex max-h-[50vh] flex-col gap-4 overflow-y-auto pr-1"
+            id="explore-thread"
+            className="flex max-h-[35vh] flex-col gap-4 overflow-y-auto pr-1 sm:max-h-[50vh]"
             data-testid="explore-thread"
-            aria-live="polite"
           >
             {chat.messages.map((message) =>
               message.role === "user" ? (
@@ -95,7 +130,7 @@ export function ExploreAsk({
             {askFailure(chat.error)}
           </p>
         )}
-        {chat.messages.length === 0 && questions.length > 0 && open && (
+        {!answered && questions.length > 0 && open && (
           <ul className="flex flex-wrap gap-1.5" aria-label="Questions worth asking">
             {questions.slice(0, SUGGESTED).map((question) => (
               <li key={question}>
@@ -141,9 +176,35 @@ export function ExploreAsk({
             Questions about public repositories aren&apos;t open here yet.
           </p>
         )}
-        {human.kind === "widget" && (
-          <Turnstile siteKey={human.siteKey} round={round} onToken={setToken} />
-        )}
+        {human.kind === "widget" &&
+          (unavailable ? (
+            <p className="text-sm text-fg-muted">
+              The check that you&apos;re a person couldn&apos;t load.{" "}
+              <button
+                type="button"
+                className="underline hover:text-fg"
+                onClick={() => {
+                  setUnavailable(false);
+                  setAttempt((n) => n + 1);
+                }}
+              >
+                Try again
+              </button>
+            </p>
+          ) : (
+            <Turnstile
+              key={attempt}
+              siteKey={human.siteKey}
+              round={round}
+              onToken={setToken}
+              onUnavailable={() => {
+                setUnavailable(true);
+              }}
+            />
+          ))}
+        <p aria-live="polite" className="sr-only" data-testid="announcer">
+          {announcement}
+        </p>
         <p className="text-xs text-fg-faint">
           Short answers, asked as no one: each question stands alone.{" "}
           <Link href="/login" className="underline hover:text-fg">

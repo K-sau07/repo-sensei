@@ -43,6 +43,7 @@ import { EvidenceRail } from "./evidence-rail";
 import { ConversationHistory } from "./history";
 import { ShareButton } from "./share-dialog";
 import type { CodeHref } from "./tool-cards";
+import { useAnnouncement } from "./use-announcement";
 import { useAsk, useConversations } from "./use-ask";
 import { useStaleness } from "./use-staleness";
 
@@ -328,19 +329,6 @@ function useAskedFromBar(fresh: boolean, ask: (text: string, scope: ScopeData | 
 }
 
 /** What a screen reader hears when an answer is done: "Answer ready, 6 citations". */
-function useAnnouncement(latest: AskMessage | undefined, streaming: boolean): string {
-  const [said, setSaid] = useState("");
-  const was = useRef(false);
-  useEffect(() => {
-    if (was.current && !streaming && latest) {
-      const n = citationsOf(latest).length;
-      setSaid(`Answer ready, ${n} citation${n === 1 ? "" : "s"}`);
-    }
-    was.current = streaming;
-  }, [streaming, latest]);
-  return said;
-}
-
 function Start() {
   const { org, repo } = useRepoSlug();
   const recent = useConversations();

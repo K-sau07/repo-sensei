@@ -1,6 +1,6 @@
 import type { Meta, StoryObj } from "@storybook/nextjs-vite";
 import { http } from "msw";
-import { expect, userEvent, within } from "storybook/test";
+import { expect, userEvent, waitFor, within } from "storybook/test";
 
 import { Gallery as GalleryView } from "@/components/explore/gallery";
 import { RepoPage } from "@/components/explore/repo-page";
@@ -70,7 +70,8 @@ export const Repository: Story = {
   },
 };
 
-/** A question the API refuses (past the day's, here) says why. */
+/** A question the API refuses (past the day's, here) says why, and is back in the box to ask
+ * again; the suggestions stay, as nothing was answered. Answers fold away. */
 export const Refused: Story = {
   render: () => <RepoPage page={page} maps={maps} human={{ kind: "mock" }} />,
   parameters: {
@@ -82,10 +83,33 @@ export const Refused: Story = {
     ],
   },
   play: async ({ canvas }) => {
-    await userEvent.click(canvas.getByRole("button", { name: page.overview.questions[0] ?? "" }));
+    const first = page.overview.questions[0] ?? "";
+    await userEvent.click(canvas.getByRole("button", { name: first }));
     await expect(await canvas.findByRole("alert")).toHaveTextContent(
       "You've reached today's 20 questions on public pages.",
     );
+    await expect(canvas.getByLabelText("Your question")).toHaveValue(first);
+    await expect(canvas.getByRole("list", { name: "Questions worth asking" })).toBeVisible();
+    await expect(canvas.queryByTestId("explore-thread")).toBeNull();
+  },
+};
+
+/** Answers fold away, so the page under them can be read (a phone's screen). */
+export const Folded: Story = {
+  render: () => <RepoPage page={page} maps={maps} human={{ kind: "mock" }} />,
+  play: async ({ canvas }) => {
+    await userEvent.type(canvas.getByLabelText("Your question"), "Where are items saved?{Enter}");
+    await expect(await canvas.findByTestId("explore-thread")).toBeVisible();
+    await waitFor(
+      async () => {
+        await expect(canvas.getByTestId("announcer")).toHaveTextContent(/^Answer ready/);
+      },
+      { timeout: 5000 },
+    );
+    await userEvent.click(canvas.getByRole("button", { name: "Hide answers" }));
+    await expect(canvas.queryByTestId("explore-thread")).toBeNull();
+    await userEvent.click(canvas.getByRole("button", { name: "Show answers" }));
+    await expect(canvas.getByTestId("explore-thread")).toBeVisible();
   },
 };
 

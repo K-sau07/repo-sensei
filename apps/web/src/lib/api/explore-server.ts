@@ -14,6 +14,8 @@ import type { HumanCheck } from "@/components/explore/explore-ask";
 import type { FeatureMapList, PublicRepo, PublicRepoPage } from "./explore";
 
 const MOCKS = process.env.NEXT_PUBLIC_MOCKS === "1";
+// A page waits for these before it sends anything: an API that hangs fails it soon instead.
+const READ_TIMEOUT_MS = 8_000;
 
 function apiOrigin(): string {
   return (
@@ -41,6 +43,7 @@ export function humanCheck(): HumanCheck {
 async function read<T>(path: string): Promise<T | null> {
   const response = await fetch(`${apiOrigin()}/api/v1${path}`, {
     headers: { accept: "application/json" },
+    signal: AbortSignal.timeout(READ_TIMEOUT_MS),
   });
   if (response.status === 404) return null;
   if (!response.ok) throw new Error(`The API answered ${response.status} for ${path}.`);

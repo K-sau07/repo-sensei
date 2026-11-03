@@ -58,5 +58,10 @@ test.describe("the public gallery", () => {
     const card = await page.request.get(`${pathname}${search}`);
     expect(card.status()).toBe(200);
     expect(card.headers()["content-type"]).toBe("image/png");
+    // Never a card in the site's name for a repository that isn't published.
+    const spoofed = await page.request.get(
+      `${pathname.replace("fastapi/full-stack-fastapi-template", "anyone/anything")}${search}`,
+    );
+    expect(spoofed.status()).toBe(404);
   });
 });
