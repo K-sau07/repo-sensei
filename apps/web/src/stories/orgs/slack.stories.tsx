@@ -65,9 +65,9 @@ export const Disconnect: Story = {
     await expect(db.slack?.acme?.webhook_url).toBe(HOOK);
     // Saved, the form starts again from what was saved: nothing left to save (and Disconnect,
     // held while saving, is back).
-    await waitFor(() => {
-      expect(canvas.getByRole("button", { name: "Save" })).toBeDisabled();
-      expect(canvas.getByRole("button", { name: "Disconnect" })).toBeEnabled();
+    await waitFor(async () => {
+      await expect(canvas.getByRole("button", { name: "Save" })).toBeDisabled();
+      await expect(canvas.getByRole("button", { name: "Disconnect" })).toBeEnabled();
     });
     await userEvent.click(canvas.getByRole("button", { name: "Disconnect" }));
     const dialog = await within(canvasElement.ownerDocument.body).findByRole("alertdialog");
