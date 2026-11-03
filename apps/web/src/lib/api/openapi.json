@@ -747,7 +747,9 @@
           "fix.create",
           "fix.decision",
           "sentry.connect",
-          "sentry.disconnect"
+          "sentry.disconnect",
+          "slack.connect",
+          "slack.disconnect"
         ],
         "title": "AuditAction",
         "type": "string"
@@ -1170,6 +1172,34 @@
           "request"
         ],
         "title": "ChangeIn",
+        "type": "object"
+      },
+      "ChannelsPatch": {
+        "properties": {
+          "email": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email"
+          },
+          "in_app": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "In App"
+          }
+        },
+        "title": "ChannelsPatch",
         "type": "object"
       },
       "CitationOut": {
@@ -4622,6 +4652,137 @@
         "title": "ImportRepo",
         "type": "object"
       },
+      "InboxCount": {
+        "properties": {
+          "unread": {
+            "title": "Unread",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "unread"
+        ],
+        "title": "InboxCount",
+        "type": "object"
+      },
+      "InboxItemOut": {
+        "properties": {
+          "body": {
+            "title": "Body",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/NotificationKind"
+          },
+          "link": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Link"
+          },
+          "read": {
+            "title": "Read",
+            "type": "boolean"
+          },
+          "risk": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FixRisk"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "title",
+          "body",
+          "link",
+          "risk",
+          "read",
+          "created_at"
+        ],
+        "title": "InboxItemOut",
+        "type": "object"
+      },
+      "InboxPage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/InboxItemOut"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          },
+          "unread": {
+            "title": "Unread",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "unread",
+          "next_cursor"
+        ],
+        "title": "InboxPage",
+        "type": "object"
+      },
+      "InboxReadIn": {
+        "properties": {
+          "ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "maxItems": 100,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ids"
+          }
+        },
+        "title": "InboxReadIn",
+        "type": "object"
+      },
       "IndexJobOut": {
         "properties": {
           "created_at": {
@@ -5089,6 +5250,33 @@
         ],
         "title": "JobStatus",
         "type": "string"
+      },
+      "KindPreference": {
+        "properties": {
+          "email": {
+            "title": "Email",
+            "type": "boolean"
+          },
+          "in_app": {
+            "title": "In App",
+            "type": "boolean"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/NotificationKind"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "label",
+          "in_app",
+          "email"
+        ],
+        "title": "KindPreference",
+        "type": "object"
       },
       "Lane": {
         "description": "The design system's swimlanes, as the API, the constellation and the flow view (2.13)\ndraw them. The router's finer layers fold into them (:data:`LANES`).",
@@ -5596,6 +5784,18 @@
         "title": "MyOrg",
         "type": "object"
       },
+      "NotificationKind": {
+        "enum": [
+          "approval_needed",
+          "pr_opened",
+          "fix_failed",
+          "index_done",
+          "index_failed",
+          "cost_cap"
+        ],
+        "title": "NotificationKind",
+        "type": "string"
+      },
       "OrgCreate": {
         "properties": {
           "name": {
@@ -5984,6 +6184,54 @@
           }
         },
         "title": "PlanEdits",
+        "type": "object"
+      },
+      "PreferencesOut": {
+        "properties": {
+          "email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email"
+          },
+          "kinds": {
+            "items": {
+              "$ref": "#/components/schemas/KindPreference"
+            },
+            "title": "Kinds",
+            "type": "array"
+          }
+        },
+        "required": [
+          "kinds",
+          "email"
+        ],
+        "title": "PreferencesOut",
+        "type": "object"
+      },
+      "PreferencesPatch": {
+        "properties": {
+          "kinds": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/ChannelsPatch"
+            },
+            "maxProperties": 6,
+            "propertyNames": {
+              "$ref": "#/components/schemas/NotificationKind"
+            },
+            "title": "Kinds",
+            "type": "object"
+          }
+        },
+        "required": [
+          "kinds"
+        ],
+        "title": "PreferencesPatch",
         "type": "object"
       },
       "Provenance": {
@@ -7647,6 +7895,64 @@
           "diagram"
         ],
         "title": "SharedDiagram",
+        "type": "object"
+      },
+      "SlackIn": {
+        "properties": {
+          "channel": {
+            "default": "",
+            "maxLength": 100,
+            "title": "Channel",
+            "type": "string"
+          },
+          "kinds": {
+            "items": {
+              "$ref": "#/components/schemas/NotificationKind"
+            },
+            "maxItems": 6,
+            "title": "Kinds",
+            "type": "array"
+          },
+          "webhook_url": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Webhook Url"
+          }
+        },
+        "title": "SlackIn",
+        "type": "object"
+      },
+      "SlackOut": {
+        "properties": {
+          "channel": {
+            "title": "Channel",
+            "type": "string"
+          },
+          "kinds": {
+            "items": {
+              "$ref": "#/components/schemas/NotificationKind"
+            },
+            "title": "Kinds",
+            "type": "array"
+          },
+          "webhook_hint": {
+            "title": "Webhook Hint",
+            "type": "string"
+          }
+        },
+        "required": [
+          "channel",
+          "kinds",
+          "webhook_hint"
+        ],
+        "title": "SlackOut",
         "type": "object"
       },
       "SlugAvailability": {
@@ -9554,6 +9860,66 @@
         "summary": "Update Me",
         "tags": [
           "me"
+        ]
+      }
+    },
+    "/api/v1/me/notifications": {
+      "get": {
+        "operationId": "get_preferences_api_v1_me_notifications_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PreferencesOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Preferences",
+        "tags": [
+          "notifications"
+        ]
+      },
+      "patch": {
+        "operationId": "update_preferences_api_v1_me_notifications_patch",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PreferencesPatch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PreferencesOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Preferences",
+        "tags": [
+          "notifications"
         ]
       }
     },
@@ -11757,6 +12123,185 @@
         ]
       }
     },
+    "/api/v1/orgs/{org}/inbox": {
+      "get": {
+        "operationId": "get_inbox_api_v1_orgs__org__inbox_get",
+        "parameters": [
+          {
+            "description": "Organization slug",
+            "in": "path",
+            "name": "org",
+            "required": true,
+            "schema": {
+              "description": "Organization slug",
+              "title": "Org",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "unread",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Unread",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "before",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Before"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InboxPage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Inbox",
+        "tags": [
+          "notifications"
+        ]
+      }
+    },
+    "/api/v1/orgs/{org}/inbox/events": {
+      "get": {
+        "description": "New inbox items (``inbox.new``: its kind, title and link), from now (or after\n``Last-Event-ID``). Ends when the session does or the user leaves the org (checked every\nminute).",
+        "operationId": "inbox_events_api_v1_orgs__org__inbox_events_get",
+        "parameters": [
+          {
+            "description": "Organization slug",
+            "in": "path",
+            "name": "org",
+            "required": true,
+            "schema": {
+              "description": "Organization slug",
+              "title": "Org",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "text/event-stream": {}
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Inbox Events",
+        "tags": [
+          "notifications"
+        ]
+      }
+    },
+    "/api/v1/orgs/{org}/inbox/read": {
+      "post": {
+        "description": "Mark ``ids`` read (others' and unknown ones are passed over), or every item.",
+        "operationId": "read_inbox_api_v1_orgs__org__inbox_read_post",
+        "parameters": [
+          {
+            "description": "Organization slug",
+            "in": "path",
+            "name": "org",
+            "required": true,
+            "schema": {
+              "description": "Organization slug",
+              "title": "Org",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InboxReadIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InboxCount"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Read Inbox",
+        "tags": [
+          "notifications"
+        ]
+      }
+    },
     "/api/v1/orgs/{org}/integrations/sentry": {
       "delete": {
         "operationId": "delete_sentry_api_v1_orgs__org__integrations_sentry_delete",
@@ -11886,6 +12431,138 @@
         "summary": "Put Sentry",
         "tags": [
           "sentry"
+        ]
+      }
+    },
+    "/api/v1/orgs/{org}/integrations/slack": {
+      "delete": {
+        "operationId": "delete_slack_api_v1_orgs__org__integrations_slack_delete",
+        "parameters": [
+          {
+            "description": "Organization slug",
+            "in": "path",
+            "name": "org",
+            "required": true,
+            "schema": {
+              "description": "Organization slug",
+              "title": "Org",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Slack",
+        "tags": [
+          "notifications"
+        ]
+      },
+      "get": {
+        "operationId": "get_slack_api_v1_orgs__org__integrations_slack_get",
+        "parameters": [
+          {
+            "description": "Organization slug",
+            "in": "path",
+            "name": "org",
+            "required": true,
+            "schema": {
+              "description": "Organization slug",
+              "title": "Org",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SlackOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Slack",
+        "tags": [
+          "notifications"
+        ]
+      },
+      "put": {
+        "description": "Connect the org's Slack (or change what it posts). Admins.",
+        "operationId": "put_slack_api_v1_orgs__org__integrations_slack_put",
+        "parameters": [
+          {
+            "description": "Organization slug",
+            "in": "path",
+            "name": "org",
+            "required": true,
+            "schema": {
+              "description": "Organization slug",
+              "title": "Org",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SlackIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SlackOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Put Slack",
+        "tags": [
+          "notifications"
         ]
       }
     },

@@ -60,6 +60,8 @@ class AuditAction(enum.StrEnum):
     FIX_DECISION = "fix.decision"  # an approval, a request for changes, a rejection
     SENTRY_CONNECT = "sentry.connect"
     SENTRY_DISCONNECT = "sentry.disconnect"
+    SLACK_CONNECT = "slack.connect"
+    SLACK_DISCONNECT = "slack.disconnect"
 
 
 def _clean_meta(meta: dict[str, Any] | None) -> dict[str, Any]:

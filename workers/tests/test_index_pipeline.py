@@ -44,14 +44,19 @@ from sensei_core.models import (
     IndexJob,
     JobKind,
     JobStatus,
+    Membership,
+    Notification,
+    NotificationKind,
     Org,
     Repo,
     RepoSource,
     RepoStatus,
+    Role,
     Snapshot,
     Stage,
     UsageEvent,
     UsageKind,
+    User,
 )
 from sensei_core.models.chunks import EMBEDDING_DIMENSIONS
 from sensei_core.storage import Bucket, artifact_key, repo_prefix
@@ -318,6 +323,56 @@ def test_a_full_run_streams_its_stages_in_order(
     assert org[-1] == ("done", "finalize")
     assert all(kind in ("stage_started", "done", "repo_updated") for kind, _ in org)
     assert [kind for kind, _ in org].count("repo_updated") == 1
+
+
+def test_a_repositorys_first_index_tells_its_admins_and_a_later_one_doesnt(
+    runtime: Runtime,
+    ids: tuple[uuid.UUID, uuid.UUID, uuid.UUID],
+    github: respx.MockRouter,
+    bare_repo: Any,
+) -> None:
+    org_id, repo_id, job_id = ids
+
+    async def admin() -> uuid.UUID:
+        async with runtime.system_database.session() as db:
+            login = f"admin-{uuid.uuid4().hex[:8]}"
+            github_id = 900_000_000 + uuid.uuid4().int % 1_000_000
+            user = User(github_id=github_id, login=login, email="admin@example.com")
+            db.add(user)
+            await db.flush()
+            db.add(Membership(org_id=org_id, user_id=user.id, role=Role.ADMIN))
+            return user.id
+
+    async def told() -> list[tuple[uuid.UUID, NotificationKind, str]]:
+        async with runtime.system_database.session() as db:
+            rows = await db.execute(
+                select(Notification.user_id, Notification.kind, Notification.title).where(
+                    Notification.org_id == org_id
+                )
+            )
+            return list(rows.tuples().all())
+
+    async def again() -> uuid.UUID:
+        async with runtime.system_database.session() as db:
+            job = IndexJob(org_id=org_id, repo_id=repo_id, kind=JobKind.FULL)
+            db.add(job)
+            await db.flush()
+            return job.id
+
+    async def drop(user_id: uuid.UUID) -> None:
+        async with runtime.system_database.session() as db:
+            await db.execute(delete(User).where(User.id == user_id))
+
+    user_id = runtime.run(admin())
+    try:
+        _run(org_id, repo_id, job_id)
+        assert runtime.run(told()) == [
+            (user_id, NotificationKind.INDEX_DONE, "acme-gh/demo is indexed")
+        ]
+        _run(org_id, repo_id, runtime.run(again()))
+        assert len(runtime.run(told())) == 1
+    finally:
+        runtime.run(drop(user_id))
 
 
 def test_cancelling_while_cloning_stops_the_rest(

@@ -12,16 +12,23 @@ from __future__ import annotations
 
 import re
 import time
+import uuid
 from collections.abc import AsyncGenerator, Awaitable, Callable
+from contextlib import AbstractAsyncContextManager
 from typing import Any, cast
 
 import orjson
 from fastapi import Request
 from redis.asyncio import Redis
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
 from sse_starlette import EventSourceResponse, ServerSentEvent
 
+from sensei_core.db import Database
+from sensei_core.db.tenancy import set_org_context, set_user_context
 from sensei_core.errors import InvalidError
 from sensei_core.indexing.events import parse_entry
+from sensei_core.models import Membership, Org, UserSession
 
 HEARTBEAT_SECONDS = 15.0
 # Each read blocks for at most this long: below the Redis client's socket timeout, so a quiet
@@ -115,3 +122,40 @@ async def follow(
 
 def response(events: AsyncGenerator[ServerSentEvent]) -> EventSourceResponse:
     return EventSourceResponse(events, ping=HEARTBEAT_SECONDS, headers=HEADERS)
+
+
+def short_session(request: Request) -> AbstractAsyncContextManager[AsyncSession]:
+    """A session of its own (streams outlive the request's); tests may swap the factory."""
+    factory = getattr(request.app.state, "stream_sessions", None)
+    if factory is not None:
+        return cast("Callable[[], AbstractAsyncContextManager[AsyncSession]]", factory)()
+    database: Database = request.app.state.database
+    return database.session()
+
+
+async def still_member(
+    request: Request, org_id: uuid.UUID, user_id: uuid.UUID, session_id: uuid.UUID
+) -> bool:
+    """Whether the stream's session is still live and its user still in the org. Read-only: a
+    stream mustn't keep a session alive the way a request does."""
+    async with short_session(request) as db:
+        await set_user_context(db, user_id)
+        await set_org_context(db, org_id)
+        live = await db.scalar(
+            select(UserSession.id).where(
+                UserSession.id == session_id,
+                UserSession.revoked_at.is_(None),
+                UserSession.idle_expires_at > func.now(),
+                UserSession.absolute_expires_at > func.now(),
+            )
+        )
+        member = await db.scalar(
+            select(Membership.user_id)
+            .join(Org, Org.id == Membership.org_id)
+            .where(
+                Membership.org_id == org_id,
+                Membership.user_id == user_id,
+                Org.deleted_at.is_(None),
+            )
+        )
+        return live is not None and member is not None

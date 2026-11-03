@@ -39,6 +39,8 @@ from sensei_core.models import (
     JobStatus,
     Membership,
     MessageFeedback,
+    Notification,
+    NotificationKind,
     Repo,
     RepoFile,
     RepoSource,
@@ -417,6 +419,20 @@ async def test_an_org_past_its_daily_cap_starts_no_run(
         select(func.count()).where(AuditEvent.action == "agent.cost_cap_warning")
     )
     assert told == 1
+    # Its admins too, in their inboxes (8.10), once: asked again, nobody is told again.
+    inbox = (await db_session.scalars(
+        select(Notification).where(Notification.kind == NotificationKind.COST_CAP)
+    )).all()  # fmt: skip
+    assert [n.title for n in inbox] == ["Agent spend is at 85% of today's cap"]
+    assert inbox[0].body.startswith("$0.85 of $1.00 so far today (UTC).")
+    again, _ = await _ask(app, client, org, headers, message="And where are they read?")
+    assert again.status_code == 200
+    assert (
+        await db_session.scalar(
+            select(func.count()).where(Notification.kind == NotificationKind.COST_CAP)
+        )
+        == 1
+    )
     await spend("1")
     refused = await client.post(
         f"{org}/repos/items/ask", json={"message": "And deleted?"}, headers=headers

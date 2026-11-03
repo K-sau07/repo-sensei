@@ -43,6 +43,7 @@ from sensei_core.models import (
     Snapshot,
     Stage,
 )
+from sensei_core.notifications.indexing import index_notice
 from sensei_core.usage import costs_of
 from sensei_engine.chunk.store import prune_chunks
 from sensei_engine.incremental import moved_on, previous_of
@@ -344,6 +345,16 @@ def _time(value: object) -> datetime | None:
         return None
 
 
+async def _settle_failed(db: AsyncSession, job: IndexJob, outbox: JobOutbox) -> None:
+    """A job the sweep failed: its repository settled, its admins told (8.10)."""
+    repo = await db.get(Repo, job.repo_id)
+    if repo is not None:
+        settle_repo(repo, JobStatus.FAILED)
+    notice = await index_notice(db, job)
+    if notice is not None:
+        outbox.told.append(notice)
+
+
 @celery_app.task(bind=True, base=SenseiTask, name=TaskName.SWEEP_STALLED_JOBS.value, system=True)
 def sweep_stalled_jobs(self: SenseiTask) -> int:
     """Look after index jobs nothing is moving any more. Returns how many it failed.
@@ -398,9 +409,7 @@ def sweep_stalled_jobs(self: SenseiTask) -> int:
                         continue
                     machine.fail_waiting({"code": "stage_stalled", "message": WAITING_MESSAGE})
                 outbox.collect(machine)
-                repo = await db.get(Repo, job.repo_id)
-                if repo is not None:
-                    settle_repo(repo, JobStatus.FAILED)
+                await _settle_failed(db, job, outbox)
                 failed += 1
         await outbox.publish(runtime.redis)
         return failed, waiting

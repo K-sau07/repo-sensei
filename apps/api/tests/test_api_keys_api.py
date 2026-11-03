@@ -176,6 +176,9 @@ async def test_a_key_acts_as_its_user_where_keys_are_let_in_within_its_scopes(
         ("GET", "/orgs/acme/members"),
         ("GET", "/me/sessions"),
         ("GET", "/orgs/acme/events"),  # a browser's stream, kept while its session lives
+        ("GET", "/orgs/acme/inbox"),  # a person's, not a script's
+        ("GET", "/me/notifications"),
+        ("PUT", "/orgs/acme/integrations/slack"),
         ("POST", "/auth/logout"),
     ):
         response = await client.request(method, f"{API}{path}", headers=_bearer(reader), json={})

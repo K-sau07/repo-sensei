@@ -78,6 +78,6 @@ async def sweep_stalled(
             machine.stop(FixStatus.FAILED, f"No worker took the {stage} stage in {hours:g} hours.")
         await close_agent_run(db, run, lambda: now)
         outbox = FixOutbox(run.org_id, run.id, run.repo_id)
-        outbox.add(machine.events)
+        await outbox.add_told(db, run, machine.events)
         swept.failed.append(outbox)
     return swept

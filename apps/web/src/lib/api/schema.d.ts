@@ -272,6 +272,24 @@ export interface paths {
         patch: operations["update_me_api_v1_me_patch"];
         trace?: never;
     };
+    "/api/v1/me/notifications": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Preferences */
+        get: operations["get_preferences_api_v1_me_notifications_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Update Preferences */
+        patch: operations["update_preferences_api_v1_me_notifications_patch"];
+        trace?: never;
+    };
     "/api/v1/me/sessions": {
         parameters: {
             query?: never;
@@ -1041,6 +1059,65 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/orgs/{org}/inbox": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Inbox */
+        get: operations["get_inbox_api_v1_orgs__org__inbox_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/inbox/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Inbox Events
+         * @description New inbox items (``inbox.new``: its kind, title and link), from now (or after
+         *     ``Last-Event-ID``). Ends when the session does or the user leaves the org (checked every
+         *     minute).
+         */
+        get: operations["inbox_events_api_v1_orgs__org__inbox_events_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/inbox/read": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Read Inbox
+         * @description Mark ``ids`` read (others' and unknown ones are passed over), or every item.
+         */
+        post: operations["read_inbox_api_v1_orgs__org__inbox_read_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/orgs/{org}/integrations/sentry": {
         parameters: {
             query?: never;
@@ -1058,6 +1135,28 @@ export interface paths {
         post?: never;
         /** Delete Sentry */
         delete: operations["delete_sentry_api_v1_orgs__org__integrations_sentry_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/integrations/slack": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Slack */
+        get: operations["get_slack_api_v1_orgs__org__integrations_slack_get"];
+        /**
+         * Put Slack
+         * @description Connect the org's Slack (or change what it posts). Admins.
+         */
+        put: operations["put_slack_api_v1_orgs__org__integrations_slack_put"];
+        post?: never;
+        /** Delete Slack */
+        delete: operations["delete_slack_api_v1_orgs__org__integrations_slack_delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -2388,7 +2487,7 @@ export interface components {
          * AuditAction
          * @enum {string}
          */
-        AuditAction: "auth.login" | "auth.logout" | "auth.logout_all" | "org.create" | "org.update" | "org.delete" | "invitation.create" | "invitation.revoke" | "invitation.accept" | "member.role_change" | "member.remove" | "member.leave" | "github.install.linked" | "github.install.deleted" | "github.install.suspended" | "github.install.unsuspended" | "github.install.permissions_accepted" | "repo.connected" | "repo.settings_update" | "repo.disconnected" | "repo.index_started" | "repo.index_cancelled" | "agent.cost_cap_warning" | "conversation.shared" | "conversation.unshared" | "diagram.shared" | "diagram.unshared" | "api_key.create" | "api_key.revoke" | "oauth.authorize" | "oauth.refresh_reused" | "fix.create" | "fix.decision" | "sentry.connect" | "sentry.disconnect";
+        AuditAction: "auth.login" | "auth.logout" | "auth.logout_all" | "org.create" | "org.update" | "org.delete" | "invitation.create" | "invitation.revoke" | "invitation.accept" | "member.role_change" | "member.remove" | "member.leave" | "github.install.linked" | "github.install.deleted" | "github.install.suspended" | "github.install.unsuspended" | "github.install.permissions_accepted" | "repo.connected" | "repo.settings_update" | "repo.disconnected" | "repo.index_started" | "repo.index_cancelled" | "agent.cost_cap_warning" | "conversation.shared" | "conversation.unshared" | "diagram.shared" | "diagram.unshared" | "api_key.create" | "api_key.revoke" | "oauth.authorize" | "oauth.refresh_reused" | "fix.create" | "fix.decision" | "sentry.connect" | "sentry.disconnect" | "slack.connect" | "slack.disconnect";
         /** AuditEventOut */
         AuditEventOut: {
             /** Action */
@@ -2516,6 +2615,13 @@ export interface components {
             request: string;
             /** Title */
             title?: string | null;
+        };
+        /** ChannelsPatch */
+        ChannelsPatch: {
+            /** Email */
+            email?: boolean | null;
+            /** In App */
+            in_app?: boolean | null;
         };
         /** CitationOut */
         CitationOut: {
@@ -3848,6 +3954,48 @@ export interface components {
             /** Url */
             url: string;
         };
+        /** InboxCount */
+        InboxCount: {
+            /** Unread */
+            unread: number;
+        };
+        /** InboxItemOut */
+        InboxItemOut: {
+            /** Body */
+            body: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            kind: components["schemas"]["NotificationKind"];
+            /** Link */
+            link: string | null;
+            /** Read */
+            read: boolean;
+            risk: components["schemas"]["FixRisk"] | null;
+            /** Title */
+            title: string;
+        };
+        /** InboxPage */
+        InboxPage: {
+            /** Items */
+            items: components["schemas"]["InboxItemOut"][];
+            /** Next Cursor */
+            next_cursor: string | null;
+            /** Unread */
+            unread: number;
+        };
+        /** InboxReadIn */
+        InboxReadIn: {
+            /** Ids */
+            ids?: string[] | null;
+        };
         /** IndexJobOut */
         IndexJobOut: {
             /**
@@ -4051,6 +4199,16 @@ export interface components {
          * @enum {string}
          */
         JobStatus: "queued" | "running" | "succeeded" | "failed" | "cancelled";
+        /** KindPreference */
+        KindPreference: {
+            /** Email */
+            email: boolean;
+            /** In App */
+            in_app: boolean;
+            kind: components["schemas"]["NotificationKind"];
+            /** Label */
+            label: string;
+        };
         /**
          * Lane
          * @description The design system's swimlanes, as the API, the constellation and the flow view (2.13)
@@ -4225,6 +4383,11 @@ export interface components {
             /** Slug */
             slug: string;
         };
+        /**
+         * NotificationKind
+         * @enum {string}
+         */
+        NotificationKind: "approval_needed" | "pr_opened" | "fix_failed" | "index_done" | "index_failed" | "cost_cap";
         /** OrgCreate */
         OrgCreate: {
             /** Name */
@@ -4345,6 +4508,20 @@ export interface components {
             summary?: string | null;
             /** Tests */
             tests?: components["schemas"]["TestEdit"][] | null;
+        };
+        /** PreferencesOut */
+        PreferencesOut: {
+            /** Email */
+            email: string | null;
+            /** Kinds */
+            kinds: components["schemas"]["KindPreference"][];
+        };
+        /** PreferencesPatch */
+        PreferencesPatch: {
+            /** Kinds */
+            kinds: {
+                [key: string]: components["schemas"]["ChannelsPatch"];
+            };
         };
         /**
          * Provenance
@@ -4922,6 +5099,27 @@ export interface components {
             redacted: boolean;
             /** Repo */
             repo: string | null;
+        };
+        /** SlackIn */
+        SlackIn: {
+            /**
+             * Channel
+             * @default
+             */
+            channel: string;
+            /** Kinds */
+            kinds?: components["schemas"]["NotificationKind"][];
+            /** Webhook Url */
+            webhook_url?: string | null;
+        };
+        /** SlackOut */
+        SlackOut: {
+            /** Channel */
+            channel: string;
+            /** Kinds */
+            kinds: components["schemas"]["NotificationKind"][];
+            /** Webhook Hint */
+            webhook_hint: string;
         };
         /** SlugAvailability */
         SlugAvailability: {
@@ -5741,6 +5939,59 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["MeResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_preferences_api_v1_me_notifications_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PreferencesOut"];
+                };
+            };
+        };
+    };
+    update_preferences_api_v1_me_notifications_patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PreferencesPatch"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PreferencesOut"];
                 };
             };
             /** @description Validation Error */
@@ -7193,6 +7444,110 @@ export interface operations {
             };
         };
     };
+    get_inbox_api_v1_orgs__org__inbox_get: {
+        parameters: {
+            query?: {
+                unread?: boolean;
+                before?: string | null;
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                /** @description Organization slug */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InboxPage"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    inbox_events_api_v1_orgs__org__inbox_events_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization slug */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/event-stream": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    read_inbox_api_v1_orgs__org__inbox_read_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization slug */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["InboxReadIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InboxCount"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_sentry_api_v1_orgs__org__integrations_sentry_get: {
         parameters: {
             query?: never;
@@ -7262,6 +7617,104 @@ export interface operations {
         };
     };
     delete_sentry_api_v1_orgs__org__integrations_sentry_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization slug */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_slack_api_v1_orgs__org__integrations_slack_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization slug */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SlackOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    put_slack_api_v1_orgs__org__integrations_slack_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization slug */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SlackIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SlackOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_slack_api_v1_orgs__org__integrations_slack_delete: {
         parameters: {
             query?: never;
             header?: never;

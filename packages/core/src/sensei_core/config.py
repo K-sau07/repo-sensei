@@ -442,6 +442,18 @@ class FixerSettings(BaseSettings):
     sentry_hosts: list[str] = Field(default_factory=lambda: ["sentry.io"])
 
 
+class NotifySettings(BaseSettings):
+    """Notifications (8.10): email through Resend (no key: emails are logged, in development,
+    or skipped), and how many times a delivery is tried before it is given up."""
+
+    model_config = _config("SENSEI_NOTIFY_")
+
+    resend_api_key: SecretStr | None = None
+    resend_url: str = "https://api.resend.com/emails"
+    email_from: str = "repo-sensei <notifications@repo-sensei.dev>"
+    max_attempts: int = Field(default=5, ge=1)
+
+
 class Settings(BaseSettings):
     """Root settings object. Use :func:`get_settings` instead of constructing directly."""
 
@@ -472,6 +484,7 @@ class Settings(BaseSettings):
     sandbox: SandboxSettings = Field(default_factory=SandboxSettings)
     agent: AgentSettings = Field(default_factory=AgentSettings)
     fixer: FixerSettings = Field(default_factory=FixerSettings)
+    notify: NotifySettings = Field(default_factory=NotifySettings)
 
     @model_validator(mode="after")
     def _refuse_dev_secrets_outside_dev(self) -> Settings:

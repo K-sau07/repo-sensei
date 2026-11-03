@@ -226,7 +226,7 @@ class FixPipeline:
             else:
                 machine.stop(outcome.status, outcome.reason)
             await close_agent_run(db, run, self.clock)
-            outbox.add(machine.events)
+            await outbox.add_told(db, run, machine.events)
             following = queued_stage(run)
             status = run.status.value
         await outbox.publish(self.redis)

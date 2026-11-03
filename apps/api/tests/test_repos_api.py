@@ -1182,7 +1182,7 @@ async def test_the_org_stream_ends_when_its_viewer_loses_access(
     async def gone(*_args: object) -> bool:
         return False
 
-    monkeypatch.setattr(index_jobs, "_still_member", gone)
+    monkeypatch.setattr(streams, "still_member", gone)
     # The stream would replay the queued run; it ends instead, and sends nothing.
     response = await client.get(f"{API}/orgs/acme/events?last_event_id=0")
     assert response.status_code == 200
@@ -1203,9 +1203,7 @@ async def test_still_member_follows_the_session_and_the_membership(
     request = Request({"type": "http", "app": app})
 
     async def check() -> bool:
-        return await index_jobs._still_member(  # pyright: ignore[reportPrivateUsage]
-            request, org_id, admin.id, session.id
-        )
+        return await streams.still_member(request, org_id, admin.id, session.id)
 
     assert await check()
     session.revoked_at = datetime.now(UTC)

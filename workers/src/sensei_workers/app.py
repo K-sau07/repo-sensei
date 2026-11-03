@@ -40,6 +40,7 @@ TASK_MODULES = [
     "sensei_workers.tasks.pushes",
     "sensei_workers.tasks.maintenance",
     "sensei_workers.tasks.fixes",
+    "sensei_workers.tasks.notifications",
 ]
 
 settings = get_settings()

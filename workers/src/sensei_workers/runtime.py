@@ -49,6 +49,7 @@ class Runtime:
         self._embeddings = embeddings
         self._embeddings_given = embeddings is not None
         self._voyage_http: httpx.AsyncClient | None = None
+        self._notify_http: httpx.AsyncClient | None = None
         self._costs: CostCalculator | None = None
         self._runner: asyncio.Runner | None = None
         self._database: Database | None = None
@@ -164,6 +165,17 @@ class Runtime:
     def _cipher(self) -> TokenCipher:
         return TokenCipher.from_settings(self.settings.auth)
 
+    @property
+    def cipher(self) -> TokenCipher:
+        return self._cipher
+
+    @property
+    def notify_http(self) -> httpx.AsyncClient:
+        """For sending notifications (email, Slack): its own client, with its own timeouts."""
+        if self._notify_http is None:
+            self._notify_http = httpx.AsyncClient()
+        return self._notify_http
+
     async def storage(self) -> ObjectStorage:
         """Object storage, started on first use (on this runtime's event loop)."""
         if self._storage is None:
@@ -176,7 +188,7 @@ class Runtime:
         async def _close() -> None:
             if self._storage is not None:
                 await self._storage.close()
-            for http in (self._http, self._voyage_http):
+            for http in (self._http, self._voyage_http, self._notify_http):
                 if http is not None:
                     await http.aclose()
             if self._redis is not None:
@@ -205,6 +217,7 @@ class Runtime:
         if not self._embeddings_given:
             self._embeddings = None
         self._voyage_http = None
+        self._notify_http = None
 
 
 _runtime: Runtime | None = None

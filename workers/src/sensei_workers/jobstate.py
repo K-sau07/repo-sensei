@@ -24,6 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sensei_core.indexing.events import JobOutbox
 from sensei_core.indexing.state import IndexJobStateMachine
 from sensei_core.models import IndexJob, JobStatus, Stage
+from sensei_core.notifications.indexing import index_notice
 from sensei_workers.base import NotYetError, SenseiTask
 from sensei_workers.runtime import get_runtime
 
@@ -68,7 +69,12 @@ async def job_scope(
     """The job row locked (``FOR UPDATE``) in an org-scoped transaction."""
     async with task.org_session(org_id) as db:
         job = await db.scalar(select(IndexJob).where(IndexJob.id == job_id).with_for_update())
+        was = job.status if job is not None else None
         scope = JobScope(db, job)
         yield scope
         scope.collect()  # before the commit, while the job row is current
+        if job is not None and job.status is not was:  # it ended here: tell its admins (8.10)
+            notice = await index_notice(db, job)
+            if notice is not None:
+                scope.outbox.told.append(notice)
     await scope.outbox.publish(get_runtime().redis)

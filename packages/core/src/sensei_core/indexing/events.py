@@ -35,6 +35,8 @@ from redis.asyncio import Redis
 
 from sensei_core.indexing.state import IndexJobStateMachine, JobEvent
 from sensei_core.models import IndexJob, Repo
+from sensei_core.notifications.service import Told
+from sensei_core.notifications.service import publish as publish_notices
 
 JOB_STREAM_MAXLEN = 10_000
 ORG_STREAM_MAXLEN = 1_000
@@ -136,6 +138,8 @@ class JobOutbox:
     items: list[tuple[str, str, dict[str, Any]]] = field(
         default_factory=list[tuple[str, str, dict[str, Any]]]
     )
+    # Who was told of a run's end (8.10), for their inboxes' streams.
+    told: list[Told] = field(default_factory=list[Told])
 
     def collect(self, machine: IndexJobStateMachine) -> None:
         job = machine.job
@@ -177,6 +181,8 @@ class JobOutbox:
         self.items.append((payload["job_id"] or "", str(repo.org_id), payload))
 
     async def publish(self, redis: Redis) -> None:
+        told, self.told = self.told, []
+        await publish_notices(redis, told)
         if not self.items:
             return
         async with redis.pipeline(transaction=False) as pipe:

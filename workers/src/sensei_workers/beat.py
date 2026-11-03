@@ -19,4 +19,11 @@ BEAT_SCHEDULE: dict[str, dict[str, Any]] = {
     "sweep-snapshots": {"task": TaskName.SWEEP_SNAPSHOTS.value, "schedule": 86400.0},
     # Expired OAuth requests, device codes and tokens (7.2) don't pile up.
     "prune-oauth": {"task": TaskName.PRUNE_OAUTH.value, "schedule": 86400.0},
+    # Notifications' emails and Slack posts (8.10) go out within a minute; a round not taken
+    # in time is dropped (the next one sends what it would have).
+    "deliver-notifications": {
+        "task": TaskName.DELIVER_NOTIFICATIONS.value,
+        "schedule": 60.0,
+        "options": {"expires": 55},
+    },
 }

@@ -58,6 +58,7 @@ class TaskName(enum.StrEnum):
     DROP_REF = "sensei.maintenance.drop_ref"
     PRUNE_OAUTH = "sensei.maintenance.prune_oauth"
     RUN_FIX_STAGE = "sensei.agent.run_fix_stage"
+    DELIVER_NOTIFICATIONS = "sensei.default.deliver_notifications"
 
 
 # Tasks go to the queue named by the second part of their name ("sensei.<queue>.<task>").

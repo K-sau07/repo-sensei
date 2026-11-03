@@ -20,6 +20,12 @@ from typing import Any, cast
 
 import orjson
 from redis.asyncio import Redis
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from sensei_core.models import FixRun
+from sensei_core.notifications.service import Told
+from sensei_core.notifications.service import publish as publish_notices
+from sensei_fixer.notices import fix_notices
 
 STREAM_MAXLEN = 5_000
 ORG_STREAM_MAXLEN = 1_000
@@ -42,14 +48,23 @@ class FixOutbox:
     fix_id: uuid.UUID
     repo_id: uuid.UUID
     pending: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
+    told: list[Told] = field(default_factory=list[Told])
 
     def add(self, events: Iterable[dict[str, Any]]) -> None:
         self.pending.extend(events)
+
+    async def add_told(self, db: AsyncSession, run: FixRun, events: list[dict[str, Any]]) -> None:
+        """Add ``events``, and tell people of those they act on (8.10: inbox items, emails and
+        Slack posts, written in ``db``'s transaction; the inboxes' streams told on publish)."""
+        self.add(events)
+        self.told.extend(await fix_notices(db, run, events))
 
     async def publish(self, redis: Redis) -> None:
         """Send what was collected (after the commit). Best effort: the database is the truth,
         and the stream endpoint falls back to it."""
         events, self.pending = self.pending, []
+        told, self.told = self.told, []
+        await publish_notices(redis, told)
         if not events:
             return
         key = fix_stream(self.fix_id)

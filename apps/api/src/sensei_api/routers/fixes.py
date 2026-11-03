@@ -13,8 +13,7 @@ from __future__ import annotations
 import asyncio
 import re
 import uuid
-from collections.abc import AsyncGenerator, Callable
-from contextlib import AbstractAsyncContextManager
+from collections.abc import AsyncGenerator
 from datetime import datetime
 from typing import Annotated, Any, Literal, cast
 
@@ -29,7 +28,6 @@ from sensei_api.deps import DbSession, RedisClient
 from sensei_api.orgs import OrgAccessDep
 from sensei_api.repos import RepoAccessDep, RepoDep, checked, get_viewer, github_client
 from sensei_core.audit import AuditAction, audit
-from sensei_core.db.engine import Database
 from sensei_core.db.tenancy import set_org_context
 from sensei_core.errors import ConflictError, ForbiddenError, InvalidError, NotFoundError
 from sensei_core.fixes.service import FixService, repo_index
@@ -191,15 +189,6 @@ class FixIn(BaseModel):
 def jobs_of(request: Request) -> FixJobs:
     jobs: FixJobs = request.app.state.fix_jobs
     return jobs
-
-
-def _short_session(request: Request) -> AbstractAsyncContextManager[AsyncSession]:
-    """A session of its own (streams outlive the request's); tests may swap the factory."""
-    factory = getattr(request.app.state, "stream_sessions", None)
-    if factory is not None:
-        return cast("Callable[[], AbstractAsyncContextManager[AsyncSession]]", factory)()
-    database: Database = request.app.state.database
-    return database.session()
 
 
 def service_of(request: Request) -> FixService:
@@ -618,7 +607,7 @@ async def fix_events(
     latest: list[FixRun] = [run]
 
     async def going() -> bool:
-        async with _short_session(request) as session:
+        async with streams.short_session(request) as session:
             await set_org_context(session, org_id)
             current = await session.get(FixRun, fix_id)
             if current is None:

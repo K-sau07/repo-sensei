@@ -1,8 +1,8 @@
 """What an org may still spend on agents today (4.8): its LLM spend since UTC midnight (the
 usage ledger's), against the daily cap, less what the runs under way may still spend (each
 holds its budget while it runs, so runs at once can't each spend what is left). Past the cap
-no new run starts; at its warning share the org is told, once a day (an audit event until
-there is an inbox)."""
+no new run starts; at its warning share the org is told, once a day: an audit event, and its
+admins' inboxes (and email, and Slack: 8.10)."""
 
 from __future__ import annotations
 
@@ -22,7 +22,8 @@ from sensei_core.audit import AuditAction, audit
 from sensei_core.config import AgentSettings
 from sensei_core.errors import DomainError
 from sensei_core.logging import get_logger
-from sensei_core.models import UsageEvent
+from sensei_core.models import NotificationKind, UsageEvent
+from sensei_core.notifications.service import Event, admins, notify, publish
 
 log = get_logger(__name__)
 
@@ -179,3 +180,15 @@ async def _warn(
             target_id=org_id,
             meta={"spent_usd": str(spent), "cap_usd": str(cap)},
         )
+        share = round(spent / cap * 100) if cap else 0
+        event = Event(
+            org_id, NotificationKind.COST_CAP, f"cost-cap:{org_id}:{day.date().isoformat()}",
+            f"Agent spend is at {share}% of today's cap",
+            f"${spent:.2f} of ${cap:.2f} so far today (UTC). Past the cap, no new agent run starts "
+            "until midnight UTC.",
+            None,
+        )  # fmt: skip
+        told = await notify(db, event, await admins(db, org_id))
+        # Its inboxes' streams told now (the request's transaction commits after): a message
+        # for an item rolled back only makes an inbox read again, and find nothing new.
+        await publish(redis, [told])

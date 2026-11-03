@@ -44,6 +44,7 @@ from sensei_api.routers import (
     invitations,
     mcp_setup,
     me,
+    notifications,
     oauth,
     orgs,
     overview,
@@ -239,6 +240,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         fixes,
         changes,
         sentry,
+        notifications,
         oauth,
     ):  # the order routes are matched in
         name = module.__name__.rsplit(".", 1)[-1]

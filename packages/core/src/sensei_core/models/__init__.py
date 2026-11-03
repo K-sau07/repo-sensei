@@ -53,6 +53,15 @@ from sensei_core.models.indexing import (
 )
 from sensei_core.models.jobs import JobFailure
 from sensei_core.models.llm import LLMBatch, LLMBatchStatus
+from sensei_core.models.notifications import (
+    DeliveryChannel,
+    DeliveryState,
+    Notification,
+    NotificationDelivery,
+    NotificationKind,
+    NotificationPreferences,
+    SlackIntegration,
+)
 from sensei_core.models.oauth import (
     ClientKind,
     GrantStatus,
@@ -86,6 +95,8 @@ __all__ = [
     "CodeNode",
     "Conversation",
     "ConversationMessage",
+    "DeliveryChannel",
+    "DeliveryState",
     "DeliveryStatus",
     "Diagram",
     "DiagramKind",
@@ -116,6 +127,10 @@ __all__ = [
     "MessageCitation",
     "MessageFeedback",
     "NodeKind",
+    "Notification",
+    "NotificationDelivery",
+    "NotificationKind",
+    "NotificationPreferences",
     "OAuthClient",
     "OAuthDeviceCode",
     "OAuthGrant",
@@ -130,6 +145,7 @@ __all__ = [
     "ReproResult",
     "Role",
     "SentryIntegration",
+    "SlackIntegration",
     "Snapshot",
     "SnapshotStatus",
     "Stage",

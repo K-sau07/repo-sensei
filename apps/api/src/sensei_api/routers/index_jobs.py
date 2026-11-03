@@ -4,16 +4,13 @@ from __future__ import annotations
 
 import time
 import uuid
-from collections.abc import AsyncGenerator, Awaitable, Callable
-from contextlib import AbstractAsyncContextManager
+from collections.abc import AsyncGenerator, Awaitable
 from datetime import datetime
 from typing import Annotated, Any, cast
 
 from fastapi import APIRouter, BackgroundTasks, Path, Request, status
 from pydantic import BaseModel, Field, ValidationError
 from redis.asyncio import Redis
-from sqlalchemy import func, select
-from sqlalchemy.ext.asyncio import AsyncSession
 from sse_starlette import EventSourceResponse, ServerSentEvent
 
 from sensei_api import streams
@@ -22,8 +19,7 @@ from sensei_api.deps import DbSession, RedisClient
 from sensei_api.orgs import OrgAccessDep
 from sensei_api.repos import RepoDep, repo_access
 from sensei_api.routers.auth import GitHubOAuthDep
-from sensei_core.db import Database
-from sensei_core.db.tenancy import set_org_context, set_user_context
+from sensei_core.db.tenancy import set_org_context
 from sensei_core.github.client import GitHubError
 from sensei_core.github.oauth import GitHubOAuth, OAuthError
 from sensei_core.indexing.events import TERMINAL, EventType, JobOutbox, job_stream, org_stream
@@ -35,12 +31,9 @@ from sensei_core.models import (
     IndexJob,
     JobKind,
     JobStatus,
-    Membership,
-    Org,
     Repo,
     Stage,
     User,
-    UserSession,
 )
 
 router = APIRouter(prefix="/orgs/{org}", tags=["indexing"])
@@ -256,7 +249,7 @@ async def index_job_events(
     latest: list[IndexJob] = [found]
 
     async def still_active() -> bool:
-        async with _short_session(request) as session:
+        async with streams.short_session(request) as session:
             await set_org_context(session, org_id)
             current = await session.get(IndexJob, job)
             if current is None:
@@ -312,7 +305,7 @@ async def org_events(
 
     async def still_allowed() -> bool:
         nonlocal allowed
-        allowed = await _still_member(request, org_id, user_id, session_id)
+        allowed = await streams.still_member(request, org_id, user_id, session_id)
         return allowed
 
     async def keep(payload: dict[str, Any]) -> bool:
@@ -338,34 +331,6 @@ async def org_events(
     )
 
 
-async def _still_member(
-    request: Request, org_id: uuid.UUID, user_id: uuid.UUID, session_id: uuid.UUID
-) -> bool:
-    """Whether the stream's session is still live and its user still in the org. Read-only: a
-    stream mustn't keep a session alive the way a request does."""
-    async with _short_session(request) as db:
-        await set_user_context(db, user_id)
-        await set_org_context(db, org_id)
-        live = await db.scalar(
-            select(UserSession.id).where(
-                UserSession.id == session_id,
-                UserSession.revoked_at.is_(None),
-                UserSession.idle_expires_at > func.now(),
-                UserSession.absolute_expires_at > func.now(),
-            )
-        )
-        member = await db.scalar(
-            select(Membership.user_id)
-            .join(Org, Org.id == Membership.org_id)
-            .where(
-                Membership.org_id == org_id,
-                Membership.user_id == user_id,
-                Org.deleted_at.is_(None),
-            )
-        )
-        return live is not None and member is not None
-
-
 def _resuming(request: Request) -> bool:
     return bool(request.headers.get("last-event-id") or request.query_params.get("last_event_id"))
 
@@ -382,7 +347,7 @@ async def _can_read(
         target = uuid.UUID(repo_id)
     except ValueError:
         return False
-    async with _short_session(request) as db:
+    async with streams.short_session(request) as db:
         await set_org_context(db, org_id)
         repo = await db.get(Repo, target)
         user = await db.get(User, user_id)
@@ -392,12 +357,3 @@ async def _can_read(
             return await repo_access(request, db, oauth).can_read(user, repo)
         except (OAuthError, GitHubError):
             return False
-
-
-def _short_session(request: Request) -> AbstractAsyncContextManager[AsyncSession]:
-    """A session of its own (streams outlive the request's); tests may swap the factory."""
-    factory = getattr(request.app.state, "stream_sessions", None)
-    if factory is not None:
-        return cast("Callable[[], AbstractAsyncContextManager[AsyncSession]]", factory)()
-    database: Database = request.app.state.database
-    return database.session()
