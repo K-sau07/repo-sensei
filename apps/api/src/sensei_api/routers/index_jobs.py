@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import time
 import uuid
 from collections.abc import AsyncGenerator, Awaitable
 from datetime import datetime
@@ -13,15 +12,13 @@ from pydantic import BaseModel, Field, ValidationError
 from redis.asyncio import Redis
 from sse_starlette import EventSourceResponse, ServerSentEvent
 
-from sensei_api import streams
+from sensei_api import stream_access, streams
 from sensei_api.auth import RequiredSession
 from sensei_api.deps import DbSession, RedisClient
 from sensei_api.orgs import OrgAccessDep
-from sensei_api.repos import RepoDep, repo_access
+from sensei_api.repos import RepoDep
 from sensei_api.routers.auth import GitHubOAuthDep
 from sensei_core.db.tenancy import set_org_context
-from sensei_core.github.client import GitHubError
-from sensei_core.github.oauth import GitHubOAuth, OAuthError
 from sensei_core.indexing.events import TERMINAL, EventType, JobOutbox, job_stream, org_stream
 from sensei_core.indexing.features import Feature, unlocked
 from sensei_core.indexing.jobs import IndexJobService
@@ -31,14 +28,11 @@ from sensei_core.models import (
     IndexJob,
     JobKind,
     JobStatus,
-    Repo,
     Stage,
-    User,
 )
 
 router = APIRouter(prefix="/orgs/{org}", tags=["indexing"])
 JobId = Annotated[uuid.UUID, Path(description="Index job id")]
-ACCESS_RECHECK_SECONDS = 300.0  # how long an org stream trusts its answer about one repository
 MEMBERSHIP_RECHECK_SECONDS = 60.0  # how often an org stream checks its session and membership
 
 
@@ -300,7 +294,7 @@ async def org_events(
         if _resuming(request)
         else await streams.latest_id(redis, key)
     )
-    known: dict[str, tuple[bool, float]] = {}
+    readable = stream_access.readable_repos(request, oauth, org_id, user_id)
     allowed = True
 
     async def still_allowed() -> bool:
@@ -311,12 +305,7 @@ async def org_events(
     async def keep(payload: dict[str, Any]) -> bool:
         if not allowed:
             return False  # nothing more, not even what was already in the stream
-        repo_id = str(payload.get("repo_id"))
-        cached = known.get(repo_id)
-        if cached is None or time.monotonic() - cached[1] > ACCESS_RECHECK_SECONDS:
-            readable = await _can_read(request, oauth, org_id, user_id, repo_id)
-            known[repo_id] = cached = (readable, time.monotonic())
-        return cached[0]
+        return await readable(str(payload.get("repo_id")))
 
     return streams.response(
         streams.follow(
@@ -333,27 +322,3 @@ async def org_events(
 
 def _resuming(request: Request) -> bool:
     return bool(request.headers.get("last-event-id") or request.query_params.get("last_event_id"))
-
-
-async def _can_read(
-    request: Request,
-    oauth: GitHubOAuth | None,
-    org_id: uuid.UUID,
-    user_id: uuid.UUID,
-    repo_id: str,
-) -> bool:
-    """Whether the user may read the repository, in a short session of its own."""
-    try:
-        target = uuid.UUID(repo_id)
-    except ValueError:
-        return False
-    async with streams.short_session(request) as db:
-        await set_org_context(db, org_id)
-        repo = await db.get(Repo, target)
-        user = await db.get(User, user_id)
-        if repo is None or user is None or repo.deleted_at is not None:
-            return False
-        try:
-            return await repo_access(request, db, oauth).can_read(user, repo)
-        except (OAuthError, GitHubError):
-            return False

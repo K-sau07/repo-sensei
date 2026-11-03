@@ -38,7 +38,7 @@ async def index_notice(db: AsyncSession, job: IndexJob) -> Told | None:
         event = Event(
             job.org_id, NotificationKind.INDEX_DONE, f"repo:{job.repo_id}:first-index",
             f"{place.full_name} is indexed",
-            "Its code browser, search and Ask are ready.", place.path,
+            "Its code browser, search and Ask are ready.", place.path, repo_id=job.repo_id,
         )  # fmt: skip
     else:
         before = await db.scalar(
@@ -59,6 +59,6 @@ async def index_notice(db: AsyncSession, job: IndexJob) -> Told | None:
         event = Event(
             job.org_id, NotificationKind.INDEX_FAILED, f"index:{job.id}:failed",
             f"Indexing {place.full_name} failed", message or "The run stopped with an error.",
-            f"{place.path}/index",
+            f"{place.path}/index", repo_id=job.repo_id,
         )  # fmt: skip
     return await notify(db, event, await admins(db, job.org_id))

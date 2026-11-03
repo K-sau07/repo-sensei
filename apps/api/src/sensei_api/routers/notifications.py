@@ -10,6 +10,10 @@ org's Slack.
 - ``PUT/GET/DELETE /orgs/{org}/integrations/slack`` (admins): the org's Slack incoming webhook
   (kept encrypted, never shown again but for its end) and the kinds it posts.
 
+An item about a repository (a fix's, an index run's) is shown only to those who can read that
+repository on GitHub, as the repository's own pages are (``repo_id``): someone who lost access
+no longer sees it, in the list, the unread count or the live stream.
+
 API keys can't use any of it (a person's, not a script's).
 """
 
@@ -21,27 +25,35 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Query, Request, status
 from pydantic import BaseModel, Field
-from sqlalchemy import func, select, update
+from sqlalchemy import ColumnElement, func, or_, select, true, update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sse_starlette import EventSourceResponse
 
-from sensei_api import streams
+from sensei_api import stream_access, streams
 from sensei_api.auth import CurrentUser, RequiredSession
 from sensei_api.deps import DbSession, RedisClient
 from sensei_api.orgs import OrgAccessDep
+from sensei_api.repos import RepoAccessDep
+from sensei_api.routers.auth import GitHubOAuthDep
 from sensei_core.audit import AuditAction, audit
 from sensei_core.errors import InvalidError, NotFoundError
+from sensei_core.github.client import GitHubError
+from sensei_core.github.oauth import OAuthError
 from sensei_core.models import (
     FixRisk,
     Notification,
     NotificationKind,
     NotificationPreferences,
+    Repo,
     Role,
     SlackIntegration,
 )
 from sensei_core.notifications.deliver import slack_context
 from sensei_core.notifications.senders import valid_slack_webhook
 from sensei_core.notifications.service import KIND_LABELS, inbox_stream, wants
-from sensei_core.orgs.service import require_role
+from sensei_core.orgs.service import OrgAccess, require_role
+from sensei_core.repos.access import RepoAccess, open_to_all
+from sensei_core.repos.service import GitHubUnavailableError
 from sensei_core.security.crypto import TokenCipher
 
 router = APIRouter(tags=["notifications"])
@@ -69,18 +81,59 @@ class InboxPage(BaseModel):
 
 class InboxReadIn(BaseModel):
     ids: list[uuid.UUID] | None = Field(default=None, max_length=MAX_PAGE)  # None: all
+    kinds: list[NotificationKind] | None = Field(default=None, max_length=len(NotificationKind))
 
 
 class InboxCount(BaseModel):
     unread: int
 
 
-async def _unread(db: DbSession, org_id: uuid.UUID, user_id: uuid.UUID) -> int:
+async def _shown(db: DbSession, access: OrgAccess, readers: RepoAccess) -> ColumnElement[bool]:
+    """Which of the person's items they may see now: none about a repository they can't read
+    (or one since removed). GitHub is asked about each repository their items name, once per
+    five minutes (its answers are cached); a lapsed GitHub sign-in shows only public ones'."""
+    named = list(
+        await db.scalars(
+            select(Notification.repo_id)
+            .where(
+                Notification.org_id == access.org.id,
+                Notification.user_id == access.user.id,
+                Notification.repo_id.is_not(None),
+            )
+            .distinct()
+        )
+    )
+    if not named:
+        return true()
+    repos = list(
+        await db.scalars(
+            select(Repo).where(
+                Repo.org_id == access.org.id, Repo.id.in_(named), Repo.deleted_at.is_(None)
+            )
+        )
+    )
+    try:
+        readable = await readers.readable(access.user, repos)
+    except OAuthError:
+        readable = [repo for repo in repos if open_to_all(repo)]
+    except GitHubError as exc:
+        raise GitHubUnavailableError("GitHub is not responding.") from exc
+    allowed = {repo.id for repo in readable}
+    hidden = [repo_id for repo_id in named if repo_id not in allowed]
+    if not hidden:
+        return true()
+    return or_(Notification.repo_id.is_(None), Notification.repo_id.not_in(hidden))
+
+
+async def _unread(
+    db: DbSession, org_id: uuid.UUID, user_id: uuid.UUID, shown: ColumnElement[bool]
+) -> int:
     found = await db.scalar(
         select(func.count()).where(
             Notification.org_id == org_id,
             Notification.user_id == user_id,
             Notification.read_at.is_(None),
+            shown,
         )
     )
     return int(found or 0)
@@ -95,14 +148,22 @@ def _risk(meta: dict[str, Any] | None) -> FixRisk | None:
 async def get_inbox(
     access: OrgAccessDep,
     db: DbSession,
+    readers: RepoAccessDep,
+    *,
     unread: bool = False,
+    kinds: Annotated[list[NotificationKind] | None, Query(max_length=len(NotificationKind))] = None,
     before: uuid.UUID | None = None,
     limit: Annotated[int, Query(ge=1, le=MAX_PAGE)] = 50,
 ) -> InboxPage:
+    """The person's items, newest first (``unread``: only those; ``kinds``: only those kinds),
+    with how many are unread in all."""
     org_id, user_id = access.org.id, access.user.id
+    shown = await _shown(db, access, readers)
     query = select(Notification).where(
-        Notification.org_id == org_id, Notification.user_id == user_id
+        Notification.org_id == org_id, Notification.user_id == user_id, shown
     )
+    if kinds:
+        query = query.where(Notification.kind.in_(kinds))
     if unread:
         query = query.where(Notification.read_at.is_(None))
     if before is not None:
@@ -123,15 +184,19 @@ async def get_inbox(
     ]
     return InboxPage(
         items=items,
-        unread=await _unread(db, org_id, user_id),
+        unread=await _unread(db, org_id, user_id, shown),
         next_cursor=rows[-1].id if len(rows) == limit else None,
     )
 
 
 @router.post("/orgs/{org}/inbox/read", response_model=InboxCount)
-async def read_inbox(body: InboxReadIn, access: OrgAccessDep, db: DbSession) -> InboxCount:
-    """Mark ``ids`` read (others' and unknown ones are passed over), or every item."""
+async def read_inbox(
+    body: InboxReadIn, access: OrgAccessDep, db: DbSession, readers: RepoAccessDep
+) -> InboxCount:
+    """Mark ``ids`` read (others' and unknown ones are passed over), or every item (``kinds``:
+    every item of those kinds)."""
     org_id, user_id = access.org.id, access.user.id
+    shown = await _shown(db, access, readers)
     marking = (
         update(Notification)
         .where(
@@ -143,8 +208,10 @@ async def read_inbox(body: InboxReadIn, access: OrgAccessDep, db: DbSession) -> 
     )
     if body.ids is not None:
         marking = marking.where(Notification.id.in_(body.ids))
-    await db.execute(marking)
-    return InboxCount(unread=await _unread(db, org_id, user_id))
+    if body.kinds:
+        marking = marking.where(Notification.kind.in_(body.kinds))
+    await db.execute(marking.where(shown))
+    return InboxCount(unread=await _unread(db, org_id, user_id, shown))
 
 
 @router.get(
@@ -153,22 +220,42 @@ async def read_inbox(body: InboxReadIn, access: OrgAccessDep, db: DbSession) -> 
     responses={200: {"content": {"text/event-stream": {}}}},
 )
 async def inbox_events(
-    request: Request, access: OrgAccessDep, active: RequiredSession, redis: RedisClient
+    request: Request,
+    access: OrgAccessDep,
+    active: RequiredSession,
+    redis: RedisClient,
+    oauth: GitHubOAuthDep,
 ) -> EventSourceResponse:
     """New inbox items (``inbox.new``: its kind, title and link), from now (or after
-    ``Last-Event-ID``). Ends when the session does or the user leaves the org (checked every
-    minute)."""
+    ``Last-Event-ID``); one about a repository only while the user can read it. Ends when the
+    session does or the user leaves the org (checked every minute)."""
     org_id, user_id, session_id = access.org.id, access.user.id, active.session.id
     key = inbox_stream(org_id, user_id)
     resuming = request.headers.get("last-event-id") or request.query_params.get("last_event_id")
     cursor = streams.last_event_id(request) if resuming else await streams.latest_id(redis, key)
+    readable = stream_access.readable_repos(request, oauth, org_id, user_id)
+    allowed = True
 
     async def still() -> bool:
-        return await streams.still_member(request, org_id, user_id, session_id)
+        nonlocal allowed
+        allowed = await streams.still_member(request, org_id, user_id, session_id)
+        return allowed
+
+    async def keep(payload: dict[str, Any]) -> bool:
+        if not allowed:
+            return False
+        repo_id = payload.get("repo_id")
+        return repo_id is None or await readable(str(repo_id))
 
     return streams.response(
         streams.follow(
-            request, redis, key, cursor, still=still, recheck_seconds=MEMBERSHIP_RECHECK_SECONDS
+            request,
+            redis,
+            key,
+            cursor,
+            keep=keep,
+            still=still,
+            recheck_seconds=MEMBERSHIP_RECHECK_SECONDS,
         )
     )
 
@@ -224,14 +311,20 @@ async def get_preferences(user: CurrentUser, db: DbSession) -> PreferencesOut:
 async def update_preferences(
     body: PreferencesPatch, user: CurrentUser, db: DbSession
 ) -> PreferencesOut:
+    # Made first if it isn't there (two first changes at once: one makes it, both then lock it).
+    await db.execute(
+        pg_insert(NotificationPreferences)
+        .values(user_id=user.id, channels={})
+        .on_conflict_do_nothing(index_elements=["user_id"])
+    )
     found = await db.scalar(
         select(NotificationPreferences)
         .where(NotificationPreferences.user_id == user.id)
         .with_for_update()
+        .execution_options(populate_existing=True)
     )
-    if found is None:
-        found = NotificationPreferences(user_id=user.id, channels={})
-        db.add(found)
+    if found is None:  # pragma: no cover - made just above
+        raise NotFoundError("Preferences not found.", code="preferences_not_found")
     channels: dict[str, Any] = {
         kind.value: {
             "in_app": wants(found.channels, kind, "in_app"),
@@ -290,17 +383,27 @@ async def put_slack(
     require_role(access, Role.ADMIN)
     org_id = access.org.id
     cipher = _cipher(request)
-    found = await db.scalar(select(SlackIntegration).where(SlackIntegration.org_id == org_id))
     url = body.webhook_url.strip() if body.webhook_url is not None else None
     if url is not None and not valid_slack_webhook(url):
         raise InvalidError("That isn't a Slack incoming webhook (https://hooks.slack.com/services/…).",
                            code="slack_webhook")  # fmt: skip
+    if url is not None:
+        # Made if it isn't there (two first connections at once: one makes it, both change it).
+        await db.execute(
+            pg_insert(SlackIntegration)
+            .values(org_id=org_id, created_by=access.user.id,
+                    webhook_url_enc=cipher.encrypt_text(url, context=slack_context(org_id)))
+            .on_conflict_do_nothing(index_elements=["org_id"])
+        )  # fmt: skip
+    found = await db.scalar(
+        select(SlackIntegration)
+        .where(SlackIntegration.org_id == org_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
     if found is None:
-        if url is None:
-            raise InvalidError("Connecting Slack needs its incoming webhook's URL.",
-                               code="slack_webhook")  # fmt: skip
-        found = SlackIntegration(org_id=org_id, created_by=access.user.id)
-        db.add(found)
+        raise InvalidError("Connecting Slack needs its incoming webhook's URL.",
+                           code="slack_webhook")  # fmt: skip
     if url is not None:
         found.webhook_url_enc = cipher.encrypt_text(url, context=slack_context(org_id))
     found.channel = body.channel.strip()

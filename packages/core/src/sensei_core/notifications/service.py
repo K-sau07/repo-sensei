@@ -14,6 +14,10 @@ Who is told:
 - an index done (a repository's first) or failed: the org's admins;
 - the org's spend near its cap: the org's admins.
 
+One about a repository reaches only those who can read it on GitHub, as the repository itself
+does: the inbox shows it only to them (``repo_id``), and an email goes only once their access is
+checked (:mod:`.deliver`). The org's Slack channel is its admins' choice and hears of all.
+
 What they want: in the inbox, everything; by email, all but an index done; a person changes
 either per kind.
 """
@@ -76,6 +80,9 @@ class Event:
     body: str = ""
     link: str | None = None  # a path in the app (/acme/api/fixes/<id>)
     meta: Mapping[str, Any] | None = None  # shown beside it in the inbox ({"risk": "high"})
+    # The repository it's about: only those who can read it there see it (in the inbox, by
+    # email), as they see the repository.
+    repo_id: uuid.UUID | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -165,10 +172,11 @@ async def notify(db: AsyncSession, event: Event, users: Iterable[uuid.UUID]) -> 
                 told.append(user_id)
             email = emails.get(user_id)
             if email and wants(channels, event.kind, "email"):
-                await _delivery(db, event, DeliveryChannel.EMAIL, email)
+                await _delivery(db, event, DeliveryChannel.EMAIL, email, user_id)
     slack = await db.scalar(select(SlackIntegration).where(SlackIntegration.org_id == event.org_id))
     if slack is not None and event.kind.value in (slack.kinds or []):
-        await _delivery(db, event, DeliveryChannel.SLACK, SLACK_RECIPIENT)
+        # The org's channel, as its admins chose: it hears of every repository's.
+        await _delivery(db, event, DeliveryChannel.SLACK, SLACK_RECIPIENT, None)
     return Told(told, event)
 
 
@@ -178,6 +186,7 @@ async def _inbox(db: AsyncSession, event: Event, user_id: uuid.UUID) -> bool:
         .values(
             org_id=event.org_id,
             user_id=user_id,
+            repo_id=event.repo_id,
             kind=event.kind,
             key=event.key,
             title=event.title[:300],
@@ -191,13 +200,21 @@ async def _inbox(db: AsyncSession, event: Event, user_id: uuid.UUID) -> bool:
     return found.scalar() is not None
 
 
-async def _delivery(db: AsyncSession, event: Event, channel: DeliveryChannel, to: str) -> None:
+async def _delivery(
+    db: AsyncSession,
+    event: Event,
+    channel: DeliveryChannel,
+    to: str,
+    user_id: uuid.UUID | None,
+) -> None:
     await db.execute(
         pg_insert(NotificationDelivery)
         .values(
             org_id=event.org_id,
             channel=channel,
             recipient=to[:320],
+            user_id=user_id,
+            repo_id=event.repo_id,
             key=event.key,
             kind=event.kind,
             subject=event.title[:300],
@@ -218,8 +235,10 @@ async def publish(redis: Redis, told: Iterable[Told]) -> None:
     commit; a lost message only delays the inbox until it is read again."""
     for each in told:
         event = each.event
+        repo = str(event.repo_id) if event.repo_id else None  # the stream drops what can't be read
         data = orjson.dumps({"type": "inbox.new", "kind": event.kind.value, "key": event.key,
-                             "title": event.title, "link": event.link}).decode()  # fmt: skip
+                             "title": event.title, "link": event.link,
+                             "repo_id": repo}).decode()  # fmt: skip
         try:
             for user_id in each.users:
                 await redis.xadd(inbox_stream(event.org_id, user_id), {"data": data},  # pyright: ignore[reportUnknownMemberType, reportArgumentType]

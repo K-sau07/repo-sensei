@@ -444,14 +444,15 @@ class FixerSettings(BaseSettings):
 
 class NotifySettings(BaseSettings):
     """Notifications (8.10): email through Resend (no key: emails are logged, in development,
-    or skipped), and how many times a delivery is tried before it is given up."""
+    or skipped), and how many times a delivery is tried before it is given up (each wait twice
+    the last, from a minute: 8 tries span about two hours)."""
 
     model_config = _config("SENSEI_NOTIFY_")
 
     resend_api_key: SecretStr | None = None
     resend_url: str = "https://api.resend.com/emails"
     email_from: str = "repo-sensei <notifications@repo-sensei.dev>"
-    max_attempts: int = Field(default=5, ge=1)
+    max_attempts: int = Field(default=8, ge=1, le=12)
 
 
 class Settings(BaseSettings):

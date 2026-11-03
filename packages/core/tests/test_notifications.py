@@ -35,6 +35,7 @@ from sensei_core.models import (
     NotificationDelivery,
     NotificationKind,
     NotificationPreferences,
+    Org,
     Repo,
     RepoSource,
     Role,
@@ -43,6 +44,7 @@ from sensei_core.models import (
 )
 from sensei_core.notifications.deliver import (
     Senders,
+    app_link,
     deliver_pending,
     email_text,
     slack_context,
@@ -50,6 +52,7 @@ from sensei_core.notifications.deliver import (
 )
 from sensei_core.notifications.indexing import index_notice
 from sensei_core.notifications.senders import (
+    Email,
     HttpSlackPoster,
     MemoryEmailer,
     MemorySlackPoster,
@@ -222,7 +225,7 @@ async def test_publish_tells_each_persons_inbox_stream() -> None:
     assert len(entries) == 1
     payload = orjson.loads(entries[0][1][b"data"])
     assert payload == {"type": "inbox.new", "kind": "fix_failed", "key": "fix:1:failed",
-                       "title": event.title, "link": event.link}  # fmt: skip
+                       "title": event.title, "link": event.link, "repo_id": None}  # fmt: skip
 
 
 # ---------------------------------------------------------------- sending
@@ -270,12 +273,182 @@ async def test_a_failing_send_is_retried_a_few_times_then_given_up(
     flaky = MemoryEmailer(fail=SendError("email: HTTP 503", retry=True))
     senders = _senders(cipher, flaky, MemorySlackPoster(), max_attempts=2)
 
-    first = await deliver_pending(_same(db_session), senders)
+    now = datetime.now(UTC)
+    first = await deliver_pending(_same(db_session), senders, clock=lambda: now)
     [delivery] = await _deliveries(db_session, org_id)
     assert (first.retrying, delivery.state, delivery.attempts) == (1, DeliveryState.PENDING, 1)
-    second = await deliver_pending(_same(db_session), senders)
+    assert delivery.next_attempt_at == now + timedelta(minutes=1)
+    # Not before its wait is over; then given up (its tries spent).
+    early = await deliver_pending(_same(db_session), senders, clock=lambda: now)
+    assert (early.failed, early.retrying, delivery.attempts) == (0, 0, 1)
+    later = now + timedelta(minutes=1)
+    second = await deliver_pending(_same(db_session), senders, clock=lambda: later)
     assert (second.failed, delivery.state, delivery.attempts) == (1, DeliveryState.FAILED, 2)
     assert delivery.error == "email: HTTP 503"
+
+
+async def test_retries_wait_twice_as_long_each_time(db_session: AsyncSession) -> None:
+    org_id, owner, _ = await _org(db_session)
+    await notify(db_session, _event(org_id), [owner.id])
+    flaky = MemoryEmailer(fail=SendError("email: HTTP 503", retry=True))
+    senders = _senders(_cipher(), flaky, MemorySlackPoster(), max_attempts=8)
+    moment = datetime.now(UTC)
+    waits: list[timedelta] = []
+    for _ in range(3):
+        at = moment
+        await deliver_pending(_same(db_session), senders, clock=lambda at=at: at)
+        [delivery] = await _deliveries(db_session, org_id)
+        assert delivery.next_attempt_at is not None
+        waits.append(delivery.next_attempt_at - moment)
+        moment = delivery.next_attempt_at
+    assert waits == [timedelta(minutes=1), timedelta(minutes=2), timedelta(minutes=4)]
+
+
+class Broken(MemoryEmailer):
+    """Fails in a way nobody planned for (once), then sends."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.broke = False
+
+    async def send(self, email: Email, *, key: str) -> None:
+        if not self.broke:
+            self.broke = True
+            raise UnicodeEncodeError("ascii", "é", 0, 1, "not ascii")
+        await super().send(email, key=key)
+
+
+async def test_one_delivery_that_breaks_doesnt_stop_the_others(db_session: AsyncSession) -> None:
+    org_id, owner, _ = await _org(db_session)
+    other = await _member(db_session, org_id, Role.MEMBER)
+    await notify(db_session, _event(org_id), [owner.id, other.id])
+    emails = Broken()
+    now = datetime.now(UTC)
+
+    done = await deliver_pending(
+        _same(db_session), _senders(_cipher(), emails, MemorySlackPoster()), clock=lambda: now
+    )
+
+    assert (done.sent, done.retrying) == (1, 1)
+    broken = [d for d in await _deliveries(db_session, org_id) if d.state is DeliveryState.PENDING]
+    assert [(d.attempts, d.error) for d in broken] == [(1, "unexpected UnicodeEncodeError")]
+    assert broken[0].next_attempt_at == now + timedelta(minutes=1)
+
+
+async def test_an_emails_idempotency_key_is_ascii_whatever_the_address(
+    db_session: AsyncSession,
+) -> None:
+    org_id, _, _ = await _org(db_session)
+    person = await _member(db_session, org_id, Role.ADMIN, email="zoë@example.com")
+    await notify(db_session, _event(org_id), [person.id])
+    keys: list[str] = []
+
+    class Keys(MemoryEmailer):
+        async def send(self, email: Email, *, key: str) -> None:
+            keys.append(key)
+            await super().send(email, key=key)
+
+    await deliver_pending(_same(db_session), _senders(_cipher(), Keys(), MemorySlackPoster()))
+
+    [key] = keys
+    assert key.isascii()
+    assert len(key) == 64
+
+
+# ---------------------------------------------------------------- who may read the repository
+
+
+async def _private_repo(db: AsyncSession, org_id: uuid.UUID) -> Repo:
+    repo = Repo(
+        org_id=org_id, source=RepoSource.GITHUB_APP, github_repo_id=8, owner="o",
+        name="secret", full_name="o/secret", slug="secret", default_branch="main",
+        visibility="private",
+    )  # fmt: skip
+    db.add(repo)
+    await db.flush()
+    return repo
+
+
+def _about(org_id: uuid.UUID, repo: Repo, key: str = "fix:9:failed") -> Event:
+    return Event(org_id, NotificationKind.FIX_FAILED, key, "Fix failed: SecretError",
+                 "In o/secret.", "/acme/secret/fixes/9", repo_id=repo.id)  # fmt: skip
+
+
+@pytest.mark.parametrize(
+    ("answer", "sent"),
+    [(True, "Fix failed: SecretError"), (False, None), (None, "A fix or change stopped")],
+)
+async def test_an_email_about_a_repository_goes_only_to_who_can_read_it(
+    db_session: AsyncSession, answer: bool | None, sent: str | None
+) -> None:
+    org_id, owner, _ = await _org(db_session)
+    repo = await _private_repo(db_session, org_id)
+    await notify(db_session, _about(org_id, repo), [owner.id])
+    asked: list[tuple[uuid.UUID, uuid.UUID]] = []
+
+    async def can_read(user: User, about: Repo) -> bool | None:
+        asked.append((user.id, about.id))
+        return answer
+
+    emails = MemoryEmailer()
+    senders = Senders(emailer=emails, slack=MemorySlackPoster(), cipher=_cipher(), origin=ORIGIN,
+                      can_read=can_read)  # fmt: skip
+
+    done = await deliver_pending(_same(db_session), senders)
+
+    assert asked == [(owner.id, repo.id)]
+    assert [e.subject for e in emails.sent] == ([sent] if sent else [])
+    if answer is None:
+        # Only what kind of thing, in which org, and where: not the repository or its words.
+        [email] = emails.sent
+        assert "secret" not in email.text.lower()
+        assert email.text.startswith("A fix or change stopped in Acme. Sign in to see it.")
+        slug = await db_session.scalar(select(Org.slug).where(Org.id == org_id))
+        assert f"Open it: {ORIGIN}/{slug}/inbox" in email.text
+    if answer is False:
+        [delivery] = await _deliveries(db_session, org_id)
+        assert (done.skipped, delivery.error) == (1, "can't read the repository")
+
+
+async def test_a_public_repositorys_email_isnt_asked_about(db_session: AsyncSession) -> None:
+    org_id, owner, public = await _org(db_session)
+    await notify(db_session, _about(org_id, public), [owner.id])
+
+    async def can_read(user: User, about: Repo) -> bool | None:
+        raise AssertionError("a public repository is anyone's")
+
+    emails = MemoryEmailer()
+    senders = Senders(emailer=emails, slack=MemorySlackPoster(), cipher=_cipher(), origin=ORIGIN,
+                      can_read=can_read)  # fmt: skip
+    await deliver_pending(_same(db_session), senders)
+    assert [e.subject for e in emails.sent] == ["Fix failed: SecretError"]
+
+
+async def test_github_not_answering_is_tried_again(db_session: AsyncSession) -> None:
+    from sensei_core.github.client import GitHubError  # noqa: PLC0415
+
+    org_id, owner, _ = await _org(db_session)
+    repo = await _private_repo(db_session, org_id)
+    await notify(db_session, _about(org_id, repo), [owner.id])
+
+    async def can_read(user: User, about: Repo) -> bool | None:
+        raise GitHubError(502, "bad gateway")
+
+    senders = Senders(emailer=MemoryEmailer(), slack=MemorySlackPoster(), cipher=_cipher(),
+                      origin=ORIGIN, can_read=can_read)  # fmt: skip
+    done = await deliver_pending(_same(db_session), senders)
+    [delivery] = await _deliveries(db_session, org_id)
+    assert (done.retrying, delivery.state, delivery.error) == (1, DeliveryState.PENDING,
+                                                              "GitHub: 502")  # fmt: skip
+
+
+async def test_the_inbox_item_names_its_repository(db_session: AsyncSession) -> None:
+    org_id, owner, _ = await _org(db_session)
+    repo = await _private_repo(db_session, org_id)
+    await notify(db_session, _about(org_id, repo), [owner.id])
+    item = await db_session.scalar(select(Notification).where(Notification.org_id == org_id))
+    assert item is not None
+    assert item.repo_id == repo.id
 
 
 async def test_a_send_that_cant_pass_fails_at_once(db_session: AsyncSession) -> None:
@@ -352,8 +525,11 @@ def test_texts_link_only_into_the_app_and_escape_slack() -> None:
                                     channel=DeliveryChannel.SLACK)  # fmt: skip
     assert slack_text(delivery, ORIGIN) == "*Fix &lt;b&gt; &amp; co*\na &lt; b"
     assert "evil" not in email_text(delivery, ORIGIN)
-    delivery.link = "https://evil.example/x"
-    assert "evil" not in slack_text(delivery, ORIGIN)
+    for link in ("https://evil.example/x", "/\\evil.example/x", "/a\\b", "/x\ty"):
+        delivery.link = link
+        assert "evil" not in slack_text(delivery, ORIGIN)
+        assert app_link(ORIGIN, link) is None, link
+    assert app_link(ORIGIN, "/acme/items/fixes/1") == f"{ORIGIN}/acme/items/fixes/1"
 
 
 # ---------------------------------------------------------------- senders
@@ -379,8 +555,6 @@ async def test_resend_is_sent_with_its_key_and_an_idempotency_key() -> None:
     async with httpx.AsyncClient() as http, respx.mock() as mock:
         route = mock.post("https://api.resend.com/emails").respond(200, json={"id": "e1"})
         sender = ResendEmailer(http, settings)
-        from sensei_core.notifications.senders import Email  # noqa: PLC0415
-
         await sender.send(Email("a@example.com", "Hi", "Body"), key="fix:1:pr:a@example.com")
         request = route.calls.last.request
         assert request.headers["authorization"] == "Bearer re_test"

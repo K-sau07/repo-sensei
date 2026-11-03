@@ -17,7 +17,18 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import DateTime, Enum, ForeignKey, Index, Integer, LargeBinary, String, Text, func
+from sqlalchemy import (
+    DateTime,
+    Enum,
+    ForeignKey,
+    ForeignKeyConstraint,
+    Index,
+    Integer,
+    LargeBinary,
+    String,
+    Text,
+    func,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -59,9 +70,14 @@ class Notification(IdMixin, OrgScopedMixin, Base):
     __table_args__ = (
         Index("uq_notifications_user_key", "user_id", "key", unique=True),
         Index("ix_notifications_inbox", "org_id", "user_id", "created_at"),
+        ForeignKeyConstraint(
+            ["repo_id", "org_id"], ["repos.id", "repos.org_id"], ondelete="CASCADE"
+        ),
     )
 
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    # The repository it's about: shown only to those who can read it there (as the repo is).
+    repo_id: Mapped[uuid.UUID | None] = mapped_column()
     kind: Mapped[NotificationKind] = mapped_column(_enum(NotificationKind, "notification_kind"))
     key: Mapped[str] = mapped_column(String(200))  # the event's: once per person
     title: Mapped[str] = mapped_column(String(300))
@@ -81,10 +97,16 @@ class NotificationDelivery(IdMixin, OrgScopedMixin, Base):
         # Once per channel, recipient and event (the org's Slack hears of an event once).
         Index("uq_notification_deliveries_once", "channel", "recipient", "key", unique=True),
         Index("ix_notification_deliveries_pending", "state", "created_at"),
+        ForeignKeyConstraint(
+            ["repo_id", "org_id"], ["repos.id", "repos.org_id"], ondelete="CASCADE"
+        ),
     )
 
     channel: Mapped[DeliveryChannel] = mapped_column(_enum(DeliveryChannel, "delivery_channel"))
     recipient: Mapped[str] = mapped_column(String(320))  # an email address, or the org's Slack
+    # An email's person: one about a repository goes only if they can still read it.
+    user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    repo_id: Mapped[uuid.UUID | None] = mapped_column()
     key: Mapped[str] = mapped_column(String(200))
     kind: Mapped[NotificationKind] = mapped_column(_enum(NotificationKind, "notification_kind"))
     subject: Mapped[str] = mapped_column(String(300))
@@ -94,6 +116,7 @@ class NotificationDelivery(IdMixin, OrgScopedMixin, Base):
         _enum(DeliveryState, "delivery_state"), default=DeliveryState.PENDING
     )
     attempts: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    next_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))  # a retry's
     error: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False

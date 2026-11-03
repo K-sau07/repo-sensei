@@ -52,7 +52,7 @@ async def fix_notices(
                 run.org_id, NotificationKind.APPROVAL_NEEDED, f"fix:{run.id}:awaiting:{rev}",
                 f"{noun} plan to approve{again}: {run.title}",
                 f"In {place.full_name}, risk {run.risk.value if run.risk else 'not yet rated'}.",
-                link, {"risk": run.risk.value} if run.risk else None,
+                link, {"risk": run.risk.value} if run.risk else None, run.repo_id,
             )  # fmt: skip
             users = {*asked, *await admins(db, run.org_id)}
         elif kind == "done":
@@ -61,7 +61,7 @@ async def fix_notices(
             notice = Event(
                 run.org_id, NotificationKind.PR_OPENED, f"fix:{run.id}:pr",
                 f"Draft pull request opened: {run.title}", f"In {place.full_name}: {run.pr_url}",
-                link,
+                link, repo_id=run.repo_id,
             )  # fmt: skip
             users = set(asked or await admins(db, run.org_id))
         else:
@@ -69,6 +69,7 @@ async def fix_notices(
                 run.org_id, NotificationKind.FIX_FAILED, f"fix:{run.id}:{kind}:{event.get('ts')}",
                 f"{noun} {STOPPED[kind]}: {run.title}",
                 f"In {place.full_name}. {run.stop_reason or ''}".strip(), link,
+                repo_id=run.repo_id,
             )  # fmt: skip
             users = set(asked or await admins(db, run.org_id))
         told.append(await notify(db, notice, _sorted(users)))

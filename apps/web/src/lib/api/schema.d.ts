@@ -1066,7 +1066,11 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Get Inbox */
+        /**
+         * Get Inbox
+         * @description The person's items, newest first (``unread``: only those; ``kinds``: only those kinds),
+         *     with how many are unread in all.
+         */
         get: operations["get_inbox_api_v1_orgs__org__inbox_get"];
         put?: never;
         post?: never;
@@ -1086,8 +1090,8 @@ export interface paths {
         /**
          * Inbox Events
          * @description New inbox items (``inbox.new``: its kind, title and link), from now (or after
-         *     ``Last-Event-ID``). Ends when the session does or the user leaves the org (checked every
-         *     minute).
+         *     ``Last-Event-ID``); one about a repository only while the user can read it. Ends when the
+         *     session does or the user leaves the org (checked every minute).
          */
         get: operations["inbox_events_api_v1_orgs__org__inbox_events_get"];
         put?: never;
@@ -1109,7 +1113,8 @@ export interface paths {
         put?: never;
         /**
          * Read Inbox
-         * @description Mark ``ids`` read (others' and unknown ones are passed over), or every item.
+         * @description Mark ``ids`` read (others' and unknown ones are passed over), or every item (``kinds``:
+         *     every item of those kinds).
          */
         post: operations["read_inbox_api_v1_orgs__org__inbox_read_post"];
         delete?: never;
@@ -3995,6 +4000,8 @@ export interface components {
         InboxReadIn: {
             /** Ids */
             ids?: string[] | null;
+            /** Kinds */
+            kinds?: components["schemas"]["NotificationKind"][] | null;
         };
         /** IndexJobOut */
         IndexJobOut: {
@@ -7448,6 +7455,7 @@ export interface operations {
         parameters: {
             query?: {
                 unread?: boolean;
+                kinds?: components["schemas"]["NotificationKind"][] | null;
                 before?: string | null;
                 limit?: number;
             };

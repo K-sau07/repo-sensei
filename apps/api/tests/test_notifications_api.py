@@ -1,11 +1,12 @@
 """Notifications over HTTP (8.10): a person's inbox in an org (only theirs; read one, or all),
 its live stream, their preferences (the same in every org), and the org's Slack (admins; only
-Slack's webhooks, kept encrypted, never shown back)."""
+Slack's webhooks, kept encrypted, never shown back). An item about a repository is shown only to
+whoever can read the repository on GitHub."""
 
 from __future__ import annotations
 
 import uuid
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Generator
 from contextlib import asynccontextmanager
 
 import httpx
@@ -15,15 +16,19 @@ from fastapi import FastAPI
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from sensei_api import streams
+from sensei_api import stream_access, streams
+from sensei_api.repos import get_repo_access
 from sensei_api.routers import notifications as notifications_router
 from sensei_core.config import Settings
 from sensei_core.db.tenancy import set_org_context
+from sensei_core.github.oauth import OAuthError
 from sensei_core.mail import MemoryMailer
 from sensei_core.models import (
     AuditEvent,
     Membership,
     NotificationKind,
+    Repo,
+    RepoSource,
     Role,
     SlackIntegration,
     User,
@@ -55,9 +60,48 @@ def app(api_app: FastAPI, migrated_test_db: Settings, fake_redis: FakeAsyncRedis
 
 @pytest.fixture
 async def client(app: FastAPI) -> AsyncGenerator[httpx.AsyncClient]:
-    transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
-    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as test:
-        yield test
+    async with httpx.AsyncClient() as http:
+        app.state.http = http
+        transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as test:
+            yield test
+
+
+class FakeReaders:
+    """What GitHub says each person can read (``lapsed``: their sign-in must be renewed)."""
+
+    def __init__(self) -> None:
+        self.readable: set[uuid.UUID] = set()
+        self.lapsed = False
+
+    async def readable_for(self, user: User, repos: list[Repo]) -> list[Repo]:
+        if self.lapsed:
+            raise OAuthError("github_reauth_required", "Sign in with GitHub again.")
+        return [repo for repo in repos if repo.id in self.readable]
+
+
+@pytest.fixture
+def readers(app: FastAPI) -> Generator[FakeReaders]:
+    fake = FakeReaders()
+
+    class Access:
+        async def readable(self, user: User, repos: list[Repo]) -> list[Repo]:
+            return await fake.readable_for(user, repos)
+
+    app.dependency_overrides[get_repo_access] = Access
+    yield fake
+    app.dependency_overrides.pop(get_repo_access, None)
+
+
+async def _repo(db: AsyncSession, org_id: uuid.UUID, slug: str, *, public: bool = False) -> Repo:
+    repo = Repo(
+        org_id=org_id, source=RepoSource.PUBLIC_URL if public else RepoSource.GITHUB_APP,
+        github_repo_id=hash(slug) % 10_000, owner="o", name=slug, full_name=f"o/{slug}",
+        slug=slug, default_branch="main", visibility="public" if public else "private",
+    )  # fmt: skip
+    db.add(repo)
+    await db.flush()
+    return repo
 
 
 async def _org(db: AsyncSession) -> tuple[uuid.UUID, User, User, User]:
@@ -154,19 +198,117 @@ async def test_the_inbox_stream_sends_what_arrives_for_that_person(
 
     calls = 0
 
-    async def once(*_args: object) -> bool:
+    async def twice(*_args: object) -> bool:
         nonlocal calls
         calls += 1
-        return False  # the session ended: what's there is sent, then it closes
+        return calls == 1  # then the session ended: the stream closes
 
-    monkeypatch.setattr(streams, "still_member", once)
+    monkeypatch.setattr(streams, "still_member", twice)
     response = await client.get(f"{API}/orgs/acme/inbox/events", params={"last_event_id": "0"})
 
     assert response.status_code == 200
     events = [e for e in _sse(response.text) if "event" in e]
     assert [e["event"] for e in events] == ["inbox.new"]
     assert '"title":"Draft pull request opened"' in events[0]["data"]
-    assert calls == 1
+    assert calls == 2
+
+
+async def test_the_inbox_stream_drops_what_its_reader_cant_read(
+    app: FastAPI,
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    fake_redis: FakeAsyncRedis,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(streams, "READ_BLOCK_MS", 50)
+    monkeypatch.setattr(notifications_router, "MEMBERSHIP_RECHECK_SECONDS", 0.0)
+    org_id, _, member, _ = await _org(db_session)
+    await set_org_context(db_session, org_id)
+    seen, hidden = await _repo(db_session, org_id, "seen"), await _repo(db_session, org_id, "hid")
+    for repo in (seen, hidden):
+        event = Event(org_id, NotificationKind.FIX_FAILED, f"fix:{repo.slug}:failed",
+                      f"Fix failed in {repo.slug}", "", None, repo_id=repo.id)  # fmt: skip
+        await publish(fake_redis, [await notify(db_session, event, [member.id])])
+    await sign_in(app, client, db_session, member)
+    asked: list[str] = []
+
+    async def can_read(_request: object, _oauth: object, _org: object, _user: object,
+                       repo_id: str) -> bool:  # fmt: skip
+        asked.append(repo_id)
+        return repo_id == str(seen.id)
+
+    monkeypatch.setattr(stream_access, "_can_read", can_read)
+    calls = 0
+
+    async def twice(*_args: object) -> bool:
+        nonlocal calls
+        calls += 1
+        return calls == 1
+
+    monkeypatch.setattr(streams, "still_member", twice)
+    response = await client.get(f"{API}/orgs/acme/inbox/events", params={"last_event_id": "0"})
+
+    titles = [e["data"] for e in _sse(response.text) if e.get("event") == "inbox.new"]
+    assert len(titles) == 1
+    assert "Fix failed in seen" in titles[0]
+    assert sorted(asked) == sorted([str(seen.id), str(hidden.id)])
+
+
+async def test_items_about_a_repository_are_shown_only_to_who_can_read_it(
+    app: FastAPI, client: httpx.AsyncClient, db_session: AsyncSession, readers: FakeReaders
+) -> None:
+    org_id, _, member, _ = await _org(db_session)
+    await set_org_context(db_session, org_id)
+    seen, hidden = await _repo(db_session, org_id, "seen"), await _repo(db_session, org_id, "hid")
+    public = await _repo(db_session, org_id, "open", public=True)
+    for key, repo in (("s", seen), ("h", hidden), ("p", public), ("none", None)):
+        event = Event(org_id, NotificationKind.FIX_FAILED, key, f"Fix failed: {key}", "", None,
+                      repo_id=repo.id if repo else None)  # fmt: skip
+        await notify(db_session, event, [member.id])
+    readers.readable = {seen.id, public.id}
+    _, headers = await sign_in(app, client, db_session, member)
+
+    body = (await client.get(f"{API}/orgs/acme/inbox")).json()
+    assert sorted(i["title"] for i in body["items"]) == [
+        "Fix failed: none", "Fix failed: p", "Fix failed: s",
+    ]  # fmt: skip
+    assert body["unread"] == 3
+    # Read all: what they can't see is left alone, and isn't counted.
+    marked = await client.post(f"{API}/orgs/acme/inbox/read", json={}, headers=headers)
+    assert marked.json() == {"unread": 0}
+    # Their GitHub sign-in lapsed: only what isn't a private repository's.
+    readers.lapsed = True
+    lapsed = (await client.get(f"{API}/orgs/acme/inbox")).json()
+    assert sorted(i["title"] for i in lapsed["items"]) == ["Fix failed: none", "Fix failed: p"]
+    # A repository removed takes its items with it.
+    readers.lapsed = False
+    readers.readable = {hidden.id, seen.id, public.id}
+    shown = (await client.get(f"{API}/orgs/acme/inbox")).json()
+    assert (len(shown["items"]), shown["unread"]) == (4, 1)
+    await db_session.delete(hidden)
+    await db_session.flush()
+    after = (await client.get(f"{API}/orgs/acme/inbox")).json()
+    assert len(after["items"]) == 3
+
+
+async def test_the_inbox_by_kind_and_marking_one_kind_read(
+    app: FastAPI, client: httpx.AsyncClient, db_session: AsyncSession
+) -> None:
+    org_id, _, member, _ = await _org(db_session)
+    await _tell(db_session, org_id, "approve", [member], NotificationKind.APPROVAL_NEEDED)
+    await _tell(db_session, org_id, "failed", [member])
+    await _tell(db_session, org_id, "pr", [member], NotificationKind.PR_OPENED)
+    _, headers = await sign_in(app, client, db_session, member)
+
+    kinds = {"kinds": ["approval_needed", "pr_opened"]}
+    some = (await client.get(f"{API}/orgs/acme/inbox", params=kinds)).json()
+    assert sorted(i["kind"] for i in some["items"]) == ["approval_needed", "pr_opened"]
+    assert some["unread"] == 3  # in all
+    marked = await client.post(f"{API}/orgs/acme/inbox/read",
+                               json={"kinds": ["approval_needed"]}, headers=headers)  # fmt: skip
+    assert marked.json() == {"unread": 2}
+    left = (await client.get(f"{API}/orgs/acme/inbox", params={"unread": True})).json()
+    assert sorted(i["kind"] for i in left["items"]) == ["fix_failed", "pr_opened"]
 
 
 def _sse(body: str) -> list[dict[str, str]]:

@@ -4778,6 +4778,21 @@
               }
             ],
             "title": "Ids"
+          },
+          "kinds": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/NotificationKind"
+                },
+                "maxItems": 6,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Kinds"
           }
         },
         "title": "InboxReadIn",
@@ -12125,6 +12140,7 @@
     },
     "/api/v1/orgs/{org}/inbox": {
       "get": {
+        "description": "The person's items, newest first (``unread``: only those; ``kinds``: only those kinds),\nwith how many are unread in all.",
         "operationId": "get_inbox_api_v1_orgs__org__inbox_get",
         "parameters": [
           {
@@ -12146,6 +12162,26 @@
               "default": false,
               "title": "Unread",
               "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "kinds",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "$ref": "#/components/schemas/NotificationKind"
+                  },
+                  "maxItems": 6,
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Kinds"
             }
           },
           {
@@ -12208,7 +12244,7 @@
     },
     "/api/v1/orgs/{org}/inbox/events": {
       "get": {
-        "description": "New inbox items (``inbox.new``: its kind, title and link), from now (or after\n``Last-Event-ID``). Ends when the session does or the user leaves the org (checked every\nminute).",
+        "description": "New inbox items (``inbox.new``: its kind, title and link), from now (or after\n``Last-Event-ID``); one about a repository only while the user can read it. Ends when the\nsession does or the user leaves the org (checked every minute).",
         "operationId": "inbox_events_api_v1_orgs__org__inbox_events_get",
         "parameters": [
           {
@@ -12249,7 +12285,7 @@
     },
     "/api/v1/orgs/{org}/inbox/read": {
       "post": {
-        "description": "Mark ``ids`` read (others' and unknown ones are passed over), or every item.",
+        "description": "Mark ``ids`` read (others' and unknown ones are passed over), or every item (``kinds``:\nevery item of those kinds).",
         "operationId": "read_inbox_api_v1_orgs__org__inbox_read_post",
         "parameters": [
           {

@@ -32,7 +32,7 @@ from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sse_starlette import EventSourceResponse, ServerSentEvent
 
-from sensei_api import answer_cache
+from sensei_api import answer_cache, streams
 from sensei_api.deps import DbSession, RedisClient
 from sensei_api.orgs import OrgAccessDep
 from sensei_api.ratelimit import TokenBucket
@@ -298,8 +298,9 @@ async def ask(
             headers={"Retry-After": str(wait)},
         )
     remaining = await remaining_today(
-        db, redis, settings.agent, org_id=repo.org_id, user_id=access.user.id
-    )
+        db, redis, settings.agent, org_id=repo.org_id, user_id=access.user.id,
+        warn_in=lambda: streams.short_session(request),
+    )  # fmt: skip
     snapshot = await resolve_snapshot(db, repo, body.ref)
     if snapshot.symbol_count is None or snapshot.chunk_count is None:
         raise ConflictError("This repository isn't indexed for questions yet.", code="not_indexed")

@@ -2,13 +2,16 @@
 usage ledger's), against the daily cap, less what the runs under way may still spend (each
 holds its budget while it runs, so runs at once can't each spend what is left). Past the cap
 no new run starts; at its warning share the org is told, once a day: an audit event, and its
-admins' inboxes (and email, and Slack: 8.10)."""
+admins' inboxes (and email, and Slack: 8.10), in a transaction of its own: a request that
+fails after it doesn't take the warning back with it."""
 
 from __future__ import annotations
 
+import contextlib
 import time
 import uuid
-from collections.abc import Awaitable
+from collections.abc import Awaitable, Callable
+from contextlib import AbstractAsyncContextManager
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import cast
@@ -20,6 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from sensei_core.audit import AuditAction, audit
 from sensei_core.config import AgentSettings
+from sensei_core.db.tenancy import set_org_context
 from sensei_core.errors import DomainError
 from sensei_core.logging import get_logger
 from sensei_core.models import NotificationKind, UsageEvent
@@ -30,6 +34,8 @@ log = get_logger(__name__)
 WARNED_PREFIX = "agent:cap-warned:"
 HOLDS_PREFIX = "agent:holds:"  # a hash per org: run id -> "<amount> <unix time it lapses>"
 HOLD_SECONDS = 900  # a run's hold lapses after this, should the run never release it
+
+Sessions = Callable[[], AbstractAsyncContextManager[AsyncSession]]
 
 
 class CostCapReachedError(DomainError):
@@ -57,10 +63,12 @@ async def remaining_today(
     *,
     org_id: uuid.UUID,
     user_id: uuid.UUID,
+    warn_in: Sessions,
     now: datetime | None = None,
 ) -> Decimal | None:
     """What the org may still spend today (None: no cap); past the cap, an error saying when
-    it resets. At the warning share, the org is told once a day."""
+    it resets. At the warning share, the org is told once a day (in a session of
+    ``warn_in``'s, committed then)."""
     cap = settings.daily_cost_cap_usd
     if cap <= 0:
         return None
@@ -75,7 +83,7 @@ async def remaining_today(
         )
     if spent >= cap * Decimal(str(settings.cap_warning_share)):
         day = day_start(moment)
-        await _warn(db, redis, org_id=org_id, user_id=user_id, spent=spent, cap=cap, day=day)
+        await _warn(warn_in, redis, org_id=org_id, user_id=user_id, spent=spent, cap=cap, day=day)
     return cap - spent
 
 
@@ -156,7 +164,7 @@ async def release(redis: Redis, org_id: uuid.UUID, run_id: uuid.UUID) -> None:
 
 
 async def _warn(
-    db: AsyncSession,
+    sessions: Sessions,
     redis: Redis,
     *,
     org_id: uuid.UUID,
@@ -170,25 +178,32 @@ async def _warn(
         first = await redis.set(key, "1", nx=True, ex=int(timedelta(days=1).total_seconds()))
     except RedisError:
         return  # unsure whether it was said: say nothing rather than every time
-    if first:
-        await audit(
-            db,
-            AuditAction.AGENT_COST_CAP_WARNING,
-            actor_user_id=user_id,
-            org_id=org_id,
-            target_type="org",
-            target_id=org_id,
-            meta={"spent_usd": str(spent), "cap_usd": str(cap)},
-        )
-        share = round(spent / cap * 100) if cap else 0
-        event = Event(
-            org_id, NotificationKind.COST_CAP, f"cost-cap:{org_id}:{day.date().isoformat()}",
-            f"Agent spend is at {share}% of today's cap",
-            f"${spent:.2f} of ${cap:.2f} so far today (UTC). Past the cap, no new agent run starts "
-            "until midnight UTC.",
-            None,
-        )  # fmt: skip
-        told = await notify(db, event, await admins(db, org_id))
-        # Its inboxes' streams told now (the request's transaction commits after): a message
-        # for an item rolled back only makes an inbox read again, and find nothing new.
-        await publish(redis, [told])
+    if not first:
+        return
+    share = round(spent / cap * 100) if cap else 0
+    event = Event(
+        org_id, NotificationKind.COST_CAP, f"cost-cap:{org_id}:{day.date().isoformat()}",
+        f"Agent spend is at {share}% of today's cap",
+        f"${spent:.2f} of ${cap:.2f} so far today (UTC). Past the cap, no new agent run starts "
+        "until midnight UTC.",
+        None,
+    )  # fmt: skip
+    try:
+        async with sessions() as db:
+            await set_org_context(db, org_id)
+            await audit(
+                db,
+                AuditAction.AGENT_COST_CAP_WARNING,
+                actor_user_id=user_id,
+                org_id=org_id,
+                target_type="org",
+                target_id=org_id,
+                meta={"spent_usd": str(spent), "cap_usd": str(cap)},
+            )
+            told = await notify(db, event, await admins(db, org_id))
+    except Exception as exc:  # telling is worth no request: the next one tries again
+        log.warning("cost cap warning not written", error=type(exc).__name__)
+        with contextlib.suppress(RedisError):
+            await redis.delete(key)
+        return
+    await publish(redis, [told])  # after the commit: what the inboxes are told is there

@@ -25,6 +25,7 @@ from fastapi import APIRouter, Query, Request, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 
+from sensei_api import streams
 from sensei_api.deps import DbSession, RedisClient
 from sensei_api.orgs import OrgAccessDep
 from sensei_api.ratelimit import TokenBucket
@@ -220,7 +221,10 @@ async def create_diagram(
             "Too many diagrams at once; try again in a moment.",
             headers={"Retry-After": str(wait)},
         )
-    await remaining_today(db, redis, settings.agent, org_id=repo.org_id, user_id=access.user.id)
+    await remaining_today(
+        db, redis, settings.agent, org_id=repo.org_id, user_id=access.user.id,
+        warn_in=lambda: streams.short_session(request),
+    )  # fmt: skip
     snapshot = await resolve_snapshot(db, repo, ref)
     store: GraphStore = request.app.state.graph_store
     storage: ObjectStorage = request.app.state.storage
