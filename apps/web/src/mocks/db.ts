@@ -5,6 +5,7 @@
  */
 import type { Diagram } from "@/lib/api/diagrams";
 import type { Fix } from "@/lib/api/fixes";
+import type { InboxItem, NotificationKind } from "@/lib/api/inbox";
 import type {
   ApiKey,
   AvailableRepo,
@@ -84,6 +85,13 @@ export interface MockDb {
   changes?: Record<string, MockChange[]>;
   /** API keys, newest first (see handlers/api-keys.ts). */
   apiKeys?: MockApiKey[];
+  /** Each person's inbox in each org, by "<org>:<user id>" (see handlers/inbox.ts). */
+  inbox?: Record<string, InboxItem[]>;
+  /** Each person's notification preferences, per kind (see handlers/inbox.ts). */
+  notificationPrefs?: Record<
+    string,
+    Partial<Record<NotificationKind, { in_app: boolean; email: boolean }>>
+  >;
 }
 
 const STORAGE_KEY = "sensei.mock.db.v5";

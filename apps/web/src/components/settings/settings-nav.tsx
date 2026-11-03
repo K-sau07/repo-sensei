@@ -10,6 +10,7 @@ import { orgPath } from "@/lib/routes";
 const ITEMS = [
   { href: "/settings/profile", label: "Profile" },
   { href: "/settings/sessions", label: "Sessions" },
+  { href: "/settings/notifications", label: "Notifications" },
 ] as const;
 
 /** Personal settings sit outside any org; this header leads back to the last one. */

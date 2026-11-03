@@ -33,6 +33,13 @@ export const SHORTCUTS = [
   { id: "list-next", keys: "j", label: "Next item in a list", group: "Navigation" },
   { id: "list-prev", keys: "k", label: "Previous item in a list", group: "Navigation" },
   { id: "list-open", keys: "enter", label: "Open the focused item", group: "Navigation" },
+  {
+    id: "inbox-approve",
+    keys: "a",
+    label: "Inbox: open the focused approval",
+    group: "Navigation",
+  },
+  { id: "inbox-done", keys: "e", label: "Inbox: mark the focused item done", group: "General" },
   { id: "lane-prev", keys: "left", label: "Previous lane, from a result", group: "Navigation" },
   { id: "lane-next", keys: "right", label: "Next lane, from a result", group: "Navigation" },
   { id: "focus-search", keys: "/", label: "Focus the search field", group: "Navigation" },

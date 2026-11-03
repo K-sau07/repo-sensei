@@ -4,6 +4,7 @@ import { cn } from "cn";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
+import { useInboxUnread } from "@/components/inbox/use-inbox";
 import { orgPath } from "@/lib/routes";
 
 import type { NavItem } from "./nav-items";
@@ -19,6 +20,8 @@ export function NavLink({ org, item, onNavigate }: NavLinkProps) {
   const href = orgPath(org, item.section);
   // Home matches exactly; sections also match their sub-pages.
   const active = item.section === "" ? pathname === href : pathname.startsWith(href);
+  // The inbox shows how much is unread.
+  const unread = useInboxUnread(item.section === "inbox" ? org : null).data ?? 0;
   const Icon = item.icon;
   return (
     <Link
@@ -33,8 +36,25 @@ export function NavLink({ org, item, onNavigate }: NavLinkProps) {
         "sidebar-collapsed:justify-center sidebar-collapsed:px-0",
       )}
     >
-      <Icon aria-hidden className="size-4 shrink-0" />
+      <span className="relative shrink-0">
+        <Icon aria-hidden className="size-4" />
+        {unread > 0 && (
+          <span
+            aria-hidden
+            className="absolute -top-0.5 -right-0.5 hidden size-1.5 rounded-full bg-signal sidebar-collapsed:block"
+          />
+        )}
+      </span>
       <span className="truncate sidebar-collapsed:sr-only">{item.label}</span>
+      {unread > 0 && (
+        <span
+          className="ml-auto rounded-full bg-surface-3 px-1.5 text-xs text-fg tabular-nums sidebar-collapsed:sr-only"
+          data-testid="inbox-badge"
+        >
+          {unread > 99 ? "99+" : unread}
+          <span className="sr-only"> unread</span>
+        </span>
+      )}
     </Link>
   );
 }

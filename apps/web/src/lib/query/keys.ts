@@ -9,6 +9,12 @@ const org = (slug: string) => ({ params: { path: { org: slug } } });
 export const queryKeys = {
   me: () => $api.queryOptions("get", "/api/v1/me").queryKey,
   mySessions: () => $api.queryOptions("get", "/api/v1/me/sessions").queryKey,
+  /** The person's notification preferences (the same in every org). */
+  myNotifications: () => $api.queryOptions("get", "/api/v1/me/notifications").queryKey,
+  /** Everything of the person's inbox in an org: its pages (all, or unread) and its count. */
+  inbox: (slug: string) => ["inbox", slug] as const,
+  inboxList: (slug: string, unread: boolean) => ["inbox", slug, "list", unread] as const,
+  inboxUnread: (slug: string) => ["inbox", slug, "unread"] as const,
   orgs: () => $api.queryOptions("get", "/api/v1/orgs").queryKey,
   org: (slug: string) => $api.queryOptions("get", "/api/v1/orgs/{org}", org(slug)).queryKey,
   members: (slug: string) =>

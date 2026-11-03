@@ -57,8 +57,10 @@ export const Collapsed: Story = {
   play: async ({ canvas }) => {
     const sidebar = await canvas.findByRole("complementary", { name: "Sidebar" });
     await waitFor(() => expect(sidebar.getBoundingClientRect().width).toBe(56));
-    // Icon-only links keep their names for screen readers.
-    await expect(canvas.getByRole("link", { name: "Inbox" })).toBeInTheDocument();
+    // Icon-only links keep their names for screen readers (the inbox's with what's unread).
+    await expect(
+      await canvas.findByRole("link", { name: "Inbox 3 unread" }, { timeout: 5000 }),
+    ).toBeInTheDocument();
   },
 };
 
