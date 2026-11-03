@@ -11095,7 +11095,7 @@
     },
     "/api/v1/orgs/{org}/audit": {
       "get": {
-        "description": "The org's audit log, newest first (admins and owners).",
+        "description": "The org's audit log, newest first (admins and owners); ``action`` and ``actor`` (a user's\nid) keep only theirs.",
         "operationId": "list_audit_events_api_v1_orgs__org__audit_get",
         "parameters": [
           {
@@ -11123,6 +11123,23 @@
                 }
               ],
               "title": "Action"
+            }
+          },
+          {
+            "in": "query",
+            "name": "actor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Actor"
             }
           },
           {

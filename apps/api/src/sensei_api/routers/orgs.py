@@ -282,15 +282,20 @@ async def revoke_invitation(
 
 @router.get("/{org}/audit", response_model=AuditPage)
 async def list_audit_events(
+    *,
     access: OrgAccessDep,
     db: DbSession,
     action: AuditAction | None = None,
+    actor: uuid.UUID | None = None,
     before: uuid.UUID | None = None,
     limit: Annotated[int, Query(ge=1, le=MAX_PAGE_SIZE)] = 50,
 ) -> AuditPage:
-    """The org's audit log, newest first (admins and owners)."""
+    """The org's audit log, newest first (admins and owners); ``action`` and ``actor`` (a user's
+    id) keep only theirs."""
     require_role(access, Role.ADMIN)
-    rows = await list_org_audit(db, access.org.id, action=action, before=before, limit=limit)
+    rows = await list_org_audit(
+        db, access.org.id, action=action, actor_user_id=actor, before=before, limit=limit
+    )
     items = [
         AuditEventOut(
             id=event.id,

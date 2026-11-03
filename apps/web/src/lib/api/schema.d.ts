@@ -671,7 +671,8 @@ export interface paths {
         };
         /**
          * List Audit Events
-         * @description The org's audit log, newest first (admins and owners).
+         * @description The org's audit log, newest first (admins and owners); ``action`` and ``actor`` (a user's
+         *     id) keep only theirs.
          */
         get: operations["list_audit_events_api_v1_orgs__org__audit_get"];
         put?: never;
@@ -6976,6 +6977,7 @@ export interface operations {
         parameters: {
             query?: {
                 action?: components["schemas"]["AuditAction"] | null;
+                actor?: string | null;
                 before?: string | null;
                 limit?: number;
             };

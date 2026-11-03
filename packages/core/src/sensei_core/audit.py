@@ -126,10 +126,12 @@ async def list_org_audit(
     org_id: uuid.UUID,
     *,
     action: AuditAction | None = None,
+    actor_user_id: uuid.UUID | None = None,
     before: uuid.UUID | None = None,
     limit: int = 50,
 ) -> list[tuple[AuditEvent, str | None]]:
-    """Newest first, with the actor's login. ``before`` is the id of the last row already seen."""
+    """Newest first, with the actor's login (``action``, ``actor_user_id``: only those). ``before``
+    is the id of the last row already seen."""
     query = (
         select(AuditEvent, User.login)
         .outerjoin(User, User.id == AuditEvent.actor_user_id)
@@ -139,6 +141,8 @@ async def list_org_audit(
     )
     if action is not None:
         query = query.where(AuditEvent.action == action.value)
+    if actor_user_id is not None:
+        query = query.where(AuditEvent.actor_user_id == actor_user_id)
     if before is not None:
         seen = aliased(AuditEvent)  # an alias, so the subqueries never correlate to the page
         last_seen = seen.id == before, seen.org_id == org_id

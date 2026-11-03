@@ -83,6 +83,23 @@ async def test_audit_log_filters_by_action(
     assert bad.status_code == 422
 
 
+async def test_audit_log_filters_by_who_did_it(
+    api_app: FastAPI, api_client: httpx.AsyncClient, db_session: AsyncSession
+) -> None:
+    owner, headers = await sign_in(api_app, api_client, db_session)
+    await _org_with_invites(api_client, headers, "who-org", 1)
+    mine = (
+        await api_client.get(f"{API}/orgs/who-org/audit", params={"actor": str(owner.id)})
+    ).json()
+    assert {e["actor_login"] for e in mine["items"]} == {owner.login}
+    assert len(mine["items"]) == 2  # the org, the invitation
+    someone = await make_user(db_session)
+    theirs = (
+        await api_client.get(f"{API}/orgs/who-org/audit", params={"actor": str(someone.id)})
+    ).json()
+    assert theirs == {"items": [], "next_cursor": None}
+
+
 async def test_members_below_admin_cannot_read_the_audit_log(
     api_app: FastAPI, api_client: httpx.AsyncClient, db_session: AsyncSession
 ) -> None:
