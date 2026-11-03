@@ -6640,6 +6640,12 @@
             "title": "Owner",
             "type": "string"
           },
+          "publishable": {
+            "default": false,
+            "description": "Whether its admins may show it in the public gallery: the explore org's, imported by public URL (on a single repository's reads).",
+            "title": "Publishable",
+            "type": "boolean"
+          },
           "published_at": {
             "anyOf": [
               {

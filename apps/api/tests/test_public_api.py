@@ -200,6 +200,8 @@ async def test_the_explore_orgs_admins_publish_its_public_repositories(
     assert refused.json()["error"]["code"] == "insufficient_role"
 
     _, headers = await sign_in(api_app, client, db_session, await _owner(db_session, org))
+    read = await client.get(f"{API}/orgs/{org.slug}/repos/items")
+    assert read.json()["publishable"] is True  # the explore org's, imported by URL
     published = await client.put(path, headers=headers)
     assert published.status_code == 200, published.text
     first = published.json()["published_at"]

@@ -230,6 +230,20 @@ async def test_pushes_that_index_nothing_are_ignored(
 
 
 @pytest.mark.integration
+async def test_no_push_indexes_a_repository_whose_automatic_indexing_is_off(
+    system_session: AsyncSession, fake_redis: FakeAsyncRedis
+) -> None:
+    repo = await _repo(system_session, tracked=["release"])
+    repo.settings = {**(repo.settings or {}), "auto_index": False}
+    await system_session.flush()
+    timers = Timers()
+    for ref in ("refs/heads/main", "refs/heads/release"):
+        _, status = await _deliver(system_session, fake_redis, timers, _push(ref, SHA[0], SHA[1]))
+        assert status is DeliveryStatus.IGNORED
+    assert timers.set == []
+
+
+@pytest.mark.integration
 async def test_a_tracked_branch_is_noted_and_its_run_kept_apart(
     system_session: AsyncSession, fake_redis: FakeAsyncRedis
 ) -> None:

@@ -23,6 +23,7 @@ from sensei_core.jobs import RepoJobs
 from sensei_core.limits import check_quota, count_quota
 from sensei_core.models import JobKind, JobStatus, Repo, RepoSource, RepoStatus, Stage
 from sensei_core.orgs.service import OrgAccess
+from sensei_core.repos.access import open_to_all
 from sensei_core.repos.service import RepoSettings
 
 router = APIRouter(prefix="/orgs/{org}", tags=["repos"])
@@ -67,6 +68,11 @@ class RepoOut(BaseModel):
     active_job: ActiveJobOut | None = None
     published_at: datetime | None = Field(
         default=None, description="Shown in the public gallery (/explore) since then."
+    )
+    publishable: bool = Field(
+        default=False,
+        description="Whether its admins may show it in the public gallery: the explore org's, "
+        "imported by public URL (on a single repository's reads).",
     )
     created_at: datetime
     updated_at: datetime
@@ -340,9 +346,16 @@ async def list_repos(
 
 
 @router.get("/repos/{repo}", response_model=RepoOut)
-async def get_repo(repo: RepoDep, db: DbSession) -> RepoOut:
+async def get_repo(request: Request, repo: RepoDep, access: OrgAccessDep, db: DbSession) -> RepoOut:
     summaries = await repo_summaries(db, [repo])
-    return RepoOut.build(repo, summary=summaries.get(repo.id))
+    found = RepoOut.build(repo, summary=summaries.get(repo.id))
+    return found.model_copy(update={"publishable": _publishable(request, access, repo)})
+
+
+def _publishable(request: Request, access: OrgAccess, repo: Repo) -> bool:
+    explore: ExploreSettings = request.app.state.settings.explore
+    mine = bool(explore.org) and access.org.slug.lower() == explore.org.lower()
+    return mine and open_to_all(repo)
 
 
 @router.patch("/repos/{repo}", response_model=RepoOut)
@@ -363,7 +376,8 @@ async def publish_repo(
     explore: ExploreSettings = request.app.state.settings.explore
     found = await repos.publish(db, access, repo, explore_org=explore.org, shown=True)
     summaries = await repo_summaries(db, [found])
-    return RepoOut.build(found, summary=summaries.get(found.id))
+    built = RepoOut.build(found, summary=summaries.get(found.id))
+    return built.model_copy(update={"publishable": True})
 
 
 @router.delete("/repos/{repo}/published", status_code=status.HTTP_204_NO_CONTENT)

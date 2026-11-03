@@ -4788,6 +4788,12 @@ export interface components {
             /** Owner */
             owner: string;
             /**
+             * Publishable
+             * @description Whether its admins may show it in the public gallery: the explore org's, imported by public URL (on a single repository's reads).
+             * @default false
+             */
+            publishable: boolean;
+            /**
              * Published At
              * @description Shown in the public gallery (/explore) since then.
              */
