@@ -40,8 +40,14 @@ from sensei_engine.llm.anthropic_client import AnthropicClient, Effort, Tier
 from sensei_engine.search.layers import lane_of, layer_of
 from sensei_engine.snapshots import UnsafePathError, check_path
 from sensei_fixer.agents import Conversation
-from sensei_fixer.antigaming import is_test_config, is_test_path
-from sensei_fixer.frameworks import dependencies
+from sensei_fixer.antigaming import (
+    is_sensitive,
+    is_test_config,
+    is_test_name,
+    is_test_path,
+    shadows,
+)
+from sensei_fixer.frameworks import NoFramework, dependencies, detect
 from sensei_fixer.investigate import READ_TOOLS, Hooks, fenced
 from sensei_fixer.plan import MAX_STEPS, PlanError, items_of, planned_path, request_text
 from sensei_fixer.reproduce import Workspace
@@ -139,18 +145,27 @@ def _int(value: Any) -> int | None:
     return value if isinstance(value, int) and not isinstance(value, bool) else None
 
 
-def _test_path(raw: Any, ctx: ToolContext) -> str:
-    """A new test file the change adds: a test's path, not there yet."""
+def _test_path(raw: Any, ctx: ToolContext, deps: frozenset[str] = frozenset()) -> str:
+    """A new test file the change adds: named as a test (in a test folder is not enough), not
+    a stand-in for a module or a start-up hook, not there yet."""
     try:
         path = check_path(str(raw or ""))
     except UnsafePathError:
         raise PlanError(f"{raw!r} isn't a path in the repository.") from None
     if not path or path.split("/", 1)[0] == ".git":
         raise PlanError(f"{raw!r} isn't a file of the repository.")
-    if not is_test_path(path) or is_test_config(path) or PurePosixPath(path).name == "conftest.py":
+    pure = PurePosixPath(path)
+    if (
+        not is_test_name(path)
+        or is_test_config(path)
+        or pure.name in ("conftest.py", "__init__.py")
+        or "__mocks__" in pure.parts
+        or shadows(path, deps)
+        or is_sensitive(path)
+    ):
         raise PlanError(
-            f"{path} isn't a test file (test_*.py, *_test.py, *.test.ts, or in a tests folder): "
-            "name the new test as the project names its tests."
+            f"{path} isn't a test file (test_*.py, *_test.py, *.test.ts, *.spec.ts): name the new "
+            "test as the project names its tests (not a helper, an __init__ or a mock)."
         )
     if path in ctx.tree or (ctx.root / path).exists():
         raise PlanError(f"{path} exists already: a change adds new tests, existing ones stay.")
@@ -193,17 +208,35 @@ def _files(ctx: ToolContext, raw: Any, deps: frozenset[str]) -> list[dict[str, s
     return planned
 
 
-def _tests(ctx: ToolContext, raw: Any, planned: list[dict[str, str]]) -> list[dict[str, str]]:
+def _tests(
+    ctx: ToolContext, raw: Any, planned: list[dict[str, str]], deps: frozenset[str]
+) -> list[dict[str, str]]:
     tests = items_of(raw)
     if not 1 <= len(tests) <= MAX_TESTS:
         raise PlanError(f"Add 1 to {MAX_TESTS} new test files: a change brings its tests.")
     added: list[dict[str, str]] = []
     for item in tests:
-        path = _test_path(item.get("path"), ctx)
+        path = _test_path(item.get("path"), ctx, deps)
         if any(t["path"] == path for t in added) or any(p["path"] == path for p in planned):
             raise PlanError(f"{path} is named twice.")
         added.append({"path": path, "checks": str(item.get("checks") or "")[:500]})
     return added
+
+
+def _one_project(ctx: ToolContext, tests: list[str]) -> None:
+    """The new tests are one project's, run by one framework (where the patch runs them)."""
+    setups: set[tuple[str, str]] = set()
+    for path in tests:
+        try:
+            setup = detect(ctx.root, path)
+        except NoFramework:
+            raise PlanError(
+                f"{path} is in no pytest, vitest or jest project: put it in one."
+            ) from None
+        setups.add((setup.project or "(the root)", setup.framework))
+    if len(setups) > 1:
+        found = ", ".join(f"{p} ({f})" for p, f in sorted(setups))
+        raise PlanError(f"The new tests are in different projects ({found}): keep them to one.")
 
 
 def _steps(raw: Any, places: set[str]) -> list[dict[str, str]]:
@@ -231,7 +264,8 @@ async def check_change_plan(
     if not summary:
         raise PlanError("Say in a sentence or two what the change does (summary).")
     planned = _files(ctx, args.get("files"), deps)
-    added = _tests(ctx, args.get("tests"), planned)
+    added = _tests(ctx, args.get("tests"), planned, deps)
+    _one_project(ctx, [t["path"] for t in added])
     patterns = items_of(args.get("patterns"))
     if not 1 <= len(patterns) <= MAX_PATTERNS:
         raise PlanError(

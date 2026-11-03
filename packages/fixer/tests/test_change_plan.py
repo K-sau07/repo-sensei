@@ -165,3 +165,29 @@ async def test_a_fix_has_no_change_plan_and_a_change_no_reproduction() -> None:
     run.status = FixStatus.RUNNING
     FixStateMachine(run).advance()
     assert (run.stage, run.status) == (FixStage.AWAITING_APPROVAL, FixStatus.AWAITING_APPROVAL)
+
+
+async def test_a_new_test_must_be_a_test_file_in_one_project(tmp_path: Path) -> None:
+    from sensei_fixer.change_plan import check_change_plan  # noqa: PLC0415
+    from sensei_fixer.plan import PlanError  # noqa: PLC0415
+
+    root = _repo(tmp_path)
+    refused = ("tests/json.py", "tests/__init__.py", "tests/helpers.py", "__mocks__/axios.test.js",
+               "tests/sitecustomize.py", "tests/conftest.py")  # fmt: skip
+    for path in refused:
+        plan = {**GOOD, "tests": [{"path": path, "checks": "x"}],
+                "steps": [GOOD["steps"][0]]}  # fmt: skip
+        try:
+            await check_change_plan(_tools(root), plan)
+        except PlanError:
+            continue
+        raise AssertionError(f"{path} was taken for a new test")
+    (root / "web").mkdir()
+    (root / "web/package.json").write_text('{"devDependencies": {"vitest": "5.0.0"}}')
+    split = {**GOOD, "tests": [*GOOD["tests"], {"path": "web/tests/limit.test.js", "checks": "x"}]}
+    try:
+        await check_change_plan(_tools(root), split)
+    except PlanError as error:
+        assert "different projects" in str(error)  # noqa: PT017
+    else:
+        raise AssertionError("tests in two projects were taken")

@@ -140,6 +140,7 @@ class FixOut(FixSummaryOut):
     approvals_needed: int | None = Field(
         description="Distinct approvers its plan needs (two for a high-risk fix); None: no plan."
     )
+    run_id: uuid.UUID | None = Field(description="Its agent run (the timeline of its steps).")
 
     @classmethod
     def full(cls, run: FixRun, repo: Repo, author: str | None = None) -> FixOut:
@@ -149,6 +150,7 @@ class FixOut(FixSummaryOut):
             repro_result=run.repro_result, root_cause=run.root_cause, repro=run.repro,
             plan=run.plan, patch=run.patch, verification=run.verification,
             stop_reason=run.stop_reason, approvals_needed=required(run.risk) if run.plan else None,
+            run_id=run.run_id,
         )  # fmt: skip
 
 
@@ -312,8 +314,8 @@ def kind_of(request: Request) -> FixKind:
     """The kind of run a route is for: ``/changes/...`` routes (9.1) a change's, the rest a
     fix's. The run's controls (read, events, cancel, decide) are the same endpoints under both."""
     route = request.scope.get("route")
-    path = str(getattr(route, "path", request.url.path))
-    return FixKind.CHANGE if "/changes" in path else FixKind.FIX
+    template = str(getattr(route, "path", ""))  # the route's template, never the URL itself
+    return FixKind.CHANGE if "/changes/{fix_id}" in template else FixKind.FIX
 
 
 def not_found(kind: FixKind) -> NotFoundError:
@@ -536,7 +538,8 @@ async def decide_fix(
     await audit(
         db, AuditAction.FIX_DECISION, actor_user_id=access.user.id, org_id=access.org.id,
         target_type="fix", target_id=run.id,
-        meta={"decision": body.decision.value, "plan_revision": body.plan_revision,
+        meta={"kind": (run.kind or FixKind.FIX).value, "decision": body.decision.value,
+              "plan_revision": body.plan_revision,
               "risk": run.risk.value if run.risk else None, "approvals": done.approved_by,
               "needed": done.needed, "status": run.status.value},
     )  # fmt: skip
