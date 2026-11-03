@@ -733,6 +733,8 @@
           "repo.connected",
           "repo.settings_update",
           "repo.disconnected",
+          "repo.published",
+          "repo.unpublished",
           "repo.index_started",
           "repo.index_cancelled",
           "agent.cost_cap_warning",
@@ -6266,6 +6268,134 @@
         "title": "Provenance",
         "type": "string"
       },
+      "PublicRepoList": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/PublicRepoOut"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "PublicRepoList",
+        "type": "object"
+      },
+      "PublicRepoOut": {
+        "properties": {
+          "default_branch": {
+            "title": "Default Branch",
+            "type": "string"
+          },
+          "files": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Files"
+          },
+          "full_name": {
+            "title": "Full Name",
+            "type": "string"
+          },
+          "indexed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Indexed At"
+          },
+          "languages": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Languages",
+            "type": "object"
+          },
+          "loc": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Loc"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "owner": {
+            "title": "Owner",
+            "type": "string"
+          },
+          "published_at": {
+            "format": "date-time",
+            "title": "Published At",
+            "type": "string"
+          },
+          "sha": {
+            "title": "Sha",
+            "type": "string"
+          },
+          "summary": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Summary"
+          }
+        },
+        "required": [
+          "owner",
+          "name",
+          "full_name",
+          "default_branch",
+          "languages",
+          "sha",
+          "indexed_at",
+          "files",
+          "loc",
+          "summary",
+          "published_at"
+        ],
+        "title": "PublicRepoOut",
+        "type": "object"
+      },
+      "PublicRepoPage": {
+        "properties": {
+          "overview": {
+            "$ref": "#/components/schemas/OverviewOut"
+          },
+          "repo": {
+            "$ref": "#/components/schemas/PublicRepoOut"
+          }
+        },
+        "required": [
+          "repo",
+          "overview"
+        ],
+        "title": "PublicRepoPage",
+        "type": "object"
+      },
       "ReadinessResponse": {
         "properties": {
           "checks": {
@@ -6487,6 +6617,19 @@
           "owner": {
             "title": "Owner",
             "type": "string"
+          },
+          "published_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Shown in the public gallery (/explore) since then.",
+            "title": "Published At"
           },
           "settings": {
             "$ref": "#/components/schemas/RepoSettings"
@@ -16488,6 +16631,111 @@
         ]
       }
     },
+    "/api/v1/orgs/{org}/repos/{repo}/published": {
+      "delete": {
+        "description": "Take the repository out of the public gallery (admins of the explore org).",
+        "operationId": "unpublish_repo_api_v1_orgs__org__repos__repo__published_delete",
+        "parameters": [
+          {
+            "description": "Repository slug",
+            "in": "path",
+            "name": "repo",
+            "required": true,
+            "schema": {
+              "description": "Repository slug",
+              "maxLength": 201,
+              "title": "Repo",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Organization slug",
+            "in": "path",
+            "name": "org",
+            "required": true,
+            "schema": {
+              "description": "Organization slug",
+              "title": "Org",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Unpublish Repo",
+        "tags": [
+          "repos"
+        ]
+      },
+      "put": {
+        "description": "Show the repository in the public gallery (admins of the explore org; one imported by\nits public URL). It appears there once it is indexed.",
+        "operationId": "publish_repo_api_v1_orgs__org__repos__repo__published_put",
+        "parameters": [
+          {
+            "description": "Repository slug",
+            "in": "path",
+            "name": "repo",
+            "required": true,
+            "schema": {
+              "description": "Repository slug",
+              "maxLength": 201,
+              "title": "Repo",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Organization slug",
+            "in": "path",
+            "name": "org",
+            "required": true,
+            "schema": {
+              "description": "Organization slug",
+              "title": "Org",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RepoOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Publish Repo",
+        "tags": [
+          "repos"
+        ]
+      }
+    },
     "/api/v1/orgs/{org}/repos/{repo}/refs": {
       "get": {
         "description": "The default branch first, then the tracked branches and the pull requests, by name.",
@@ -17563,6 +17811,140 @@
         "summary": "Tree",
         "tags": [
           "browse"
+        ]
+      }
+    },
+    "/api/v1/public/repos": {
+      "get": {
+        "description": "The gallery: the published repositories that are indexed, newest first.",
+        "operationId": "public_repos_api_v1_public_repos_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicRepoList"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Public Repos",
+        "tags": [
+          "public"
+        ]
+      }
+    },
+    "/api/v1/public/repos/{owner}/{name}": {
+      "get": {
+        "description": "A published repository at its last index: what it does, how it's laid out, its feature\nmaps and questions worth asking.",
+        "operationId": "public_repo_api_v1_public_repos__owner___name__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "owner",
+            "required": true,
+            "schema": {
+              "maxLength": 100,
+              "pattern": "^[A-Za-z0-9_.-]+$",
+              "title": "Owner",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "maxLength": 100,
+              "pattern": "^[A-Za-z0-9_.-]+$",
+              "title": "Name",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicRepoPage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Public Repo",
+        "tags": [
+          "public"
+        ]
+      }
+    },
+    "/api/v1/public/repos/{owner}/{name}/feature-maps": {
+      "get": {
+        "description": "A published repository's feature maps at its last index, by path.",
+        "operationId": "public_feature_maps_api_v1_public_repos__owner___name__feature_maps_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "owner",
+            "required": true,
+            "schema": {
+              "maxLength": 100,
+              "pattern": "^[A-Za-z0-9_.-]+$",
+              "title": "Owner",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "maxLength": 100,
+              "pattern": "^[A-Za-z0-9_.-]+$",
+              "title": "Name",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FeatureMapList"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Public Feature Maps",
+        "tags": [
+          "public"
         ]
       }
     },

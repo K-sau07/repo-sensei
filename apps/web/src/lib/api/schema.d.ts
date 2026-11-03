@@ -1981,6 +1981,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/orgs/{org}/repos/{repo}/published": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Publish Repo
+         * @description Show the repository in the public gallery (admins of the explore org; one imported by
+         *     its public URL). It appears there once it is indexed.
+         */
+        put: operations["publish_repo_api_v1_orgs__org__repos__repo__published_put"];
+        post?: never;
+        /**
+         * Unpublish Repo
+         * @description Take the repository out of the public gallery (admins of the explore org).
+         */
+        delete: operations["unpublish_repo_api_v1_orgs__org__repos__repo__published_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/orgs/{org}/repos/{repo}/refs": {
         parameters: {
             query?: never;
@@ -2181,6 +2206,67 @@ export interface paths {
          *     ``t1`` version changes whenever what a listing shows does); ``X-Commit-Sha``: the commit.
          */
         get: operations["tree_api_v1_orgs__org__repos__repo__tree_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/public/repos": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Public Repos
+         * @description The gallery: the published repositories that are indexed, newest first.
+         */
+        get: operations["public_repos_api_v1_public_repos_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/public/repos/{owner}/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Public Repo
+         * @description A published repository at its last index: what it does, how it's laid out, its feature
+         *     maps and questions worth asking.
+         */
+        get: operations["public_repo_api_v1_public_repos__owner___name__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/public/repos/{owner}/{name}/feature-maps": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Public Feature Maps
+         * @description A published repository's feature maps at its last index, by path.
+         */
+        get: operations["public_feature_maps_api_v1_public_repos__owner___name__feature_maps_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2496,7 +2582,7 @@ export interface components {
          * AuditAction
          * @enum {string}
          */
-        AuditAction: "auth.login" | "auth.logout" | "auth.logout_all" | "org.create" | "org.update" | "org.delete" | "invitation.create" | "invitation.revoke" | "invitation.accept" | "member.role_change" | "member.remove" | "member.leave" | "github.install.linked" | "github.install.deleted" | "github.install.suspended" | "github.install.unsuspended" | "github.install.permissions_accepted" | "repo.connected" | "repo.settings_update" | "repo.disconnected" | "repo.index_started" | "repo.index_cancelled" | "agent.cost_cap_warning" | "conversation.shared" | "conversation.unshared" | "diagram.shared" | "diagram.unshared" | "api_key.create" | "api_key.revoke" | "oauth.authorize" | "oauth.refresh_reused" | "fix.create" | "fix.decision" | "sentry.connect" | "sentry.disconnect" | "slack.connect" | "slack.disconnect";
+        AuditAction: "auth.login" | "auth.logout" | "auth.logout_all" | "org.create" | "org.update" | "org.delete" | "invitation.create" | "invitation.revoke" | "invitation.accept" | "member.role_change" | "member.remove" | "member.leave" | "github.install.linked" | "github.install.deleted" | "github.install.suspended" | "github.install.unsuspended" | "github.install.permissions_accepted" | "repo.connected" | "repo.settings_update" | "repo.disconnected" | "repo.published" | "repo.unpublished" | "repo.index_started" | "repo.index_cancelled" | "agent.cost_cap_warning" | "conversation.shared" | "conversation.unshared" | "diagram.shared" | "diagram.unshared" | "api_key.create" | "api_key.revoke" | "oauth.authorize" | "oauth.refresh_reused" | "fix.create" | "fix.decision" | "sentry.connect" | "sentry.disconnect" | "slack.connect" | "slack.disconnect";
         /** AuditEventOut */
         AuditEventOut: {
             /** Action */
@@ -4540,6 +4626,46 @@ export interface components {
          * @enum {string}
          */
         Provenance: "scip" | "lsp" | "runtime" | "contract" | "import_resolved" | "receiver_heuristic" | "url_literal" | "name_unique" | "name_ambiguous" | "llm_inferred";
+        /** PublicRepoList */
+        PublicRepoList: {
+            /** Items */
+            items: components["schemas"]["PublicRepoOut"][];
+        };
+        /** PublicRepoOut */
+        PublicRepoOut: {
+            /** Default Branch */
+            default_branch: string;
+            /** Files */
+            files: number | null;
+            /** Full Name */
+            full_name: string;
+            /** Indexed At */
+            indexed_at: string | null;
+            /** Languages */
+            languages: {
+                [key: string]: number;
+            };
+            /** Loc */
+            loc: number | null;
+            /** Name */
+            name: string;
+            /** Owner */
+            owner: string;
+            /**
+             * Published At
+             * Format: date-time
+             */
+            published_at: string;
+            /** Sha */
+            sha: string;
+            /** Summary */
+            summary: string | null;
+        };
+        /** PublicRepoPage */
+        PublicRepoPage: {
+            overview: components["schemas"]["OverviewOut"];
+            repo: components["schemas"]["PublicRepoOut"];
+        };
         /** ReadinessResponse */
         ReadinessResponse: {
             /** Checks */
@@ -4627,6 +4753,11 @@ export interface components {
             name: string;
             /** Owner */
             owner: string;
+            /**
+             * Published At
+             * @description Shown in the public gallery (/explore) since then.
+             */
+            published_at?: string | null;
             settings: components["schemas"]["RepoSettings"];
             /** Size Kb */
             size_kb: number;
@@ -9686,6 +9817,72 @@ export interface operations {
             };
         };
     };
+    publish_repo_api_v1_orgs__org__repos__repo__published_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Repository slug */
+                repo: string;
+                /** @description Organization slug */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RepoOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    unpublish_repo_api_v1_orgs__org__repos__repo__published_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Repository slug */
+                repo: string;
+                /** @description Organization slug */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     refs_api_v1_orgs__org__repos__repo__refs_get: {
         parameters: {
             query?: never;
@@ -10172,6 +10369,90 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    public_repos_api_v1_public_repos_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PublicRepoList"];
+                };
+            };
+        };
+    };
+    public_repo_api_v1_public_repos__owner___name__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                owner: string;
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PublicRepoPage"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    public_feature_maps_api_v1_public_repos__owner___name__feature_maps_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                owner: string;
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FeatureMapList"];
+                };
             };
             /** @description Validation Error */
             422: {

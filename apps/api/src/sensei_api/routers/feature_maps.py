@@ -9,12 +9,13 @@ from typing import Any
 from fastapi import APIRouter
 from pydantic import BaseModel
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from sensei_api.deps import DbSession
 from sensei_api.repos import RepoDep
 from sensei_api.routers.browse import RefParam
 from sensei_core.indexing.snapshots import resolve_snapshot
-from sensei_core.models import FeatureMap
+from sensei_core.models import FeatureMap, Snapshot
 
 router = APIRouter(prefix="/orgs/{org}/repos/{repo}", tags=["feature-maps"])
 
@@ -40,7 +41,11 @@ class FeatureMapList(BaseModel):
 @router.get("/feature-maps", response_model=FeatureMapList)
 async def feature_maps(*, repo: RepoDep, db: DbSession, ref: RefParam = None) -> FeatureMapList:
     """The modules' maps at the commit (the last index by default), by path."""
-    snapshot = await resolve_snapshot(db, repo, ref)
+    return await maps_of(db, await resolve_snapshot(db, repo, ref))
+
+
+async def maps_of(db: AsyncSession, snapshot: Snapshot) -> FeatureMapList:
+    """The snapshot's maps, by path (also for the public gallery's pages)."""
     rows = await db.scalars(
         select(FeatureMap).where(FeatureMap.snapshot_id == snapshot.id).order_by(FeatureMap.path)
     )

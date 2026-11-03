@@ -45,6 +45,8 @@ class AuditAction(enum.StrEnum):
     REPO_CONNECTED = "repo.connected"
     REPO_SETTINGS_UPDATE = "repo.settings_update"
     REPO_DISCONNECTED = "repo.disconnected"
+    REPO_PUBLISHED = "repo.published"
+    REPO_UNPUBLISHED = "repo.unpublished"
     REPO_INDEX_STARTED = "repo.index_started"
     REPO_INDEX_CANCELLED = "repo.index_cancelled"
     AGENT_COST_CAP_WARNING = "agent.cost_cap_warning"

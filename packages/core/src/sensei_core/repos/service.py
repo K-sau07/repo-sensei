@@ -33,6 +33,7 @@ from sensei_core.github.client import Credential, GitHubClient, GitHubError, Rat
 from sensei_core.logging import get_logger
 from sensei_core.models import GitHubInstallation, Repo, RepoSource, RepoStatus, Role
 from sensei_core.orgs.service import OrgAccess, require_role
+from sensei_core.repos.access import open_to_all
 from sensei_core.repos.estimate import (
     EstimateModels,
     IndexEstimate,
@@ -541,3 +542,35 @@ class RepoService:
             meta={"full_name": repo.full_name},
         )
         return repo.id
+
+    async def publish(
+        self, db: AsyncSession, access: OrgAccess, repo: Repo, *, explore_org: str, shown: bool
+    ) -> Repo:
+        """Show the repository in the public gallery, or stop showing it (admins of the explore
+        org, ``explore_org``: 403 ``not_explore_org`` for any other). Only one imported by its
+        public URL is shown (422 ``repo_not_public``): what anyone may read already."""
+        require_role(access, Role.ADMIN)
+        if not explore_org or access.org.slug.lower() != explore_org.lower():
+            raise ForbiddenError(
+                "Only the explore organization publishes repositories.", code="not_explore_org"
+            )
+        if shown and not open_to_all(repo):
+            raise InvalidError(
+                "Only a public repository imported by its URL can be published.",
+                code="repo_not_public",
+            )
+        if shown == (repo.published_at is not None):
+            return repo
+        repo.published_at = _now() if shown else None
+        await db.flush()
+        await db.refresh(repo)
+        await audit(
+            db,
+            AuditAction.REPO_PUBLISHED if shown else AuditAction.REPO_UNPUBLISHED,
+            actor_user_id=access.user.id,
+            org_id=access.org.id,
+            target_type="repo",
+            target_id=repo.id,
+            meta={"full_name": repo.full_name},
+        )
+        return repo

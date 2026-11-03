@@ -20,6 +20,7 @@ from typing import Annotated, Any, cast
 import orjson
 from fastapi import APIRouter, Query, Request
 from pydantic import BaseModel, ValidationError
+from redis.asyncio import Redis
 from redis.exceptions import RedisError
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -196,6 +197,13 @@ async def overview(
     snapshot doesn't change, so its overview is kept (per snapshot and the index run that
     finished it) for a day: only the first look reads the whole graph."""
     snapshot = await resolve_snapshot(db, repo, ref)
+    return await overview_of(request, repo, db, redis, snapshot)
+
+
+async def overview_of(
+    request: Request, repo: Repo, db: AsyncSession, redis: Redis, snapshot: Snapshot
+) -> OverviewOut:
+    """The snapshot's overview, kept for a day (also for the public gallery's pages)."""
     job = await _job(db, snapshot)
     key = f"{CACHE_PREFIX}{snapshot.id}:{job.id if job is not None else '-'}"
     try:

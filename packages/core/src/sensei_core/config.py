@@ -473,6 +473,15 @@ class LimitsSettings(BaseSettings):
     blocked_repos: list[str] = Field(default_factory=list[str])
 
 
+class ExploreSettings(BaseSettings):
+    """The public gallery (10.2): one org, the operator's, whose admins publish repositories it
+    imported by their public URL to ``/explore``, where anyone may read them."""
+
+    model_config = _config("SENSEI_EXPLORE_")
+
+    org: str = ""  # the org's slug (empty: no gallery)
+
+
 class Settings(BaseSettings):
     """Root settings object. Use :func:`get_settings` instead of constructing directly."""
 
@@ -505,6 +514,7 @@ class Settings(BaseSettings):
     fixer: FixerSettings = Field(default_factory=FixerSettings)
     notify: NotifySettings = Field(default_factory=NotifySettings)
     limits: LimitsSettings = Field(default_factory=LimitsSettings)
+    explore: ExploreSettings = Field(default_factory=ExploreSettings)
 
     @model_validator(mode="after")
     def _refuse_dev_secrets_outside_dev(self) -> Settings:

@@ -16,7 +16,7 @@ from sensei_api.deps import DbSession, RedisClient, Writable
 from sensei_api.orgs import OrgAccessDep
 from sensei_api.repos import RepoAccessDep, RepoDep, RepoServiceDep, ViewerDep, checked
 from sensei_api.routers.index_jobs import dispatch_index
-from sensei_core.config import LimitsSettings
+from sensei_core.config import ExploreSettings, LimitsSettings
 from sensei_core.indexing.events import JobOutbox
 from sensei_core.indexing.jobs import IndexJobService, RepoSummary, repo_summaries
 from sensei_core.jobs import RepoJobs
@@ -65,6 +65,9 @@ class RepoOut(BaseModel):
     loc: int | None = Field(default=None, description="Lines in those files.")
     last_indexed_at: datetime | None = None
     active_job: ActiveJobOut | None = None
+    published_at: datetime | None = Field(
+        default=None, description="Shown in the public gallery (/explore) since then."
+    )
     created_at: datetime
     updated_at: datetime
 
@@ -109,6 +112,7 @@ class RepoOut(BaseModel):
                 if job
                 else None
             ),
+            published_at=repo.published_at,
             created_at=repo.created_at,
             updated_at=repo.updated_at,
         )
@@ -348,6 +352,28 @@ async def update_repo(
     """Tracked branches, ignore patterns and automatic indexing (admins)."""
     changes = body.model_dump(exclude_unset=True, exclude_none=True)
     return RepoOut.build(await repos.update_settings(db, access, repo, changes))
+
+
+@router.put("/repos/{repo}/published", response_model=RepoOut)
+async def publish_repo(
+    *, request: Request, repo: RepoDep, access: OrgAccessDep, db: DbSession, repos: RepoServiceDep
+) -> RepoOut:
+    """Show the repository in the public gallery (admins of the explore org; one imported by
+    its public URL). It appears there once it is indexed."""
+    explore: ExploreSettings = request.app.state.settings.explore
+    found = await repos.publish(db, access, repo, explore_org=explore.org, shown=True)
+    summaries = await repo_summaries(db, [found])
+    return RepoOut.build(found, summary=summaries.get(found.id))
+
+
+@router.delete("/repos/{repo}/published", status_code=status.HTTP_204_NO_CONTENT)
+async def unpublish_repo(
+    *, request: Request, repo: RepoDep, access: OrgAccessDep, db: DbSession, repos: RepoServiceDep
+) -> Response:
+    """Take the repository out of the public gallery (admins of the explore org)."""
+    explore: ExploreSettings = request.app.state.settings.explore
+    await repos.publish(db, access, repo, explore_org=explore.org, shown=False)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.delete("/repos/{repo}", status_code=status.HTTP_204_NO_CONTENT)
