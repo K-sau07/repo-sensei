@@ -60,12 +60,9 @@ def handlers() -> dict[FixStage, StageHandler]:
         FixKind.FIX: plan_stage(fix_workspace, client, runtime.costs),
         FixKind.CHANGE: change_plan_stage(fix_workspace, client, runtime.costs),
     })  # fmt: skip
-    found[FixStage.PATCH] = by_kind(
-        {FixKind.FIX: patch_stage(fix_workspace, runners, client, runtime.costs)}
-    )
-    found[FixStage.VERIFY] = by_kind(
-        {FixKind.FIX: verify_stage(fix_workspace, runners, client, runtime.costs)}
-    )
+    # A change is patched and verified as a fix is (its new tests for the reproducing test).
+    found[FixStage.PATCH] = patch_stage(fix_workspace, runners, client, runtime.costs)
+    found[FixStage.VERIFY] = verify_stage(fix_workspace, runners, client, runtime.costs)
     return found
 
 

@@ -737,6 +737,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/orgs/{org}/changes/{fix_id}/plan": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Edit Change Plan
+         * @description Edit the change's plan (its summary, files, steps): it is planned again with the edits,
+         *     then waits for approval again. The same rules as any decision on it: members who can write
+         *     to the repository on GitHub; the revision read must be the current one; audited.
+         */
+        patch: operations["edit_change_plan_api_v1_orgs__org__changes__fix_id__plan_patch"];
+        trace?: never;
+    };
     "/api/v1/orgs/{org}/conversations/{conversation_id}": {
         parameters: {
             query?: never;
@@ -4293,6 +4315,17 @@ export interface components {
              */
             files?: number | null;
         };
+        /** PlanEditIn */
+        PlanEditIn: {
+            /** Comment */
+            comment?: string | null;
+            edits: components["schemas"]["PlanEdits"];
+            /**
+             * Plan Revision
+             * @description The plan's revision edited (as read).
+             */
+            plan_revision: number;
+        };
         /**
          * PlanEdits
          * @description The plan as a person edited it (each part left out stays as the planner had it).
@@ -6556,6 +6589,43 @@ export interface operations {
                 };
                 content: {
                     "text/event-stream": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    edit_change_plan_api_v1_orgs__org__changes__fix_id__plan_patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                fix_id: string;
+                /** @description Organization slug */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PlanEditIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FixOut"];
                 };
             };
             /** @description Validation Error */

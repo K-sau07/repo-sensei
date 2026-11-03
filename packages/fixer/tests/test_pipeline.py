@@ -23,6 +23,7 @@ from sensei_core.mail import MemoryMailer
 from sensei_core.models import (
     AgentRun,
     AgentStep,
+    FixKind,
     FixRun,
     FixSource,
     FixStage,
@@ -341,3 +342,41 @@ async def test_the_sweep_fails_lost_stages_and_sends_lost_messages_again(
     await db_session.refresh(agent)
     assert (agent.status, agent.stopped, agent.finished_at) == ("failed", "failed", now)
     assert [e["type"] for e in await _events(fake_redis, lost.id)] == ["failed"]
+
+
+async def test_a_change_goes_from_its_request_to_its_plan_then_on_as_a_fix_does(
+    db_session: AsyncSession, fake_redis: FakeAsyncRedis
+) -> None:
+    run = await _fix(db_session)
+    run.kind, run.source = FixKind.CHANGE, FixSource.REQUEST
+    run.ticket = {"title": "Add rate limiting", "text": "60 requests a minute per client."}
+    await db_session.flush()
+    kinds: list[tuple[FixStage, FixKind]] = []
+
+    def seen(**updates: Any) -> StageHandler:
+        async def handler(ctx: StageContext) -> Outcome:
+            kinds.append((ctx.stage, ctx.kind))
+            return Advance(updates)
+
+        return handler
+
+    handlers = {stage: seen() for stage in FixStage}
+    handlers[FixStage.PLAN] = seen(plan={"summary": "Limit", "revision": 1})
+    pipeline = _pipeline(db_session, fake_redis, handlers)
+    while await pipeline.run_stage(run.org_id, run.id) is not None:
+        pass
+    await db_session.refresh(run)
+    assert run.status is FixStatus.AWAITING_APPROVAL
+    FixStateMachine(run).approve()
+    await db_session.flush()
+    while await pipeline.run_stage(run.org_id, run.id) is not None:
+        pass
+    await db_session.refresh(run)
+    assert run.status is FixStatus.SUCCEEDED
+    # No investigation, reproduction or root cause; every stage told it is a change's.
+    assert kinds == [(stage, FixKind.CHANGE) for stage in (
+        FixStage.INTAKE, FixStage.PLAN, FixStage.PATCH, FixStage.VERIFY, FixStage.PR,
+    )]  # fmt: skip
+    agent = await db_session.get(AgentRun, run.run_id)
+    assert agent is not None
+    assert (agent.kind, agent.mode) == ("change", "change")

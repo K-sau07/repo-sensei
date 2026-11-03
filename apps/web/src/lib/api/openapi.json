@@ -5877,6 +5877,37 @@
         "title": "PartialOut",
         "type": "object"
       },
+      "PlanEditIn": {
+        "properties": {
+          "comment": {
+            "anyOf": [
+              {
+                "maxLength": 4000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Comment"
+          },
+          "edits": {
+            "$ref": "#/components/schemas/PlanEdits"
+          },
+          "plan_revision": {
+            "description": "The plan's revision edited (as read).",
+            "minimum": 0.0,
+            "title": "Plan Revision",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "plan_revision",
+          "edits"
+        ],
+        "title": "PlanEditIn",
+        "type": "object"
+      },
       "PlanEdits": {
         "description": "The plan as a person edited it (each part left out stays as the planner had it).",
         "properties": {
@@ -10723,6 +10754,71 @@
           }
         },
         "summary": "Change Events",
+        "tags": [
+          "changes"
+        ]
+      }
+    },
+    "/api/v1/orgs/{org}/changes/{fix_id}/plan": {
+      "patch": {
+        "description": "Edit the change's plan (its summary, files, steps): it is planned again with the edits,\nthen waits for approval again. The same rules as any decision on it: members who can write\nto the repository on GitHub; the revision read must be the current one; audited.",
+        "operationId": "edit_change_plan_api_v1_orgs__org__changes__fix_id__plan_patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "fix_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Fix Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Organization slug",
+            "in": "path",
+            "name": "org",
+            "required": true,
+            "schema": {
+              "description": "Organization slug",
+              "title": "Org",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PlanEditIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FixOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Edit Change Plan",
         "tags": [
           "changes"
         ]

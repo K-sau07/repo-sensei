@@ -10,7 +10,7 @@ is what verification applies and what the pull request will hold.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -67,6 +67,19 @@ def remove_file(root: Path, path: str) -> None:
         return  # never written
     if target.is_file() and not target.is_symlink():
         target.unlink()
+
+
+async def swap(root: Path, contents: Mapping[str, str | None]) -> dict[str, str | None]:
+    """Put each file of ``contents`` as it says (its text; None: no file there), and answer what
+    they were (to put back): a change's tests run against the code as it was (9.2)."""
+    was: dict[str, str | None] = {}
+    for path, text in contents.items():
+        was[path] = await read_text(root, path)
+        if text is None:
+            remove_file(root, path)
+        else:
+            await write_file(root, path, text)
+    return was
 
 
 async def read_text(root: Path, path: str) -> str | None:

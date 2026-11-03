@@ -10,19 +10,22 @@ the route: :func:`sensei_api.routers.fixes.kind_of`). Members start changes; vie
 
 from __future__ import annotations
 
+import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, BackgroundTasks, Query, Request, status
 from pydantic import BaseModel, Field
 from sse_starlette import EventSourceResponse
 
-from sensei_api.deps import DbSession
+from sensei_api.deps import DbSession, RedisClient
 from sensei_api.orgs import OrgAccessDep
-from sensei_api.repos import RepoDep
+from sensei_api.repos import RepoAccessDep, RepoDep
 from sensei_api.routers.fixes import (
+    ApprovalIn,
     ApprovalOut,
     FixOut,
     FixSummaryOut,
+    PlanEdits,
     authors,
     cancel_fix,
     decide_fix,
@@ -34,7 +37,7 @@ from sensei_api.routers.fixes import (
     service_of,
 )
 from sensei_core.fixes.tickets import Ticket
-from sensei_core.models import FixKind, FixSource, FixStatus, Role
+from sensei_core.models import ApprovalDecision, FixKind, FixSource, FixStatus, Role
 from sensei_core.orgs.service import require_role
 
 router = APIRouter(prefix="/orgs/{org}", tags=["changes"])
@@ -93,6 +96,37 @@ async def list_changes(
         FixSummaryOut.from_run(run, repo, known.get(run.created_by) if run.created_by else None)
         for run in runs
     ]
+
+
+class PlanEditIn(BaseModel):
+    plan_revision: int = Field(ge=0, description="The plan's revision edited (as read).")
+    edits: PlanEdits
+    comment: str | None = Field(default=None, max_length=4_000)
+
+
+@router.patch("/changes/{fix_id}/plan", response_model=FixOut)
+async def edit_change_plan(
+    *,
+    request: Request,
+    fix_id: uuid.UUID,
+    body: PlanEditIn,
+    access: OrgAccessDep,
+    db: DbSession,
+    readers: RepoAccessDep,
+    redis: RedisClient,
+    background: BackgroundTasks,
+) -> FixOut:
+    """Edit the change's plan (its summary, files, steps): it is planned again with the edits,
+    then waits for approval again. The same rules as any decision on it: members who can write
+    to the repository on GitHub; the revision read must be the current one; audited."""
+    decision = ApprovalIn(
+        decision=ApprovalDecision.REQUEST_CHANGES, plan_revision=body.plan_revision,
+        comment=body.comment, plan_edits=body.edits,
+    )  # fmt: skip
+    return await decide_fix(
+        request=request, fix_id=fix_id, body=decision, access=access, db=db, readers=readers,
+        redis=redis, background=background,
+    )  # fmt: skip
 
 
 # The run's controls, the fix's endpoints under /changes (a change's route finds no fix).

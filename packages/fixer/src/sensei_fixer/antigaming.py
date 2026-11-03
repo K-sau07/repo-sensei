@@ -2,8 +2,10 @@
 no fix, so a patch that does any of these is blocked, whatever its tests say.
 
 - ``test_changed``: an existing test changed or deleted, or a test added (only the reproducing
-  test, as the reproduce stage wrote it, is added);
+  test, as the reproduce stage wrote it, is added; a requested change adds the new test files
+  its plan names);
 - ``repro_changed``: the reproducing test isn't the one that reproduced the bug;
+- ``test_missing``: a test file the change's plan adds isn't in it;
 - ``test_config``: the test setup changed (``conftest.py``, pytest/vitest/jest configuration,
   test settings in a manifest);
 - ``skip_added``: a test skipped, expected to fail, or narrowed to some (``only``);
@@ -250,13 +252,14 @@ def _excepted(line: str) -> frozenset[str]:
 class Context:
     """What the checks hold a patch to."""
 
-    repro_path: str  # the reproducing test's file (the one test a patch adds)
+    repro_path: str | None  # a fix's reproducing test's file (None: a change has none)
     repro_test: str  # its content, as it reproduced the bug
     planned: Collection[str]  # the files the approved plan names
     before: dict[str, str] = field(default_factory=dict[str, str])  # changed files, as they were
     reported: str = ""  # the report's own words (a value it says is no special case)
     error_type: str | None = None  # the reported error's type (catching it is a finding)
     dependencies: frozenset[str] = frozenset()  # the project's (a file named so shadows one)
+    new_tests: frozenset[str] = frozenset()  # a change's planned new test files (any content)
 
 
 def check(diff: str, ctx: Context) -> list[Finding]:
@@ -265,8 +268,11 @@ def check(diff: str, ctx: Context) -> list[Finding]:
     watched = literals(ctx.repro_test) - literals(ctx.reported)
     reported_error = (ctx.error_type or "").rsplit(".", 1)[-1] or None
     files = parse_diff(diff)
-    if not any(f.path == ctx.repro_path for f in files):
+    if ctx.repro_path and not any(f.path == ctx.repro_path for f in files):
         findings.append(Finding("repro_changed", ctx.repro_path, "the reproducing test is missing"))
+    for test in sorted(ctx.new_tests):
+        if not any(f.path == test and f.status == "added" for f in files):
+            findings.append(Finding("test_missing", test, "a test the plan adds isn't added"))
     for change in files:
         findings += _file_findings(change, ctx, watched, reported_error)
     return findings
@@ -284,6 +290,10 @@ def _file_findings(
         if change.status != "added" or added.strip() != ctx.repro_test.strip():
             found.append(Finding("repro_changed", path, "the reproducing test was changed"))
         return found
+    if path in ctx.new_tests:  # a change's new test: what it may not do is what a test may not
+        if change.status != "added":
+            found.append(Finding("test_changed", path, f"an existing test {change.status}"))
+        return [*found, *_line_findings(change, set())]
     if change.status == "added" and shadows(path, ctx.dependencies):
         found.append(Finding("shadowing", path, "a new file imported instead of another"))
     if is_sensitive(path):

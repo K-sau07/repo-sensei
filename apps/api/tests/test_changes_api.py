@@ -171,3 +171,35 @@ async def test_a_changes_plan_is_decided_through_its_own_route(
     assert app.state.fix_jobs.sent == [(str(run.id), "patch")]
     listed = (await client.get(f"{API}/orgs/acme/changes/{run.id}/approvals")).json()
     assert [a["decision"] for a in listed] == ["approve"]
+
+
+async def test_editing_a_changes_plan_plans_it_again(
+    app: FastAPI, client: httpx.AsyncClient, db_session: AsyncSession
+) -> None:
+    owner, repo = await _org(app, db_session)
+    run = FixRun(
+        org_id=repo.org_id, repo_id=repo.id, kind=FixKind.CHANGE, source=FixSource.REQUEST,
+        title="Add rate limiting", ticket={"title": "Add rate limiting", "text": "60/min"},
+        status=FixStatus.AWAITING_APPROVAL, stage=FixStage.AWAITING_APPROVAL, risk=FixRisk.LOW,
+        plan={"summary": "Limit", "revision": 1, "files": [], "risk": {"level": "low"}},
+        created_by=owner.id,
+    )  # fmt: skip
+    db_session.add(run)
+    await db_session.flush()
+    _, headers = await sign_in(app, client, db_session, owner)
+    edits = {"steps": [{"description": "Limit per API key, not per IP", "path": "app/limits.py"}]}
+    with respx.mock(assert_all_called=False) as github:
+        github.get("https://api.github.com/repositories/7").respond(
+            json={"id": 7, "permissions": {"pull": True, "push": True}}
+        )
+        url = f"{API}/orgs/acme/changes/{run.id}/plan"
+        stale = await client.patch(url, json={"plan_revision": 0, "edits": edits}, headers=headers)
+        assert (stale.status_code, stale.json()["error"]["code"]) == (409, "fix_plan_changed")
+        body = {"plan_revision": 1, "edits": edits, "comment": "Keys, not IPs."}
+        edited = await client.patch(url, json=body, headers=headers)
+    assert edited.status_code == 200, edited.text
+    found = edited.json()
+    assert (found["status"], found["stage"]) == ("queued", "plan")
+    [request] = found["plan"]["requests"]
+    assert (request["comment"], request["edits"]) == ("Keys, not IPs.", edits)
+    assert app.state.fix_jobs.sent == [(str(run.id), "plan")]
