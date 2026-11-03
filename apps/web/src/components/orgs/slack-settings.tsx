@@ -96,7 +96,10 @@ export function SlackSettings() {
   const saved = missing ? null : (slack.data ?? null);
   return (
     <Section>
-      <SlackForm key={saved ? `${saved.channel}:${saved.kinds.join()}` : "new"} saved={saved} />
+      <SlackForm
+        key={saved ? `${saved.channel}:${saved.kinds.join()}:${saved.webhook_hint}` : "new"}
+        saved={saved}
+      />
     </Section>
   );
 }
