@@ -5,14 +5,22 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from fastapi import APIRouter, Response, status
-from pydantic import BaseModel
+from fastapi import APIRouter, Request, Response, status
+from pydantic import BaseModel, Field
 
-from sensei_api.auth import CurrentUser, OptionalBearer, RequiredSession, Sessions
+from sensei_api.auth import (
+    CurrentUser,
+    OptionalBearer,
+    RequiredSession,
+    Sessions,
+    clear_session_cookies,
+)
 from sensei_api.deps import DbSession
 from sensei_api.errors import NotFound
 from sensei_api.orgs import OrgServiceDep
+from sensei_core.errors import InvalidError
 from sensei_core.models import Role, User
+from sensei_core.orgs import lifecycle
 from sensei_core.orgs.service import OrgService
 
 router = APIRouter(prefix="/me", tags=["me"])
@@ -111,3 +119,23 @@ async def revoke_session(
     if not await sessions.revoke(db, active.user.id, session_id):
         raise NotFound("Session not found.")
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+class AccountDeletion(BaseModel):
+    confirm: str = Field(description="The account's GitHub login, typed again to confirm.")
+
+
+@router.delete("", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_account(
+    *, request: Request, body: AccountDeletion, active: RequiredSession, db: DbSession
+) -> Response:
+    """Delete the signed-in account (F19), from a browser session only: 422
+    ``confirmation_mismatch`` unless ``confirm`` is the login; 409 ``sole_owner`` while it is an
+    org's only owner. Its sessions end, it leaves every org and its name, login, email and
+    avatar are gone; what it wrote in orgs stays, by no one."""
+    if body.confirm.strip().lower() != active.user.login.lower():
+        raise InvalidError("Type your GitHub login to confirm.", code="confirmation_mismatch")
+    await lifecycle.delete_account(db, active.user)
+    response = Response(status_code=status.HTTP_204_NO_CONTENT)
+    clear_session_cookies(response, request.app.state.settings)
+    return response

@@ -6,7 +6,7 @@ import uuid
 from datetime import datetime
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Query, Response, status
+from fastapi import APIRouter, Path, Query, Response, status
 from pydantic import BaseModel, Field
 
 from sensei_api.auth import CurrentUser
@@ -15,6 +15,7 @@ from sensei_api.orgs import OrgAccessDep, OrgServiceDep
 from sensei_core.audit import MAX_PAGE_SIZE, AuditAction, list_org_audit
 from sensei_core.errors import InvalidError
 from sensei_core.models import ActorType, Org, Role
+from sensei_core.orgs import lifecycle
 from sensei_core.orgs.service import require_role, validate_slug
 
 router = APIRouter(prefix="/orgs", tags=["orgs"])
@@ -133,6 +134,36 @@ async def slug_available(
     return SlugAvailability(
         slug=normalized, available=available, reason=None if available else "slug_taken"
     )
+
+
+class DeletedOrgOut(BaseModel):
+    slug: str
+    name: str
+    deleted_at: datetime
+    purge_at: datetime = Field(description="When it is purged, and can no longer be restored.")
+
+
+@router.get("/deleted", response_model=list[DeletedOrgOut])
+async def deleted_orgs(user: CurrentUser, db: DbSession) -> list[DeletedOrgOut]:
+    """The deleted orgs the signed-in user owns that may still be restored."""
+    return [
+        DeletedOrgOut(
+            slug=found.org.slug,
+            name=found.org.name,
+            deleted_at=found.org.deleted_at or found.purge_at,
+            purge_at=found.purge_at,
+        )
+        for found in await lifecycle.deleted_orgs(db, user)
+    ]
+
+
+@router.post("/{org}/restore", response_model=OrgOut)
+async def restore_org(
+    org: Annotated[str, Path(max_length=64)], user: CurrentUser, db: DbSession
+) -> OrgOut:
+    """Bring back a deleted org (its owners, within the grace period)."""
+    access = await lifecycle.restore_org(db, user, org)
+    return OrgOut.build(access.org, access.role)
 
 
 @router.get("/{org}", response_model=OrgOut)

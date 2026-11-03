@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Iterator
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
@@ -18,10 +18,12 @@ from sensei_core.config import Settings
 from sensei_core.db import Database
 from sensei_core.github.webhooks import record_delivery
 from sensei_core.models import DeliveryStatus, JobFailure, Org, Repo, RepoSource, WebhookDelivery
+from sensei_core.orgs.lifecycle import ORG_GRACE
 from sensei_core.storage import Bucket, artifact_key, repo_prefix, snapshot_key
 from sensei_workers.app import celery_app
 from sensei_workers.base import SenseiTask
 from sensei_workers.runtime import Runtime, set_runtime
+from sensei_workers.tasks.maintenance import purge_deleted_orgs
 from sensei_workers.tasks.repos import purge_repo
 from sensei_workers.tasks.webhooks import process_github_webhook, sweep_webhooks
 
@@ -237,3 +239,38 @@ def test_purge_removes_only_disconnected_repositories(
         runtime.run(_drop_org(system_db, org_id))
         for repo_id in (disconnected, live):
             runtime.run(_drop_objects(runtime, org_id, repo_id))
+
+
+async def _delete_org(system_db: Database, org_id: uuid.UUID, ago: timedelta) -> None:
+    async with system_db.session() as db:
+        org = await db.get(Org, org_id)
+        assert org is not None
+        org.deleted_at = datetime.now(UTC) - ago
+
+
+async def _org_exists(system_db: Database, org_id: uuid.UUID) -> bool:
+    async with system_db.session() as db:
+        return await db.get(Org, org_id) is not None
+
+
+def test_an_org_deleted_past_its_grace_is_purged_with_what_it_stored(
+    runtime: Runtime, system_db: Database
+) -> None:
+    kept_id, _, _ = runtime.run(_org_with_repos(system_db))
+    gone_id, disconnected, live = runtime.run(_org_with_repos(system_db))
+    try:
+        for repo_id in (disconnected, live):
+            runtime.run(_store_objects(runtime, gone_id, repo_id))
+        runtime.run(_delete_org(system_db, kept_id, ORG_GRACE - timedelta(hours=1)))  # restorable
+        runtime.run(_delete_org(system_db, gone_id, ORG_GRACE + timedelta(hours=1)))
+        assert purge_deleted_orgs.apply().get() >= 1
+        assert not runtime.run(_org_exists(system_db, gone_id))
+        assert runtime.run(_repo_ids(system_db, gone_id)) == set()  # its rows went with it
+        for repo_id in (disconnected, live):  # its disconnected repository's objects too
+            assert runtime.run(_stored_objects(runtime, gone_id, repo_id)) == 0
+        assert runtime.run(_org_exists(system_db, kept_id))
+    finally:
+        runtime.run(_drop_org(system_db, kept_id))
+        runtime.run(_drop_org(system_db, gone_id))
+        for repo_id in (disconnected, live):
+            runtime.run(_drop_objects(runtime, gone_id, repo_id))

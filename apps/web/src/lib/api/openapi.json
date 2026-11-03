@@ -1,6 +1,20 @@
 {
   "components": {
     "schemas": {
+      "AccountDeletion": {
+        "properties": {
+          "confirm": {
+            "description": "The account's GitHub login, typed again to confirm.",
+            "title": "Confirm",
+            "type": "string"
+          }
+        },
+        "required": [
+          "confirm"
+        ],
+        "title": "AccountDeletion",
+        "type": "object"
+      },
       "ActiveJobOut": {
         "description": "The repository's queued or running index run, for status dots and progress.",
         "properties": {
@@ -719,6 +733,9 @@
           "org.create",
           "org.update",
           "org.delete",
+          "org.restore",
+          "org.purge",
+          "auth.account_delete",
           "invitation.create",
           "invitation.revoke",
           "invitation.accept",
@@ -1934,6 +1951,37 @@
           "dev"
         ],
         "title": "DeclaredOut",
+        "type": "object"
+      },
+      "DeletedOrgOut": {
+        "properties": {
+          "deleted_at": {
+            "format": "date-time",
+            "title": "Deleted At",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "purge_at": {
+            "description": "When it is purged, and can no longer be restored.",
+            "format": "date-time",
+            "title": "Purge At",
+            "type": "string"
+          },
+          "slug": {
+            "title": "Slug",
+            "type": "string"
+          }
+        },
+        "required": [
+          "slug",
+          "name",
+          "deleted_at",
+          "purge_at"
+        ],
+        "title": "DeletedOrgOut",
         "type": "object"
       },
       "DepEdgeOut": {
@@ -9990,6 +10038,39 @@
       }
     },
     "/api/v1/me": {
+      "delete": {
+        "description": "Delete the signed-in account (F19), from a browser session only: 422\n``confirmation_mismatch`` unless ``confirm`` is the login; 409 ``sole_owner`` while it is an\norg's only owner. Its sessions end, it leaves every org and its name, login, email and\navatar are gone; what it wrote in orgs stays, by no one.",
+        "operationId": "delete_account_api_v1_me_delete",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AccountDeletion"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Account",
+        "tags": [
+          "me"
+        ]
+      },
       "get": {
         "operationId": "get_me_api_v1_me_get",
         "responses": {
@@ -10558,6 +10639,32 @@
           }
         },
         "summary": "Create Org",
+        "tags": [
+          "orgs"
+        ]
+      }
+    },
+    "/api/v1/orgs/deleted": {
+      "get": {
+        "description": "The deleted orgs the signed-in user owns that may still be restored.",
+        "operationId": "deleted_orgs_api_v1_orgs_deleted_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/DeletedOrgOut"
+                  },
+                  "title": "Response Deleted Orgs Api V1 Orgs Deleted Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Deleted Orgs",
         "tags": [
           "orgs"
         ]
@@ -17839,6 +17946,50 @@
         "summary": "Tree",
         "tags": [
           "browse"
+        ]
+      }
+    },
+    "/api/v1/orgs/{org}/restore": {
+      "post": {
+        "description": "Bring back a deleted org (its owners, within the grace period).",
+        "operationId": "restore_org_api_v1_orgs__org__restore_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "org",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "title": "Org",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrgOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Restore Org",
+        "tags": [
+          "orgs"
         ]
       }
     },

@@ -265,7 +265,14 @@ export interface paths {
         get: operations["get_me_api_v1_me_get"];
         put?: never;
         post?: never;
-        delete?: never;
+        /**
+         * Delete Account
+         * @description Delete the signed-in account (F19), from a browser session only: 422
+         *     ``confirmation_mismatch`` unless ``confirm`` is the login; 409 ``sole_owner`` while it is an
+         *     org's only owner. Its sessions end, it leaves every org and its name, login, email and
+         *     avatar are gone; what it wrote in orgs stays, by no one.
+         */
+        delete: operations["delete_account_api_v1_me_delete"];
         options?: never;
         head?: never;
         /** Update Me */
@@ -507,6 +514,26 @@ export interface paths {
         put?: never;
         /** Create Org */
         post: operations["create_org_api_v1_orgs_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/deleted": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Deleted Orgs
+         * @description The deleted orgs the signed-in user owns that may still be restored.
+         */
+        get: operations["deleted_orgs_api_v1_orgs_deleted_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -2214,6 +2241,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/orgs/{org}/restore": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Restore Org
+         * @description Bring back a deleted org (its owners, within the grace period).
+         */
+        post: operations["restore_org_api_v1_orgs__org__restore_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/public/repos": {
         parameters: {
             query?: never;
@@ -2383,6 +2430,14 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** AccountDeletion */
+        AccountDeletion: {
+            /**
+             * Confirm
+             * @description The account's GitHub login, typed again to confirm.
+             */
+            confirm: string;
+        };
         /**
          * ActiveJobOut
          * @description The repository's queued or running index run, for status dots and progress.
@@ -2609,7 +2664,7 @@ export interface components {
          * AuditAction
          * @enum {string}
          */
-        AuditAction: "auth.login" | "auth.logout" | "auth.logout_all" | "org.create" | "org.update" | "org.delete" | "invitation.create" | "invitation.revoke" | "invitation.accept" | "member.role_change" | "member.remove" | "member.leave" | "github.install.linked" | "github.install.deleted" | "github.install.suspended" | "github.install.unsuspended" | "github.install.permissions_accepted" | "repo.connected" | "repo.settings_update" | "repo.disconnected" | "repo.published" | "repo.unpublished" | "repo.index_started" | "repo.index_cancelled" | "agent.cost_cap_warning" | "conversation.shared" | "conversation.unshared" | "diagram.shared" | "diagram.unshared" | "api_key.create" | "api_key.revoke" | "oauth.authorize" | "oauth.refresh_reused" | "fix.create" | "fix.decision" | "sentry.connect" | "sentry.disconnect" | "slack.connect" | "slack.disconnect";
+        AuditAction: "auth.login" | "auth.logout" | "auth.logout_all" | "org.create" | "org.update" | "org.delete" | "org.restore" | "org.purge" | "auth.account_delete" | "invitation.create" | "invitation.revoke" | "invitation.accept" | "member.role_change" | "member.remove" | "member.leave" | "github.install.linked" | "github.install.deleted" | "github.install.suspended" | "github.install.unsuspended" | "github.install.permissions_accepted" | "repo.connected" | "repo.settings_update" | "repo.disconnected" | "repo.published" | "repo.unpublished" | "repo.index_started" | "repo.index_cancelled" | "agent.cost_cap_warning" | "conversation.shared" | "conversation.unshared" | "diagram.shared" | "diagram.unshared" | "api_key.create" | "api_key.revoke" | "oauth.authorize" | "oauth.refresh_reused" | "fix.create" | "fix.decision" | "sentry.connect" | "sentry.disconnect" | "slack.connect" | "slack.disconnect";
         /** AuditEventOut */
         AuditEventOut: {
             /** Action */
@@ -3034,6 +3089,24 @@ export interface components {
             spec: string | null;
             /** Version */
             version: string | null;
+        };
+        /** DeletedOrgOut */
+        DeletedOrgOut: {
+            /**
+             * Deleted At
+             * Format: date-time
+             */
+            deleted_at: string;
+            /** Name */
+            name: string;
+            /**
+             * Purge At
+             * Format: date-time
+             * @description When it is purged, and can no longer be restored.
+             */
+            purge_at: string;
+            /** Slug */
+            slug: string;
         };
         /** DepEdgeOut */
         DepEdgeOut: {
@@ -6101,6 +6174,37 @@ export interface operations {
             };
         };
     };
+    delete_account_api_v1_me_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AccountDeletion"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     update_me_api_v1_me_patch: {
         parameters: {
             query?: never;
@@ -6552,6 +6656,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    deleted_orgs_api_v1_orgs_deleted_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeletedOrgOut"][];
                 };
             };
         };
@@ -10409,6 +10533,37 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    restore_org_api_v1_orgs__org__restore_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OrgOut"];
+                };
             };
             /** @description Validation Error */
             422: {

@@ -57,6 +57,7 @@ class TaskName(enum.StrEnum):
     SWEEP_SNAPSHOTS = "sensei.maintenance.sweep_snapshots"
     DROP_REF = "sensei.maintenance.drop_ref"
     PRUNE_OAUTH = "sensei.maintenance.prune_oauth"
+    PURGE_DELETED_ORGS = "sensei.maintenance.purge_deleted_orgs"
     RUN_FIX_STAGE = "sensei.agent.run_fix_stage"
     DELIVER_NOTIFICATIONS = "sensei.default.deliver_notifications"
     CHECK_GLOBAL_SPEND = "sensei.maintenance.check_global_spend"

@@ -17,11 +17,13 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import delete, or_, select
 from sqlalchemy.exc import DBAPIError
 
+from sensei_core.audit import AuditAction, audit
 from sensei_core.indexing import retention
 from sensei_core.jobs import TaskName
 from sensei_core.logging import get_logger
 from sensei_core.models import ACTIVE_JOB_STATUSES, IndexJob, Repo, RepoRef, Snapshot
 from sensei_core.oauth.service import prune as oauth_prune
+from sensei_core.orgs.lifecycle import drop_org, org_repo_ids, orgs_to_purge
 from sensei_core.storage import Bucket, repo_prefix, snapshot_key
 from sensei_workers.app import celery_app
 from sensei_workers.base import RetryableError, SenseiTask
@@ -222,3 +224,39 @@ def prune_oauth(self: SenseiTask) -> dict[str, int]:
 async def _prune_oauth() -> dict[str, int]:
     async with get_runtime().system_database.session() as db:
         return await oauth_prune(db, datetime.now(UTC))
+
+
+@celery_app.task(bind=True, base=SenseiTask, name=TaskName.PURGE_DELETED_ORGS.value, system=True)
+def purge_deleted_orgs(self: SenseiTask) -> int:
+    """Purge the orgs deleted longer ago than their grace period: each repository's stored
+    objects first (a failure leaves the org to try again from), then the org's row, which
+    everything in it follows. Returns how many went."""
+    runtime = get_runtime()
+
+    async def _due() -> list[tuple[uuid.UUID, str]]:
+        async with runtime.system_database.session() as db:
+            return [(org.id, org.slug) for org in await orgs_to_purge(db)]
+
+    async def _purge(org_id: uuid.UUID, slug: str) -> bool:
+        async with runtime.system_database.session() as db:
+            repos = await org_repo_ids(db, org_id)
+        storage = await runtime.storage()
+        for repo_id in repos:
+            for bucket in Bucket:
+                await storage.delete_prefix(bucket, repo_prefix(bucket, org_id, repo_id))
+        async with runtime.system_database.session() as db:
+            gone = await drop_org(db, org_id)
+            if gone:
+                await audit(db, AuditAction.ORG_PURGE, actor_user_id=None,
+                            target_type="org", target_id=org_id, meta={"slug": slug})  # fmt: skip
+            return gone
+
+    purged = 0
+    for org_id, slug in runtime.run(_due()):
+        try:
+            if runtime.run(_purge(org_id, slug)):
+                purged += 1
+                log.info("org purged", org_id=str(org_id))
+        except Exception:  # the next one still goes; this one is tried again tomorrow
+            log.exception("org not purged", org_id=str(org_id))
+    return purged
