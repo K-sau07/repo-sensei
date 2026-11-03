@@ -27,6 +27,7 @@ test the change. The rest is the same.
 from __future__ import annotations
 
 import asyncio
+import re
 import time
 from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager
@@ -59,7 +60,16 @@ from sensei_fixer.reproduce import Runners, Workspace
 from sensei_fixer.risk import Areas, Risk, assess, code_areas, graph_areas, higher, path_areas
 from sensei_fixer.runs import FixRunner, RunResult, SetupFailed
 from sensei_fixer.stages import Advance, Outcome, StageContext, StageHandler, Step, Stop
-from sensei_fixer.suites import SuiteRun, SuiteVerdict, compare, count_tests, passed, read_suite
+from sensei_fixer.suites import (
+    SuiteRun,
+    SuiteVerdict,
+    Without,
+    compare,
+    count_tests,
+    passed,
+    read_suite,
+    without_change,
+)
 from sensei_fixer.tooling import text_result
 
 PROMPT_VERSION = "patch.v1"
@@ -302,7 +312,13 @@ async def working(
     :class:`NoFramework` or :class:`SetupFailed` when the tests can't run."""
     root_cause = cast("Mapping[str, Any]", ctx.facts.get("root_cause") or {})
     hooks = Hooks(record=ctx.record, spend=ctx.spend, check=ctx.check)
-    culprit = root_cause.get("path") or (ctx.ticket.culprit.path if ctx.ticket.culprit else None)
+    # Where its tests run: the project of a fix's root cause (or its report's culprit), of a
+    # change's new tests.
+    culprit = (
+        root_cause.get("path")
+        or (ctx.ticket.culprit.path if ctx.ticket.culprit else None)
+        or (plan.new_tests[0] if plan.new_tests else None)
+    )
     async with workspace(ctx) as (tools, _history):
         try:
             setup = detect(tools.root, culprit)
@@ -373,6 +389,7 @@ class _Patching:
     accepted: tuple[Diff, Checked, str] | None = None
     blocked: Checked | None = None
     gave_up: str | None = None
+    without: dict[str, str] = field(default_factory=dict[str, str])  # new test -> outcome
 
     @property
     def root(self) -> Path:
@@ -491,46 +508,47 @@ class _Patching:
     async def _run_checks(self) -> Ran:
         job = self.job
         if job.plan.new_tests:
-            failing, output, count = await self._new_tests_check()
+            failing, output = await self._new_tests_check()
         else:
             repro = await job.run(job.setup.command(job.plan.repro_path or ""))
-            count = job.plan.repro_tests
-            ok = job.passes(repro, at_least=count)
+            ok = job.passes(repro, at_least=job.plan.repro_tests)
             failing = None if ok else "The reproducing test still fails."
             output = _shown(repro)
         if failing is not None:
             return failing, output, None, None
         await job.hooks.check()
-        suite = read_suite(job.setup.framework, await job.run(job.setup.suite()))
-        return None, "", suite, compare(self.baseline, suite, repro_tests=count)
+        # The rest of the suite, without the new tests (run apart above).
+        ran = await job.run(job.setup.suite(exclude=job.plan.tests))
+        suite = read_suite(job.setup.framework, ran)
+        return None, "", suite, compare(self.baseline, suite, repro_tests=0)
 
-    async def _new_tests_check(self) -> tuple[str | None, str, int]:
-        """A change's new tests: written, passing (by their report) with the change, and not
-        all passing without it (what passes either way doesn't test the change)."""
+    async def _new_tests_check(self) -> tuple[str | None, str]:
+        """A change's new tests: written, asserting something real, passing (by their report)
+        with the change, and none passing with the change's code put back as it was (what
+        passes either way doesn't test the change)."""
         job = self.job
         contents: dict[str, str] = {}
         for path in job.plan.new_tests:
             content = await read_text(self.root, path)
             if content is None:
-                return f"The plan's test {path} isn't written.", "", 0
+                return f"The plan's test {path} isn't written.", ""
+            empty = asserts_nothing(job.setup.framework, content)
+            if empty:
+                return f"The new test {path} {empty}: make it check what the change does.", ""
             contents[path] = content
-        count = 0
         for path, content in contents.items():
             ran = await job.run(job.setup.command(path))
-            tests = count_tests(job.setup.framework, content)
-            if not job.passes(ran, at_least=tests):
-                return f"The new test {path} doesn't pass with the change.", _shown(ran), 0
-            count += tests
-        original = {p: self.before.get(p) for p in self.written if p not in job.plan.new_tests}
-        current = await swap(self.root, original)  # the code as it was, the new tests kept
-        try:
-            without = [await job.run(job.setup.command(p)) for p in contents]
-        finally:
-            await swap(self.root, current)
-        if all(job.passes(ran) for ran in without):
-            return ("The new tests pass without the change too: they don't test it. Make them "
-                    "check what the change adds.", _shown(without[-1]), 0)  # fmt: skip
-        return None, "", count
+            if not job.passes(ran, at_least=count_tests(job.setup.framework, content)):
+                return f"The new test {path} doesn't pass with the change.", _shown(ran)
+        sources = [p for p in self.written if p not in job.plan.new_tests]
+        outcomes = await without_the_change(job, self.root, list(contents),
+                                            {p: self.before.get(p) for p in sources})  # fmt: skip
+        self.without = {path: outcome for path, (outcome, _ran) in outcomes.items()}
+        for path, (outcome, ran) in outcomes.items():
+            if outcome == "passes":
+                return (f"The new test {path} passes without the change too: it doesn't test "
+                        "it. Make it check what the change adds.", _shown(ran))  # fmt: skip
+        return None, ""
 
     async def submit(self, summary: str, fixed: bool) -> ToolResult:
         if not fixed:
@@ -567,6 +585,43 @@ class _Patching:
                 f"<failure>\n{fenced(checked.output)}\n</failure>\n\n"
                 f"Fix it and submit again ({attempts} left).")  # fmt: skip
         return text_result(body, f"attempt {n} failed", error=True)
+
+
+_PY_ASSERTION = re.compile(r"\bassert\b|pytest\.raises|self\.assert\w+\(")
+_JS_ASSERTION = re.compile(r"\bexpect\s*\(|\bassert(\.\w+)?\s*\(")
+# An assertion that holds whatever the code does.
+_TRIVIAL = re.compile(
+    r"^\s*assert\s+(True|1|not\s+False|\(?\s*\)?)\s*(,.*)?$|"
+    r"expect\(\s*(true|1)\s*\)\.(toBe|toEqual|toBeTruthy)\(\s*(true|1)?\s*\)",
+    re.MULTILINE,
+)
+
+
+def asserts_nothing(framework: str, content: str) -> str | None:
+    """Why a new test checks nothing (None: it asserts something that could fail)."""
+    assertion = _PY_ASSERTION if framework == "pytest" else _JS_ASSERTION
+    if not assertion.search(content):
+        return "asserts nothing"
+    trivial = _TRIVIAL.search(content)
+    if trivial:
+        return f"asserts what always holds ({trivial.group(0).strip()[:60]})"
+    return None
+
+
+async def without_the_change(
+    job: Job, root: Path, tests: Sequence[str], originals: Mapping[str, str | None]
+) -> dict[str, tuple[Without, RunResult]]:
+    """Each new test run with the change's code (``originals``: each changed source file as it
+    was, None for one it created) put back, then the change restored."""
+    found: dict[str, tuple[Without, RunResult]] = {}
+    current = await swap(root, originals)
+    try:
+        for path in tests:
+            ran = await job.run(job.setup.command(path))
+            found[path] = (without_change(job.setup.framework, ran), ran)
+    finally:
+        await swap(root, current)
+    return found
 
 
 def brief(ticket: Ticket, root_cause: Mapping[str, Any], plan: Approved,
@@ -663,6 +718,7 @@ async def _patch(job: Job) -> Outcome:
     return Advance({"patch": {
         **record, "diff": diff.text, "files": [f.path for f in source],
         "tests": sorted(tests), "lines": sum(f.lines_changed for f in source),
+        "without_change": patching.without,
         "summary": summary, "risk": checked.risk.json() if checked.risk else None,
         "suite": checked.suite.json() if checked.suite else None,
     }})  # fmt: skip

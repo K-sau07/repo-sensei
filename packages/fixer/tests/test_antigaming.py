@@ -215,3 +215,18 @@ def test_test_paths_and_shadowing() -> None:
     assert antigaming.shadows("tests/random.py")
     assert antigaming.shadows("src/json.py")
     assert not antigaming.shadows("app/json.py")  # a package's own module
+
+
+def test_a_changes_own_tests_are_held_to_the_codes_rules() -> None:
+    def added(path: str, lines: list[str]) -> str:
+        body = "".join(f"+{line}\n" for line in lines)
+        return (f"diff --git a/{path} b/{path}\nnew file mode 100644\n--- /dev/null\n+++ b/{path}\n"
+                f"@@ -0,0 +1,{len(lines)} @@\n{body}")  # fmt: skip
+
+    ctx = antigaming.Context(None, "", planned={"app/stats.py"},
+                             new_tests=frozenset({"tests/json.py", "tests/test_x.py"}))  # fmt: skip
+    diff = added("tests/json.py", ["loads = dict"]) + added(
+        "tests/test_x.py", ["import os", "os._exit(0)", "def test_x():", "    assert 1 == 2"]
+    )
+    rules = {f.rule for f in antigaming.check(diff, ctx)}
+    assert {"shadowing", "test_config", "exit_forced"} <= rules

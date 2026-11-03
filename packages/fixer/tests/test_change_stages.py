@@ -152,7 +152,9 @@ async def test_tests_that_pass_without_the_change_are_refused(repo: Path) -> Non
     assert isinstance(outcome, Stop)
     assert outcome.status is FixStatus.FAILED
     [first] = outcome.updates["patch"]["attempts"]
-    assert first["reason"].startswith("The new tests pass without the change too")
+    assert first["reason"].startswith(
+        "The new test tests/test_median.py passes without the change too"
+    )
 
 
 async def test_existing_tests_stay_and_planned_tests_must_be_written(repo: Path) -> None:
@@ -194,9 +196,53 @@ async def test_a_built_change_is_verified_from_a_clean_checkout(repo: Path) -> N
     assert isinstance(outcome, Advance), outcome
     found = outcome.updates["verification"]
     assert [r["passed"] for r in found["repro_runs"]] == [True, True, True]
-    assert [r["passed"] for r in found["without_change"]] == [False]  # its tests need it
+    # Its tests need it: with median() taken out, a test of it fails (proven, not an import).
+    assert [r["outcome"] for r in found["without_change"]] == ["fails"]
+    assert found["proven"] is True
     assert found["suite"]["ok"] is True
     assert found["prompt"] == "change_verify.v1"
     assert outcome.updates["risk"] is FixRisk.LOW
     assert "The requested change" in fake.bodies("/v1/messages")[0]["messages"][0]["content"]
     assert (repo / "app/stats.py").read_text() == STATS
+
+
+async def test_tests_that_assert_nothing_real_are_refused(repo: Path) -> None:
+    always = (
+        "from app import stats\n\n\ndef test_median():\n    stats.median([1])\n    assert True\n"
+    )
+    fake = scripted(
+        [_create("t1", "tests/test_median.py", always), _add_median("e1")], [_submit("s1")],
+        [tool_use("g1", "submit_patch", {"summary": "No.", "fixed": False})],
+    )  # fmt: skip
+    outcome = await _patch(repo, fake)
+    assert isinstance(outcome, Stop)
+    [first] = outcome.updates["patch"]["attempts"]
+    assert first["reason"].startswith("The new test tests/test_median.py asserts what always holds")
+
+
+async def test_tests_that_only_import_the_change_are_unproven(repo: Path) -> None:
+    # Without median(), this test can't even be collected (an ImportError): it isn't shown to
+    # fail by a test of its own, so nothing proves it tests the change.
+    importing = (
+        "from app.stats import median\n\n\ndef test_median():\n    assert callable(median)\n"
+    )
+    built = await _patch(repo, scripted(
+        [_create("t1", "tests/test_median.py", importing), _add_median("e1")], [_submit("s1")],
+    ))  # fmt: skip
+    assert isinstance(built, Advance), built
+    assert built.updates["patch"]["without_change"] == {"tests/test_median.py": "inconclusive"}
+    verdict: dict[str, Any] = {"test_shaped": False, "reason": "ok", "concerns": [],
+                               "unverified": []}  # fmt: skip
+    fake = scripted([tool_use("w1", "write_extra_tests", {"content": EXTRA})],
+                    [tool_use("v1", "submit_verdict", verdict)])  # fmt: skip
+    handler = verify_stage(_workspace(repo), _runners, fake.client, None)
+    outcome = await handler(
+        _stage(FixStage.VERIFY, {"plan": PLAN, "patch": built.updates["patch"]})
+    )
+    assert isinstance(outcome, Advance), outcome
+    found = outcome.updates["verification"]
+    assert found["proven"] is False
+    assert outcome.updates["merge_readiness"] <= 2
+    assert any(u.startswith("whether its new tests check the change") for u in found["unverified"])
+    brief = fake.bodies("/v1/messages")[0]["messages"][0]["content"]
+    assert "couldn't run (it imports what the change adds)" in brief

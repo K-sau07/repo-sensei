@@ -227,8 +227,10 @@ def readiness(
     covered: bool | None,
     extra_failed: bool,
     extra_written: bool,
+    unproven: bool = False,
 ) -> Readiness:
-    """How ready a verified fix is to merge (see the module)."""
+    """How ready a verified fix is to merge (see the module). ``unproven``: a change whose new
+    tests couldn't be shown to fail without it (they import what it adds)."""
     score = 5
     said: list[str] = []
     if risk is FixRisk.HIGH:
@@ -252,6 +254,9 @@ def readiness(
     if extra_failed:
         score = min(score, 1)
         said.append("an extra test on the changed lines fails")
+    if unproven:
+        score = min(score, 2)
+        said.append("its new tests couldn't be shown to fail without the change")
     score = max(0, score)
     if not said:
         return Readiness(5, "Reproduced; the fix passes its test, the whole suite and extra "

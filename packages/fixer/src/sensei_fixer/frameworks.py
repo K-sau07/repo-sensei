@@ -14,7 +14,7 @@ from __future__ import annotations
 import json
 import re
 import tomllib
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any, Literal, cast
@@ -65,15 +65,19 @@ class TestSetup:
             return ("npx", "vitest", "run", relative)
         return ("npx", "jest", "--runTestsByPath", relative)
 
-    def suite(self) -> tuple[str, ...]:
+    def suite(self, exclude: Sequence[str] = ()) -> tuple[str, ...]:
         """The argv that runs the project's whole suite (8.7), saying which tests failed
-        (:mod:`sensei_fixer.suites` reads it)."""
+        (:mod:`sensei_fixer.suites` reads it), without the test files ``exclude`` names (a
+        patch's own new tests: run apart, so code they run as they're collected can't touch
+        how the rest of the suite fares)."""
+        left_out = [str(PurePosixPath(p).relative_to(self.project or ".")) for p in exclude]
         if self.framework == "pytest":
             return ("python", "-m", "pytest", "-q", "-p", "no:cacheprovider", "-rA",
-                    "--tb=short")  # fmt: skip
+                    "--tb=short", *(f"--ignore={p}" for p in left_out))  # fmt: skip
         if self.framework == "vitest":
-            return ("npx", "vitest", "run")
-        return ("npx", "jest", "--ci")
+            return ("npx", "vitest", "run", *(a for p in left_out for a in ("--exclude", p)))
+        patterns = [a for p in left_out for a in ("--testPathIgnorePatterns", re.escape(p))]
+        return ("npx", "jest", "--ci", *patterns)
 
 
 def _join(folder: str, name: str) -> str:
