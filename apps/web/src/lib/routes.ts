@@ -12,7 +12,8 @@ export type OrgSection =
   | "settings/members"
   | "settings/integrations"
   | "settings/api-keys"
-  | "settings/mcp";
+  | "settings/mcp"
+  | "settings/danger";
 
 /**
  * Org-scoped paths. Typed routes can't check a runtime slug, so the cast lives here, once, and the

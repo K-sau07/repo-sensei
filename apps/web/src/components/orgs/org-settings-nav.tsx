@@ -12,6 +12,7 @@ const ITEMS = [
   { section: "settings/integrations", label: "Integrations" },
   { section: "settings/api-keys", label: "API keys" },
   { section: "settings/mcp", label: "Editors (MCP)" },
+  { section: "settings/danger", label: "Danger zone" },
 ] as const;
 
 export function OrgSettingsNav() {

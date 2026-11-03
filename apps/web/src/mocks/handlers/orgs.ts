@@ -22,7 +22,59 @@ export function orgAccess(slug: string) {
   return { user, role, org };
 }
 
+const GRACE_MS = 7 * 24 * 3600 * 1000; // the API's grace before a deleted org is purged
+
 export const orgHandlers = [
+  // Before "/orgs/:org": "deleted" is no org's name.
+  http.get("*/api/v1/orgs/deleted", () => {
+    const user = currentUser();
+    if (user instanceof Response) return user;
+    return HttpResponse.json(
+      Object.values(db.deletedOrgs ?? {})
+        .filter((d) => d.members.some((m) => m.user_id === user.id && m.role === "owner"))
+        .map((d) => ({
+          slug: d.org.slug,
+          name: d.org.name,
+          deleted_at: d.deleted_at,
+          purge_at: new Date(Date.parse(d.deleted_at) + GRACE_MS).toISOString(),
+        })),
+    );
+  }),
+
+  http.post<{ org: string }>("*/api/v1/orgs/:org/restore", ({ params }) => {
+    const user = currentUser();
+    if (user instanceof Response) return user;
+    const found = db.deletedOrgs?.[params.org];
+    if (!found?.members.some((m) => m.user_id === user.id && m.role === "owner")) {
+      return apiError(404, "org_not_found", "Organization not found.");
+    }
+    db.orgs.push(found.org);
+    db.members[found.org.slug] = found.members;
+    const { [params.org]: _restored, ...still } = db.deletedOrgs ?? {};
+    db.deletedOrgs = still;
+    saveDb();
+    return HttpResponse.json<Org>({ ...found.org, role: "owner" });
+  }),
+
+  http.delete<{ org: string }>("*/api/v1/orgs/:org", ({ params }) => {
+    const access = orgAccess(params.org);
+    if (access instanceof Response) return access;
+    if (!atLeast(access.role, "owner")) return insufficientRole("owner", access.role);
+    const org = db.orgs.find((o) => o.slug === params.org);
+    if (!org) return apiError(404, "org_not_found", "Organization not found.");
+    db.deletedOrgs ??= {};
+    db.deletedOrgs[org.slug] = {
+      org,
+      members: db.members[org.slug] ?? [],
+      deleted_at: new Date().toISOString(),
+    };
+    db.orgs = db.orgs.filter((o) => o.slug !== org.slug);
+    const { [org.slug]: _gone, ...others } = db.members;
+    db.members = others;
+    saveDb();
+    return new HttpResponse(null, { status: 204 });
+  }),
+
   http.get("*/api/v1/orgs", () => {
     const user = currentUser();
     if (user instanceof Response) return user;

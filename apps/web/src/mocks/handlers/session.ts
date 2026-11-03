@@ -18,6 +18,7 @@ export function currentUser(): MockUser | Response {
         : OCTO;
   const user = db.users.find((u) => u.id === id);
   if (!user) throw new Error("mock seed is missing a user");
+  if (user.deleted) return apiError(401, "unauthenticated", "Sign in to continue.");
   return user;
 }
 

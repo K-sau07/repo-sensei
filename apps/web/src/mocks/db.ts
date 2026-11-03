@@ -37,6 +37,8 @@ export interface MockUser {
   login: string;
   name: string | null;
   email: string | null;
+  /** Deleted (F19): signed out for good. */
+  deleted?: boolean;
 }
 
 export interface MockMembership {
@@ -89,6 +91,11 @@ export interface MockDb {
   inbox?: Record<string, InboxItem[]>;
   /** Each org's Slack, by org slug (see handlers/inbox.ts): the webhook kept whole here. */
   slack?: Record<string, { webhook_url: string; channel: string; kinds: NotificationKind[] }>;
+  /** Orgs deleted and still restorable, by slug (see handlers/orgs.ts). */
+  deletedOrgs?: Record<
+    string,
+    { org: Omit<Org, "role">; members: MockMembership[]; deleted_at: string }
+  >;
   /** Each person's notification preferences, per kind (see handlers/inbox.ts). */
   notificationPrefs?: Record<
     string,

@@ -61,6 +61,34 @@ export const meHandlers = [
       : new HttpResponse(null, { status: 204 });
   }),
 
+  http.delete("*/api/v1/me", async ({ request }) => {
+    const user = currentUser();
+    if (user instanceof Response) return user;
+    const body = (await request.json()) as { confirm?: string };
+    if ((body.confirm ?? "").trim().toLowerCase() !== user.login.toLowerCase()) {
+      return apiError(422, "confirmation_mismatch", "Type your GitHub login to confirm.");
+    }
+    const sole = db.orgs.filter((org) => {
+      const owners = (db.members[org.slug] ?? []).filter((m) => m.role === "owner");
+      return owners.length === 1 && owners[0]?.user_id === user.id;
+    });
+    if (sole.length > 0) {
+      return apiError(
+        409,
+        "sole_owner",
+        "You're the only owner of an organization: make someone else an owner, or delete it, first.",
+        { orgs: sole.map((org) => org.slug) },
+      );
+    }
+    for (const slug of Object.keys(db.members)) {
+      db.members[slug] = (db.members[slug] ?? []).filter((m) => m.user_id !== user.id);
+    }
+    user.deleted = true;
+    db.sessions = [];
+    saveDb();
+    return new HttpResponse(null, { status: 204 });
+  }),
+
   http.post("*/api/v1/auth/logout", () => new HttpResponse(null, { status: 204 })),
 
   http.post("*/api/v1/auth/logout-all", () => {

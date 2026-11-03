@@ -5,6 +5,8 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useMe } from "@/hooks/use-me";
 
+import { DeleteAccount, DeletedOrgs } from "./account-lifecycle";
+
 function Field({ label, value }: { label: string; value: string | null }) {
   return (
     <div className="grid grid-cols-[10rem_1fr] items-baseline gap-4 py-3 text-sm">
@@ -54,6 +56,8 @@ export function ProfileView() {
       <p className="text-sm text-fg-muted">
         These come from your GitHub profile. Change them on GitHub, then sign in again to refresh.
       </p>
+      <DeletedOrgs />
+      <DeleteAccount login={user.login} />
     </section>
   );
 }
