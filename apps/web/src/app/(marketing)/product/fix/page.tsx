@@ -15,7 +15,7 @@ export const metadata: Metadata = {
 const POINTS = [
   "Nothing is patched until a test reproduces the bug; a flaky reproduction stops the run.",
   "A person approves the plan before any code changes; a risky one needs two.",
-  "Tests run in a sandbox with no network; only installing dependencies reaches the package registries.",
+  "Tests run in a sandbox with no internet access; only installing dependencies reaches the package registries.",
   "A patch counts only when the reproduction passes and no test that passed before fails.",
   "Changes to tests, skipped tests or a faked report are caught and refused.",
   "Changes in plain words go the same way: planned by layer, approved, patched with new tests.",

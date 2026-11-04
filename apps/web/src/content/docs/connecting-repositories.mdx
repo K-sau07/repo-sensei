@@ -1,0 +1,41 @@
+## The GitHub App
+
+Install the repo-sensei GitHub App from **Connect a repository** or from **Settings →
+Integrations**. On GitHub you choose the account and which of its repositories the App may read;
+you can change that, or uninstall it, on GitHub at any time. Installing takes an admin of the
+organization here, and someone who administers the GitHub account.
+
+The App reads repository contents and metadata. If GitHub suspends the installation or the App
+loses access to a repository, the repository says so and indexing stops until access is back.
+
+## Public URLs
+
+Any public GitHub repository can be connected by its URL. Before connecting, repo-sensei says how
+big it is and whether it is within the limits. Public imports have a size limit and a daily limit
+per person; your organization's **Usage** settings show the ones this server uses.
+
+## Indexing
+
+The first index reads the whole repository at the default branch's latest commit. After that:
+
+- **Each push** to a tracked branch is indexed again, only what changed: unchanged files keep
+  what was already worked out. Pushes that arrive close together are indexed once.
+- **Answers and diagrams** say when the code they cite has changed since.
+- **Start a run by hand** from the repository's **Index** tab; that page also has each run's
+  stages, logs and history, and can cancel or retry a run.
+
+## Branches and pull requests
+
+In the repository's **Settings**:
+
+- **Tracked branches**: besides the default branch, the branches to index. Each is read on its
+  own, and the branch picker in the repository's header switches between them.
+- **Index pull requests**: each open pull request's head, indexed as an overlay on the default
+  branch's index. Off unless you turn it on.
+- **Index automatically**: after each push to a tracked branch. Off, only runs someone starts.
+- **Ignored paths**: patterns of files to leave out.
+
+## Disconnecting
+
+**Disconnect** in the repository's settings removes it and everything indexed from it, after you
+type its name to confirm.

@@ -1,8 +1,7 @@
 import type { Metadata } from "next";
 
+import { McpSetups } from "@/components/docs/mcp-setups";
 import { ProductPage } from "@/components/marketing/product/product-page";
-import { siteOrigin } from "@/lib/api/explore-server";
-import { CLIENT_LABELS, MCP_CLIENTS, mcpSetup } from "@/lib/mcp-setup";
 
 const LEAD =
   "Your coding agent reads the codebase through the same index: search, symbols, code, traces, the graph, impact and answers, over MCP.";
@@ -32,7 +31,6 @@ const TOOLS: readonly [string, string][] = [
 ];
 
 export default function McpPage() {
-  const server = siteOrigin();
   return (
     <ProductPage
       title="MCP"
@@ -40,24 +38,7 @@ export default function McpPage() {
       points={POINTS}
       example="Connect it: the setup for each editor"
     >
-      <ul className="grid gap-4 lg:grid-cols-3">
-        {MCP_CLIENTS.map((client) => {
-          const setup = mcpSetup(client, server, "remote");
-          return (
-            <li
-              key={client}
-              className="flex min-w-0 flex-col gap-2 rounded-xl border border-line bg-surface-1 p-4"
-            >
-              <h3 className="font-medium">{CLIENT_LABELS[client]}</h3>
-              <p className="font-mono text-xs text-fg-muted">{setup.file}</p>
-              <pre className="overflow-x-auto rounded-md bg-surface-2 p-3 font-mono text-xs">
-                {JSON.stringify(setup.config, null, 2)}
-              </pre>
-              <p className="text-xs text-fg-muted">{setup.then}</p>
-            </li>
-          );
-        })}
-      </ul>
+      <McpSetups />
       <h3 className="mt-4 text-sm font-medium text-fg-muted">Its tools</h3>
       <dl className="grid gap-x-6 gap-y-2 text-sm sm:grid-cols-2">
         {TOOLS.map(([name, what]) => (

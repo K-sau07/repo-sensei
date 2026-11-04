@@ -1,0 +1,57 @@
+An answer about code is only useful if you can tell whether it's true. A fluent paragraph that
+names a function the repository doesn't have, or describes what a handler "probably" does, costs
+more than no answer: you act on it, and find out later. So repo-sensei treats every answer as a
+draft until the code backs it up. This is what happens between your question and the answer you
+read.
+
+## It starts from the code, not from a guess
+
+Before the model writes a word, the question is searched the way the code search works: by exact
+text, by keyword and by meaning, with the results reranked. A question about a flow ("what
+happens when someone signs in?") is also traced, from its best page or endpoint down to the data.
+The model's first turn starts with this map of where the answer is, grouped by layer and by file,
+and every result in it is something it can cite.
+
+## Every claim points at lines
+
+The answer is written with citations: each claim names the file and the lines it stands on, at
+the commit that was read. That is what makes the next steps possible: a claim with a citation can
+be checked.
+
+## Then each claim is checked
+
+When the answer is written, it is verified:
+
+- **The citations exist.** Each one must point at lines its file has at that commit. One that
+  doesn't is dropped, and the sentence that leaned on it is flagged.
+- **The names exist.** A name the answer writes as code, like `create_item`, must be one the
+  repository defines or one its evidence shows. Any other is flagged as invented.
+- **The claims are supported.** Each sentence that cites is read against its lines: supported,
+  partly, or not.
+- **The answer is whole.** Does the evidence answer the question, in every layer it asks about?
+  If not, the agent searches for what is missing and answers again, a limited number of times.
+
+## And what doesn't hold is rewritten
+
+A sentence its lines show only part of is rewritten to say only what they show; one they show
+nothing of is taken out. The rewrite is spliced back into the answer, its citations moved to
+match, and checked again. If the rewrite can't be checked, the answer stays as it was verified:
+an unchecked rewrite never replaces a checked answer.
+
+What you read marks each citation **verified** or **not verified**, so you know which claims to
+read the lines for before you rely on them.
+
+## Saying "the code doesn't say"
+
+Some questions have no answer in the code: a setting that lives in a dashboard, a behaviour of a
+service the repository only calls. Then the answer says so, and what it looked at, instead of
+filling the gap with what such code usually does.
+
+## Staying true as the code changes
+
+The repository is indexed again on each push, only what changed. An answer keeps the commit it
+read, so when the cited lines change it says so, and **Re-run on latest** asks the same question
+of the code as it is now.
+
+None of this makes an answer infallible. It makes it checkable: every claim comes with the lines
+to check it against, and the checks that can be done before you read it have been done.

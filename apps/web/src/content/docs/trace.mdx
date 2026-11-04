@@ -1,0 +1,34 @@
+A trace follows a feature through the whole codebase, hop by hop: from the component a person
+clicks, through state and the API client, across to the route that serves the request, its
+handler and services, to the tables it reads and writes, and back.
+
+## Starting a trace
+
+Open the repository's **Trace** tab and pick where to start: a page or component, a route such as
+`POST /api/v1/login/access-token`, a function, or a file. In the code browser, <kbd>t</kbd> on a
+symbol starts a trace from it.
+
+## Reading it
+
+The hops are laid out in lanes by layer, joined by the path the request takes. Each hop shows
+what it is (a component, a hook, an HTTP call, an endpoint, a handler, a query) and where it is.
+Open one to read its code.
+
+How sure each hop is, is on it: **verified** (●, the code shows it), **inferred** (◐, matched
+by name or convention) or **unresolved** (○). Hover it to see how sure, and how that's known.
+
+## Gaps and choices
+
+- **A gap**: where the trace can't go on (a call no route serves, code the graph can't follow),
+  it stops there and says why, instead of guessing past it.
+- **More than one way**: a call two endpoints could serve gets a path through each.
+
+## Traces over time
+
+A trace's link keeps the commit it was traced at. Opened later, once the branch has moved on, it
+says so, and can be traced again on the latest code.
+
+## What a change reaches
+
+From any hop, **Impact** shows what depends on it: what calls it, and what calls those, ranked by
+how sure each link is. Use it before changing a function to see what else to check.

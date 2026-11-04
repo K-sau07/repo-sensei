@@ -4,6 +4,7 @@
  */
 import {
   AppWindow,
+  BookOpen,
   File,
   Folder,
   FolderGit2,
@@ -16,6 +17,7 @@ import {
 
 import { ALL_TABS } from "@/components/repo/repo-tabs-config";
 import { PRIMARY_NAV, SECONDARY_NAV } from "@/components/shell/nav-items";
+import { DOCS, docPath } from "@/content/docs-index";
 import type { SymbolHit, Repo } from "@/lib/api/types";
 import type { Feature } from "@/lib/indexing";
 import type { HistoryEntry } from "@/lib/palette/history";
@@ -72,7 +74,8 @@ export const KIND_LABELS: Record<PaletteKind, string> = {
 
 // ----------------------------------------------------------------- pages
 
-/** Org sections, then (in a repository) its tabs that are unlocked. Settings is an action. */
+/** Org sections, then (in a repository) its tabs that are unlocked, then the docs. Settings is
+ * an action. */
 export function pageItems(org: string, repo: RepoContext | null, admin: boolean): ShownItem[] {
   const items: ShownItem[] = [];
   if (repo) {
@@ -128,6 +131,20 @@ export function pageItems(org: string, repo: RepoContext | null, admin: boolean)
       keywords: ["add", "import", "github"],
       href: connect,
       scope: { org },
+    });
+  }
+  // The docs (10.5), by what each covers: the same pages the public docs search finds.
+  for (const doc of DOCS) {
+    const href = docPath(doc.slug);
+    items.push({
+      id: pageId(href),
+      group: "go",
+      kind: "page",
+      title: doc.title,
+      subtitle: "Docs",
+      keywords: ["docs", "help", doc.description, ...doc.keywords],
+      href,
+      icon: BookOpen,
     });
   }
   return items;

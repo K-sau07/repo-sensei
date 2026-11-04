@@ -1,3 +1,4 @@
+import createMDX from "@next/mdx";
 import type { NextConfig } from "next";
 
 const isDev = process.env.NODE_ENV === "development";
@@ -85,4 +86,8 @@ const nextConfig: NextConfig = {
     ),
 };
 
-export default nextConfig;
+// The public docs, blog and legal pages are MDX (src/content), imported as components. Plugins
+// are named, not imported: Turbopack passes the loader's options as plain data.
+const withMDX = createMDX({ options: { remarkPlugins: [["remark-gfm", {}]] } });
+
+export default withMDX(nextConfig);

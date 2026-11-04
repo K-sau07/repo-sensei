@@ -1,0 +1,42 @@
+`sensei` is repo-sensei on the command line: sign in, connect repositories, and search, ask and
+trace from a terminal.
+
+## Install
+
+It needs Python 3.13 or later. With [uv](https://docs.astral.sh/uv/):
+
+```sh
+uv tool install "git+https://github.com/K-sau07/repo-sensei#subdirectory=packages/cli"
+```
+
+The MCP server for running locally installs the same way:
+
+```sh
+uv tool install "git+https://github.com/K-sau07/repo-sensei#subdirectory=packages/mcp_server"
+```
+
+## Sign in
+
+```sh
+sensei login --server https://your-repo-sensei.example
+```
+
+It shows a code and opens a page here to approve it, then asks which organization to use. The
+sign-in is kept in your system's keychain. `sensei whoami` says who you are signed in as;
+`sensei logout` signs out and revokes the sign-in on the server.
+
+Admins who will connect repositories from the terminal sign in with `--connect`.
+
+## Commands
+
+| Command                               | What it does                                              |
+| ------------------------------------- | --------------------------------------------------------- |
+| `sensei repos list`                   | The organization's repositories you can read.             |
+| `sensei repos connect <url>`          | Connect a repository and start indexing it (admins).      |
+| `sensei index status <repo>`          | What is being indexed, how far along, and the last index. |
+| `sensei search "<query>" -r <repo>`   | Search the code by meaning and by name.                   |
+| `sensei ask "<question>" -r <repo>`   | An answer with citations; `--deep` researches longer.     |
+| `sensei trace "<start>" -r <repo>`    | Follow a feature across the layers.                       |
+| `sensei mcp config --client <editor>` | The MCP config for `claude-code`, `vscode` or `cursor`.   |
+
+Most commands take `--json` to print the API's answer as JSON, for scripts.

@@ -42,7 +42,9 @@ const entry = (fields: Partial<HistoryEntry>): HistoryEntry => ({
 });
 
 describe("pages", () => {
-  const titles = (items: { title: string }[]) => items.map((item) => item.title);
+  // The app's own pages (the docs come after them, each with "Docs" under it).
+  const titles = (items: { title: string; subtitle?: string }[]) =>
+    items.filter((item) => item.subtitle !== "Docs").map((item) => item.title);
 
   it("offers the repository's unlocked tabs, and admin-only ones to admins", () => {
     const member = titles(pageItems("acme", repo(["code_browser"]), false));
@@ -71,6 +73,14 @@ describe("pages", () => {
       "Members",
     ]);
     expect(items.find((item) => item.title === "Inbox")?.href).toBe("/acme/inbox");
+  });
+
+  it("end with the docs, found by what each covers", () => {
+    const docs = pageItems("acme", null, false).filter((item) => item.subtitle === "Docs");
+    const mcp = docs.find((item) => item.href === "/docs/mcp");
+    expect(mcp?.title).toBe("MCP in your editor");
+    expect(mcp?.keywords).toEqual(expect.arrayContaining(["docs", "cursor"]));
+    expect(docs).toHaveLength(8);
   });
 });
 

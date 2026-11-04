@@ -114,7 +114,7 @@ export function Features() {
 const SAFEGUARDS = [
   "Private code is read through a GitHub App, installed only on the repositories you choose.",
   "Each organization's data is kept apart in the database itself, row by row.",
-  "Tests run in a sandbox with no network; only installing dependencies reaches the package registries.",
+  "Tests run in a sandbox with no internet access; only installing dependencies reaches the package registries.",
   "Nothing is changed without a person approving the plan; risky plans need two.",
   "Agent runs stop at a daily spending cap, and summaries at a monthly budget.",
   "Changes to members, repositories, keys, integrations and fixes are in the audit log.",

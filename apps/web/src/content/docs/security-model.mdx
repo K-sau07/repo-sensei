@@ -1,0 +1,68 @@
+## Who can read what
+
+Everything belongs to an organization, and only its members see it. Within one, each person has
+a role:
+
+| Role   | Can                                                                                    |
+| ------ | -------------------------------------------------------------------------------------- |
+| Viewer | Read the repositories, search, trace and ask.                                          |
+| Member | Also start fixes and changes.                                                          |
+| Admin  | Also connect repositories, invite people, and manage integrations, API keys and usage. |
+| Owner  | Also make owners, and delete the organization.                                         |
+
+Approving a fix or change takes write access to the repository **on GitHub**, checked at the
+moment of approving, never remembered. A high-risk plan needs two approvers.
+
+## Keeping organizations apart
+
+Each organization's rows are kept apart by the database itself (Postgres row-level security), not
+only by the application: a query made for one organization can't read another's.
+
+## Reading your code
+
+Private repositories are read through the repo-sensei GitHub App, on the repositories its
+installation was given; it reads contents and metadata. Signing in with GitHub gives no access to
+repositories.
+
+To index and answer, parts of the code are sent to the AI providers repo-sensei uses: Anthropic
+(answers, summaries, plans and patches) and Voyage AI (embeddings and reranking).
+
+## Running code
+
+Fixes and changes run your tests in a sandbox: a container per run with no internet access (at
+most a private network to a database container the tests need). Only installing dependencies
+reaches the package registries, through a proxy that allows nothing else. A patch counts only if the tests pass by their own report, and patches that edit tests,
+skip them or fake their results are refused.
+
+## Signing in, keys and tokens
+
+- **Browser sessions** are cookies the page's scripts can't read, with protection against
+  cross-site requests. **Settings → Sessions** lists yours and signs any of them out.
+- **API keys** belong to an organization, carry only the scopes chosen for them (`read:repo`,
+  `ask`), are kept only as a hash, and are shown once.
+- **Editors and the command line** sign in with OAuth (approved on a page here) and get tokens
+  for that purpose only, which you can revoke.
+- **Integration secrets** (GitHub, Sentry and Slack credentials) are encrypted at rest.
+
+## Spending
+
+Agent runs stop at the organization's daily spending cap, and summaries at its monthly budget.
+Admins see the spend on **Settings → Usage**.
+
+## The audit log
+
+Changes to members, roles, repositories, keys, integrations and fixes are recorded, with who made
+them and when, in **Settings → Security**. The log is append-only.
+
+## Deleting
+
+- **An organization** an owner deletes is hidden at once and can be restored by its owners for 7
+  days; then it is purged with everything in it.
+- **An account** is deleted from **Settings → Profile**: its sessions end, its GitHub tokens are
+  deleted, and its name, login, email and avatar are removed. It can't be deleted while it is
+  the only owner of an organization.
+
+## Public pages
+
+Repositories on [Explore](/explore) are public: their pages and short answers about them need no
+account. Each question there passes a check that a person is asking, and has per-address limits.

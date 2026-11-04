@@ -1,0 +1,46 @@
+repo-sensei reads a codebase once and keeps an index of it: its files, symbols, how they call each
+other, and how the frontend reaches the backend and the database. Everything else (questions,
+traces, diagrams, fixes) works from that index, and points back at the lines it used.
+
+## 1. Sign in
+
+Sign in with GitHub. repo-sensei learns your GitHub login and name; it gets no access to your
+repositories from signing in.
+
+## 2. Make an organization
+
+Repositories, questions and fixes live in an organization. Name it and pick its URL. You own it,
+and can invite your team from **Settings → Members** once it exists.
+
+## 3. Connect a repository
+
+Two ways, both on **Connect a repository**:
+
+- **Install the GitHub App** on the account or organization that owns the code, and choose which
+  repositories it may read. This is the way for private code.
+- **Paste a public repository's URL.** Nothing to install; there is a size limit, and these are
+  indexed after connected repositories.
+
+Pasting a URL on the home page does the same: after signing in, it opens with the URL filled in.
+
+## 4. Watch it index
+
+Indexing runs in stages: clone, file discovery, parsing, symbols, the keyword index, embeddings,
+summaries, the code graph and the cross-layer links. Each feature opens as soon as what it needs
+is ready: the code browser after discovery, keyword search and Ask after the keyword index
+(answers get better as the later stages finish), search by meaning after the embeddings, and
+Trace, Diagrams and Fixes after the links. See
+[Connecting repositories](/docs/connecting-repositories).
+
+## 5. Ask it something
+
+Open the repository's **Ask** tab, or press <kbd>⌘</kbd> <kbd>L</kbd> anywhere, and ask about
+the code in plain words. Each claim in the answer cites the lines it stands on. See
+[Ask](/docs/ask).
+
+## Next
+
+- Follow a feature from the page to the database with [Trace](/docs/trace).
+- Use the same index from your editor with [MCP](/docs/mcp), or from a terminal with the
+  [command line](/docs/cli).
+- Read how your code is kept safe in the [security model](/docs/security-model).

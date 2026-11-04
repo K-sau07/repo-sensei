@@ -1,0 +1,38 @@
+## Which languages does it read?
+
+Python, JavaScript and TypeScript (with JSX and TSX), Java, Kotlin, Go, C#, PHP, Ruby, Rust, C and
+C++ are parsed for symbols and search. Calls, imports and traces across layers go deepest for
+Python, JavaScript and TypeScript (React included) and Java.
+
+## Does it need access to my private code?
+
+Only for the repositories you choose when installing the GitHub App, and only to read them.
+Public repositories can be connected by URL without installing anything.
+
+## How do I know an answer is right?
+
+Each claim cites the lines it stands on, at the commit read, and each citation says whether
+those lines were checked to hold it up. Open the lines and read them. When the code doesn't
+answer the question, the answer says so.
+
+## What does it cost?
+
+repo-sensei is free while it is in early access. See [Pricing](/pricing).
+
+## Does it change my code?
+
+Only through a fix or a change someone asks for, and only after a person with write access to the
+repository approves its plan. The patch is made and tested in a sandbox.
+
+## What happens when I push?
+
+Tracked branches are indexed again after each push, only what changed. Answers and diagrams say
+when the code they cite has changed since.
+
+## Can I use it from my editor?
+
+Yes: Claude Code, VS Code, Cursor, or any MCP client. See [MCP in your editor](/docs/mcp).
+
+## Where do I report a problem?
+
+Open an issue on [GitHub](https://github.com/K-sau07/repo-sensei/issues).

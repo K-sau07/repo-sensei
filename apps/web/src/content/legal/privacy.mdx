@@ -1,0 +1,51 @@
+This page says, in plain words, what repo-sensei keeps about you and your code, why, and for how
+long. repo-sensei is in early access; this page will be replaced by a reviewed policy before it
+is generally available, and changes will be listed in the [changelog](/changelog).
+
+## What is kept
+
+- **Your GitHub account**: its id, login, name, email and avatar, from signing in.
+- **Your sessions**: when each started and was last used, and the address and browser it came
+  from. **Settings → Sessions** shows them and signs any out.
+- **What you make**: organizations, memberships and invitations, questions and answers,
+  diagrams, fixes and changes, settings, and integrations (their secrets encrypted).
+- **The code of repositories you connect**: a copy of each indexed commit, and the index made
+  from it (symbols, search indexes, the code's graph, summaries).
+- **Usage**: what each action cost and on which model, to keep within limits and caps.
+- **The audit log**: changes to members, roles, repositories, keys, integrations and fixes, with
+  who made them and when.
+
+For questions asked without an account on [Explore](/explore), no account is made; the address
+they came from is kept only as a keyed hash, to apply per-address limits.
+
+## Who it is shared with
+
+- **AI providers**, to index and answer: parts of your code and your questions go to Anthropic
+  (answers, summaries, plans and patches) and to Voyage AI (embeddings and reranking).
+- **GitHub**, which repo-sensei calls to read the repositories you connect.
+- **Sentry and Slack**, only when your organization connects them, to start fixes from errors
+  and post notifications.
+- **Error reporting**: when it is set up, errors in the service are reported without personal
+  data.
+
+Nothing is sold, and there is no advertising or analytics tracking on these pages.
+
+## Cookies and storage
+
+A session cookie keeps you signed in, and a second protects against cross-site requests. Your
+browser keeps your appearance and layout choices itself (local storage); they aren't sent to the
+server.
+
+## How long
+
+- **Indexes** of older commits are pruned; what a branch or pull request points at is kept while
+  it is tracked.
+- **A deleted organization** can be restored for 7 days, then everything in it is purged.
+- **A deleted account** loses its sessions, GitHub tokens and its name, login, email and avatar
+  at once. What it wrote in organizations stays with them, by an anonymous author.
+
+## Your choices
+
+Disconnect a repository to remove it and its index; delete an organization or your account from
+its settings. For anything else, open an issue on
+[GitHub](https://github.com/K-sau07/repo-sensei/issues).

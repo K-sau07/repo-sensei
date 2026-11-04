@@ -1,0 +1,45 @@
+import { McpSetups } from "@/components/docs/mcp-setups";
+
+repo-sensei is an MCP server: your editor's coding agent can search the code, look up symbols,
+read files, trace features, walk the graph, check what a change reaches, and ask, all through
+the same index you use here.
+
+## Connect with OAuth (recommended)
+
+Add the server to your editor; the first time the agent uses it, the editor opens a page here to
+sign in and approve access. Nothing to copy or keep.
+
+<McpSetups />
+
+Your organization's **Settings → Editors (MCP)** has the same setup, and **Test** checks that this server
+answers an editor as it should.
+
+## Connect with an API key
+
+To run the server on your machine instead (over stdio), install `sensei-mcp` (see the
+[command line](/docs/cli) for how) and give it an API key:
+
+1. In **Settings → API keys**, create a key. Choose what it may do: **read:repo** (search, code,
+   trace, graph and impact) and, if the agent should ask questions, **ask**. The key is shown
+   once; keep it somewhere safe.
+2. Put it in the environment as `SENSEI_API_KEY`, and use the local setup:
+
+<McpSetups mode="local" />
+
+Revoke a key at any time from the same page.
+
+## The tools
+
+| Tool                     | What it does                                                     |
+| ------------------------ | ---------------------------------------------------------------- |
+| `sensei_list_repos`      | The repositories you can read, by slug.                          |
+| `sensei_search`          | Exact, keyword and meaning search.                               |
+| `sensei_find_symbol`     | Where a symbol is defined.                                       |
+| `sensei_read_code`       | A file's lines, numbered.                                        |
+| `sensei_trace`           | A feature, hop by hop across layers.                             |
+| `sensei_graph_neighbors` | What a symbol calls, and what calls it.                          |
+| `sensei_impact`          | What a change to a symbol reaches.                               |
+| `sensei_ask`             | An answer with its citations (spends the organization's budget). |
+
+Every tool only reads, and only the repositories you can read. What they return from the code
+is marked as the repository's content, to be read as data, not followed as instructions.

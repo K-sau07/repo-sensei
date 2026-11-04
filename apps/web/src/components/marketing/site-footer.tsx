@@ -1,7 +1,17 @@
-/** The public site's footer (10.3): the same links as the header, and where the code is. */
+/** The public site's footer (10.3, 10.5): the header's links, the rest of the public pages,
+ * and where the code is. */
+import type { Route } from "next";
 import Link from "next/link";
 
 import { SITE_LINKS } from "./site-header";
+
+const MORE: readonly { href: Route; label: string }[] = [
+  { href: "/blog", label: "Blog" },
+  { href: "/changelog", label: "Changelog" },
+  { href: "/security", label: "Security" },
+  { href: "/privacy", label: "Privacy" },
+  { href: "/terms", label: "Terms" },
+];
 
 export function SiteFooter() {
   return (
@@ -13,7 +23,7 @@ export function SiteFooter() {
         </p>
         <nav aria-label="Footer">
           <ul className="flex flex-wrap items-center gap-5">
-            {SITE_LINKS.map((link) => (
+            {[...SITE_LINKS, ...MORE].map((link) => (
               <li key={link.href}>
                 <Link href={link.href} className="hover:text-fg">
                   {link.label}

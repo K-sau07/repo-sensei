@@ -1,0 +1,49 @@
+Ask about a repository in plain words: how something works, where something happens, what
+calls what. Open the repository's **Ask** tab, or press <kbd>⌘</kbd> <kbd>L</kbd> anywhere (with
+a file open, the question is about it, and about its selected lines if any).
+
+## Fast and Deep
+
+**Fast** answers most questions in a few turns. **Deep** researches longer, for questions that
+cross many files; it spends more of the organization's budget.
+
+## Scope
+
+Narrow a question with **Scope**: to paths, or to layers (UI, API, services, data). Type
+
+<kbd>@</kbd> in the question to mention a file or a symbol by name.
+
+## Citations
+
+Each claim in an answer ends in a citation: the file and lines it stands on, at the commit the
+answer read. Hover or open one to read the lines beside the answer.
+
+- **verified**: the cited lines were checked and hold the claim up.
+- **not verified**: they don't, or not all of it. Read those lines before you rely on the claim.
+
+The **evidence rail** beside the answer lists what it stands on: its sources by file, what it
+searched for (each search can be run again), and the part of the code's graph it walked.
+
+## When the code doesn't say
+
+If the code doesn't answer the question, the answer says so, and what it looked at, instead of
+guessing.
+
+## Answers over time
+
+The repository keeps being indexed as it changes. An answer whose cited lines have changed since
+says so, and **Re-run on latest** asks the same question of the code as it is now. An answer
+asked on a branch reads that branch.
+
+## Sharing and feedback
+
+- **Share** makes a link to the conversation. Someone who can't read the repository sees the
+  answer without its code. Stop sharing at any time.
+- 👍 and 👎 on an answer tell us what worked; a 👎 can say why.
+- Conversations are listed in the history, where they can be renamed and searched.
+
+## Limits
+
+Each person has a number of questions a minute and a day, and the organization has a daily
+spending cap; your organization's **Usage** settings show both. Questions about public
+repositories on [Explore](/explore) need no account: short answers, one question at a time.

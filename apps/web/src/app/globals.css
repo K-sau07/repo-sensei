@@ -206,3 +206,58 @@
     animation: none !important;
   }
 }
+
+/* Long-form content: the docs, blog and legal pages (MDX, 10.5). `.not-prose` opts a block out. */
+@layer components {
+  .prose-sensei {
+    @apply max-w-3xl text-[15px] leading-7 text-fg;
+  }
+  .prose-sensei :where(h2):not(:where(.not-prose, .not-prose *)) {
+    @apply mt-10 mb-3 scroll-mt-20 text-xl font-semibold tracking-tight first:mt-0;
+  }
+  .prose-sensei :where(h3):not(:where(.not-prose, .not-prose *)) {
+    @apply mt-8 mb-2 scroll-mt-20 text-base font-semibold;
+  }
+  .prose-sensei :where(p, ul, ol, table, pre, blockquote):not(:where(.not-prose, .not-prose *)) {
+    @apply my-4;
+  }
+  .prose-sensei :where(ul):not(:where(.not-prose, .not-prose *)) {
+    @apply list-disc pl-6;
+  }
+  .prose-sensei :where(ol):not(:where(.not-prose, .not-prose *)) {
+    @apply list-decimal pl-6;
+  }
+  .prose-sensei :where(li):not(:where(.not-prose, .not-prose *)) {
+    @apply my-1.5 pl-1;
+  }
+  .prose-sensei :where(a):not(:where(.not-prose, .not-prose *)) {
+    @apply text-fg underline decoration-line-strong underline-offset-4 hover:decoration-fg;
+  }
+  .prose-sensei :where(strong):not(:where(.not-prose, .not-prose *)) {
+    @apply font-semibold;
+  }
+  .prose-sensei :where(:not(pre) > code):not(:where(.not-prose, .not-prose *)) {
+    @apply rounded-sm bg-surface-2 px-1 py-0.5 font-mono text-[0.85em];
+  }
+  .prose-sensei :where(pre):not(:where(.not-prose, .not-prose *)) {
+    @apply overflow-x-auto rounded-lg border border-line bg-surface-1 p-4 font-mono text-[13px] leading-6;
+  }
+  .prose-sensei :where(kbd):not(:where(.not-prose, .not-prose *)) {
+    @apply rounded-sm border border-line bg-surface-2 px-1.5 py-0.5 font-mono text-xs;
+  }
+  .prose-sensei :where(table):not(:where(.not-prose, .not-prose *)) {
+    @apply block w-full overflow-x-auto text-sm;
+  }
+  .prose-sensei :where(th, td):not(:where(.not-prose, .not-prose *)) {
+    @apply border-b border-line px-3 py-2 text-left align-top;
+  }
+  .prose-sensei :where(th):not(:where(.not-prose, .not-prose *)) {
+    @apply font-medium text-fg-muted;
+  }
+  .prose-sensei :where(blockquote):not(:where(.not-prose, .not-prose *)) {
+    @apply border-l-2 border-line-strong pl-4 text-fg-muted;
+  }
+  .prose-sensei :where(hr):not(:where(.not-prose, .not-prose *)) {
+    @apply my-8 border-line;
+  }
+}
