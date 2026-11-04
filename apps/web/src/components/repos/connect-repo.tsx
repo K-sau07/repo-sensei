@@ -308,7 +308,9 @@ function GitHubTab({ org }: { org: string }) {
 function UrlTab({ org }: { org: string }) {
   const id = useId();
   const connected = useConnected(org);
-  const [url, setUrl] = useState("");
+  // A URL handed over (the landing page's, through /new) is where it starts.
+  const [handed] = useQueryState("url");
+  const [url, setUrl] = useState(handed ?? "");
   const typed = useDebouncedValue(url.trim(), 400);
   const estimate = $api.useQuery(
     "post",

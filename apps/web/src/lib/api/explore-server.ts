@@ -74,3 +74,20 @@ export async function publicMaps(owner: string, name: string): Promise<FeatureMa
   if (MOCKS) return (await import("@/mocks/explore")).mockPublicMaps(owner, name);
   return read<FeatureMapList>(`/public/repos/${named(owner, name)}/feature-maps`);
 }
+
+/** The repository the landing page's demo asks about: `SENSEI_FEATURED_REPO` ("owner/name")
+ * when it is published, else the first published; null when none is (or the API is down: the
+ * landing page shows the rest). */
+export async function featuredRepo(): Promise<PublicRepoPage | null> {
+  try {
+    const chosen = process.env.SENSEI_FEATURED_REPO?.split("/");
+    if (chosen?.length === 2 && chosen[0] && chosen[1]) {
+      const page = await publicRepo(chosen[0], chosen[1]);
+      if (page) return page;
+    }
+    const first = (await publicRepos())[0];
+    return first ? await publicRepo(first.owner, first.name) : null;
+  } catch {
+    return null;
+  }
+}

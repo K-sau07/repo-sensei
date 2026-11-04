@@ -7,6 +7,7 @@
  * (`human`): its token is good for one question, so the check starts again after each.
  */
 import { useChat } from "@ai-sdk/react";
+import { cn } from "cn";
 import { ArrowUp, ChevronDown, ChevronUp, Loader2 } from "lucide-react";
 import Link from "next/link";
 import { useMemo, useRef, useState, type SubmitEvent } from "react";
@@ -32,12 +33,15 @@ export function ExploreAsk({
   name,
   questions,
   human,
+  inline = false,
 }: {
   owner: string;
   name: string;
   /** Questions worth asking (the overview's), offered before the first. */
   questions: readonly string[];
   human: HumanCheck;
+  /** In the page's flow (the landing page's demo) instead of floating at the window's foot. */
+  inline?: boolean;
 }) {
   const fullName = `${owner}/${name}`;
   const transport = useMemo(() => publicAskTransport(owner, name), [owner, name]);
@@ -85,9 +89,18 @@ export function ExploreAsk({
   return (
     <section
       aria-label={`Ask about ${fullName}`}
-      className="pointer-events-none fixed inset-x-0 bottom-0 z-30 flex justify-center p-3"
+      className={
+        inline
+          ? "flex w-full"
+          : "pointer-events-none fixed inset-x-0 bottom-0 z-30 flex justify-center p-3"
+      }
     >
-      <div className="pointer-events-auto flex w-full max-w-2xl flex-col gap-2 rounded-xl border border-border bg-bg p-3 shadow-lg">
+      <div
+        className={cn(
+          "flex w-full flex-col gap-2 rounded-xl border border-border bg-bg p-3",
+          inline ? "shadow-sm" : "pointer-events-auto max-w-2xl shadow-lg",
+        )}
+      >
         {chat.messages.length > 0 && (
           <div className="flex justify-end">
             <Button

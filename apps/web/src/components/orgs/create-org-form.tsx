@@ -1,8 +1,8 @@
 "use client";
 
 import { useQueryClient } from "@tanstack/react-query";
-import type { Route } from "next";
 import { useRouter } from "next/navigation";
+import { useQueryState } from "nuqs";
 import { useState, type SubmitEvent } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -19,6 +19,7 @@ import { SlugField, useSlugStatus } from "./slug-field";
 export function CreateOrgForm() {
   const router = useRouter();
   const queryClient = useQueryClient();
+  const [handed] = useQueryState("url");
   const [name, setName] = useState("");
   const [slug, setSlug] = useState("");
   const [slugEdited, setSlugEdited] = useState(false);
@@ -36,8 +37,14 @@ export function CreateOrgForm() {
     try {
       const { data } = await api.POST("/api/v1/orgs", { body: { name: name.trim(), slug } });
       await queryClient.invalidateQueries({ queryKey: queryKeys.me() });
-      // On to installing the GitHub App (step 2 of onboarding).
-      router.push(`/onboarding?step=2&org=${encodeURIComponent(data?.slug ?? slug)}` as Route);
+      const created = encodeURIComponent(data?.slug ?? slug);
+      // On to installing the GitHub App (step 2 of onboarding), or, with a public repository's
+      // URL handed over from the landing page, straight to connecting it.
+      router.push(
+        handed
+          ? `/onboarding?step=3&org=${created}&tab=url&url=${encodeURIComponent(handed)}`
+          : `/onboarding?step=2&org=${created}`,
+      );
     } catch (caught) {
       const message =
         caught instanceof ApiError
