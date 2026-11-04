@@ -31,6 +31,7 @@ export function McpSetups({ mode = "remote" }: { mode?: McpMode }) {
               </pre>
               {setup.command && (
                 <pre
+                  // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- as above
                   tabIndex={0}
                   aria-label={`${CLIENT_LABELS[client]}: the command`}
                   className="overflow-x-auto rounded-md bg-surface-2 p-3 font-mono text-xs whitespace-pre-wrap"
