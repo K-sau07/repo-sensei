@@ -249,7 +249,7 @@ function SlackForm({ saved }: { saved: Slack | null }) {
             }}
           >
             <Unplug aria-hidden />
-            Disconnect
+            Disconnect Slack
           </Button>
         )}
       </div>

@@ -67,9 +67,9 @@ export const Disconnect: Story = {
     // held while saving, is back).
     await waitFor(async () => {
       await expect(canvas.getByRole("button", { name: "Save" })).toBeDisabled();
-      await expect(canvas.getByRole("button", { name: "Disconnect" })).toBeEnabled();
+      await expect(canvas.getByRole("button", { name: "Disconnect Slack" })).toBeEnabled();
     });
-    await userEvent.click(canvas.getByRole("button", { name: "Disconnect" }));
+    await userEvent.click(canvas.getByRole("button", { name: "Disconnect Slack" }));
     const dialog = await within(canvasElement.ownerDocument.body).findByRole("alertdialog");
     await userEvent.click(within(dialog).getByRole("button", { name: "Disconnect" }));
     await expect(await canvas.findByRole("button", { name: "Connect Slack" })).toBeVisible();

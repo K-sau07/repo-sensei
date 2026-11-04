@@ -146,7 +146,7 @@ test.describe("Slack", () => {
     await noAxeViolations(page);
     await page.reload();
     await expect(page.getByTestId("slack-connected")).toContainText("…1234");
-    await page.getByRole("button", { name: "Disconnect" }).click();
+    await page.getByRole("button", { name: "Disconnect Slack" }).click();
     await page.getByRole("alertdialog").getByRole("button", { name: "Disconnect" }).click();
     await expect(page.getByRole("button", { name: "Connect Slack" })).toBeVisible();
   });

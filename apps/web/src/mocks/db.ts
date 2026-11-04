@@ -14,6 +14,7 @@ import type {
   Org,
   Repo,
   Role,
+  Schemas,
   SessionInfo,
 } from "@/lib/api/types";
 
@@ -91,6 +92,8 @@ export interface MockDb {
   inbox?: Record<string, InboxItem[]>;
   /** Each org's Slack, by org slug (see handlers/inbox.ts): the webhook kept whole here. */
   slack?: Record<string, { webhook_url: string; channel: string; kinds: NotificationKind[] }>;
+  /** Each org's Sentry as changed here (null: disconnected; see handlers/fixes.ts). */
+  sentry?: Record<string, Schemas["SentryOut"] | null>;
   /** Orgs deleted and still restorable, by slug (see handlers/orgs.ts). */
   deletedOrgs?: Record<
     string,

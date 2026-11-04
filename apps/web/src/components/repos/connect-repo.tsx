@@ -32,7 +32,7 @@ const minutes = (value: number) =>
 const compact = new Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 1 });
 
 /** Where to send the browser to install the GitHub App (an API redirect, so a plain link). */
-export function installUrl(org: string, from: "repos" | "onboarding"): string {
+export function installUrl(org: string, from: "repos" | "onboarding" | "integrations"): string {
   return `/api/v1/github/install?org=${encodeURIComponent(org)}&from=${from}`;
 }
 

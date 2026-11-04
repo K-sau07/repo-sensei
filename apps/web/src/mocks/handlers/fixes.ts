@@ -572,13 +572,69 @@ export const fixHandlers = [
     if (access instanceof Response) return access;
     const role = roleIn(params.org, access.user.id);
     if (!atLeast(role, "admin")) return insufficientRole("admin", role ?? "none");
-    return HttpResponse.json({
-      sentry_org: "acme",
-      api_url: "https://sentry.io",
-      projects: { "acme-api": "api" },
-      auto_run: true,
-      min_events: 10,
+    const found = sentryOf(params.org);
+    if (found === null) return apiError(404, "sentry_not_connected", "Sentry isn't connected.");
+    return HttpResponse.json(found);
+  }),
+
+  http.put<Params>("*/api/v1/orgs/:org/integrations/sentry", async ({ params, request }) => {
+    const access = orgAccess(params.org);
+    if (access instanceof Response) return access;
+    const role = roleIn(params.org, access.user.id);
+    if (!atLeast(role, "admin")) return insufficientRole("admin", role ?? "none");
+    const body = (await request.json()) as {
+      sentry_org: string;
+      api_url?: string;
+      token?: string | null;
+      client_secret?: string | null;
+      projects?: Record<string, string>;
+      auto_run: boolean;
+      min_events: number;
+    };
+    if (sentryOf(params.org) === null && (!body.token || !body.client_secret)) {
+      return apiError(
+        422,
+        "sentry_secrets_needed",
+        "Connecting Sentry needs its token and client secret.",
+      );
+    }
+    db.sentry ??= {};
+    db.sentry[params.org] = {
+      sentry_org: body.sentry_org,
+      api_url: (body.api_url ?? "https://sentry.io").replace(/\/$/, ""),
+      projects: body.projects ?? {},
+      auto_run: body.auto_run,
+      min_events: body.min_events,
       webhook_url: `https://sensei.example/api/v1/webhooks/sentry/${params.org}`,
-    });
+    };
+    saveDb();
+    return HttpResponse.json(db.sentry[params.org]);
+  }),
+
+  http.delete<Params>("*/api/v1/orgs/:org/integrations/sentry", ({ params }) => {
+    const access = orgAccess(params.org);
+    if (access instanceof Response) return access;
+    const role = roleIn(params.org, access.user.id);
+    if (!atLeast(role, "admin")) return insufficientRole("admin", role ?? "none");
+    db.sentry ??= {};
+    db.sentry[params.org] = null;
+    saveDb();
+    return new HttpResponse(null, { status: 204 });
   }),
 ];
+
+/** The org's Sentry: the seed's for "acme" until it is changed (null once disconnected). */
+function sentryOf(org: string) {
+  const kept = db.sentry?.[org];
+  if (kept !== undefined) return kept;
+  return org === "acme"
+    ? {
+        sentry_org: "acme",
+        api_url: "https://sentry.io",
+        projects: { "acme-api": "api" },
+        auto_run: true,
+        min_events: 10,
+        webhook_url: `https://sensei.example/api/v1/webhooks/sentry/${org}`,
+      }
+    : null;
+}

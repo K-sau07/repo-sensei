@@ -304,7 +304,7 @@ export const repoHandlers = [
   ...jobEvents,
 
   http.get<{ org: string }>("*/api/v1/orgs/:org/github/installations", ({ params }) => {
-    const access = adminOf(params.org);
+    const access = orgAccess(params.org); // any member, as the API
     if (access instanceof Response) return access;
     return HttpResponse.json<Installation[]>([
       {
