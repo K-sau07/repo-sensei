@@ -3,6 +3,7 @@
 import { TriangleAlert } from "lucide-react";
 import { useSearchParams } from "next/navigation";
 
+import { LogoMark, Wordmark } from "@/components/brand/logo";
 import { buttonVariants } from "@/components/ui/button";
 import { safeNext } from "@/lib/security/auth-paths";
 
@@ -31,7 +32,10 @@ export function LoginPanel() {
   return (
     <div className="flex w-full max-w-sm flex-col gap-6">
       <header className="flex flex-col gap-2 text-center">
-        <p className="font-mono text-xs tracking-widest text-signal uppercase">repo-sensei</p>
+        <div className="flex flex-col items-center gap-3">
+          <LogoMark className="size-11" />
+          <Wordmark className="text-xl" />
+        </div>
         <h1 className="text-2xl font-semibold tracking-[-0.015em]">Sign in</h1>
         <p className="text-sm text-fg-muted">
           Understand any codebase, with answers you can verify.

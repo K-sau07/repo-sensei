@@ -3,6 +3,8 @@
 import type { Route } from "next";
 import Link from "next/link";
 
+import { Brand } from "@/components/brand/logo";
+
 import { SITE_LINKS } from "./site-header";
 
 const MORE: readonly { href: Route; label: string }[] = [
@@ -17,10 +19,10 @@ export function SiteFooter() {
   return (
     <footer className="border-t border-line">
       <div className="mx-auto flex w-full max-w-6xl flex-wrap items-center justify-between gap-4 px-6 py-8 text-sm text-fg-muted">
-        <p>
-          <span className="font-mono text-fg">repo-sensei</span>: understand any codebase, with
-          answers you can verify.
-        </p>
+        <div className="flex flex-col gap-2">
+          <Brand />
+          <p>Understand any codebase, with answers you can verify.</p>
+        </div>
         <nav aria-label="Footer">
           <ul className="flex flex-wrap items-center gap-5">
             {[...SITE_LINKS, ...MORE].map((link) => (

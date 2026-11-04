@@ -2,11 +2,14 @@
 
 import { cn } from "cn";
 import { PanelLeft, Search } from "lucide-react";
+import Link from "next/link";
 
+import { LogoMark, Wordmark } from "@/components/brand/logo";
 import { KeyHint } from "@/components/primitives/key-hint";
 import { SidebarRepos } from "@/components/repos/sidebar-repos";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { orgPath } from "@/lib/routes";
 import { shortcut } from "@/lib/shortcut-registry";
 
 import { PRIMARY_NAV, SECONDARY_NAV } from "./nav-items";
@@ -88,7 +91,14 @@ export function Sidebar({ className }: { className?: string }) {
         className,
       )}
     >
-      <div className="flex h-10 items-center justify-end px-2 sidebar-collapsed:justify-center">
+      <div className="flex h-10 items-center justify-between gap-2 px-2 sidebar-collapsed:justify-center">
+        <Link
+          href={orgPath(org)}
+          className="flex min-w-0 items-center gap-2 rounded-sm px-1 sidebar-collapsed:hidden"
+        >
+          <LogoMark className="size-6" />
+          <Wordmark className="truncate text-[15px]" />
+        </Link>
         <Tooltip>
           <TooltipTrigger
             render={
