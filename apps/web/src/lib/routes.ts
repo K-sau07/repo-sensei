@@ -13,6 +13,7 @@ export type OrgSection =
   | "settings/integrations"
   | "settings/api-keys"
   | "settings/mcp"
+  | "settings/usage"
   | "settings/security"
   | "settings/danger";
 
