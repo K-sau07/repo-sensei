@@ -8,6 +8,7 @@ import Link from "next/link";
 import { buttonVariants } from "@/components/ui/button";
 
 export const SITE_LINKS: readonly { href: Route; label: string }[] = [
+  { href: "/product", label: "Product" },
   { href: "/explore", label: "Explore" },
 ];
 

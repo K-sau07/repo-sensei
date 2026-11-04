@@ -92,6 +92,8 @@ interface CanvasProps {
   selected: string | null;
   onSelect: (node: SpecNode | null) => void;
   added?: ReadonlySet<string> | undefined;
+  /** Which way it is laid out first (left to right unless said). */
+  initialDirection?: FlowDirection;
 }
 
 export function DiagramCanvas(props: CanvasProps) {
@@ -102,8 +104,17 @@ export function DiagramCanvas(props: CanvasProps) {
   );
 }
 
-function Canvas({ spec, edges, mermaid, title, selected, onSelect, added }: CanvasProps) {
-  const [direction, setDirection] = useState<FlowDirection>("RIGHT");
+function Canvas({
+  spec,
+  edges,
+  mermaid,
+  title,
+  selected,
+  onSelect,
+  added,
+  initialDirection = "RIGHT",
+}: CanvasProps) {
+  const [direction, setDirection] = useState<FlowDirection>(initialDirection);
   const placed = useLaidOut(spec, edges, direction);
   const flow = useReactFlow();
   const vertical = direction === "DOWN";
@@ -200,6 +211,9 @@ function Canvas({ spec, edges, mermaid, title, selected, onSelect, added }: Canv
           zoomable
           nodeColor={(node) => laneOf((node.data as BlueprintData).node.layer).color}
           className="!bg-surface-2"
+          // What is outside the view, dimmed in the theme's own background (React Flow's default
+          // is a light grey, a pale block on the dark theme).
+          maskColor="color-mix(in oklch, var(--bg) 65%, transparent)"
           ariaLabel="Minimap"
         />
       </ReactFlow>
