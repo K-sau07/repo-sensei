@@ -8920,7 +8920,7 @@
                 "type": "null"
               }
             ],
-            "description": "The day's agent cap (None: no cap).",
+            "description": "The day's cap, at which agent runs stop starting (None: no cap).",
             "title": "Cap Usd"
           },
           "held_usd": {
@@ -8934,6 +8934,7 @@
             "type": "string"
           },
           "spent_usd": {
+            "description": "Everything metered today, indexing included.",
             "title": "Spent Usd",
             "type": "string"
           },
@@ -12983,7 +12984,7 @@
         ]
       },
       "put": {
-        "description": "Connect Sentry (or change the connection: its token and client secret may be left out\nthen, to keep the stored ones). Admins. 422 ``sentry_secrets_needed`` connecting without\nthem.",
+        "description": "Connect Sentry (or change the connection: its token and client secret may be left out\nthen, to keep the stored ones, except the token when Sentry's address moves to another\nhost). Admins. 422 ``sentry_secrets_needed`` without the secrets it needs.",
         "operationId": "put_sentry_api_v1_orgs__org__integrations_sentry_put",
         "parameters": [
           {

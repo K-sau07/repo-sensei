@@ -1163,8 +1163,8 @@ export interface paths {
         /**
          * Put Sentry
          * @description Connect Sentry (or change the connection: its token and client secret may be left out
-         *     then, to keep the stored ones). Admins. 422 ``sentry_secrets_needed`` connecting without
-         *     them.
+         *     then, to keep the stored ones, except the token when Sentry's address moves to another
+         *     host). Admins. 422 ``sentry_secrets_needed`` without the secrets it needs.
          */
         put: operations["put_sentry_api_v1_orgs__org__integrations_sentry_put"];
         post?: never;
@@ -5665,7 +5665,7 @@ export interface components {
         TodayOut: {
             /**
              * Cap Usd
-             * @description The day's agent cap (None: no cap).
+             * @description The day's cap, at which agent runs stop starting (None: no cap).
              */
             cap_usd: string | null;
             /**
@@ -5678,7 +5678,10 @@ export interface components {
              * Format: date-time
              */
             resets_at: string;
-            /** Spent Usd */
+            /**
+             * Spent Usd
+             * @description Everything metered today, indexing included.
+             */
             spent_usd: string;
             /**
              * Warn Share

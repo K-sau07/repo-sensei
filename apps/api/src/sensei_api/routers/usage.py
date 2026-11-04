@@ -1,8 +1,9 @@
 """An org's usage (10.7.2): what it has spent, against its caps, and the limits each person
 works within (admins).
 
-The caps and limits are the deployment's (settings), the same for every org: today's agent
-spend (asks, diagrams, fixes; UTC day) against ``SENSEI_AGENT_DAILY_COST_CAP_USD``, this month's
+The caps and limits are the deployment's (settings), the same for every org: today's spend
+(everything metered, indexing too; UTC day) against ``SENSEI_AGENT_DAILY_COST_CAP_USD``, at
+which asks, diagrams, fixes and changes stop starting, this month's
 spend against ``SENSEI_PRICING_ORG_MONTHLY_CAP_USD`` (a summaries run that would pass it is
 skipped; 0 allows none), and each
 person's quotas and rates. The spend is the usage ledger's: the last 30 days by day, by model
@@ -34,9 +35,11 @@ TOP_PEOPLE = 10
 
 
 class TodayOut(BaseModel):
-    spent_usd: Decimal
+    spent_usd: Decimal = Field(description="Everything metered today, indexing included.")
     held_usd: Decimal = Field(description="Set aside for runs under way.")
-    cap_usd: Decimal | None = Field(description="The day's agent cap (None: no cap).")
+    cap_usd: Decimal | None = Field(
+        description="The day's cap, at which agent runs stop starting (None: no cap)."
+    )
     warn_share: float = Field(description="The share of the cap at which admins are told.")
     resets_at: datetime
 

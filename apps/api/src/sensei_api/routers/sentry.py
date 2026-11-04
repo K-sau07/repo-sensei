@@ -20,6 +20,7 @@ from collections.abc import Callable, Sequence
 from contextlib import AbstractAsyncContextManager
 from datetime import UTC, datetime
 from typing import Annotated, Any, cast
+from urllib.parse import urlsplit
 
 import httpx
 from fastapi import APIRouter, BackgroundTasks, Header, Request, Response, status
@@ -107,13 +108,17 @@ async def _out(db: AsyncSession, request: Request, org: str, found: SentryIntegr
     )  # fmt: skip
 
 
+def _host(url: str) -> str:
+    return (urlsplit(url).hostname or "").lower()
+
+
 @router.put("/orgs/{org}/integrations/sentry", response_model=SentryOut)
 async def put_sentry(
     request: Request, body: SentryIn, access: OrgAccessDep, db: DbSession
 ) -> SentryOut:
     """Connect Sentry (or change the connection: its token and client secret may be left out
-    then, to keep the stored ones). Admins. 422 ``sentry_secrets_needed`` connecting without
-    them."""
+    then, to keep the stored ones, except the token when Sentry's address moves to another
+    host). Admins. 422 ``sentry_secrets_needed`` without the secrets it needs."""
     require_role(access, Role.ADMIN)
     if not host_allowed(body.api_url, request.app.state.settings.fixer.sentry_hosts):
         raise InvalidError("That isn't a Sentry this server talks to.", code="sentry_host")
@@ -138,6 +143,12 @@ async def put_sentry(
             )
         found = SentryIntegration(org_id=org_id)
         db.add(found)
+    elif body.token is None and _host(body.api_url) != _host(found.api_url):
+        # The token is sent to Sentry's address: a new address gets it only from whoever has it.
+        raise InvalidError(
+            "A new Sentry address needs the integration's token again.",
+            code="sentry_secrets_needed",
+        )
     found.sentry_org = body.sentry_org
     found.api_url = body.api_url.rstrip("/")
     if body.token is not None:
@@ -150,8 +161,12 @@ async def put_sentry(
     found.auto_run = body.auto_run
     found.min_events = body.min_events
     await db.flush()
+    # Which credentials this change gave: named, never their values.
+    given = (("token", body.token), ("client secret", body.client_secret))
+    replaced = [name for name, value in given if value is not None]
     await audit(db, AuditAction.SENTRY_CONNECT, actor_user_id=access.user.id, org_id=org_id,
-                meta={"sentry_org": body.sentry_org, "auto_run": body.auto_run})  # fmt: skip
+                meta={"sentry_org": body.sentry_org, "api_url": found.api_url,
+                      "auto_run": body.auto_run, "replaced": replaced})  # fmt: skip
     return await _out(db, request, access.org.slug, found)
 
 

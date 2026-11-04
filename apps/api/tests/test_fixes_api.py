@@ -23,11 +23,13 @@ from pydantic import SecretStr
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from sensei_core.audit import AuditAction
 from sensei_core.auth.github_login import store_tokens
 from sensei_core.config import GitHubSettings, Settings
 from sensei_core.github.oauth import GitHubTokens
 from sensei_core.mail import MemoryMailer
 from sensei_core.models import (
+    AuditEvent,
     FixRun,
     FixSource,
     FixStage,
@@ -253,6 +255,37 @@ def _alert(issue_id: str) -> dict[str, object]:
         "url": "https://sentry.io/api/0/projects/acme-sentry/backend/events/e1/",
         "exception": {"values": [{"type": "ZeroDivisionError", "value": "division by zero",
                                   "stacktrace": {"frames": frames}}]}}}}  # fmt: skip
+
+
+async def test_a_new_sentry_address_needs_the_token_again(
+    app: FastAPI, client: httpx.AsyncClient, db_session: AsyncSession
+) -> None:
+    owner, _ = await _org(app, db_session)
+    _, headers = await sign_in(app, client, db_session, owner)
+    setup = {"sentry_org": "acme-sentry", "token": "sntrys_secret_token", "client_secret": SECRET,
+             "projects": {"backend": "items"}, "auto_run": False, "min_events": 10}  # fmt: skip
+    put = f"{API}/orgs/acme/integrations/sentry"
+    assert (await client.put(put, json=setup, headers=headers)).status_code == 200
+    # Elsewhere (an allowed host, sentry.io's subdomain), without the token: it isn't sent there.
+    moved = {k: v for k, v in setup.items() if k not in {"token", "client_secret"}}
+    moved["api_url"] = "https://de.sentry.io"
+    refused = await client.put(put, json=moved, headers=headers)
+    assert refused.status_code == 422
+    assert refused.json()["error"]["code"] == "sentry_secrets_needed"
+    stored = await db_session.scalar(select(SentryIntegration))
+    assert stored is not None
+    assert stored.api_url == "https://sentry.io"
+    # With it, it moves; the same host (another path) keeps the token as before.
+    assert (await client.put(put, json={**moved, "token": "sntrys_new_token"},
+                             headers=headers)).status_code == 200  # fmt: skip
+    same = {**moved, "api_url": "https://de.sentry.io/"}
+    assert (await client.put(put, json=same, headers=headers)).status_code == 200
+    events = list(await db_session.scalars(
+        select(AuditEvent).where(AuditEvent.action == AuditAction.SENTRY_CONNECT)
+        .order_by(AuditEvent.created_at)
+    ))  # fmt: skip
+    assert [e.meta["replaced"] for e in events] == [["token", "client secret"], ["token"], []]
+    assert events[-1].meta["api_url"] == "https://de.sentry.io"
 
 
 async def test_sentry_is_connected_by_admins_and_its_webhook_starts_fixes(
