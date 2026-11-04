@@ -1,4 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/nextjs-vite";
+import { delay, http } from "msw";
 import { expect, userEvent, waitFor, within } from "storybook/test";
 
 import { GitHubInstallations } from "@/components/orgs/github-installations";
@@ -10,6 +11,8 @@ const nextjs = {
   appDirectory: true,
   navigation: { pathname: "/acme/settings/integrations", segments: [["org", "acme"]] },
 };
+
+const SLOW_MS = 400;
 
 const meta = {
   title: "Settings/Integrations",
@@ -65,9 +68,18 @@ export const ConnectSentry: Story = {
   },
 };
 
-/** Connected: changed without its secrets (kept), then disconnected. */
+/** Connected: changed without its secrets (kept), then disconnected. Sentry's settings come
+ * back slowly, as on a busy machine: the confirmation opened before they arrive stays open. */
 export const ChangeSentry: Story = {
   render: () => <SentrySettings />,
+  parameters: {
+    msw: [
+      http.get("*/api/v1/orgs/:org/integrations/sentry", async () => {
+        await delay(SLOW_MS); // then on to the mock's own answer
+      }),
+      ...handlers,
+    ],
+  },
   play: async ({ canvas, canvasElement }) => {
     await expect(await canvas.findByTestId("sentry-connected")).toHaveTextContent("acme");
     const events = canvas.getByLabelText("at");
@@ -82,7 +94,10 @@ export const ChangeSentry: Story = {
       await expect(disconnect).toBeEnabled(); // not while the save is still finishing
     });
     await userEvent.click(disconnect);
-    const dialog = await within(canvasElement.ownerDocument.body).findByRole("alertdialog");
+    const body = within(canvasElement.ownerDocument.body);
+    await body.findByRole("alertdialog");
+    await new Promise((resolve) => setTimeout(resolve, SLOW_MS * 2)); // the settings arrive
+    const dialog = body.getByRole("alertdialog"); // still open
     await userEvent.click(within(dialog).getByRole("button", { name: "Disconnect" }));
     await expect(await canvas.findByRole("button", { name: "Connect Sentry" })).toBeVisible();
   },

@@ -49,6 +49,9 @@ const ORG = /^[a-z0-9][a-z0-9_-]*$/;
 export function SentrySettings() {
   const { slug, role } = useOrgRole();
   const admin = roleAtLeast(role, "admin");
+  // Kept here: the form starts again from each answer the API gives (its key), and a dialog
+  // opened just as one arrives must stay open.
+  const [confirming, setConfirming] = useState(false);
   const sentry = $api.useQuery(
     "get",
     PATH,
@@ -80,7 +83,12 @@ export function SentrySettings() {
   const saved = missing ? null : (sentry.data ?? null);
   return (
     <Section>
-      <SentryForm key={saved ? JSON.stringify(saved) : "new"} saved={saved} />
+      <SentryForm
+        key={saved ? JSON.stringify(saved) : "new"}
+        saved={saved}
+        confirming={confirming}
+        setConfirming={setConfirming}
+      />
     </Section>
   );
 }
@@ -107,7 +115,16 @@ interface Row {
   repo: string;
 }
 
-function SentryForm({ saved }: { saved: Sentry | null }) {
+function SentryForm({
+  saved,
+  confirming,
+  setConfirming,
+}: {
+  saved: Sentry | null;
+  /** Whether Disconnect is asking to be sure. */
+  confirming: boolean;
+  setConfirming: (open: boolean) => void;
+}) {
   const id = useId();
   const { slug } = useOrgRole();
   const queryClient = useQueryClient();
@@ -123,7 +140,6 @@ function SentryForm({ saved }: { saved: Sentry | null }) {
   );
   const [autoRun, setAutoRun] = useState(saved?.auto_run ?? false);
   const [minEvents, setMinEvents] = useState(String(saved?.min_events ?? 10));
-  const [confirming, setConfirming] = useState(false);
   const key = $api.queryOptions("get", PATH, { params: { path: { org: slug } } }).queryKey;
   const save = $api.useMutation("put", PATH);
   const remove = $api.useMutation("delete", PATH);

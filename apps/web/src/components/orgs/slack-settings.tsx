@@ -53,6 +53,9 @@ const SUGGESTED: NotificationKind[] = ["approval_needed", "pr_opened", "fix_fail
 
 export function SlackSettings() {
   const { slug, role } = useOrgRole();
+  // Kept here: the form starts again from each answer the API gives (its key), and a dialog
+  // opened just as one arrives must stay open.
+  const [confirming, setConfirming] = useState(false);
   const admin = roleAtLeast(role, "admin");
   const slack = $api.useQuery(
     "get",
@@ -99,6 +102,8 @@ export function SlackSettings() {
       <SlackForm
         key={saved ? `${saved.channel}:${saved.kinds.join()}:${saved.webhook_hint}` : "new"}
         saved={saved}
+        confirming={confirming}
+        setConfirming={setConfirming}
       />
     </Section>
   );
@@ -122,14 +127,22 @@ function Section({ children }: { children: React.ReactNode }) {
   );
 }
 
-function SlackForm({ saved }: { saved: Slack | null }) {
+function SlackForm({
+  saved,
+  confirming,
+  setConfirming,
+}: {
+  saved: Slack | null;
+  /** Whether Disconnect is asking to be sure. */
+  confirming: boolean;
+  setConfirming: (open: boolean) => void;
+}) {
   const id = useId();
   const { slug } = useOrgRole();
   const queryClient = useQueryClient();
   const [webhook, setWebhook] = useState("");
   const [channel, setChannel] = useState(saved?.channel ?? "");
   const [kinds, setKinds] = useState<Set<NotificationKind>>(new Set(saved?.kinds ?? SUGGESTED));
-  const [confirming, setConfirming] = useState(false);
   const key = $api.queryOptions("get", PATH, { params: { path: { org: slug } } }).queryKey;
   const refresh = () => queryClient.invalidateQueries({ queryKey: key });
   const save = $api.useMutation("put", PATH, { onSuccess: refresh });
