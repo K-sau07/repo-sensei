@@ -8,6 +8,7 @@ import {
   appearanceCss,
   DEFAULT_APPEARANCE,
   saveAppearance,
+  subscribeAppearance,
 } from "./appearance";
 
 function runBootScript() {
@@ -55,5 +56,17 @@ describe("the appearance boot script", () => {
     localStorage.setItem(APPEARANCE_CSS_KEY, "</style><script>alert(1)</script>");
     runBootScript();
     expect(document.getElementById(APPEARANCE_STYLE_ID)).toBeNull();
+  });
+
+  it("takes a choice saved in another tab, and replaces a palette an older version made", () => {
+    const choice = { ...DEFAULT_APPEARANCE, accentHue: 255, density: "compact" as const };
+    localStorage.setItem(APPEARANCE_KEY, JSON.stringify(choice));
+    localStorage.setItem(APPEARANCE_CSS_KEY, "[data-theme]{--brand: red;}"); // stale
+    const unsubscribe = subscribeAppearance(() => undefined);
+    window.dispatchEvent(new StorageEvent("storage", { key: APPEARANCE_KEY }));
+    unsubscribe();
+    expect(document.documentElement.dataset.density).toBe("compact");
+    expect(document.getElementById(APPEARANCE_STYLE_ID)?.textContent).toBe(appearanceCss(choice));
+    expect(localStorage.getItem(APPEARANCE_CSS_KEY)).toBe(appearanceCss(choice));
   });
 });

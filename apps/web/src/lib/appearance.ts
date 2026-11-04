@@ -113,14 +113,32 @@ export function saveAppearance(appearance: Appearance): void {
   window.dispatchEvent(new Event(APPEARANCE_EVENT));
 }
 
+/** The saved choice applied to this page again, its palette worked out afresh: after another
+ * tab saved one, or on load (a palette kept by an older version of the generator is replaced). */
+export function refreshAppearance(): void {
+  const appearance = readAppearance(localStorage.getItem(APPEARANCE_KEY));
+  const css = appearanceCss(appearance);
+  if ((localStorage.getItem(APPEARANCE_CSS_KEY) ?? "") !== css) {
+    if (css) localStorage.setItem(APPEARANCE_CSS_KEY, css);
+    else localStorage.removeItem(APPEARANCE_CSS_KEY);
+  }
+  applyAppearance(document.documentElement, appearance, css);
+}
+
 /** The saved choice as an external store, for useSyncExternalStore: told when saved here or
- * in another tab; its snapshot is what was saved (none on the server: the default). */
+ * in another tab (whose choice this page then takes too); its snapshot is what was saved (none
+ * on the server: the default). */
 export function subscribeAppearance(listener: () => void): () => void {
+  const fromAnotherTab = (event: StorageEvent) => {
+    if (event.key !== null && event.key !== APPEARANCE_KEY) return;
+    refreshAppearance();
+    listener();
+  };
   window.addEventListener(APPEARANCE_EVENT, listener);
-  window.addEventListener("storage", listener);
+  window.addEventListener("storage", fromAnotherTab);
   return () => {
     window.removeEventListener(APPEARANCE_EVENT, listener);
-    window.removeEventListener("storage", listener);
+    window.removeEventListener("storage", fromAnotherTab);
   };
 }
 
