@@ -4,6 +4,7 @@ import { headers } from "next/headers";
 import { Providers } from "@/components/providers";
 import { SHELL_BOOT_SCRIPT } from "@/components/shell/shell-store";
 import { fontVariables } from "@/fonts";
+import { APPEARANCE_BOOT_SCRIPT } from "@/lib/appearance";
 
 import "./globals.css";
 
@@ -35,6 +36,8 @@ export default async function RootLayout({ children }: LayoutProps<"/">) {
       <head>
         {/* Restores the sidebar width and rail before first paint, so the shell never shifts. */}
         <script nonce={nonce} dangerouslySetInnerHTML={{ __html: SHELL_BOOT_SCRIPT }} />
+        {/* This browser's appearance settings (density, palette, motion), likewise. */}
+        <script nonce={nonce} dangerouslySetInnerHTML={{ __html: APPEARANCE_BOOT_SCRIPT }} />
       </head>
       <body className="flex min-h-dvh flex-col">
         <Providers nonce={nonce}>{children}</Providers>

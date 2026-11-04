@@ -3,21 +3,30 @@
 import { domAnimation, LazyMotion, MotionConfig } from "motion/react";
 import { ThemeProvider } from "next-themes";
 import { NuqsAdapter } from "nuqs/adapters/next/app";
-import { type ReactNode } from "react";
+import { useSyncExternalStore, type ReactNode } from "react";
 
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import {
+  readAppearance,
+  savedAppearance,
+  serverAppearance,
+  subscribeAppearance,
+} from "@/lib/appearance";
 import { QueryProvider } from "@/lib/query/provider";
 
 export const THEMES = ["dark", "light"] as const;
 export const DEFAULT_THEME = "dark";
 
-/** Motion setup: lazy-loaded DOM features and the user's reduced-motion preference. */
+/** Motion setup: lazy-loaded DOM features and the user's reduced-motion preference (the
+ * system's, or always reduced when their appearance settings say so). */
 export function MotionProvider({ children }: { children: ReactNode }) {
+  const saved = useSyncExternalStore(subscribeAppearance, savedAppearance, serverAppearance);
+  const reduce = readAppearance(saved).motion === "reduce";
   return (
     // `strict` makes a full `motion.*` import an error, keeping the bundle on `m.*`.
     <LazyMotion features={domAnimation} strict>
-      <MotionConfig reducedMotion="user">{children}</MotionConfig>
+      <MotionConfig reducedMotion={reduce ? "always" : "user"}>{children}</MotionConfig>
     </LazyMotion>
   );
 }

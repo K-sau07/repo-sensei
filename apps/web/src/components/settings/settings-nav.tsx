@@ -11,6 +11,8 @@ const ITEMS = [
   { href: "/settings/profile", label: "Profile" },
   { href: "/settings/sessions", label: "Sessions" },
   { href: "/settings/notifications", label: "Notifications" },
+  { href: "/settings/appearance", label: "Appearance" },
+  { href: "/settings/shortcuts", label: "Shortcuts" },
 ] as const;
 
 /** Personal settings sit outside any org; this header leads back to the last one. */

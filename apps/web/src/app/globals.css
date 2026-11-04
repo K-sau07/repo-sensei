@@ -155,6 +155,13 @@
   -webkit-backdrop-filter: blur(24px);
 }
 
+/* The system's preference, or this browser's appearance settings (data-transparency). */
+[data-transparency="reduce"] .glass {
+  background-color: var(--surface-2);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
 @media (prefers-reduced-transparency: reduce) {
   .glass {
     background-color: var(--surface-2);
@@ -167,6 +174,20 @@
 ::view-transition-group(open-code) {
   animation-duration: var(--dur-slow);
   animation-timing-function: var(--ease-inout);
+}
+
+/* Reduced in this browser's appearance settings (data-motion), whatever the system says. */
+[data-motion="reduce"] *,
+[data-motion="reduce"] ::before,
+[data-motion="reduce"] ::after {
+  animation-duration: 1ms !important;
+  animation-iteration-count: 1 !important;
+  scroll-behavior: auto !important;
+}
+[data-motion="reduce"]::view-transition-group(*),
+[data-motion="reduce"]::view-transition-old(*),
+[data-motion="reduce"]::view-transition-new(*) {
+  animation: none !important;
 }
 
 /* Keyframe animations snap and loops stop; Motion components fade instead (reducedMotion="user"). */
