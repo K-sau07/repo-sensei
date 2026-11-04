@@ -77,8 +77,12 @@ export const ChangeSentry: Story = {
     await waitFor(async () => {
       await expect(db.sentry?.acme?.min_events).toBe(25);
     });
-    await userEvent.click(await canvas.findByRole("button", { name: "Disconnect Sentry" }));
-    const dialog = within(canvasElement.ownerDocument.body).getByRole("alertdialog");
+    const disconnect = await canvas.findByRole("button", { name: "Disconnect Sentry" });
+    await waitFor(async () => {
+      await expect(disconnect).toBeEnabled(); // not while the save is still finishing
+    });
+    await userEvent.click(disconnect);
+    const dialog = await within(canvasElement.ownerDocument.body).findByRole("alertdialog");
     await userEvent.click(within(dialog).getByRole("button", { name: "Disconnect" }));
     await expect(await canvas.findByRole("button", { name: "Connect Sentry" })).toBeVisible();
   },
