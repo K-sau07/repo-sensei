@@ -388,4 +388,4 @@ def test_web_slug_rules_match_the_api() -> None:
     assert web_pattern is not None
     assert reserved_block is not None
     assert web_pattern.group(1) == SLUG_RE.pattern
-    assert set(re.findall(r'"([a-z]+)"', reserved_block.group(1))) == set(RESERVED_SLUGS)
+    assert set(re.findall(r'"([a-z-]+)"', reserved_block.group(1))) == set(RESERVED_SLUGS)

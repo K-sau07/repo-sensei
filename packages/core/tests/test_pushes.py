@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import itertools
 import uuid
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
@@ -240,6 +241,26 @@ async def test_no_push_indexes_a_repository_whose_automatic_indexing_is_off(
     for ref in ("refs/heads/main", "refs/heads/release"):
         _, status = await _deliver(system_session, fake_redis, timers, _push(ref, SHA[0], SHA[1]))
         assert status is DeliveryStatus.IGNORED
+    assert timers.set == []
+    # What it tracks it still keeps indexed (indexed by hand now): retention doesn't drop it.
+    assert pushes.tracks(repo, "release")
+    assert pushes.tracks(repo, "main")
+
+
+@pytest.mark.integration
+async def test_no_push_indexes_a_repository_of_a_deleted_org(
+    system_session: AsyncSession, fake_redis: FakeAsyncRedis
+) -> None:
+    repo = await _repo(system_session)
+    org = await system_session.get(Org, repo.org_id)
+    assert org is not None
+    org.deleted_at = datetime.now(UTC)  # waiting for its purge
+    await system_session.flush()
+    timers = Timers()
+    _, status = await _deliver(
+        system_session, fake_redis, timers, _push("refs/heads/main", SHA[0], SHA[1])
+    )
+    assert status is DeliveryStatus.IGNORED
     assert timers.set == []
 
 

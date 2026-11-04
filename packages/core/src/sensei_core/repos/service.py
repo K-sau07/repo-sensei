@@ -523,7 +523,7 @@ class RepoService:
             org_id=access.org.id,
             target_type="repo",
             target_id=repo.id,
-            meta={"before": before, "after": repo.settings},
+            meta={"full_name": repo.full_name, "before": before, "after": repo.settings},
         )
         return repo
 

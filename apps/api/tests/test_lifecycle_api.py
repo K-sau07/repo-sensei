@@ -16,7 +16,17 @@ from sensei_core.auth.github_login import upsert_user
 from sensei_core.db.tenancy import set_org_context
 from sensei_core.github.oauth import GitHubUser
 from sensei_core.mail import MemoryMailer
-from sensei_core.models import Membership, OAuthToken, Org, Role, User
+from sensei_core.models import (
+    DeliveryChannel,
+    Invitation,
+    Membership,
+    NotificationDelivery,
+    NotificationKind,
+    OAuthToken,
+    Org,
+    Role,
+    User,
+)
 from sensei_core.orgs.lifecycle import DELETED_LOGIN, ORG_GRACE
 from sensei_core.orgs.service import OrgService
 from sensei_testing import make_user, sign_in
@@ -103,6 +113,17 @@ async def test_an_account_is_deleted_once_its_orgs_have_another_owner(
     other = await make_user(db_session)
     await set_org_context(db_session, org.id)
     db_session.add(Membership(org_id=org.id, user_id=other.id, role=Role.OWNER))
+    # An email waiting to go to them, and an invitation they took that names them.
+    waiting = NotificationDelivery(
+        org_id=org.id, channel=DeliveryChannel.EMAIL, recipient="me@example.com",
+        user_id=user.id, key="k1", kind=NotificationKind.INDEX_DONE, subject="s", text="t",
+    )  # fmt: skip
+    taken = Invitation(
+        org_id=org.id, email="me@example.com", github_login=user.login, role=Role.MEMBER,
+        token_hash=b"t" * 32, invited_by=other.id, expires_at=datetime.now(UTC),
+        accepted_at=datetime.now(UTC), accepted_by=user.id,
+    )  # fmt: skip
+    db_session.add_all([waiting, taken])
     await db_session.flush()
     github_id = user.github_id
 
@@ -115,6 +136,13 @@ async def test_an_account_is_deleted_once_its_orgs_have_another_owner(
     assert user.github_id < 0
     assert await db_session.scalar(select(OAuthToken).where(OAuthToken.user_id == user.id)) is None
     await set_org_context(db_session, org.id)
+    assert await db_session.get(NotificationDelivery, waiting.id) is None
+    await db_session.refresh(taken)
+    assert (taken.email, taken.github_login) == (None, None)
+    await sign_in(api_app, api_client, db_session, other)
+    log = (await api_client.get(f"{API}/orgs/mine-alone/audit")).json()["items"]
+    left = next(e for e in log if e["action"] == "member.leave")
+    assert left["actor_login"] is None  # a deleted account's login isn't shown
     members = list(
         await db_session.scalars(select(Membership.user_id).where(Membership.org_id == org.id))
     )

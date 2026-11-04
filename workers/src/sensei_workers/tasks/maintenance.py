@@ -17,18 +17,18 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import delete, or_, select
 from sqlalchemy.exc import DBAPIError
 
-from sensei_core.audit import AuditAction, audit
 from sensei_core.indexing import retention
 from sensei_core.jobs import TaskName
 from sensei_core.logging import get_logger
 from sensei_core.models import ACTIVE_JOB_STATUSES, IndexJob, Repo, RepoRef, Snapshot
 from sensei_core.oauth.service import prune as oauth_prune
-from sensei_core.orgs.lifecycle import drop_org, org_repo_ids, orgs_to_purge
+from sensei_core.orgs.lifecycle import drop_org, orgs_to_purge
 from sensei_core.storage import Bucket, repo_prefix, snapshot_key
 from sensei_workers.app import celery_app
 from sensei_workers.base import RetryableError, SenseiTask
 from sensei_workers.runtime import get_runtime
 from sensei_workers.statistics import chunk_partition_of, vacuum_partition
+from sensei_workers.tasks.repos import purge_repo
 
 log = get_logger(__name__)
 
@@ -228,35 +228,42 @@ async def _prune_oauth() -> dict[str, int]:
 
 @celery_app.task(bind=True, base=SenseiTask, name=TaskName.PURGE_DELETED_ORGS.value, system=True)
 def purge_deleted_orgs(self: SenseiTask) -> int:
-    """Purge the orgs deleted longer ago than their grace period: each repository's stored
-    objects first (a failure leaves the org to try again from), then the org's row, which
-    everything in it follows. Returns how many went."""
+    """Purge the orgs deleted longer ago than their grace period: each taken (locked, checked
+    again: one restored meanwhile stays) and its row deleted, which everything in it follows;
+    then its repositories' stored objects, or, should storage fail, a repository purge for each
+    (it retries, and deletes what a repository whose row is gone still stores). Returns how many
+    orgs went."""
     runtime = get_runtime()
 
-    async def _due() -> list[tuple[uuid.UUID, str]]:
+    async def _due() -> list[uuid.UUID]:
         async with runtime.system_database.session() as db:
-            return [(org.id, org.slug) for org in await orgs_to_purge(db)]
+            return [org.id for org in await orgs_to_purge(db)]
 
-    async def _purge(org_id: uuid.UUID, slug: str) -> bool:
+    async def _drop(org_id: uuid.UUID) -> list[uuid.UUID] | None:
         async with runtime.system_database.session() as db:
-            repos = await org_repo_ids(db, org_id)
+            return await drop_org(db, org_id)
+
+    async def _objects(org_id: uuid.UUID, repos: list[uuid.UUID]) -> None:
         storage = await runtime.storage()
         for repo_id in repos:
             for bucket in Bucket:
                 await storage.delete_prefix(bucket, repo_prefix(bucket, org_id, repo_id))
-        async with runtime.system_database.session() as db:
-            gone = await drop_org(db, org_id)
-            if gone:
-                await audit(db, AuditAction.ORG_PURGE, actor_user_id=None,
-                            target_type="org", target_id=org_id, meta={"slug": slug})  # fmt: skip
-            return gone
 
     purged = 0
-    for org_id, slug in runtime.run(_due()):
+    for org_id in runtime.run(_due()):
         try:
-            if runtime.run(_purge(org_id, slug)):
-                purged += 1
-                log.info("org purged", org_id=str(org_id))
+            repos = runtime.run(_drop(org_id))
         except Exception:  # the next one still goes; this one is tried again tomorrow
             log.exception("org not purged", org_id=str(org_id))
+            continue
+        if repos is None:
+            continue
+        purged += 1
+        log.info("org purged", org_id=str(org_id), repos=len(repos))
+        try:
+            runtime.run(_objects(org_id, repos))
+        except Exception:
+            log.warning("org's objects left to its repositories' purges", org_id=str(org_id))
+            for repo_id in repos:
+                purge_repo.apply_async(kwargs={"org_id": str(org_id), "repo_id": str(repo_id)})
     return purged

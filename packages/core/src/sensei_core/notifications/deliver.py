@@ -203,10 +203,8 @@ async def _deliver(
         _end(delivery, DeliveryState.SKIPPED, "pending for over a day", done)
         return
     try:
-        if delivery.channel is DeliveryChannel.EMAIL:
-            skipped = await _email(db, delivery, senders)
-        else:
-            skipped = await _slack(db, delivery, senders)
+        send = _email if delivery.channel is DeliveryChannel.EMAIL else _slack
+        skipped = await _gone(db, delivery) or await send(db, delivery, senders)
     except SendError as exc:
         _tried(delivery, str(exc), retry=exc.retry, now=now, senders=senders, done=done)
         return
@@ -226,6 +224,18 @@ async def _deliver(
     delivery.error = None
     delivery.sent_at = now
     done.sent += 1
+
+
+async def _gone(db: AsyncSession, delivery: NotificationDelivery) -> str | None:
+    """Why the delivery's org or person is no one to send to any more (F19), if so."""
+    org = await db.get(Org, delivery.org_id)
+    if org is None or org.deleted_at is not None:
+        return "the organization was deleted"
+    if delivery.user_id is not None:
+        user = await db.get(User, delivery.user_id)
+        if user is None or user.deleted_at is not None:
+            return "the account was deleted"
+    return None
 
 
 async def _email(db: AsyncSession, delivery: NotificationDelivery, senders: Senders) -> str | None:

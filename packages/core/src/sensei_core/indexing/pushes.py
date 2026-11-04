@@ -1,7 +1,8 @@
 """Pushes (5.1): a push to a branch a repository tracks indexes it again once the pushes stop.
 
-A repository tracks its default branch and ``RepoSettings.tracked_branches`` (none while its
-``auto_index`` is off: it is indexed by hand then). Each push to one
+A repository tracks its default branch and ``RepoSettings.tracked_branches``; while its
+``auto_index`` is off no push starts a run (it is indexed by hand), and what it tracks stays
+indexed all the same. Each push to one
 is noted in Redis as the branch's pending push (its latest commit, the commit the first of the
 run of pushes started from, and whether any was forced), and a timer is set for
 :data:`DEBOUNCE_SECONDS` later, carrying the push's token. Only the latest push's timer starts a
@@ -91,13 +92,12 @@ def branch_of(ref: object) -> str | None:
 
 
 def tracks(repo: Repo, branch: str) -> bool:
-    """Whether a push to ``branch`` (or a pull request's head, ``pull/N``) indexes it again:
-    none does while the repository's automatic indexing is off (indexed by hand then)."""
-    settings = RepoSettings.model_validate(repo.settings or {})
-    if not settings.auto_index:
-        return False
+    """Whether ``branch`` (or a pull request's head, ``pull/N``) is one the repository keeps
+    indexed (its index kept, :mod:`retention`); a push to it indexes it again while the
+    repository indexes automatically (:func:`indexes_pushes`)."""
     if branch == repo.default_branch:
         return True
+    settings = RepoSettings.model_validate(repo.settings or {})
     if branch.startswith(PULLS) and branch.removeprefix(PULLS).isdigit():
         return settings.index_pull_requests
     return branch in settings.tracked_branches
@@ -309,6 +309,11 @@ async def start(
     )
     outbox.queued(job)
     return job
+
+
+def indexes_pushes(repo: Repo) -> bool:
+    """Whether a push starts a run: the repository's automatic indexing is on."""
+    return RepoSettings.model_validate(repo.settings or {}).auto_index
 
 
 def indexable(repo: Repo | None) -> bool:

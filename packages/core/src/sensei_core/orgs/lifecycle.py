@@ -6,9 +6,11 @@ then purged with everything in it) and deleting an account.
   then its row, which every org-scoped table follows (``ON DELETE CASCADE``).
 - **An account** is refused while its user is the only owner of a live org (someone else must
   own it, or it must be deleted, first). Otherwise its sessions end, its GitHub tokens go, it
-  leaves every org, and the user is anonymized: no name, login, email or avatar, and its GitHub
-  id is replaced, so the same GitHub account may sign up afresh, as no one this was. What it
-  wrote in orgs (questions, diagrams, runs) stays theirs, by an anonymous author.
+  leaves every org (what was waiting to be emailed to it is dropped, the invitations it took
+  forget who took them), and the user is anonymized: no name, login, email or avatar, and its
+  GitHub id is replaced, so the same GitHub account may sign up afresh, as no one this was.
+  What it wrote in orgs (questions, diagrams, runs) stays theirs, by an anonymous author; the
+  audit log keeps what it recorded (it is append-only).
 """
 
 from __future__ import annotations
@@ -25,7 +27,18 @@ from sqlalchemy.orm import aliased
 from sensei_core.audit import AuditAction, audit
 from sensei_core.db.tenancy import set_org_context, set_user_context
 from sensei_core.errors import ConflictError, NotFoundError
-from sensei_core.models import Membership, OAuthToken, Org, Repo, Role, User, UserSession
+from sensei_core.models import (
+    DeliveryState,
+    Invitation,
+    Membership,
+    NotificationDelivery,
+    OAuthToken,
+    Org,
+    Repo,
+    Role,
+    User,
+    UserSession,
+)
 from sensei_core.orgs.service import OrgAccess
 
 ORG_GRACE = timedelta(days=7)
@@ -73,6 +86,15 @@ async def restore_org(
     )
     if found is None:
         raise NotFoundError("Organization not found.", code="org_not_found")
+    # Locked and read again: a purge that took it meanwhile (its grace just over) wins.
+    locked = await db.scalar(
+        select(Org)
+        .where(Org.id == found.id, Org.deleted_at > _now(now) - ORG_GRACE)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    if locked is None:
+        raise NotFoundError("Organization not found.", code="org_not_found")
     await set_org_context(db, found.id)
     found.deleted_at = None
     await db.flush()
@@ -97,18 +119,33 @@ async def orgs_to_purge(system_db: AsyncSession, *, now: datetime | None = None)
     return list(rows)
 
 
-async def org_repo_ids(system_db: AsyncSession, org_id: uuid.UUID) -> list[uuid.UUID]:
-    """Every repository the org has had (disconnected ones too): what storage holds of it."""
-    return list(await system_db.scalars(select(Repo.id).where(Repo.org_id == org_id)))
-
-
-async def drop_org(system_db: AsyncSession, org_id: uuid.UUID) -> bool:
-    """The org's row gone, and with it every org-scoped row (only one still deleted: one
-    restored meanwhile stays)."""
-    result = await system_db.execute(
-        delete(Org).where(Org.id == org_id, Org.deleted_at.is_not(None))
+async def drop_org(
+    system_db: AsyncSession, org_id: uuid.UUID, *, now: datetime | None = None
+) -> list[uuid.UUID] | None:
+    """Take the org for its purge: locked, still deleted past its grace (one restored
+    meanwhile is left alone: None), its row deleted (every org-scoped row follows) and the
+    purge recorded; the repositories it had (disconnected ones too), whose stored objects are
+    to go next."""
+    moment = _now(now)
+    org = await system_db.scalar(
+        select(Org)
+        .where(Org.id == org_id, Org.deleted_at.is_not(None), Org.deleted_at <= moment - ORG_GRACE)
+        .with_for_update()
     )
-    return bool(getattr(result, "rowcount", 0))
+    if org is None:
+        return None
+    repos = list(await system_db.scalars(select(Repo.id).where(Repo.org_id == org_id)))
+    slug = org.slug
+    await system_db.execute(delete(Org).where(Org.id == org_id))
+    await audit(
+        system_db,
+        AuditAction.ORG_PURGE,
+        actor_user_id=None,
+        target_type="org",
+        target_id=org_id,
+        meta={"slug": slug, "repos": len(repos)},
+    )
+    return repos
 
 
 async def sole_owned(db: AsyncSession, user: User) -> list[Org]:
@@ -140,7 +177,18 @@ async def sole_owned(db: AsyncSession, user: User) -> list[Org]:
 
 async def delete_account(db: AsyncSession, user: User, *, now: datetime | None = None) -> None:
     """Delete the user's account (see the module); 409 ``sole_owner`` naming the orgs that
-    need another owner first."""
+    need another owner first. The orgs it owns are locked first (by id, as every membership
+    change locks its org), so two owners leaving at once can't leave an org with none."""
+    await set_user_context(db, user.id)
+    owned = list(
+        await db.scalars(
+            select(Membership.org_id).where(
+                Membership.user_id == user.id, Membership.role == Role.OWNER
+            )
+        )
+    )
+    if owned:
+        await db.execute(select(Org.id).where(Org.id.in_(owned)).order_by(Org.id).with_for_update())
     sole = await sole_owned(db, user)
     if sole:
         raise ConflictError(
@@ -165,6 +213,20 @@ async def delete_account(db: AsyncSession, user: User, *, now: datetime | None =
             delete(Membership).where(
                 Membership.org_id == membership.org_id, Membership.user_id == user.id
             )
+        )
+        # Nothing more is sent to them (their address goes from what is waiting), and the
+        # invitations they took no longer say who they were.
+        await db.execute(
+            delete(NotificationDelivery).where(
+                NotificationDelivery.org_id == membership.org_id,
+                NotificationDelivery.user_id == user.id,
+                NotificationDelivery.state == DeliveryState.PENDING,
+            )
+        )
+        await db.execute(
+            update(Invitation)
+            .where(Invitation.org_id == membership.org_id, Invitation.accepted_by == user.id)
+            .values(email=None, github_login=None)
         )
         await audit(
             db,

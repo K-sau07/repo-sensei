@@ -360,11 +360,21 @@ def _publishable(request: Request, access: OrgAccess, repo: Repo) -> bool:
 
 @router.patch("/repos/{repo}", response_model=RepoOut)
 async def update_repo(
-    body: RepoUpdate, repo: RepoDep, access: OrgAccessDep, db: DbSession, repos: RepoServiceDep
+    *,
+    request: Request,
+    body: RepoUpdate,
+    repo: RepoDep,
+    access: OrgAccessDep,
+    db: DbSession,
+    repos: RepoServiceDep,
 ) -> RepoOut:
-    """Tracked branches, ignore patterns and automatic indexing (admins)."""
+    """Tracked branches, ignore patterns and automatic indexing (admins); the repository as
+    its read answers it."""
     changes = body.model_dump(exclude_unset=True, exclude_none=True)
-    return RepoOut.build(await repos.update_settings(db, access, repo, changes))
+    updated = await repos.update_settings(db, access, repo, changes)
+    summaries = await repo_summaries(db, [updated])
+    found = RepoOut.build(updated, summary=summaries.get(updated.id))
+    return found.model_copy(update={"publishable": _publishable(request, access, updated)})
 
 
 @router.put("/repos/{repo}/published", response_model=RepoOut)

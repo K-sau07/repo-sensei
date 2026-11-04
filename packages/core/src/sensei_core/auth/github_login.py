@@ -17,7 +17,8 @@ REFRESH_MARGIN = timedelta(minutes=5)
 
 async def upsert_user(db: AsyncSession, profile: GitHubUser) -> User:
     """Create the user on first sign-in; refresh profile fields on later ones."""
-    user = await db.scalar(select(User).where(User.github_id == profile.id))
+    # Locked: an account deleted while this sign-in finishes isn't written back over.
+    user = await db.scalar(select(User).where(User.github_id == profile.id).with_for_update())
     if user is None:
         user = User(github_id=profile.id, login=profile.login)
         db.add(user)

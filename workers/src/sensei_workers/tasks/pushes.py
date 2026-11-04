@@ -19,7 +19,7 @@ from sensei_core.indexing.snapshots import ref_heads
 from sensei_core.jobs import TaskName
 from sensei_core.limits import READ_ONLY_WAIT_SECONDS, read_only
 from sensei_core.logging import get_logger
-from sensei_core.models import IndexJob, Repo
+from sensei_core.models import IndexJob, Org, Repo
 from sensei_engine.chunk.store import prune_chunks
 from sensei_engine.incremental import moved_on
 from sensei_workers.app import celery_app
@@ -55,7 +55,16 @@ async def begin(
     outcome = Outcome.UNTRACKED
     async with task.org_session(org_id) as db:
         repo = await db.get(Repo, repo_id)
-        if repo is None or not pushes.indexable(repo) or not pushes.tracks(repo, branch):
+        org = await db.get(Org, org_id)
+        wanted = (
+            repo is not None
+            and org is not None
+            and org.deleted_at is None  # deleted, waiting for its purge: nothing new starts
+            and pushes.indexable(repo)
+            and pushes.indexes_pushes(repo)
+            and pushes.tracks(repo, branch)
+        )
+        if repo is None or not wanted:
             job = None
         elif await pushes.running(db, repo):
             return Outcome.WAITING, None

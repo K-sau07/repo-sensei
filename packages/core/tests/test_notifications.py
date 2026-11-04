@@ -264,6 +264,30 @@ async def test_pending_emails_and_slack_posts_are_sent_once(db_session: AsyncSes
     assert len(emails.sent) == 1
 
 
+async def test_nothing_is_sent_for_a_deleted_account_or_org(db_session: AsyncSession) -> None:
+    org_id, owner, _ = await _org(db_session)
+    other = await _member(db_session, org_id, Role.MEMBER)
+    await notify(db_session, _event(org_id), [owner.id, other.id])
+    other.deleted_at = datetime.now(UTC)  # its account deleted after the event
+    await db_session.flush()
+    emails = MemoryEmailer()
+    done = await deliver_pending(
+        _same(db_session), _senders(_cipher(), emails, MemorySlackPoster())
+    )
+    assert [e.to for e in emails.sent] == [owner.email]
+    assert done.skipped == 1
+
+    await notify(db_session, _event(org_id, key="fix:2:failed"), [owner.id])
+    org = await db_session.get(Org, org_id)
+    assert org is not None
+    org.deleted_at = datetime.now(UTC)  # deleted, waiting for its purge
+    await db_session.flush()
+    later = await deliver_pending(
+        _same(db_session), _senders(_cipher(), emails, MemorySlackPoster())
+    )
+    assert (later.sent, later.skipped) == (0, 1)
+
+
 async def test_a_failing_send_is_retried_a_few_times_then_given_up(
     db_session: AsyncSession,
 ) -> None:

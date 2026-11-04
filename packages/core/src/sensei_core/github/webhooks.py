@@ -39,6 +39,7 @@ from sensei_core.models import (
     ActorType,
     DeliveryStatus,
     GitHubInstallation,
+    Org,
     Repo,
     RepoStatus,
     WebhookDelivery,
@@ -326,7 +327,9 @@ async def _pushed(ctx: HandlerContext) -> DeliveryStatus:
     before = payload.get("before")
     noted = 0
     for repo in repos:
-        if not pushes.indexable(repo) or not pushes.tracks(repo, branch):
+        if not pushes.indexable(repo) or not pushes.indexes_pushes(repo):
+            continue
+        if not pushes.tracks(repo, branch):
             continue
         pending = await pushes.note(
             ctx.redis,
@@ -368,7 +371,7 @@ async def _pull_request(ctx: HandlerContext) -> DeliveryStatus:
             # would be kept otherwise.
             if not (pushes.tracks(repo, ref) or await pushes.kept(ctx.db, repo, ref)):
                 continue
-        elif not pushes.tracks(repo, ref):
+        elif not pushes.tracks(repo, ref) or not pushes.indexes_pushes(repo):
             continue
         handled += 1
         if action == "closed":
@@ -390,7 +393,8 @@ async def _pull_request(ctx: HandlerContext) -> DeliveryStatus:
 
 
 async def _pushed_repos(ctx: HandlerContext) -> list[Repo]:
-    """The live repositories the delivery's installation reads that are its repository."""
+    """The live repositories the delivery's installation reads that are its repository (in a
+    live org: a deleted one's, waiting for its purge, index nothing)."""
     repository = as_object(ctx.payload.get("repository")) or {}
     github_repo_id = repository.get("id")
     if not isinstance(github_repo_id, int) or ctx.delivery.installation_id is None:
@@ -398,9 +402,11 @@ async def _pushed_repos(ctx: HandlerContext) -> list[Repo]:
     found = await ctx.db.scalars(
         select(Repo)
         .join(GitHubInstallation, GitHubInstallation.id == Repo.installation_id)
+        .join(Org, Org.id == Repo.org_id)
         .where(
             Repo.github_repo_id == github_repo_id,
             Repo.deleted_at.is_(None),
+            Org.deleted_at.is_(None),
             GitHubInstallation.installation_id == ctx.delivery.installation_id,
         )
     )

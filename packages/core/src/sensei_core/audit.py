@@ -11,7 +11,7 @@ import json
 import uuid
 from typing import Any
 
-from sqlalchemy import insert, select, tuple_
+from sqlalchemy import case, insert, select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
@@ -130,10 +130,11 @@ async def list_org_audit(
     before: uuid.UUID | None = None,
     limit: int = 50,
 ) -> list[tuple[AuditEvent, str | None]]:
-    """Newest first, with the actor's login (``action``, ``actor_user_id``: only those). ``before``
-    is the id of the last row already seen."""
+    """Newest first, with the actor's login (none for a deleted account's; ``action``,
+    ``actor_user_id``: only those). ``before`` is the id of the last row already seen."""
+    login = case((User.deleted_at.is_(None), User.login), else_=None)
     query = (
-        select(AuditEvent, User.login)
+        select(AuditEvent, login)
         .outerjoin(User, User.id == AuditEvent.actor_user_id)
         .where(AuditEvent.org_id == org_id)
         .order_by(AuditEvent.created_at.desc(), AuditEvent.id.desc())
