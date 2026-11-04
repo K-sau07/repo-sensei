@@ -27,7 +27,7 @@ type Story = StoryObj<typeof meta>;
  * budget, a month of days (each in a table too), what it went on and by whom. */
 export const Usage: Story = {
   play: async ({ canvas }) => {
-    const today = await canvas.findByRole("region", { name: "Today's agent spend" });
+    const today = await canvas.findByRole("region", { name: "Today's spend" });
     await expect(today).toHaveTextContent("$3.90 of $20.00");
     await expect(today).toHaveTextContent("$0.50 of it set aside for runs under way.");
     await expect(within(today).getByRole("meter")).toHaveAttribute("aria-valuenow", "20");

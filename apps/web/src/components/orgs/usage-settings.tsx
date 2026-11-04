@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * An org's usage (admins, 10.7.2): today's agent spend against the day's cap and this month's
+ * An org's usage (admins, 10.7.2): today's spend against the day's cap and this month's
  * against its budget (each a figure with its meter), the last 30 days' spend (one bar a day,
  * each with its numbers on hover and in a table), what it went on (models) and by whom, and the
  * limits each person works within. The caps and limits are the deployment's.
@@ -70,13 +70,13 @@ function UsageView({ org }: { org: string }) {
     <div className="flex flex-col gap-8">
       <div className="grid gap-4 sm:grid-cols-2">
         <Figure
-          title="Today's agent spend"
+          title="Today's spend"
           spent={Number(data.today.spent_usd) + Number(data.today.held_usd)}
           cap={data.today.cap_usd === null ? null : Number(data.today.cap_usd)}
           note={
             Number(data.today.held_usd) > 0
               ? `${money(data.today.held_usd)} of it set aside for runs under way.`
-              : "Asks, diagrams, fixes and changes stop starting at the cap."
+              : "Everything metered, indexing too. Asks, diagrams, fixes and changes stop starting at the cap."
           }
           resets={data.today.resets_at}
         />
@@ -84,7 +84,11 @@ function UsageView({ org }: { org: string }) {
           title="This month"
           spent={Number(data.month.spent_usd)}
           cap={Number(data.month.cap_usd)}
-          note="Everything metered. A summaries run that would pass the budget isn't started."
+          note={
+            Number(data.month.cap_usd) === 0
+              ? "The budget is $0: no summaries run starts this month."
+              : "Everything metered. A summaries run that would pass the budget isn't started."
+          }
           resets={data.month.resets_at}
         />
       </div>
