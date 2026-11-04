@@ -46,6 +46,16 @@ const PATH = "/api/v1/orgs/{org}/integrations/sentry";
 const PROJECT = /^[a-z0-9][a-z0-9_-]*$/; // a Sentry project slug, as the API takes it
 const ORG = /^[a-z0-9][a-z0-9_-]*$/;
 
+/** A Sentry address's host, as the API compares them (the token only goes to the one it was
+ * given for). */
+function hostOf(url: string): string {
+  try {
+    return new URL(url.trim()).hostname.toLowerCase();
+  } catch {
+    return "";
+  }
+}
+
 export function SentrySettings() {
   const { slug, role } = useOrgRole();
   const admin = roleAtLeast(role, "admin");
@@ -153,6 +163,13 @@ function SentryForm({
     saved === null &&
       (token.length < 8 || secret.length < 8) &&
       "Connecting needs the integration's token and client secret.",
+    saved !== null &&
+      ((token.length > 0 && token.length < 8) || (secret.length > 0 && secret.length < 8)) &&
+      "A new token or client secret is at least 8 characters.",
+    saved !== null &&
+      !token &&
+      hostOf(apiUrl) !== hostOf(saved.api_url) &&
+      "A new Sentry address needs the integration's token again.",
     badProject && "Each project needs its slug and a repository.",
     new Set(projects.map((r) => r.project.trim())).size !== projects.length &&
       "A project is listed twice.",

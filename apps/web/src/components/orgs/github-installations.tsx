@@ -10,6 +10,7 @@ import { ExternalLink } from "lucide-react";
 import { GitHubMark } from "@/components/auth/github-mark";
 import { ErrorState } from "@/components/feedback/error-state";
 import { installUrl } from "@/components/repos/connect-repo";
+import { InstallResult } from "@/components/repos/install-result";
 import { buttonVariants } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { roleAtLeast, useOrgRole } from "@/hooks/use-org-role";
@@ -38,6 +39,7 @@ export function GitHubInstallations() {
           GitHub.
         </p>
       </div>
+      <InstallResult />
       {installations.isError ? (
         <ErrorState
           title="Couldn't load the installations"

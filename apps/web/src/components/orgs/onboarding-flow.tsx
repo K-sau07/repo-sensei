@@ -17,6 +17,7 @@ import {
   EstimateCard,
   installUrl,
 } from "@/components/repos/connect-repo";
+import { githubErrorMessage } from "@/components/repos/install-result";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -30,12 +31,6 @@ import { CreateOrgForm } from "./create-org-form";
 import { OnboardingSteps } from "./onboarding-steps";
 
 /** Why the GitHub App step came back without access (the API adds `?github_error=`). */
-const GITHUB_ERRORS: Record<string, string> = {
-  installation_not_owned:
-    "That installation belongs to an account you don't administer. Install it on your own account or an organization you're an admin of.",
-  installation_unsupported: "Enterprise installations aren't supported yet.",
-  github_unavailable: "GitHub didn't answer. Try again in a moment.",
-};
 
 function Heading({ title, children }: { title: string; children: React.ReactNode }) {
   return (
@@ -57,7 +52,7 @@ function InstallStep({ org, error }: { org: string; error: string | null }) {
       </Heading>
       {error && (
         <p role="alert" className="text-sm text-danger">
-          {GITHUB_ERRORS[error] ?? "No access yet: the installation didn't finish."}
+          {githubErrorMessage(error)}
         </p>
       )}
       <div className="flex flex-wrap items-center gap-3">

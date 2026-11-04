@@ -24,6 +24,7 @@ import type { AvailableRepo, Estimate, Repo } from "@/lib/api/types";
 import { queryKeys } from "@/lib/query/keys";
 import { orgPath, repoPath } from "@/lib/routes";
 
+import { InstallResult } from "./install-result";
 import { LanguageBar } from "./language-bar";
 
 const TABS = ["github", "url"] as const;
@@ -217,22 +218,26 @@ function GitHubTab({ org }: { org: string }) {
 
   if (installations.isSuccess && installations.data.length === 0) {
     return (
-      <EmptyState
-        icon={<GitHubMark />}
-        title="Install the GitHub App first"
-        description="Choose which repositories repo-sensei may read. You can change that on GitHub at any time."
-        action={
-          <a href={installUrl(org, "repos")} className={buttonVariants()}>
-            <GitHubMark className="size-4" />
-            Install the GitHub App
-          </a>
-        }
-      />
+      <>
+        <InstallResult />
+        <EmptyState
+          icon={<GitHubMark />}
+          title="Install the GitHub App first"
+          description="Choose which repositories repo-sensei may read. You can change that on GitHub at any time."
+          action={
+            <a href={installUrl(org, "repos")} className={buttonVariants()}>
+              <GitHubMark className="size-4" />
+              Install the GitHub App
+            </a>
+          }
+        />
+      </>
     );
   }
 
   return (
     <div className="flex flex-col gap-3">
+      <InstallResult />
       <div className="flex flex-wrap items-center gap-2">
         <div className="relative min-w-60 flex-1">
           <Search
