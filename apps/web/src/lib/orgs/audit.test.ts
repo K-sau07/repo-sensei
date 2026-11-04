@@ -38,5 +38,9 @@ describe("the audit log's words", () => {
       targetLabel(event({ action: "member.role_change", meta: { from: "member", to: "admin" } })),
     ).toBe("member → admin");
     expect(targetLabel(event({ meta: { count: 3 } }))).toBeNull();
+    const hubot = new Map([["u2", "hubot"]]);
+    const promoted = event({ action: "member.role_change", target_type: "user", target_id: "u2",
+                             meta: { from: "member", to: "admin" } }); // prettier-ignore
+    expect(targetLabel(promoted, hubot)).toBe("@hubot: member → admin");
   });
 });

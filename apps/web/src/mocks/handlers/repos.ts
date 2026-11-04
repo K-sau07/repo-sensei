@@ -545,7 +545,7 @@ export const repoHandlers = [
       if (found instanceof Response) return found;
       const changes = (await request.json()) as Partial<Repo["settings"]>;
       const branches = changes.tracked_branches ?? found.settings.tracked_branches ?? [];
-      const bad = branches.find((b) => !/^[A-Za-z0-9._/-]+$/.test(b) || b.includes(".."));
+      const bad = branches.find((b) => !validBranch(b));
       if (bad !== undefined) {
         return apiError(422, "invalid_settings", "Those settings aren't valid.", {
           problems: [`Value error, not a valid branch name: '${bad}'`],
@@ -595,6 +595,25 @@ export const repoHandlers = [
     return new HttpResponse(null, { status: 204 });
   }),
 ];
+
+/** git's rules for a branch name, as the API checks them (RepoSettings._branches). */
+export function validBranch(name: string): boolean {
+  return !(
+    !name ||
+    name.length > 255 ||
+    /[\x00-\x20\x7f~^:?*[\\]/.test(name) ||
+    name.startsWith("-") ||
+    name.startsWith("/") ||
+    name.endsWith("/") ||
+    name.endsWith(".") ||
+    name.endsWith(".lock") ||
+    name.includes("..") ||
+    name.includes("//") ||
+    name.includes("@{") ||
+    name === "@" ||
+    name.split("/").some((part) => part.startsWith(".") || part.endsWith(".lock"))
+  );
+}
 
 /** The org's repository, for a change only its admins may make. */
 function adminRepo(org: string, slug: string): MockRepo | Response {

@@ -81,25 +81,34 @@ function TransferOwnership({ org, me }: { org: string; me: string }) {
   const transfer = async () => {
     if (picked === null || busy) return;
     setBusy(true);
+    const said = (caught: unknown) => (caught instanceof ApiError ? caught.message : null);
     try {
-      await api.PATCH("/api/v1/orgs/{org}/members/{user_id}", {
-        params: { path: { org, user_id: picked.user_id } },
-        body: { role: "owner" },
-      });
-      if (stepDown) {
+      try {
+        await api.PATCH("/api/v1/orgs/{org}/members/{user_id}", {
+          params: { path: { org, user_id: picked.user_id } },
+          body: { role: "owner" },
+        });
+      } catch (caught) {
+        toast.error(said(caught) ?? "Ownership couldn't be handed on.");
+        return;
+      }
+      setChosen(null);
+      if (!stepDown) {
+        toast.success(`@${picked.login} is an owner too`);
+        return;
+      }
+      try {
         await api.PATCH("/api/v1/orgs/{org}/members/{user_id}", {
           params: { path: { org, user_id: me } },
           body: { role: "admin" },
         });
+        toast.success(`@${picked.login} owns it now; you're an admin`);
+      } catch (caught) {
+        // The first went through: they are an owner whatever this says.
+        toast.error(
+          `@${picked.login} is an owner now, but you're still one: ${said(caught) ?? "your role couldn't be changed"}.`,
+        );
       }
-      toast.success(
-        stepDown
-          ? `@${picked.login} owns it now; you're an admin`
-          : `@${picked.login} is an owner too`,
-      );
-      setChosen(null);
-    } catch (caught) {
-      toast.error(caught instanceof ApiError ? caught.message : "Ownership couldn't be handed on.");
     } finally {
       setBusy(false);
       await queryClient.invalidateQueries();

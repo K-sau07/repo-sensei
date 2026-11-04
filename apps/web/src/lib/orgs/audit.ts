@@ -70,12 +70,20 @@ export function actorLabel(event: AuditEvent): string {
 
 const DETAIL_KEYS = ["full_name", "email", "slug", "name", "role", "to", "kind", "channel"];
 
-/** What it was done to, from its details: a repository's name, an invitee's email, a role. */
-export function targetLabel(event: AuditEvent): string | null {
+/** What it was done to, from its details: a repository's name, an invitee's email, whose
+ * role went from what to what (``logins``: members' logins by id, for a member's target). */
+export function targetLabel(
+  event: AuditEvent,
+  logins: ReadonlyMap<string, string> = new Map(),
+): string | null {
   const meta = event.meta;
+  const member =
+    event.target_type === "user" && event.target_id ? logins.get(event.target_id) : undefined;
   if (event.action === "member.role_change" && typeof meta.from === "string") {
-    return `${meta.from} → ${typeof meta.to === "string" ? meta.to : "?"}`;
+    const change = `${meta.from} → ${typeof meta.to === "string" ? meta.to : "?"}`;
+    return member ? `@${member}: ${change}` : change;
   }
+  if (member) return `@${member}`;
   for (const key of DETAIL_KEYS) {
     const value = meta[key];
     if (typeof value === "string" && value) return value;

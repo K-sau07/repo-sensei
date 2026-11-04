@@ -5,7 +5,7 @@ import { expect, test } from "./fixtures";
 test.describe("repository settings", () => {
   test("an admin tracks a branch, keeps it after a reload, then disconnects", async ({ page }) => {
     await page.goto("/acme/api/settings");
-    await expect(page.getByRole("heading", { name: "Settings", level: 1 })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Settings", level: 2 })).toBeVisible();
     await page.getByLabel("A branch to track").fill("staging");
     await page.getByRole("button", { name: "Track", exact: true }).click();
     await page.getByRole("button", { name: "Save" }).click();

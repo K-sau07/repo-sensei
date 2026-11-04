@@ -38,10 +38,17 @@ import {
 
 const PAGE = 50;
 const ANY = "any";
-const WHEN = new Intl.DateTimeFormat("en", { dateStyle: "medium", timeStyle: "short" });
+const WHEN = new Intl.DateTimeFormat("en", {
+  dateStyle: "medium",
+  timeStyle: "short",
+}); // the reader's time zone, named in the column header
+const ZONE = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
 export function SecuritySettings() {
-  const { slug, role } = useOrgRole();
+  const { slug, role, me } = useOrgRole();
+  if (me.isError) {
+    return <ErrorState title="Couldn't load the organization" onRetry={() => void me.refetch()} />;
+  }
   if (role === null) {
     return <Skeleton className="h-40" role="status" aria-label="Loading" />;
   }
@@ -83,6 +90,7 @@ function AuditLog({ org }: { org: string }) {
   });
   const events = log.data?.pages.flatMap((page) => page.items) ?? [];
   const who = members.data?.find((m) => m.user_id === actor);
+  const logins = new Map((members.data ?? []).map((m) => [m.user_id, m.login]));
 
   return (
     <section className="flex flex-col gap-4" aria-labelledby="audit-title">
@@ -147,7 +155,7 @@ function AuditLog({ org }: { org: string }) {
           <Table aria-label="Audit log">
             <TableHeader>
               <TableRow>
-                <TableHead>When</TableHead>
+                <TableHead>When ({ZONE})</TableHead>
                 <TableHead>Who</TableHead>
                 <TableHead>What</TableHead>
                 <TableHead>About</TableHead>
@@ -164,7 +172,9 @@ function AuditLog({ org }: { org: string }) {
                   </TableCell>
                   <TableCell>{actorLabel(event)}</TableCell>
                   <TableCell>{actionLabel(event.action)}</TableCell>
-                  <TableCell className="font-mono text-xs">{targetLabel(event) ?? ""}</TableCell>
+                  <TableCell className="font-mono text-xs">
+                    {targetLabel(event, logins) ?? ""}
+                  </TableCell>
                   <TableCell className="font-mono text-xs text-fg-muted">
                     {event.ip ?? ""}
                   </TableCell>

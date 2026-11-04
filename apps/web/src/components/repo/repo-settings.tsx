@@ -44,13 +44,16 @@ const PATH = "/api/v1/orgs/{org}/repos/{repo}";
 
 export function RepoSettings() {
   const repo = useRepo();
-  const { role } = useOrgRole();
-  if (repo.isError) {
+  const { role, me } = useOrgRole();
+  if (repo.isError || me.isError) {
     return (
       <Page>
         <ErrorState
           title="The repository's settings didn't load"
-          onRetry={() => void repo.refetch()}
+          onRetry={() => {
+            void repo.refetch();
+            void me.refetch();
+          }}
         />
       </Page>
     );
@@ -75,7 +78,10 @@ export function RepoSettings() {
       )}
       {/* Started again from what was saved, whenever that changes. */}
       <IndexingForm key={JSON.stringify(repo.data.settings)} repo={repo.data} admin={admin} />
-      {repo.data.publishable && <Gallery repo={repo.data} admin={admin} />}
+      {/* Also once published, should it stop being publishable: it can still be taken out. */}
+      {(repo.data.publishable || repo.data.published_at) && (
+        <Gallery repo={repo.data} admin={admin} />
+      )}
       {admin && <Disconnect repo={repo.data} />}
     </Page>
   );
@@ -84,7 +90,7 @@ export function RepoSettings() {
 function Page({ children }: { children: React.ReactNode }) {
   return (
     <div className="mx-auto flex w-full max-w-3xl flex-col gap-8 p-6">
-      <h1 className="text-xl font-semibold">Settings</h1>
+      <h2 className="text-xl font-semibold">Settings</h2>
       {children}
     </div>
   );
@@ -94,7 +100,12 @@ function useSaved() {
   const { org, repo } = useRepoSlug();
   const queryClient = useQueryClient();
   return async (updated?: Repo) => {
-    if (updated) queryClient.setQueryData(queryKeys.repo(org, repo), updated);
+    // Only its settings and publication from the answer: a PATCH's has no index summary.
+    if (updated) {
+      queryClient.setQueryData(queryKeys.repo(org, repo), (old: Repo | undefined) =>
+        old ? { ...old, settings: updated.settings, published_at: updated.published_at } : old,
+      );
+    }
     await queryClient.invalidateQueries({ queryKey: queryKeys.repo(org, repo) });
     await queryClient.invalidateQueries({ queryKey: queryKeys.repos(org) });
   };
@@ -113,10 +124,15 @@ function IndexingForm({ repo, admin }: { repo: Repo; admin: boolean }) {
   const [problems, setProblems] = useState<string[]>([]);
   const save = $api.useMutation("patch", PATH);
 
-  const lines = globs
-    .split("\n")
-    .map((line) => line.trim())
-    .filter(Boolean);
+  // As the API keeps them: trimmed, without blanks or repeats.
+  const lines = [
+    ...new Set(
+      globs
+        .split("\n")
+        .map((line) => line.trim())
+        .filter(Boolean),
+    ),
+  ];
   const changed =
     auto !== now.auto_index ||
     pulls !== now.index_pull_requests ||
@@ -400,7 +416,7 @@ function Disconnect({ repo }: { repo: Repo }) {
   const [open, setOpen] = useState(false);
   const [typed, setTyped] = useState("");
   const remove = $api.useMutation("delete", PATH);
-  const confirmed = typed.trim() === repo.full_name;
+  const confirmed = typed.trim().toLowerCase() === repo.full_name.toLowerCase(); // GitHub's: any case
 
   const disconnect = async () => {
     if (!confirmed || remove.isPending) return;
