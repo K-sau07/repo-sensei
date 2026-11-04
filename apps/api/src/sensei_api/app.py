@@ -58,6 +58,7 @@ from sensei_api.routers import (
     staleness,
     symbols,
     trace,
+    usage,
     webhooks,
 )
 from sensei_api.routers.health import ReadinessCheck
@@ -243,6 +244,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         changes,
         sentry,
         notifications,
+        usage,
         oauth,
     ):  # the order routes are matched in
         name = module.__name__.rsplit(".", 1)[-1]

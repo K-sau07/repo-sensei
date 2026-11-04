@@ -1873,6 +1873,36 @@
         "title": "CyclesOut",
         "type": "object"
       },
+      "DayOut": {
+        "properties": {
+          "by_kind": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "$ref": "#/components/schemas/UsageKind"
+            },
+            "title": "By Kind",
+            "type": "object"
+          },
+          "cost_usd": {
+            "title": "Cost Usd",
+            "type": "string"
+          },
+          "day": {
+            "format": "date",
+            "title": "Day",
+            "type": "string"
+          }
+        },
+        "required": [
+          "day",
+          "cost_usd",
+          "by_kind"
+        ],
+        "title": "DayOut",
+        "type": "object"
+      },
       "DecisionIn": {
         "properties": {
           "approve": {
@@ -5378,6 +5408,39 @@
         "title": "LanguageHealthOut",
         "type": "object"
       },
+      "LimitsOut": {
+        "properties": {
+          "asks_per_day": {
+            "title": "Asks Per Day",
+            "type": "integer"
+          },
+          "asks_per_minute": {
+            "title": "Asks Per Minute",
+            "type": "integer"
+          },
+          "diagrams_per_minute": {
+            "title": "Diagrams Per Minute",
+            "type": "integer"
+          },
+          "index_runs_per_day": {
+            "title": "Index Runs Per Day",
+            "type": "integer"
+          },
+          "public_imports_per_day": {
+            "title": "Public Imports Per Day",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "asks_per_minute",
+          "asks_per_day",
+          "diagrams_per_minute",
+          "index_runs_per_day",
+          "public_imports_per_day"
+        ],
+        "title": "LimitsOut",
+        "type": "object"
+      },
       "LinkHealthOut": {
         "properties": {
           "client_calls": {
@@ -5778,6 +5841,48 @@
         "title": "Mode",
         "type": "string"
       },
+      "ModelOut": {
+        "properties": {
+          "calls": {
+            "title": "Calls",
+            "type": "integer"
+          },
+          "cost_usd": {
+            "title": "Cost Usd",
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/UsageKind"
+          },
+          "model": {
+            "title": "Model",
+            "type": "string"
+          },
+          "provider": {
+            "title": "Provider",
+            "type": "string"
+          },
+          "tokens_in": {
+            "title": "Tokens In",
+            "type": "integer"
+          },
+          "tokens_out": {
+            "title": "Tokens Out",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "provider",
+          "model",
+          "kind",
+          "calls",
+          "tokens_in",
+          "tokens_out",
+          "cost_usd"
+        ],
+        "title": "ModelOut",
+        "type": "object"
+      },
       "ModuleLinkOut": {
         "properties": {
           "edges": {
@@ -5825,6 +5930,31 @@
           "layers"
         ],
         "title": "ModuleOut",
+        "type": "object"
+      },
+      "MonthOut": {
+        "properties": {
+          "cap_usd": {
+            "description": "The month's budget: a summaries run that would pass it isn't started.",
+            "title": "Cap Usd",
+            "type": "string"
+          },
+          "resets_at": {
+            "format": "date-time",
+            "title": "Resets At",
+            "type": "string"
+          },
+          "spent_usd": {
+            "title": "Spent Usd",
+            "type": "string"
+          }
+        },
+        "required": [
+          "spent_usd",
+          "cap_usd",
+          "resets_at"
+        ],
+        "title": "MonthOut",
         "type": "object"
       },
       "MyOrg": {
@@ -6154,6 +6284,32 @@
           }
         },
         "title": "PartialOut",
+        "type": "object"
+      },
+      "PersonOut": {
+        "properties": {
+          "cost_usd": {
+            "title": "Cost Usd",
+            "type": "string"
+          },
+          "login": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "None: no one's (index runs, a public page's asks).",
+            "title": "Login"
+          }
+        },
+        "required": [
+          "login",
+          "cost_usd"
+        ],
+        "title": "PersonOut",
         "type": "object"
       },
       "PlanEditIn": {
@@ -8740,6 +8896,50 @@
         "title": "TicketOut",
         "type": "object"
       },
+      "TodayOut": {
+        "properties": {
+          "cap_usd": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The day's agent cap (None: no cap).",
+            "title": "Cap Usd"
+          },
+          "held_usd": {
+            "description": "Set aside for runs under way.",
+            "title": "Held Usd",
+            "type": "string"
+          },
+          "resets_at": {
+            "format": "date-time",
+            "title": "Resets At",
+            "type": "string"
+          },
+          "spent_usd": {
+            "title": "Spent Usd",
+            "type": "string"
+          },
+          "warn_share": {
+            "description": "The share of the cap at which admins are told.",
+            "title": "Warn Share",
+            "type": "number"
+          }
+        },
+        "required": [
+          "spent_usd",
+          "held_usd",
+          "cap_usd",
+          "warn_share",
+          "resets_at"
+        ],
+        "title": "TodayOut",
+        "type": "object"
+      },
       "TraceBreakOut": {
         "properties": {
           "after_hop": {
@@ -9370,6 +9570,64 @@
           "entries"
         ],
         "title": "TreeOut",
+        "type": "object"
+      },
+      "UsageKind": {
+        "enum": [
+          "llm",
+          "embedding",
+          "rerank",
+          "index_minutes",
+          "sandbox_seconds"
+        ],
+        "title": "UsageKind",
+        "type": "string"
+      },
+      "UsageOut": {
+        "properties": {
+          "days": {
+            "description": "The last 30 days (UTC), oldest first, each one.",
+            "items": {
+              "$ref": "#/components/schemas/DayOut"
+            },
+            "title": "Days",
+            "type": "array"
+          },
+          "limits": {
+            "$ref": "#/components/schemas/LimitsOut"
+          },
+          "models": {
+            "description": "The last 30 days, the costliest first.",
+            "items": {
+              "$ref": "#/components/schemas/ModelOut"
+            },
+            "title": "Models",
+            "type": "array"
+          },
+          "month": {
+            "$ref": "#/components/schemas/MonthOut"
+          },
+          "people": {
+            "description": "The last 30 days, the costliest first.",
+            "items": {
+              "$ref": "#/components/schemas/PersonOut"
+            },
+            "title": "People",
+            "type": "array"
+          },
+          "today": {
+            "$ref": "#/components/schemas/TodayOut"
+          }
+        },
+        "required": [
+          "today",
+          "month",
+          "days",
+          "models",
+          "people",
+          "limits"
+        ],
+        "title": "UsageOut",
         "type": "object"
       },
       "UsedInOut": {
@@ -13710,7 +13968,7 @@
         ]
       },
       "patch": {
-        "description": "Tracked branches, ignore patterns and automatic indexing (admins).",
+        "description": "Tracked branches, ignore patterns and automatic indexing (admins); the repository as\nits read answers it.",
         "operationId": "update_repo_api_v1_orgs__org__repos__repo__patch",
         "parameters": [
           {
@@ -18007,6 +18265,51 @@
         "summary": "Restore Org",
         "tags": [
           "orgs"
+        ]
+      }
+    },
+    "/api/v1/orgs/{org}/usage": {
+      "get": {
+        "description": "The org's spend against its caps, and the limits each person works within (admins).",
+        "operationId": "usage_api_v1_orgs__org__usage_get",
+        "parameters": [
+          {
+            "description": "Organization slug",
+            "in": "path",
+            "name": "org",
+            "required": true,
+            "schema": {
+              "description": "Organization slug",
+              "title": "Org",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UsageOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Usage",
+        "tags": [
+          "usage"
         ]
       }
     },

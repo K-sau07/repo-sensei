@@ -1418,7 +1418,8 @@ export interface paths {
         head?: never;
         /**
          * Update Repo
-         * @description Tracked branches, ignore patterns and automatic indexing (admins).
+         * @description Tracked branches, ignore patterns and automatic indexing (admins); the repository as
+         *     its read answers it.
          */
         patch: operations["update_repo_api_v1_orgs__org__repos__repo__patch"];
         trace?: never;
@@ -2262,6 +2263,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/orgs/{org}/usage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Usage
+         * @description The org's spend against its caps, and the limits each person works within (admins).
+         */
+        get: operations["usage_api_v1_orgs__org__usage_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/public/repos": {
         parameters: {
             query?: never;
@@ -3065,6 +3086,20 @@ export interface components {
             level: "service" | "package" | "module" | "file" | "symbol";
             /** Sha */
             sha: string;
+        };
+        /** DayOut */
+        DayOut: {
+            /** By Kind */
+            by_kind: {
+                [key: string]: string;
+            };
+            /** Cost Usd */
+            cost_usd: string;
+            /**
+             * Day
+             * Format: date
+             */
+            day: string;
         };
         /** DecisionIn */
         DecisionIn: {
@@ -4423,6 +4458,19 @@ export interface components {
             /** With Symbols */
             with_symbols: number;
         };
+        /** LimitsOut */
+        LimitsOut: {
+            /** Asks Per Day */
+            asks_per_day: number;
+            /** Asks Per Minute */
+            asks_per_minute: number;
+            /** Diagrams Per Minute */
+            diagrams_per_minute: number;
+            /** Index Runs Per Day */
+            index_runs_per_day: number;
+            /** Public Imports Per Day */
+            public_imports_per_day: number;
+        };
         /** LinkHealthOut */
         LinkHealthOut: {
             /** Client Calls */
@@ -4553,6 +4601,22 @@ export interface components {
          * @enum {string}
          */
         Mode: "fast" | "deep";
+        /** ModelOut */
+        ModelOut: {
+            /** Calls */
+            calls: number;
+            /** Cost Usd */
+            cost_usd: string;
+            kind: components["schemas"]["UsageKind"];
+            /** Model */
+            model: string;
+            /** Provider */
+            provider: string;
+            /** Tokens In */
+            tokens_in: number;
+            /** Tokens Out */
+            tokens_out: number;
+        };
         /** ModuleLinkOut */
         ModuleLinkOut: {
             /** Edges */
@@ -4572,6 +4636,21 @@ export interface components {
             };
             /** Path */
             path: string;
+        };
+        /** MonthOut */
+        MonthOut: {
+            /**
+             * Cap Usd
+             * @description The month's budget: a summaries run that would pass it isn't started.
+             */
+            cap_usd: string;
+            /**
+             * Resets At
+             * Format: date-time
+             */
+            resets_at: string;
+            /** Spent Usd */
+            spent_usd: string;
         };
         /** MyOrg */
         MyOrg: {
@@ -4680,6 +4759,16 @@ export interface components {
              * @description Files whose summary retries were cut short: still none.
              */
             files?: number | null;
+        };
+        /** PersonOut */
+        PersonOut: {
+            /** Cost Usd */
+            cost_usd: string;
+            /**
+             * Login
+             * @description None: no one's (index runs, a public page's asks).
+             */
+            login: string | null;
         };
         /** PlanEditIn */
         PlanEditIn: {
@@ -5570,6 +5659,31 @@ export interface components {
                 [key: string]: string;
             };
         };
+        /** TodayOut */
+        TodayOut: {
+            /**
+             * Cap Usd
+             * @description The day's agent cap (None: no cap).
+             */
+            cap_usd: string | null;
+            /**
+             * Held Usd
+             * @description Set aside for runs under way.
+             */
+            held_usd: string;
+            /**
+             * Resets At
+             * Format: date-time
+             */
+            resets_at: string;
+            /** Spent Usd */
+            spent_usd: string;
+            /**
+             * Warn Share
+             * @description The share of the cap at which admins are told.
+             */
+            warn_share: number;
+        };
         /** TraceBreakOut */
         TraceBreakOut: {
             /** After Hop */
@@ -5761,6 +5875,32 @@ export interface components {
             entries: components["schemas"]["TreeEntry"][];
             /** Path */
             path: string;
+        };
+        /**
+         * UsageKind
+         * @enum {string}
+         */
+        UsageKind: "llm" | "embedding" | "rerank" | "index_minutes" | "sandbox_seconds";
+        /** UsageOut */
+        UsageOut: {
+            /**
+             * Days
+             * @description The last 30 days (UTC), oldest first, each one.
+             */
+            days: components["schemas"]["DayOut"][];
+            limits: components["schemas"]["LimitsOut"];
+            /**
+             * Models
+             * @description The last 30 days, the costliest first.
+             */
+            models: components["schemas"]["ModelOut"][];
+            month: components["schemas"]["MonthOut"];
+            /**
+             * People
+             * @description The last 30 days, the costliest first.
+             */
+            people: components["schemas"]["PersonOut"][];
+            today: components["schemas"]["TodayOut"];
         };
         /** UsedInOut */
         UsedInOut: {
@@ -10565,6 +10705,38 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["OrgOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    usage_api_v1_orgs__org__usage_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization slug */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UsageOut"];
                 };
             };
             /** @description Validation Error */
