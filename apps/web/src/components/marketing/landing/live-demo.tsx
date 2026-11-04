@@ -1,11 +1,10 @@
 /**
  * The landing page's live demo (10.3): a published open-source repository, asked about for real
  * (the public Ask: its suggested questions, answers streamed with citations to the lines on
- * GitHub), over a constellation backdrop. Without a published repository it points to Explore.
+ * GitHub), in a frame a light runs round. Without a published repository it points to Explore.
  */
 import Link from "next/link";
 
-import { ConstellationBackdrop } from "@/components/auth/constellation-backdrop";
 import { ExploreAsk, type HumanCheck } from "@/components/explore/explore-ask";
 import { buttonVariants } from "@/components/ui/button";
 import { shortSha, type PublicRepoPage } from "@/lib/api/explore";
@@ -15,9 +14,8 @@ export function LiveDemo({ page, human }: { page: PublicRepoPage | null; human: 
   return (
     <section
       aria-labelledby="demo-title"
-      className="relative isolate overflow-hidden rounded-2xl border border-line bg-surface-1"
+      className="glow-border relative rounded-2xl border border-line bg-surface-1/80 backdrop-blur"
     >
-      <ConstellationBackdrop />
       <div className="relative flex flex-col gap-4 p-5 sm:p-8">
         <h2 id="demo-title" className="text-sm font-medium text-fg-muted">
           Try it on a real repository

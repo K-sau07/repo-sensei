@@ -55,7 +55,7 @@ export function RepoInput() {
   return (
     <form
       onSubmit={(event) => void submit(event)}
-      className="flex w-full max-w-xl flex-col gap-2"
+      className="flex w-full max-w-xl flex-col gap-2 text-left"
       noValidate
     >
       <div className="flex flex-col gap-2 sm:flex-row">

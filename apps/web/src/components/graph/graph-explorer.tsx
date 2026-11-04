@@ -17,7 +17,6 @@ import dynamic from "next/dynamic";
 import { useCallback, useMemo, useState } from "react";
 
 import { ErrorState } from "@/components/feedback/error-state";
-import { webGLSupport } from "@/components/indexing/constellation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -36,6 +35,7 @@ import {
   type DepLevel,
 } from "@/lib/api/deps";
 import { refineLayout } from "@/lib/graph/refine-layout";
+import { webGLSupport } from "@/lib/webgl";
 
 import { useGraphColors } from "./graph-colors";
 import { GraphLegend } from "./graph-legend";

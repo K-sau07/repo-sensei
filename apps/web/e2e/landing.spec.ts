@@ -26,6 +26,25 @@ test.describe("the landing page", () => {
       await expect(chip).toHaveAttribute("href", /^https:\/\/github\.com\/fastapi\//);
     });
 
+    test("the hero shows the real repository, and the story its real trace, whole with reduced motion", async ({
+      page,
+    }) => {
+      await page.emulateMedia({ reducedMotion: "reduce" });
+      await page.goto("/");
+      // The sky: the engine's layout of the template, drawn on the server (no WebGL asked for).
+      const sky = page.getByTestId("hero-sky");
+      await expect(sky.locator("svg circle").first()).toBeAttached();
+      await expect(sky).toHaveAttribute("data-webgl", "false");
+      await expect(page.getByText(/245 files, and the trace of signing in/)).toBeVisible();
+
+      const story = page.getByRole("region", { name: "One question, through the whole stack" });
+      await story.scrollIntoViewIfNeeded();
+      const trace = story.getByRole("img", { name: /^The sign-in trace of fastapi/ });
+      await expect(trace).toHaveAttribute("aria-label", /Login, then useAuth, .* then user\.$/);
+      await expect(story.getByText("login.tsx:53")).toBeVisible();
+      await expect(story.getByText("models.py:51")).toBeVisible();
+    });
+
     test("a published repository's URL opens its public page", async ({ page }) => {
       await page.goto("/");
       await page

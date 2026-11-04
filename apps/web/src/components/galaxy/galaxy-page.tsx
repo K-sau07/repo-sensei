@@ -21,7 +21,6 @@ import { EmptyState } from "@/components/feedback/empty-state";
 import { ErrorState } from "@/components/feedback/error-state";
 import { useGraphColors } from "@/components/graph/graph-colors";
 import { useGraphSearch } from "@/components/graph/use-deps";
-import { webGLSupport } from "@/components/indexing/constellation";
 import { useSkyColors } from "@/components/indexing/constellation-scene";
 import { useViewRef } from "@/components/repo/use-ref";
 import { useRepoFeatures, useRepoSlug } from "@/components/repo/use-repo";
@@ -46,6 +45,7 @@ import { impactHref } from "@/lib/api/impact";
 import { pathFiles } from "@/lib/api/trace";
 import { codePath, repoPath } from "@/lib/routes";
 import { overviewTraceParsers, pathIndex } from "@/lib/trace/url-state";
+import { webGLSupport } from "@/lib/webgl";
 
 const GalaxyCanvas = dynamic(() => import("./galaxy-canvas"), {
   ssr: false,

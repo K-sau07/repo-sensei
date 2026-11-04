@@ -46,6 +46,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { useActive, useIdle } from "@/hooks/use-idle";
 import { pathFiles, pathTitle } from "@/lib/api/trace";
 import {
   clusters,
@@ -54,7 +55,6 @@ import {
   fileName,
   formatBytes,
   isLowPower,
-  isSoftwareRenderer,
   traceStars,
   type Layer,
   type MotionMode,
@@ -62,6 +62,7 @@ import {
 } from "@/lib/constellation";
 import { repoPath } from "@/lib/routes";
 import { overviewTraceParsers, pathIndex, traceHref } from "@/lib/trace/url-state";
+import { webGLSupport } from "@/lib/webgl";
 
 import { useSkyColors, type Hit } from "./constellation-scene";
 import { ConstellationSvg } from "./constellation-svg";
@@ -106,93 +107,7 @@ const ROLE_LABELS: Record<string, string> = {
 };
 const LISTED_DIRS = 100;
 
-interface WebGLSupport {
-  webgl2: boolean;
-  /** Drawn by a software rasterizer, not a GPU. */
-  software: boolean;
-}
-let support: WebGLSupport | null = null;
-/** Whether this browser can draw WebGL2, and with a GPU (asked once). */
-export function webGLSupport(): WebGLSupport {
-  if (support === null) {
-    try {
-      const probe = document.createElement("canvas").getContext("webgl2");
-      // Firefox names the renderer in RENDERER (its debug extension is deprecated); Chrome and
-      // Safari answer a generic "WebKit WebGL" there and the real name through the extension.
-      let name: unknown = probe?.getParameter(probe.RENDERER);
-      if (probe && typeof name === "string" && /^webkit webgl$/i.test(name)) {
-        const debug = probe.getExtension("WEBGL_debug_renderer_info");
-        if (debug) name = probe.getParameter(debug.UNMASKED_RENDERER_WEBGL);
-      }
-      support = {
-        webgl2: probe !== null,
-        software: isSoftwareRenderer(typeof name === "string" ? name : null),
-      };
-      // Give the probe's context back now: browsers allow only a few at a time.
-      probe?.getExtension("WEBGL_lose_context")?.loseContext();
-    } catch {
-      support = { webgl2: false, software: false };
-    }
-  }
-  return support;
-}
-
 const noSubscribe = () => () => undefined;
-
-const IDLE_TIMEOUT_MS = 1500;
-
-/** False until the browser is first idle after mounting (or IDLE_TIMEOUT_MS has passed). */
-function useIdle(): boolean {
-  const [idle, setIdle] = useState(false);
-  useEffect(() => {
-    if (typeof requestIdleCallback === "function") {
-      const id = requestIdleCallback(
-        () => {
-          setIdle(true);
-        },
-        { timeout: IDLE_TIMEOUT_MS },
-      );
-      return () => {
-        cancelIdleCallback(id);
-      };
-    }
-    const id = setTimeout(() => {
-      setIdle(true);
-    }, 0);
-    return () => {
-      clearTimeout(id);
-    };
-  }, []);
-  return idle;
-}
-
-/** Whether the element is on screen and the page visible (no frames are drawn otherwise). */
-function useActive(element: React.RefObject<HTMLElement | null>): boolean {
-  const [onScreen, setOnScreen] = useState(true);
-  const [visible, setVisible] = useState(true);
-  useEffect(() => {
-    const target = element.current;
-    if (!target || typeof IntersectionObserver === "undefined") return;
-    const observer = new IntersectionObserver(([entry]) => {
-      setOnScreen(entry?.isIntersecting ?? true);
-    });
-    observer.observe(target);
-    return () => {
-      observer.disconnect();
-    };
-  }, [element]);
-  useEffect(() => {
-    const update = () => {
-      setVisible(document.visibilityState !== "hidden");
-    };
-    update();
-    document.addEventListener("visibilitychange", update);
-    return () => {
-      document.removeEventListener("visibilitychange", update);
-    };
-  }, []);
-  return onScreen && visible;
-}
 
 function summary(sky: Sky, dirsWithFiles: number): string {
   const files = sky.total ?? sky.points.length;

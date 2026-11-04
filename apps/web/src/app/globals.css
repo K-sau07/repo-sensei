@@ -261,3 +261,168 @@
     @apply my-8 border-line;
   }
 }
+
+/* The landing hero's Trace Beam stops (10.3): a stop names itself once the beam reaches it. */
+.hero-stop > span {
+  display: inline-block;
+  opacity: 0;
+  transform: translateY(-50%) scale(0.96);
+  transition:
+    opacity 300ms var(--ease-out, ease-out),
+    transform 300ms var(--ease-out, ease-out);
+}
+.hero-stop[data-lit="true"] > span {
+  opacity: 1;
+  transform: translateY(-50%) scale(1);
+}
+
+/* The landing page's scroll story (10.3): the step it is at (its title brighter, its dot lit;
+   every step stays readable), and the question typed in. */
+.story-typed {
+  clip-path: inset(0 calc((1 - var(--typed, 1)) * 100%) 0 0);
+}
+.story-step .story-title {
+  color: var(--text-muted);
+  transition: color 250ms ease-out;
+}
+.story-dot {
+  background: var(--line-strong);
+  transition:
+    background 250ms ease-out,
+    box-shadow 250ms ease-out;
+}
+.story[data-step="1"] .story-step[data-index="1"] .story-title,
+.story[data-step="2"] .story-step[data-index="2"] .story-title,
+.story[data-step="3"] .story-step[data-index="3"] .story-title,
+.story[data-step="4"] .story-step[data-index="4"] .story-title {
+  color: var(--text);
+}
+.story[data-step="1"] .story-step[data-index="1"] .story-dot,
+.story[data-step="2"] .story-step[data-index="2"] .story-dot,
+.story[data-step="3"] .story-step[data-index="3"] .story-dot,
+.story[data-step="4"] .story-step[data-index="4"] .story-dot {
+  background: var(--signal);
+  box-shadow: 0 0 12px var(--signal);
+}
+
+/* Landing cards lit where the pointer is (Spotlight). */
+[data-spotlight] {
+  position: relative;
+  isolation: isolate;
+}
+[data-spotlight]::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  opacity: 0;
+  background: radial-gradient(
+    22rem circle at var(--spot-x, 50%) var(--spot-y, 50%),
+    color-mix(in oklch, var(--signal) 14%, transparent),
+    transparent 70%
+  );
+  transition: opacity 300ms ease-out;
+}
+[data-spotlight]:hover::before {
+  opacity: 1;
+}
+
+/* The landing demo's border: a light that goes round it twice (under five seconds, so it needs
+   no pause control), then again while it is pointed at or focused. Still with reduced motion. */
+@property --glow-angle {
+  syntax: "<angle>";
+  inherits: false;
+  initial-value: 0deg;
+}
+.glow-border {
+  position: relative;
+  isolation: isolate;
+}
+.glow-border::after {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  z-index: -1;
+  border-radius: inherit;
+  padding: 1px;
+  background: conic-gradient(
+    from var(--glow-angle),
+    transparent 0deg,
+    color-mix(in oklch, var(--signal) 80%, transparent) 40deg,
+    transparent 110deg,
+    transparent 220deg,
+    color-mix(in oklch, var(--layer-api) 70%, transparent) 260deg,
+    transparent 320deg
+  );
+  mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  animation: glow-turn 2.4s linear 2;
+}
+.glow-border:hover::after,
+.glow-border:focus-within::after {
+  animation: glow-turn 2.4s linear infinite;
+}
+@keyframes glow-turn {
+  to {
+    --glow-angle: 360deg;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .glow-border::after,
+  .glow-border:hover::after,
+  .glow-border:focus-within::after {
+    animation: none;
+  }
+}
+[data-motion="reduce"] .glow-border::after,
+[data-motion="reduce"] .glow-border:hover::after,
+[data-motion="reduce"] .glow-border:focus-within::after {
+  animation: none;
+}
+
+/* The landing hero: a glow of the layers' colors behind the sky, and the headline's accent. */
+.hero-glow {
+  mask-image: linear-gradient(to bottom, #000 55%, transparent);
+  background:
+    radial-gradient(
+      60rem 36rem at 78% 30%,
+      color-mix(in oklch, var(--signal) 10%, transparent),
+      transparent 70%
+    ),
+    radial-gradient(
+      40rem 30rem at 92% 80%,
+      color-mix(in oklch, var(--layer-api) 9%, transparent),
+      transparent 70%
+    ),
+    radial-gradient(
+      36rem 26rem at 55% 95%,
+      color-mix(in oklch, var(--layer-db) 8%, transparent),
+      transparent 70%
+    );
+}
+/* The globe's box: a glow behind the globe, and its edges fading into the page. */
+.hero-globe {
+  background: radial-gradient(
+    closest-side,
+    color-mix(in oklch, var(--signal) 9%, transparent),
+    transparent 80%
+  );
+}
+.hero-globe [data-layer] {
+  mask-image: radial-gradient(ellipse 60% 55% at 50% 50%, #000 60%, transparent 100%);
+}
+.hero-accent {
+  background: linear-gradient(90deg, var(--text), var(--signal) 55%, var(--layer-api));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+/* The public site's backdrop: the constellation, fading out toward the middle of the page so
+   text stays clear over it. */
+.site-backdrop {
+  mask-image: radial-gradient(ellipse 80% 70% at 50% 45%, transparent 20%, #000 85%);
+}

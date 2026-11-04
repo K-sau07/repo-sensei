@@ -6,7 +6,7 @@
  */
 
 import type { Spec } from "@/lib/api/diagrams";
-import type { Trace, TracePath } from "@/lib/api/trace";
+import { pipOf, type Pip, type Trace, type TracePath } from "@/lib/api/trace";
 import { mermaid, ratio, specOfTrace } from "@/lib/diagrams/from-trace";
 import fixture from "@/mocks/fixtures/trace.json";
 import { LOGIN_ENTRY } from "@/mocks/trace";
@@ -48,4 +48,29 @@ export function demoDiagram(): { spec: Spec; mermaid: string; verifiedRatio: num
     false,
   );
   return { spec, mermaid: mermaid(spec), verifiedRatio: ratio(spec) };
+}
+
+export interface StoryHop {
+  name: string;
+  layer: string;
+  file: string;
+  line: number | null;
+  /** How sure the hop is (the trace view's pip): none for the entry. */
+  pip: Pip | null;
+}
+
+/** The landing page's scroll story (10.3): the request half of the same sign-in trace, hop by
+ * hop, with each one's file, line and how sure it is. */
+export function storyHops(): StoryHop[] {
+  const path = demoTracePath();
+  const firstData = path.hops.findIndex((hop) => hop.layer === "db");
+  const afterData = path.hops.findIndex((hop, i) => i > firstData && hop.layer !== "db");
+  const hops = firstData < 0 || afterData < 0 ? path.hops : path.hops.slice(0, afterData);
+  return hops.map((hop) => ({
+    name: hop.node.name,
+    layer: hop.layer,
+    file: hop.node.path?.split("/").at(-1) ?? "",
+    line: hop.node.lines?.[0] ?? null,
+    pip: pipOf(hop.edge ?? null),
+  }));
 }

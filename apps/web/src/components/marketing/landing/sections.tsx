@@ -19,6 +19,8 @@ import Link from "next/link";
 import { buttonVariants } from "@/components/ui/button";
 import { CLIENT_LABELS, MCP_CLIENTS } from "@/lib/mcp-setup";
 
+import { Spotlight } from "./spotlight";
+
 const GUARANTEES = [
   { title: "Cites file and line", body: "Each claim points at the lines it stands on, at the commit it read." },
   { title: "Says when it can't tell", body: "When the code doesn't answer a question, the answer says so." },
@@ -95,18 +97,21 @@ export function Features() {
       <h2 id="features-title" className="text-2xl font-semibold tracking-tight">
         One index of the code, many ways to read it
       </h2>
-      <ul className="grid gap-4 md:grid-cols-3">
-        {FEATURES.map((feature) => (
-          <li
-            key={feature.title}
-            className={`flex flex-col gap-2 rounded-xl border border-line bg-surface-1 p-5 ${feature.wide ? "md:col-span-2" : ""}`}
-          >
-            <feature.icon aria-hidden className="size-5 text-signal" />
-            <h3 className="font-medium">{feature.title}</h3>
-            <p className="text-sm text-fg-muted">{feature.body}</p>
-          </li>
-        ))}
-      </ul>
+      <Spotlight>
+        <ul className="grid gap-4 md:grid-cols-3">
+          {FEATURES.map((feature) => (
+            <li
+              key={feature.title}
+              data-spotlight
+              className={`flex flex-col gap-2 overflow-hidden rounded-xl border border-line bg-surface-1/70 p-5 transition-colors hover:border-line-strong ${feature.wide ? "md:col-span-2" : ""}`}
+            >
+              <feature.icon aria-hidden className="size-5 text-signal" />
+              <h3 className="font-medium">{feature.title}</h3>
+              <p className="text-sm text-fg-muted">{feature.body}</p>
+            </li>
+          ))}
+        </ul>
+      </Spotlight>
     </section>
   );
 }
