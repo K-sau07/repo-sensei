@@ -79,6 +79,8 @@ def _return_path(slug: str | None, return_to: InstallReturn, *, ok: bool) -> str
     if return_to is InstallReturn.ONBOARDING or slug is None:
         # Success moves on to picking repositories; failure stays on the install step.
         return f"/onboarding?step={3 if ok else 2}" + (f"&org={quote(slug)}" if slug else "")
+    if return_to is InstallReturn.INTEGRATIONS:
+        return f"/{quote(slug)}/settings/integrations" + ("?installed=1" if ok else "")
     return f"/{quote(slug)}/repos/new" + ("?installed=1" if ok else "")
 
 

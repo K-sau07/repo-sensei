@@ -229,6 +229,17 @@ async def test_unconfigured_app_explains_itself(
 # ------------------------------------------------------------------ setup
 
 
+async def test_an_install_started_from_the_integrations_settings_returns_there(
+    github_app: FastAPI, client: httpx.AsyncClient, db_session: AsyncSession, web: str
+) -> None:
+    await _admin_with_org(github_app, client, db_session)
+    state = await _start(client, source="integrations")
+    with respx.mock(assert_all_called=False) as router:
+        _github(router)
+        response = await _setup(client, state)
+    assert response.headers["location"] == f"{web}/acme/settings/integrations?installed=1"
+
+
 async def test_setup_links_the_installation(
     github_app: FastAPI, client: httpx.AsyncClient, db_session: AsyncSession, web: str
 ) -> None:

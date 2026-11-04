@@ -1162,7 +1162,9 @@ export interface paths {
         get: operations["get_sentry_api_v1_orgs__org__integrations_sentry_get"];
         /**
          * Put Sentry
-         * @description Connect Sentry (or change the connection). Admins.
+         * @description Connect Sentry (or change the connection: its token and client secret may be left out
+         *     then, to keep the stored ones). Admins. 422 ``sentry_secrets_needed`` connecting without
+         *     them.
          */
         put: operations["put_sentry_api_v1_orgs__org__integrations_sentry_put"];
         post?: never;
@@ -4310,7 +4312,7 @@ export interface components {
          * @description Where the browser goes after installing.
          * @enum {string}
          */
-        InstallReturn: "onboarding" | "repos";
+        InstallReturn: "onboarding" | "repos" | "integrations";
         /** InstallationOut */
         InstallationOut: {
             /** Account Login */
@@ -5353,7 +5355,7 @@ export interface components {
              */
             auto_run: boolean;
             /** Client Secret */
-            client_secret: string;
+            client_secret?: string | null;
             /**
              * Min Events
              * @default 10
@@ -5366,7 +5368,7 @@ export interface components {
             /** Sentry Org */
             sentry_org: string;
             /** Token */
-            token: string;
+            token?: string | null;
         };
         /** SentryOut */
         SentryOut: {

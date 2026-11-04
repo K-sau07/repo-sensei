@@ -50,6 +50,7 @@ class InstallReturn(enum.StrEnum):
 
     ONBOARDING = "onboarding"
     REPOS = "repos"
+    INTEGRATIONS = "integrations"  # the org's integrations settings (10.7)
 
 
 class InstallStateError(DomainError):

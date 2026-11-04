@@ -5076,7 +5076,8 @@
         "description": "Where the browser goes after installing.",
         "enum": [
           "onboarding",
-          "repos"
+          "repos",
+          "integrations"
         ],
         "title": "InstallReturn",
         "type": "string"
@@ -8052,10 +8053,17 @@
             "type": "boolean"
           },
           "client_secret": {
-            "maxLength": 500,
-            "minLength": 8,
-            "title": "Client Secret",
-            "type": "string"
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "minLength": 8,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Client Secret"
           },
           "min_events": {
             "default": 10,
@@ -8080,16 +8088,21 @@
             "type": "string"
           },
           "token": {
-            "maxLength": 500,
-            "minLength": 8,
-            "title": "Token",
-            "type": "string"
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "minLength": 8,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Token"
           }
         },
         "required": [
-          "sentry_org",
-          "token",
-          "client_secret"
+          "sentry_org"
         ],
         "title": "SentryIn",
         "type": "object"
@@ -12970,7 +12983,7 @@
         ]
       },
       "put": {
-        "description": "Connect Sentry (or change the connection). Admins.",
+        "description": "Connect Sentry (or change the connection: its token and client secret may be left out\nthen, to keep the stored ones). Admins. 422 ``sentry_secrets_needed`` connecting without\nthem.",
         "operationId": "put_sentry_api_v1_orgs__org__integrations_sentry_put",
         "parameters": [
           {

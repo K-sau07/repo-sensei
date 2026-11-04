@@ -67,8 +67,9 @@ def _context(org_id: uuid.UUID, what: str) -> bytes:
 class SentryIn(BaseModel):
     sentry_org: str = Field(min_length=1, max_length=100, pattern=r"^[a-z0-9][a-z0-9_-]*$")
     api_url: str = Field(default="https://sentry.io", pattern=r"^https://[^\s/]+(/[^\s]*)?$")
-    token: str = Field(min_length=8, max_length=500)
-    client_secret: str = Field(min_length=8, max_length=500)
+    # Required to connect; once connected, left out to keep the ones stored (never shown again).
+    token: str | None = Field(default=None, min_length=8, max_length=500)
+    client_secret: str | None = Field(default=None, min_length=8, max_length=500)
     projects: dict[str, str] = Field(default_factory=dict, max_length=200)  # slug -> repo slug
     auto_run: bool = False
     min_events: int = Field(default=10, ge=1, le=100_000)
@@ -110,7 +111,9 @@ async def _out(db: AsyncSession, request: Request, org: str, found: SentryIntegr
 async def put_sentry(
     request: Request, body: SentryIn, access: OrgAccessDep, db: DbSession
 ) -> SentryOut:
-    """Connect Sentry (or change the connection). Admins."""
+    """Connect Sentry (or change the connection: its token and client secret may be left out
+    then, to keep the stored ones). Admins. 422 ``sentry_secrets_needed`` connecting without
+    them."""
     require_role(access, Role.ADMIN)
     if not host_allowed(body.api_url, request.app.state.settings.fixer.sentry_hosts):
         raise InvalidError("That isn't a Sentry this server talks to.", code="sentry_host")
@@ -128,14 +131,21 @@ async def put_sentry(
     cipher = _cipher(request)
     found = await db.scalar(select(SentryIntegration).where(SentryIntegration.org_id == org_id))
     if found is None:
+        if body.token is None or body.client_secret is None:
+            raise InvalidError(
+                "Connecting Sentry needs its token and client secret.",
+                code="sentry_secrets_needed",
+            )
         found = SentryIntegration(org_id=org_id)
         db.add(found)
     found.sentry_org = body.sentry_org
     found.api_url = body.api_url.rstrip("/")
-    found.token_enc = cipher.encrypt(body.token.encode(), context=_context(org_id, "token"))
-    found.client_secret_enc = cipher.encrypt(
-        body.client_secret.encode(), context=_context(org_id, "secret")
-    )
+    if body.token is not None:
+        found.token_enc = cipher.encrypt(body.token.encode(), context=_context(org_id, "token"))
+    if body.client_secret is not None:
+        found.client_secret_enc = cipher.encrypt(
+            body.client_secret.encode(), context=_context(org_id, "secret")
+        )
     found.projects = {p: str(repos[r]) for p, r in body.projects.items()}
     found.auto_run = body.auto_run
     found.min_events = body.min_events

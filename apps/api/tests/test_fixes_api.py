@@ -277,6 +277,18 @@ async def test_sentry_is_connected_by_admins_and_its_webhook_starts_fixes(
     stored = await db_session.scalar(select(SentryIntegration))
     assert stored is not None
     assert SECRET.encode() not in stored.client_secret_enc  # encrypted
+    # Changed later without its secrets: the stored ones are kept (they're never shown).
+    kept_secret = stored.client_secret_enc
+    changed = {k: v for k, v in setup.items() if k not in {"token", "client_secret"}}
+    changed["min_events"] = 25
+    again = await client.put(f"{API}/orgs/acme/integrations/sentry", json=changed,
+                             headers=headers)  # fmt: skip
+    assert again.status_code == 200, again.text
+    assert again.json()["min_events"] == 25
+    await db_session.refresh(stored)
+    assert stored.client_secret_enc == kept_secret
+    changed["min_events"] = 10
+    await client.put(f"{API}/orgs/acme/integrations/sentry", json=changed, headers=headers)
     client.cookies.clear()
 
     # A forged delivery: refused before anything is read.
