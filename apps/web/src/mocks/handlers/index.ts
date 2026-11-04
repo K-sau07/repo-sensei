@@ -6,6 +6,7 @@ import { changeHandlers } from "./changes";
 import { constellationHandlers } from "./constellation";
 import { depsHandlers } from "./deps";
 import { diagramHandlers } from "./diagrams";
+import { exploreHandlers } from "./explore";
 import { fixHandlers } from "./fixes";
 import { galaxyHandlers } from "./galaxy";
 import { graphHandlers } from "./graph";
@@ -30,6 +31,7 @@ export { apiError } from "./errors";
 /** Order matters: specific paths (slug-available) are listed before parameterised ones. */
 export const handlers = [
   ...meHandlers,
+  ...exploreHandlers,
   ...oauthHandlers,
   ...constellationHandlers,
   ...browseHandlers,

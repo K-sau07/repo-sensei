@@ -29,7 +29,7 @@ type Story = StoryObj<typeof meta>;
 
 /** The one input: anything that isn't a GitHub repository's URL is said so at once. */
 export const Input: Story = {
-  render: () => <RepoInput published={[]} />,
+  render: () => <RepoInput />,
   play: async ({ canvas }) => {
     await userEvent.type(canvas.getByLabelText("A public GitHub repository's URL"), "not a url");
     await userEvent.click(canvas.getByRole("button", { name: "Understand it" }));

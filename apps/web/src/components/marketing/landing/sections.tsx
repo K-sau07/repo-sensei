@@ -53,7 +53,7 @@ const FEATURES: readonly Feature[] = [
   {
     icon: BookOpenCheck,
     title: "Ask",
-    body: "Questions about the code, answered from the code: each claim checked against the lines it cites before you read it.",
+    body: "Questions about the code, answered from the code: each claim checked against the lines it cites, and each citation says whether they hold it up.",
     wide: true,
   },
   {
@@ -79,7 +79,7 @@ const FEATURES: readonly Feature[] = [
   {
     icon: Wrench,
     title: "Fix and change",
-    body: "From a stack trace, an issue or a request: investigated, planned for your approval, patched in a sandbox and verified by the tests.",
+    body: "From a stack trace or an issue: investigated, reproduced by a failing test, planned for your approval, patched in a sandbox and verified by the tests. A change asked for in plain words is planned, approved and tested the same way.",
     wide: true,
   },
   {
@@ -112,11 +112,12 @@ export function Features() {
 }
 
 const SAFEGUARDS = [
-  "Code is read through a GitHub App, installed only on the repositories you choose.",
+  "Private code is read through a GitHub App, installed only on the repositories you choose.",
   "Each organization's data is kept apart in the database itself, row by row.",
-  "Code under test runs in a sandbox: no network but the package registries it installs from.",
+  "Tests run in a sandbox with no network; only installing dependencies reaches the package registries.",
   "Nothing is changed without a person approving the plan; risky plans need two.",
-  "Spend has daily and monthly caps, and every action is in the audit log.",
+  "Agent runs stop at a daily spending cap, and summaries at a monthly budget.",
+  "Changes to members, repositories, keys, integrations and fixes are in the audit log.",
 ] as const;
 
 export function Safety() {

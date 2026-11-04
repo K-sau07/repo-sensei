@@ -24,16 +24,21 @@ export function parseGitHubUrl(value: string): GitHubRepoName | null {
     host = (ssh.groups.host ?? "").toLowerCase();
     path = ssh.groups.path ?? "";
   } else {
+    const full = text.includes("://") ? text : `https://${text}`;
     let url: URL;
     try {
-      url = new URL(text.includes("://") ? text : `https://${text}`);
+      url = new URL(full);
     } catch {
       return null;
     }
     if (url.protocol !== "https:" && url.protocol !== "http:") return null;
-    if (url.username || url.password || url.port) return null;
+    // As written, not as the browser normalises it: a port (":443" too, which URL drops) is
+    // refused, and "a/../b" is read as its segments (URL would make it "b"), as the API reads.
+    const rest = full.slice(full.indexOf("://") + 3);
+    const authority = rest.split(/[/?#]/, 1)[0] ?? "";
+    if (url.username || url.password || /:\d+$/.test(authority)) return null;
     host = url.hostname.toLowerCase();
-    path = url.pathname;
+    path = rest.slice(authority.length).split(/[?#]/, 1)[0] ?? "";
   }
   if (!HOSTS.has(host)) return null;
   const [owner, rawName] = path.split("/").filter(Boolean);

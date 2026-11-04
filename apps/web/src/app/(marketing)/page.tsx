@@ -12,7 +12,7 @@ import {
   Safety,
 } from "@/components/marketing/landing/sections";
 import { Skeleton } from "@/components/ui/skeleton";
-import { featuredRepo, humanCheck, publicRepos } from "@/lib/api/explore-server";
+import { featuredRepo, humanCheck } from "@/lib/api/explore-server";
 
 const DESCRIPTION =
   "Ask a codebase anything and get answers that cite the lines they stand on. Trace features across layers, draw verified diagrams, and fix bugs with tests that prove it.";
@@ -36,9 +36,7 @@ export default function LandingPage() {
           Understand any codebase, with answers you can verify.
         </h1>
         <p className="max-w-2xl text-lg text-fg-muted">{DESCRIPTION}</p>
-        <Suspense fallback={<RepoInput published={[]} />}>
-          <Input />
-        </Suspense>
+        <RepoInput />
       </section>
       <Suspense fallback={<Skeleton className="h-80 rounded-2xl" />}>
         <Demo />
@@ -52,13 +50,7 @@ export default function LandingPage() {
   );
 }
 
-async function Input() {
-  await connection(); // the API's, read when asked: never at build (there is no API then)
-  const repos = await publicRepos().catch(() => []);
-  return <RepoInput published={repos.map((repo) => repo.full_name)} />;
-}
-
 async function Demo() {
-  await connection();
+  await connection(); // the API's, read when asked: never at build (there is no API then)
   return <LiveDemo page={await featuredRepo()} human={humanCheck()} />;
 }
