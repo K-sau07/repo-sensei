@@ -3,6 +3,7 @@
  * what it was done to (from the event's target and details).
  */
 import type { Schemas } from "@/lib/api/types";
+import { STEP_LABELS, type Step } from "@/lib/orgs/models";
 
 export type AuditAction = Schemas["AuditAction"];
 export type AuditEvent = Schemas["AuditEventOut"];
@@ -14,6 +15,7 @@ export const ACTION_LABELS: Record<AuditAction, string> = {
   "auth.account_delete": "Deleted their account",
   "org.create": "Created the organization",
   "org.update": "Renamed the organization",
+  "org.models_update": "Changed the models",
   "org.delete": "Deleted the organization",
   "org.restore": "Restored the organization",
   "org.purge": "Purged the organization",
@@ -82,6 +84,10 @@ export function targetLabel(
   if (event.action === "member.role_change" && typeof meta.from === "string") {
     const change = `${meta.from} → ${typeof meta.to === "string" ? meta.to : "?"}`;
     return member ? `@${member}: ${change}` : change;
+  }
+  if (event.action === "org.models_update") {
+    const steps = Object.keys(meta).filter((step): step is Step => step in STEP_LABELS);
+    return steps.map((step) => STEP_LABELS[step]).join(", ") || null;
   }
   if (member) return `@${member}`;
   for (const key of DETAIL_KEYS) {

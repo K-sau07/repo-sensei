@@ -12,6 +12,7 @@ const ITEMS = [
   { section: "settings/integrations", label: "Integrations" },
   { section: "settings/api-keys", label: "API keys" },
   { section: "settings/mcp", label: "Editors (MCP)" },
+  { section: "settings/models", label: "Models" },
   { section: "settings/usage", label: "Usage" },
   { section: "settings/security", label: "Security" },
   { section: "settings/danger", label: "Danger zone" },

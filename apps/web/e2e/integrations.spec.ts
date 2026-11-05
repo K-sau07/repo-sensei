@@ -162,3 +162,25 @@ test.describe("Slack", () => {
     await expect(page).toHaveURL(/\/settings\/notifications$/);
   });
 });
+
+test.describe("models", () => {
+  test("a step is raised, kept after a reload, and put back", async ({ page }) => {
+    await page.goto("/acme/settings/models");
+    const fixes = page.getByRole("region", { name: "Fixes and changes" });
+    await expect(fixes).toContainText("Recommended: Sonnet 5.5 at medium effort");
+    await noAxeViolations(page);
+    await fixes.getByRole("combobox", { name: "Fixes and changes: effort" }).click();
+    // Only what keeps it accurate: a fix can't be set below its medium effort.
+    await expect(page.getByRole("option")).toHaveText(["Recommended", "At least high"]);
+    await page.getByRole("option", { name: "At least high" }).click();
+    await expect(page.getByText("Fixes and changes updated")).toBeVisible();
+    await page.reload();
+    const effort = page
+      .getByRole("region", { name: "Fixes and changes" })
+      .getByRole("combobox", { name: "Fixes and changes: effort" });
+    await expect(effort).toContainText("At least high");
+    await effort.click();
+    await page.getByRole("option", { name: "Recommended" }).click();
+    await expect(effort).toContainText("Recommended");
+  });
+});

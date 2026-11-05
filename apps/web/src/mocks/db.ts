@@ -17,6 +17,7 @@ import type {
   Schemas,
   SessionInfo,
 } from "@/lib/api/types";
+import type { EffortChoice, Step, TierChoice } from "@/lib/orgs/models";
 
 import type { MockChange } from "./handlers/changes";
 import type { MockJob } from "./jobs";
@@ -92,6 +93,8 @@ export interface MockDb {
   inbox?: Record<string, InboxItem[]>;
   /** Each org's Slack, by org slug (see handlers/inbox.ts): the webhook kept whole here. */
   slack?: Record<string, { webhook_url: string; channel: string; kinds: NotificationKind[] }>;
+  /** Each org's raised steps, by org slug (see handlers/audit.ts): as the API stores them. */
+  modelChoices?: Record<string, Partial<Record<Step, { tier: TierChoice; effort: EffortChoice }>>>;
   /** Each org's Sentry as changed here (null: disconnected; see handlers/fixes.ts). */
   sentry?: Record<string, Schemas["SentryOut"] | null>;
   /** Orgs deleted and still restorable, by slug (see handlers/orgs.ts). */

@@ -1,12 +1,15 @@
 /**
  * The mock audit log (10.7.2): a few days of what an org records, newest first, filtered by
- * action and actor and paged by `before` as the API pages it; and a month of its usage.
+ * action and actor and paged by `before` as the API pages it; a month of its usage; and its
+ * models, a step raised only to what the API allows.
  */
 import { http, HttpResponse } from "msw";
 
 import type { AuditEvent } from "@/lib/orgs/audit";
-import { atLeast, HUBOT, OCTO } from "@/mocks/db";
+import type { EffortChoice, ModelsOut, Step, TierChoice } from "@/lib/orgs/models";
+import { atLeast, db, HUBOT, OCTO, saveDb } from "@/mocks/db";
 
+import { apiError } from "./errors";
 import { orgAccess } from "./orgs";
 import { insufficientRole } from "./session";
 
@@ -91,7 +94,64 @@ function usage() {
   };
 }
 
+const STEPS: Record<Step, { tiers: TierChoice[]; efforts: EffortChoice[] }> = {
+  answers: { tiers: ["recommended", "deep"], efforts: ["recommended", "medium", "high"] },
+  diagrams: {
+    tiers: ["recommended", "standard", "deep"],
+    efforts: ["recommended", "medium", "high"],
+  },
+  fixes: { tiers: ["recommended", "deep"], efforts: ["recommended", "high"] },
+};
+
+function modelsOut(org: string): ModelsOut {
+  const chosen = db.modelChoices?.[org] ?? {};
+  return {
+    steps: (Object.keys(STEPS) as Step[]).map((step) => ({
+      step,
+      tier: chosen[step]?.tier ?? "recommended",
+      effort: chosen[step]?.effort ?? "recommended",
+      ...STEPS[step],
+    })),
+    models: { fast: "claude-haiku-5-5", standard: "claude-sonnet-5-5", deep: "claude-opus-5-5" },
+  };
+}
+
+function modelsAdmin(org: string): Response | null {
+  const access = orgAccess(org);
+  if (access instanceof Response) return access;
+  return atLeast(access.role, "admin") ? null : insufficientRole("admin", access.role);
+}
+
 export const auditHandlers = [
+  http.get<{ org: string }>("*/api/v1/orgs/:org/settings/models", ({ params }) => {
+    return modelsAdmin(params.org) ?? HttpResponse.json(modelsOut(params.org));
+  }),
+
+  http.patch<{ org: string }>("*/api/v1/orgs/:org/settings/models", async ({ params, request }) => {
+    const refused = modelsAdmin(params.org);
+    if (refused) return refused;
+    const body = (await request.json()) as Partial<
+      Record<Step, { tier?: TierChoice; effort?: EffortChoice }>
+    >;
+    let chosen = { ...db.modelChoices?.[params.org] };
+    for (const step of Object.keys(STEPS) as Step[]) {
+      const wanted = body[step];
+      if (!wanted) continue;
+      const tier = wanted.tier ?? "recommended";
+      const effort = wanted.effort ?? "recommended";
+      if (!STEPS[step].tiers.includes(tier) || !STEPS[step].efforts.includes(effort)) {
+        return apiError(422, "invalid_model_choice", `${step} can't run on that`);
+      }
+      chosen =
+        tier === "recommended" && effort === "recommended"
+          ? Object.fromEntries(Object.entries(chosen).filter(([key]) => key !== step))
+          : { ...chosen, [step]: { tier, effort } };
+    }
+    db.modelChoices = { ...db.modelChoices, [params.org]: chosen };
+    saveDb();
+    return HttpResponse.json(modelsOut(params.org));
+  }),
+
   http.get<{ org: string }>("*/api/v1/orgs/:org/usage", ({ params }) => {
     const access = orgAccess(params.org);
     if (access instanceof Response) return access;
