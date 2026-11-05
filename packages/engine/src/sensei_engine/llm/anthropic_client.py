@@ -290,6 +290,7 @@ class AnthropicClient:
         self._http = http_client
         self._client: anthropic.AsyncAnthropic | None = None
         self._floor = RECOMMENDED
+        self._origin = self  # the client a floored copy shares its SDK client (and pool) with
 
     @property
     def configured(self) -> bool:
@@ -506,6 +507,8 @@ class AnthropicClient:
             await results.close()
 
     def _sdk(self) -> anthropic.AsyncAnthropic:
+        if self._origin is not self:
+            return self._origin._sdk()  # pyright: ignore[reportPrivateUsage]
         if self._client is None:
             key = self._settings.api_key
             if key is None:

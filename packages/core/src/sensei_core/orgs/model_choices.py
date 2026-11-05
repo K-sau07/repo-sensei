@@ -109,8 +109,11 @@ def at_least(value: str, floor: str, order: tuple[str, ...]) -> str:
     return floor if order.index(floor) > order.index(value) else value
 
 
-async def load(db: AsyncSession, org_id: uuid.UUID) -> ModelChoices:
-    raw = await db.scalar(select(Org.model_choices).where(Org.id == org_id))
+async def load(db: AsyncSession, org_id: uuid.UUID, *, lock: bool = False) -> ModelChoices:
+    """The org's choices; ``lock``: the row held until the transaction ends (to change them, so
+    two admins' changes at once both keep)."""
+    query = select(Org.model_choices).where(Org.id == org_id)
+    raw = await db.scalar(query.with_for_update() if lock else query)
     return ModelChoices.read(raw)
 
 

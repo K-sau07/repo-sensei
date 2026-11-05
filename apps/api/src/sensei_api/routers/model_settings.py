@@ -84,7 +84,7 @@ async def update_models(
 ) -> ModelsOut:
     """Raise (or put back) the model and effort of the steps given."""
     require_role(access, Role.ADMIN)
-    before = await model_choices.load(db, access.org.id)
+    before = await model_choices.load(db, access.org.id, lock=True)
     changed: dict[str, StepChoice] = {}
     for step in Step:
         wanted: StepChoice | None = getattr(body, step.value)

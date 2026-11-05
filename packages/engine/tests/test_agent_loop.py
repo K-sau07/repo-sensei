@@ -380,6 +380,14 @@ async def test_a_raised_floor_answers_on_opus_and_warms_opus(tmp_path: Path) -> 
         assert (body["model"], body["output_config"]) == ("claude-opus-5-5", {"effort": "high"})
 
 
+def test_a_floored_client_shares_its_connection_pool() -> None:
+    client = _fake().client()
+    floored = client.floored(StepChoice(tier="deep"))
+    assert floored is not client
+    assert floored._sdk() is client._sdk()  # pyright: ignore[reportPrivateUsage]
+    assert client.floored(StepChoice()) is client
+
+
 async def test_deep_runs_on_the_deep_model(tmp_path: Path) -> None:
     fake = _fake(_answer([_text("Yes.")], "end_turn"), _answer([_text("Yes.")], "end_turn"))
     events = await _events(

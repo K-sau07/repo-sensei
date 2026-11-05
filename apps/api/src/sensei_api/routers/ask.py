@@ -62,7 +62,7 @@ from sensei_core.models import (
 )
 from sensei_core.models.chunks import EMBEDDING_DIMENSIONS
 from sensei_core.orgs import model_choices
-from sensei_core.orgs.model_choices import StepChoice
+from sensei_core.orgs.model_choices import RECOMMENDED, StepChoice
 from sensei_core.storage import Bucket, ObjectStorage
 from sensei_engine.agent.loop import Answer, AskAgent, Budget, Done, Exchange, Mode
 from sensei_engine.agent.tools import ToolContext
@@ -362,7 +362,7 @@ async def answer_anonymously(
     return await _respond(
         request, db, redis, repo=repo, snapshot=snapshot, conversation=conversation,
         message=message, mode=Mode.FAST, earlier=[], scope=None, user_id=None, cap=cap,
-        held=held, keep=False,
+        held=held, keep=False, floored=False,
     )  # fmt: skip
 
 
@@ -397,10 +397,13 @@ async def _respond(
     cap: Decimal | None,
     held: bool,
     keep: bool,
+    floored: bool = True,
 ) -> EventSourceResponse:
     """The question stored and its answer streamed: a kept one (a first question, not scoped),
     or a run's, started once the response is, spending up to ``cap`` (``held``: set aside from
-    the org's day while it runs; ``keep``: whether its answer may be kept)."""
+    the org's day while it runs; ``keep``: whether its answer may be kept; ``floored``: on the
+    org's floor for answers, else as recommended: a public page's question, whose small cap a
+    larger model would cut short)."""
     asked: list[dict[str, Any]] = [{"type": "text", "text": message}]
     if scope is not None:
         asked.append({"type": "data-scope", "id": "scope", "data": scope})
@@ -411,7 +414,7 @@ async def _respond(
         parts=asked,
         snapshot_id=snapshot.id,
     )
-    floor = (await model_choices.load(db, repo.org_id)).answers
+    floor = (await model_choices.load(db, repo.org_id)).answers if floored else RECOMMENDED
     cached_as = _cached_as(mode, floor)
     # Only a question asked first is answered from (and kept in) the cache: a follow-up's words
     # mean what the conversation before them does, which is its asker's alone.
