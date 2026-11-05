@@ -6,6 +6,19 @@ test.describe("the landing page", () => {
   test.describe("signed out", () => {
     test.use({ signedIn: false });
 
+    test.describe("without JavaScript", () => {
+      test.use({ javaScriptEnabled: false });
+
+      test("the sections that rise into view are shown at once", async ({ page }) => {
+        await page.goto("/");
+        const sections = page.locator("[data-reveal]");
+        await expect(sections.first()).toBeAttached();
+        for (const section of await sections.all()) {
+          await expect(section).toHaveCSS("opacity", "1");
+        }
+      });
+    });
+
     test("a visitor asks the demo repository a suggested question and reads its sources", async ({
       page,
     }) => {

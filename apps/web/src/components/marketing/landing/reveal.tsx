@@ -1,7 +1,8 @@
 "use client";
 
 /** A section that rises into place as it scrolls into view (once). With reduced motion it only
- * fades (the app's MotionConfig). */
+ * fades (the app's MotionConfig). It starts hidden, so `data-reveal` shows it where nothing will
+ * animate it: without JavaScript (the marketing layout's noscript style) and in print. */
 import * as m from "motion/react-m";
 
 export function Reveal({
@@ -15,6 +16,7 @@ export function Reveal({
 }) {
   return (
     <m.div
+      data-reveal
       className={className}
       initial={{ opacity: 0, y: 24 }}
       whileInView={{ opacity: 1, y: 0 }}

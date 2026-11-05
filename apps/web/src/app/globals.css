@@ -426,3 +426,11 @@
 .site-backdrop {
   mask-image: radial-gradient(ellipse 80% 70% at 50% 45%, transparent 20%, #000 85%);
 }
+
+/* Sections that rise into view (marketing Reveal) start hidden: printed, they're all shown. */
+@media print {
+  [data-reveal] {
+    opacity: 1 !important;
+    transform: none !important;
+  }
+}

@@ -9,6 +9,10 @@ export default function Layout({ children }: { children: React.ReactNode }) {
       <div aria-hidden className="site-backdrop pointer-events-none fixed inset-0 -z-30">
         <ConstellationBackdrop />
       </div>
+      {/* Sections that rise into view start hidden: shown at once without JavaScript. */}
+      <noscript>
+        <style>{"[data-reveal]{opacity:1!important;transform:none!important}"}</style>
+      </noscript>
       <SiteHeader />
       <main className="flex flex-1 flex-col">{children}</main>
       <SiteFooter />
