@@ -12,8 +12,8 @@ is generally available, and changes will be listed in the [changelog](/changelog
 - **The code of repositories you connect**: a copy of each indexed commit, and the index made
   from it (symbols, search indexes, the code's graph, summaries).
 - **Usage**: what each action cost and on which model, to keep within limits and caps.
-- **The audit log**: changes to members, roles, repositories, keys, integrations and fixes, with
-  who made them and when.
+- **The audit log**: sign-ins and changes to members, roles, repositories, keys, integrations
+  and fixes, with who made them, when, and the address they came from.
 
 For questions asked without an account on [Explore](/explore), no account is made; the address
 they came from is kept only as a keyed hash, to apply per-address limits.
@@ -42,7 +42,9 @@ server.
   it is tracked.
 - **A deleted organization** can be restored for 7 days, then everything in it is purged.
 - **A deleted account** loses its sessions, GitHub tokens and its name, login, email and avatar
-  at once. What it wrote in organizations stays with them, by an anonymous author.
+  at once. What it wrote in organizations stays with them, by an anonymous author. The audit
+  log is never edited: its entries keep the anonymous account's id and the addresses they came
+  from.
 
 ## Your choices
 
