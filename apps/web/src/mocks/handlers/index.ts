@@ -12,6 +12,7 @@ import { galaxyHandlers } from "./galaxy";
 import { graphHandlers } from "./graph";
 import { impactHandlers } from "./impact";
 import { inboxHandlers } from "./inbox";
+import { insightHandlers } from "./insights";
 import { invitationHandlers } from "./invitations";
 import { mcpHandlers } from "./mcp";
 import { meHandlers } from "./me";
@@ -43,6 +44,7 @@ export const handlers = [
   ...traceHandlers,
   ...askHandlers,
   ...auditHandlers,
+  ...insightHandlers,
   ...refHandlers,
   ...diagramHandlers,
   ...inboxHandlers,

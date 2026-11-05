@@ -184,3 +184,17 @@ test.describe("models", () => {
     await expect(effort).toContainText("Recommended");
   });
 });
+
+test.describe("insights", () => {
+  test("the month's questions, answers, repositories, modules and weeks", async ({ page }) => {
+    await page.goto("/acme/insights");
+    await expect(page.getByRole("heading", { level: 1, name: "Insights" })).toBeVisible();
+    await expect(page.getByRole("region", { name: "Answered from the code" })).toContainText("%");
+    await expect(page.getByRole("img", { name: /Questions each day/ })).toBeVisible();
+    await page.getByText("The modules, as a table").click();
+    await expect(page.getByRole("table", { name: "Most cited modules" })).toContainText(
+      "backend/app",
+    );
+    await noAxeViolations(page);
+  });
+});

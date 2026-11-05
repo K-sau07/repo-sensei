@@ -1,9 +1,14 @@
 import type { Metadata } from "next";
+import { Suspense } from "react";
 
-import { ComingSoon } from "@/components/coming-soon";
+import { InsightsPage } from "@/components/insights/insights-page";
 
 export const metadata: Metadata = { title: "Insights" };
 
-export default function InsightsPage() {
-  return <ComingSoon title="Insights" />;
+export default function Page() {
+  return (
+    <Suspense>
+      <InsightsPage />
+    </Suspense>
+  );
 }
