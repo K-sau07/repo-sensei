@@ -732,6 +732,7 @@
           "auth.logout_all",
           "org.create",
           "org.update",
+          "org.models_update",
           "org.delete",
           "org.restore",
           "org.purge",
@@ -5884,6 +5885,69 @@
         "title": "ModelOut",
         "type": "object"
       },
+      "ModelsOut": {
+        "properties": {
+          "models": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "The model each tier runs on: fast, standard, deep.",
+            "title": "Models",
+            "type": "object"
+          },
+          "steps": {
+            "items": {
+              "$ref": "#/components/schemas/sensei_api__routers__model_settings__StepOut"
+            },
+            "title": "Steps",
+            "type": "array"
+          }
+        },
+        "required": [
+          "steps",
+          "models"
+        ],
+        "title": "ModelsOut",
+        "type": "object"
+      },
+      "ModelsUpdate": {
+        "additionalProperties": false,
+        "description": "The steps to change; a step left out stays as it is.",
+        "properties": {
+          "answers": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/StepChoice"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "diagrams": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/StepChoice"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "fixes": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/StepChoice"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "title": "ModelsUpdate",
+        "type": "object"
+      },
       "ModuleLinkOut": {
         "properties": {
           "edges": {
@@ -7164,7 +7228,7 @@
           },
           "steps": {
             "items": {
-              "$ref": "#/components/schemas/StepOut"
+              "$ref": "#/components/schemas/sensei_api__routers__runs__StepOut"
             },
             "title": "Steps",
             "type": "array"
@@ -8488,6 +8552,42 @@
         "title": "StalenessOut",
         "type": "object"
       },
+      "Step": {
+        "enum": [
+          "answers",
+          "diagrams",
+          "fixes"
+        ],
+        "title": "Step",
+        "type": "string"
+      },
+      "StepChoice": {
+        "additionalProperties": false,
+        "properties": {
+          "effort": {
+            "default": "recommended",
+            "enum": [
+              "recommended",
+              "medium",
+              "high"
+            ],
+            "title": "Effort",
+            "type": "string"
+          },
+          "tier": {
+            "default": "recommended",
+            "enum": [
+              "recommended",
+              "standard",
+              "deep"
+            ],
+            "title": "Tier",
+            "type": "string"
+          }
+        },
+        "title": "StepChoice",
+        "type": "object"
+      },
       "StepEdit": {
         "properties": {
           "description": {
@@ -8508,70 +8608,6 @@
           "path"
         ],
         "title": "StepEdit",
-        "type": "object"
-      },
-      "StepOut": {
-        "properties": {
-          "has_output": {
-            "title": "Has Output",
-            "type": "boolean"
-          },
-          "idx": {
-            "title": "Idx",
-            "type": "integer"
-          },
-          "input": {
-            "additionalProperties": true,
-            "title": "Input",
-            "type": "object"
-          },
-          "kind": {
-            "title": "Kind",
-            "type": "string"
-          },
-          "ms": {
-            "title": "Ms",
-            "type": "integer"
-          },
-          "name": {
-            "title": "Name",
-            "type": "string"
-          },
-          "offset_ms": {
-            "title": "Offset Ms",
-            "type": "integer"
-          },
-          "output": {
-            "anyOf": [
-              {},
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Output"
-          },
-          "summary": {
-            "title": "Summary",
-            "type": "string"
-          },
-          "tokens": {
-            "title": "Tokens",
-            "type": "integer"
-          }
-        },
-        "required": [
-          "idx",
-          "kind",
-          "name",
-          "input",
-          "summary",
-          "tokens",
-          "ms",
-          "offset_ms",
-          "has_output",
-          "output"
-        ],
-        "title": "StepOut",
         "type": "object"
       },
       "SummaryOut": {
@@ -9717,6 +9753,130 @@
           "status"
         ],
         "title": "WebhookAccepted",
+        "type": "object"
+      },
+      "sensei_api__routers__model_settings__StepOut": {
+        "properties": {
+          "effort": {
+            "enum": [
+              "recommended",
+              "medium",
+              "high"
+            ],
+            "title": "Effort",
+            "type": "string"
+          },
+          "efforts": {
+            "description": "What it may be set to, recommended first.",
+            "items": {
+              "enum": [
+                "recommended",
+                "medium",
+                "high"
+              ],
+              "type": "string"
+            },
+            "title": "Efforts",
+            "type": "array"
+          },
+          "step": {
+            "$ref": "#/components/schemas/Step"
+          },
+          "tier": {
+            "enum": [
+              "recommended",
+              "standard",
+              "deep"
+            ],
+            "title": "Tier",
+            "type": "string"
+          },
+          "tiers": {
+            "description": "What it may be set to, recommended first.",
+            "items": {
+              "enum": [
+                "recommended",
+                "standard",
+                "deep"
+              ],
+              "type": "string"
+            },
+            "title": "Tiers",
+            "type": "array"
+          }
+        },
+        "required": [
+          "step",
+          "tier",
+          "effort",
+          "tiers",
+          "efforts"
+        ],
+        "title": "StepOut",
+        "type": "object"
+      },
+      "sensei_api__routers__runs__StepOut": {
+        "properties": {
+          "has_output": {
+            "title": "Has Output",
+            "type": "boolean"
+          },
+          "idx": {
+            "title": "Idx",
+            "type": "integer"
+          },
+          "input": {
+            "additionalProperties": true,
+            "title": "Input",
+            "type": "object"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "ms": {
+            "title": "Ms",
+            "type": "integer"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "offset_ms": {
+            "title": "Offset Ms",
+            "type": "integer"
+          },
+          "output": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Output"
+          },
+          "summary": {
+            "title": "Summary",
+            "type": "string"
+          },
+          "tokens": {
+            "title": "Tokens",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "idx",
+          "kind",
+          "name",
+          "input",
+          "summary",
+          "tokens",
+          "ms",
+          "offset_ms",
+          "has_output",
+          "output"
+        ],
+        "title": "StepOut",
         "type": "object"
       }
     }
@@ -18279,6 +18439,104 @@
         "summary": "Restore Org",
         "tags": [
           "orgs"
+        ]
+      }
+    },
+    "/api/v1/orgs/{org}/settings/models": {
+      "get": {
+        "description": "Each step's model and effort, and what it may be raised to.",
+        "operationId": "get_models_api_v1_orgs__org__settings_models_get",
+        "parameters": [
+          {
+            "description": "Organization slug",
+            "in": "path",
+            "name": "org",
+            "required": true,
+            "schema": {
+              "description": "Organization slug",
+              "title": "Org",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelsOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Models",
+        "tags": [
+          "models"
+        ]
+      },
+      "patch": {
+        "description": "Raise (or put back) the model and effort of the steps given.",
+        "operationId": "update_models_api_v1_orgs__org__settings_models_patch",
+        "parameters": [
+          {
+            "description": "Organization slug",
+            "in": "path",
+            "name": "org",
+            "required": true,
+            "schema": {
+              "description": "Organization slug",
+              "title": "Org",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ModelsUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelsOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Models",
+        "tags": [
+          "models"
         ]
       }
     },

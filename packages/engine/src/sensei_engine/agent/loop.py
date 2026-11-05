@@ -37,6 +37,7 @@ from decimal import Decimal
 from importlib import resources
 from typing import Any, Literal
 
+from sensei_core.orgs.model_choices import StepChoice
 from sensei_core.usage import CostCalculator
 from sensei_engine.agent.confidence import Abstention, Confidence, abstention, confidence
 from sensei_engine.agent.evidence import answer_blocks, final_set, gather
@@ -68,6 +69,7 @@ from sensei_engine.llm.anthropic_client import (
     LLMUsage,
     LLMUsageSink,
     Tier,
+    at_floor,
 )
 from sensei_engine.search.layers import lane_of
 from sensei_engine.search.rerank import Reranker, RerankUsageSink
@@ -270,10 +272,19 @@ class Plan:
     escalated: bool
 
 
-def plan_for(route: Route, mode: Mode, *, escalate: bool = False) -> Plan:
+def plan_for(
+    route: Route, mode: Mode, *, escalate: bool = False, floor: StepChoice | None = None
+) -> Plan:
+    """Sonnet, at low effort for a lookup; Opus at high for deep mode, an escalation and a
+    question across layers. ``floor``: the org's for answers (10.7.2), raising either."""
     if mode is Mode.DEEP or escalate or route.query_class in CROSS_CUTTING:
-        return Plan(Tier.DEEP, "high", escalated=True)
-    return Plan(Tier.STANDARD, "low" if route.query_class in LOOKUPS else "medium", False)
+        plan = Plan(Tier.DEEP, "high", escalated=True)
+    else:
+        plan = Plan(Tier.STANDARD, "low" if route.query_class in LOOKUPS else "medium", False)
+    if floor is None:
+        return plan
+    tier, effort = at_floor(floor, plan.tier, plan.effort)
+    return Plan(tier, effort or plan.effort, plan.escalated)
 
 
 @dataclass(slots=True)
@@ -353,6 +364,7 @@ class AskAgent:
         reranker: Reranker | None = None,
         on_rerank_usage: RerankUsageSink | None = None,
         verify: bool = True,
+        floor: StepChoice | None = None,
     ) -> None:
         self.client = client
         self.budget = budget or Budget()
@@ -362,6 +374,7 @@ class AskAgent:
         self.reranker = reranker  # 4.4's final rerank (None: the evidence in reading order)
         self.on_rerank_usage = on_rerank_usage
         self.verify = verify  # 4.5's checks (False: the answer as it came)
+        self.floor = floor  # the org's for answers (10.7.2): the answer's turns, not the checks
 
     def _counted(self, run: _Run) -> LLMUsageSink:
         """Where a check's usage goes (the support check, the whole-answer check, the evidence
@@ -378,7 +391,10 @@ class AskAgent:
         """Write the run's shared prefix to the cache (an Ask page opening): Sonnet's, at the
         effort most questions run at."""
         system = (system_prompt(), overview or await repo_overview(ctx))
-        request = LLMTurn((), system, definitions(), Tier.STANDARD, effort="medium")
+        tier, effort = (Tier.STANDARD, "medium")
+        if self.floor is not None:
+            tier, effort = at_floor(self.floor, tier, effort)
+        request = LLMTurn((), system, definitions(), tier, effort=effort)
         await self.client.prewarm(request, on_usage=self.on_usage)
 
     async def run(
@@ -392,7 +408,7 @@ class AskAgent:
         escalate: bool = False,
     ) -> AsyncIterator[AgentEvent]:
         route = classify(question).route
-        plan = plan_for(route, mode, escalate=escalate)
+        plan = plan_for(route, mode, escalate=escalate, floor=self.floor)
         run = _Run(
             plan,
             self.client.model_for(plan.tier),

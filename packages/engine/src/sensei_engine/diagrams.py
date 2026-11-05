@@ -34,6 +34,7 @@ from pydantic import BaseModel, ValidationError
 
 from sensei_core.logging import get_logger
 from sensei_core.models import EdgeType, Provenance
+from sensei_core.orgs.model_choices import StepChoice
 from sensei_engine.graph.snapshot import Edge, GraphSnapshot, Node
 from sensei_engine.graph.trace import TracePath, layer_of
 from sensei_engine.llm.anthropic_client import (
@@ -42,6 +43,7 @@ from sensei_engine.llm.anthropic_client import (
     LLMRequest,
     LLMUsageSink,
     Role,
+    at_floor,
     tier_for,
 )
 
@@ -498,13 +500,18 @@ async def generate(
     *,
     on_usage: LLMUsageSink | None = None,
     max_retries: int = MAX_RETRIES,
+    floor: StepChoice | None = None,
 ) -> Generated:
     """The diagram of ``sub`` (see the module). Raises :class:`DiagramError` when nothing is
-    left to draw."""
+    left to draw. ``floor``: the org's for diagrams (10.7.2), raising the labels' model or
+    effort."""
     if not sub.nodes:
         raise DiagramError("nothing to draw")
     if client is None or not client.configured:
         return Generated(plain(sub, kind, graph), 0, [])
+    tier, effort = tier_for(Role.ROUTER), "low"
+    if floor is not None:
+        tier, effort = at_floor(floor, tier, effort)
     base = render(sub, kind)
     feedback: list[str] = []
     checked: Checked | None = None
@@ -518,9 +525,9 @@ async def generate(
         request = LLMRequest(
             prompt,
             system=system_prompt(),
-            tier=tier_for(Role.ROUTER),
+            tier=tier,
             max_tokens=MAX_TOKENS,
-            effort="low",
+            effort=effort,
             schema=answer_schema(),
             cache_system=True,
         )

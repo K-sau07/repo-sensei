@@ -60,7 +60,7 @@ from sensei_fixer.patching import (
 from sensei_fixer.reproduce import Runners, Workspace
 from sensei_fixer.risk import Areas, Risk, assess, code_areas, graph_areas, higher, path_areas
 from sensei_fixer.runs import FixRunner, RunResult, SetupFailed
-from sensei_fixer.stages import Advance, Outcome, StageContext, StageHandler, Step, Stop
+from sensei_fixer.stages import Advance, Outcome, StageContext, StageHandler, Step, Stop, chosen
 from sensei_fixer.suites import (
     SuiteRun,
     SuiteVerdict,
@@ -724,7 +724,8 @@ def patch_stage(
         if isinstance(plan, str):
             return Stop(FixStatus.FAILED, plan)
         try:
-            async with working(ctx, workspace, runners, plan, (client(), costs)) as job:
+            model = (chosen(client(), ctx), costs)
+            async with working(ctx, workspace, runners, plan, model) as job:
                 return await _patch(job)
         except (NoFramework, SetupFailed, PatchError) as error:
             return Stop(FixStatus.FAILED, str(error))

@@ -52,7 +52,7 @@ from sensei_fixer.investigate import READ_TOOLS, Hooks, fenced
 from sensei_fixer.plan import MAX_STEPS, PlanError, items_of, planned_path, request_text
 from sensei_fixer.reproduce import Workspace
 from sensei_fixer.risk import Areas, assess, graph_areas, path_areas, text_areas
-from sensei_fixer.stages import Advance, Outcome, StageContext, StageHandler, Stop
+from sensei_fixer.stages import Advance, Outcome, StageContext, StageHandler, Stop, chosen
 from sensei_fixer.tooling import settle, text_result
 
 PROMPT_VERSION = "change_plan.v1"
@@ -397,8 +397,8 @@ def change_plan_stage(
             planning = _Planning(tools, deps)
             tier, effort = plan_for(f"{ctx.ticket.title} {ctx.ticket.text}", tools.tree)
             talk = Conversation(
-                client(), costs, hooks, tools, system_prompt(), definitions(), tier, effort,
-                MAX_TURNS, REMINDER, "a plan",
+                chosen(client(), ctx), costs, hooks, tools, system_prompt(), definitions(), tier,
+                effort, MAX_TURNS, REMINDER, "a plan",
             )  # fmt: skip
             ended = await talk.run(brief(ctx, previous), planning.call,
                                    lambda: planning.plan is not None)  # fmt: skip

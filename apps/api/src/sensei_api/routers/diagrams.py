@@ -40,6 +40,7 @@ from sensei_core.config import Settings
 from sensei_core.errors import ForbiddenError, InvalidError, NotFoundError, RateLimitedError
 from sensei_core.indexing.snapshots import resolve_snapshot
 from sensei_core.models import Diagram, DiagramKind, DiagramSource, Repo, Role
+from sensei_core.orgs import model_choices
 from sensei_core.orgs.service import OrgAccess
 from sensei_core.storage import ObjectStorage
 from sensei_engine.diagrams import (
@@ -236,7 +237,10 @@ async def create_diagram(
         used.append(usage)
 
     try:
-        made = await generate(_client(request), sub, graph, body.kind.value, on_usage=note)
+        floor = (await model_choices.load(db, repo.org_id)).diagrams
+        made = await generate(
+            _client(request), sub, graph, body.kind.value, on_usage=note, floor=floor
+        )
     except DiagramError as exc:
         raise NotFoundError(str(exc), code="diagram_nothing_found") from None
     spec = made.spec

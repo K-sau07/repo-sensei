@@ -2265,6 +2265,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/orgs/{org}/settings/models": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Models
+         * @description Each step's model and effort, and what it may be raised to.
+         */
+        get: operations["get_models_api_v1_orgs__org__settings_models_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Update Models
+         * @description Raise (or put back) the model and effort of the steps given.
+         */
+        patch: operations["update_models_api_v1_orgs__org__settings_models_patch"];
+        trace?: never;
+    };
     "/api/v1/orgs/{org}/usage": {
         parameters: {
             query?: never;
@@ -2688,7 +2712,7 @@ export interface components {
          * AuditAction
          * @enum {string}
          */
-        AuditAction: "auth.login" | "auth.logout" | "auth.logout_all" | "org.create" | "org.update" | "org.delete" | "org.restore" | "org.purge" | "auth.account_delete" | "invitation.create" | "invitation.revoke" | "invitation.accept" | "member.role_change" | "member.remove" | "member.leave" | "github.install.linked" | "github.install.deleted" | "github.install.suspended" | "github.install.unsuspended" | "github.install.permissions_accepted" | "repo.connected" | "repo.settings_update" | "repo.disconnected" | "repo.published" | "repo.unpublished" | "repo.index_started" | "repo.index_cancelled" | "agent.cost_cap_warning" | "conversation.shared" | "conversation.unshared" | "diagram.shared" | "diagram.unshared" | "api_key.create" | "api_key.revoke" | "oauth.authorize" | "oauth.refresh_reused" | "fix.create" | "fix.decision" | "sentry.connect" | "sentry.disconnect" | "slack.connect" | "slack.disconnect";
+        AuditAction: "auth.login" | "auth.logout" | "auth.logout_all" | "org.create" | "org.update" | "org.models_update" | "org.delete" | "org.restore" | "org.purge" | "auth.account_delete" | "invitation.create" | "invitation.revoke" | "invitation.accept" | "member.role_change" | "member.remove" | "member.leave" | "github.install.linked" | "github.install.deleted" | "github.install.suspended" | "github.install.unsuspended" | "github.install.permissions_accepted" | "repo.connected" | "repo.settings_update" | "repo.disconnected" | "repo.published" | "repo.unpublished" | "repo.index_started" | "repo.index_cancelled" | "agent.cost_cap_warning" | "conversation.shared" | "conversation.unshared" | "diagram.shared" | "diagram.unshared" | "api_key.create" | "api_key.revoke" | "oauth.authorize" | "oauth.refresh_reused" | "fix.create" | "fix.decision" | "sentry.connect" | "sentry.disconnect" | "slack.connect" | "slack.disconnect";
         /** AuditEventOut */
         AuditEventOut: {
             /** Action */
@@ -4619,6 +4643,27 @@ export interface components {
             /** Tokens Out */
             tokens_out: number;
         };
+        /** ModelsOut */
+        ModelsOut: {
+            /**
+             * Models
+             * @description The model each tier runs on: fast, standard, deep.
+             */
+            models: {
+                [key: string]: string;
+            };
+            /** Steps */
+            steps: components["schemas"]["sensei_api__routers__model_settings__StepOut"][];
+        };
+        /**
+         * ModelsUpdate
+         * @description The steps to change; a step left out stays as it is.
+         */
+        ModelsUpdate: {
+            answers?: components["schemas"]["StepChoice"] | null;
+            diagrams?: components["schemas"]["StepChoice"] | null;
+            fixes?: components["schemas"]["StepChoice"] | null;
+        };
         /** ModuleLinkOut */
         ModuleLinkOut: {
             /** Edges */
@@ -5084,7 +5129,7 @@ export interface components {
             /** Status */
             status: string;
             /** Steps */
-            steps: components["schemas"]["StepOut"][];
+            steps: components["schemas"]["sensei_api__routers__runs__StepOut"][];
             /** Stopped */
             stopped: string | null;
             /** Tokens In */
@@ -5519,37 +5564,32 @@ export interface components {
             /** Sha */
             sha: string;
         };
+        /**
+         * Step
+         * @enum {string}
+         */
+        Step: "answers" | "diagrams" | "fixes";
+        /** StepChoice */
+        StepChoice: {
+            /**
+             * Effort
+             * @default recommended
+             * @enum {string}
+             */
+            effort: "recommended" | "medium" | "high";
+            /**
+             * Tier
+             * @default recommended
+             * @enum {string}
+             */
+            tier: "recommended" | "standard" | "deep";
+        };
         /** StepEdit */
         StepEdit: {
             /** Description */
             description: string;
             /** Path */
             path: string;
-        };
-        /** StepOut */
-        StepOut: {
-            /** Has Output */
-            has_output: boolean;
-            /** Idx */
-            idx: number;
-            /** Input */
-            input: {
-                [key: string]: unknown;
-            };
-            /** Kind */
-            kind: string;
-            /** Ms */
-            ms: number;
-            /** Name */
-            name: string;
-            /** Offset Ms */
-            offset_ms: number;
-            /** Output */
-            output: unknown | null;
-            /** Summary */
-            summary: string;
-            /** Tokens */
-            tokens: number;
         };
         /** SummaryOut */
         SummaryOut: {
@@ -5934,6 +5974,55 @@ export interface components {
              * @enum {string}
              */
             status: "queued" | "duplicate";
+        };
+        /** StepOut */
+        sensei_api__routers__model_settings__StepOut: {
+            /**
+             * Effort
+             * @enum {string}
+             */
+            effort: "recommended" | "medium" | "high";
+            /**
+             * Efforts
+             * @description What it may be set to, recommended first.
+             */
+            efforts: ("recommended" | "medium" | "high")[];
+            step: components["schemas"]["Step"];
+            /**
+             * Tier
+             * @enum {string}
+             */
+            tier: "recommended" | "standard" | "deep";
+            /**
+             * Tiers
+             * @description What it may be set to, recommended first.
+             */
+            tiers: ("recommended" | "standard" | "deep")[];
+        };
+        /** StepOut */
+        sensei_api__routers__runs__StepOut: {
+            /** Has Output */
+            has_output: boolean;
+            /** Idx */
+            idx: number;
+            /** Input */
+            input: {
+                [key: string]: unknown;
+            };
+            /** Kind */
+            kind: string;
+            /** Ms */
+            ms: number;
+            /** Name */
+            name: string;
+            /** Offset Ms */
+            offset_ms: number;
+            /** Output */
+            output: unknown | null;
+            /** Summary */
+            summary: string;
+            /** Tokens */
+            tokens: number;
         };
     };
     responses: never;
@@ -10710,6 +10799,74 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["OrgOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_models_api_v1_orgs__org__settings_models_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization slug */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ModelsOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_models_api_v1_orgs__org__settings_models_patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization slug */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ModelsUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ModelsOut"];
                 };
             };
             /** @description Validation Error */

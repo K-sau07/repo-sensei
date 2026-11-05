@@ -5,9 +5,10 @@ from __future__ import annotations
 import enum
 import uuid
 from datetime import datetime
+from typing import Any
 
 from sqlalchemy import DateTime, Enum, ForeignKey, LargeBinary, String, Text, text
-from sqlalchemy.dialects.postgresql import CITEXT
+from sqlalchemy.dialects.postgresql import CITEXT, JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from sensei_core.db.base import Base, IdMixin, TimestampMixin
@@ -47,6 +48,10 @@ class Org(IdMixin, TimestampMixin, Base):
     avatar_url: Mapped[str | None] = mapped_column(Text)
     plan: Mapped[str] = mapped_column(String(32), server_default=text("'free'"))
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # The steps an admin raised to a larger model or more effort (sensei_core.orgs.model_choices).
+    model_choices: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, default=dict, server_default=text("'{}'::jsonb")
+    )
 
 
 class Membership(OrgScopedMixin, Base):

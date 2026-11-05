@@ -11,6 +11,7 @@ import httpx2
 import pytest
 
 from sensei_core.models import EdgeType, NodeKind, Provenance
+from sensei_core.orgs.model_choices import StepChoice
 from sensei_engine.diagrams import (
     MAX_DEPTH,
     DiagramError,
@@ -160,6 +161,19 @@ async def test_a_wrong_answer_is_sent_back_with_what_was_wrong(graph: GraphSnaps
     feedback = sent[1]["messages"][0]["content"]
     assert "Your last answer had these problems" in feedback
     assert "'n7' isn't one of the numbered nodes" in feedback
+
+
+async def test_the_labels_run_on_haiku_unless_the_org_raised_them(graph: GraphSnapshot) -> None:
+    sub = from_entries(graph, [graph.node(ROUTE)], "items")  # type: ignore[list-item]
+    right = _draft(["n1", "n2", "n3"], [("n1", "n2", ""), ("n2", "n3", "")]).model_dump()
+    fake, sent = _answers(right, right)
+    await generate(fake.client(), sub, graph, "sequence")
+    await generate(
+        fake.client(), sub, graph, "sequence", floor=StepChoice(tier="standard", effort="medium")
+    )
+    assert [(b["model"], b["output_config"]["effort"]) for b in sent] == [
+        ("claude-haiku-5-5", "low"), ("claude-sonnet-5-5", "medium"),
+    ]  # fmt: skip
 
 
 async def test_after_the_retries_what_is_wrong_is_left_out(graph: GraphSnapshot) -> None:

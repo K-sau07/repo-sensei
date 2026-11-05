@@ -61,6 +61,8 @@ from sensei_core.models import (
     Snapshot,
 )
 from sensei_core.models.chunks import EMBEDDING_DIMENSIONS
+from sensei_core.orgs import model_choices
+from sensei_core.orgs.model_choices import StepChoice
 from sensei_core.storage import Bucket, ObjectStorage
 from sensei_engine.agent.loop import Answer, AskAgent, Budget, Done, Exchange, Mode
 from sensei_engine.agent.tools import ToolContext
@@ -370,6 +372,15 @@ def _capped(cap: Decimal | None, remaining: Decimal | None) -> Decimal | None:
     return remaining if cap is None else min(cap, remaining)
 
 
+def _cached_as(mode: Mode, floor: StepChoice) -> str:
+    """The answer cache's key for the mode: an answer made on a raised model or effort is served
+    only while the org still asks for that: ``fast+dh`` (tier and effort by first letter, ``r``
+    for recommended; the column holds 16)."""
+    if floor.recommended:
+        return mode.value
+    return f"{mode.value}+{floor.tier[0]}{floor.effort[0]}"
+
+
 async def _respond(
     request: Request,
     db: AsyncSession,
@@ -400,6 +411,8 @@ async def _respond(
         parts=asked,
         snapshot_id=snapshot.id,
     )
+    floor = (await model_choices.load(db, repo.org_id)).answers
+    cached_as = _cached_as(mode, floor)
     # Only a question asked first is answered from (and kept in) the cache: a follow-up's words
     # mean what the conversation before them does, which is its asker's alone.
     # A scoped question means its file and lines too: answered afresh, and not kept.
@@ -410,7 +423,7 @@ async def _respond(
             db,
             repo_id=repo.id,
             snapshot_id=snapshot.id,
-            mode=mode.value,
+            mode=cached_as,
             question=message,
             embedding=embedding,
         )
@@ -456,6 +469,8 @@ async def _respond(
         message_id=answer.id,
         question=_scoped(message, scope),
         mode=mode,
+        floor=floor,
+        cached_as=cached_as,
         earlier=earlier,
         repo_name=f"{repo.owner}/{repo.name}",
         run_id=record.id,
@@ -700,6 +715,8 @@ class _Run:
     message_id: uuid.UUID
     question: str
     mode: Mode
+    floor: StepChoice  # the org's for answers (10.7.2)
+    cached_as: str  # the answer cache's mode: the mode, and the floor when it is raised
     earlier: list[Exchange]
     repo_name: str
     run_id: uuid.UUID
@@ -784,7 +801,7 @@ class _Run:
                     org_id=self.org_id,
                     repo_id=self.repo_id,
                     snapshot_id=self.snapshot_id,
-                    mode=self.mode.value,
+                    mode=self.cached_as,
                     question=self.question,
                     embedding=self.embedding,
                     message_id=self.message_id,
@@ -846,6 +863,7 @@ class _Run:
             costs=costs,
             on_usage=usage,
             reranker=ctx.search.reranker,
+            floor=self.floor,
         )
 
     async def _publish(self, key: str, parts: list[dict[str, Any]]) -> None:

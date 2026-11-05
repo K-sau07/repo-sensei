@@ -25,6 +25,8 @@ and the Message Batches API (half price, results within 24 hours) for bulk work 
 from __future__ import annotations
 
 import asyncio
+import copy
+import dataclasses
 import enum
 import json
 import logging
@@ -58,6 +60,13 @@ from anthropic.types.messages import MessageBatch, MessageBatchIndividualRespons
 from anthropic.types.messages.batch_create_params import Request
 
 from sensei_core.config import AnthropicSettings
+from sensei_core.orgs.model_choices import (
+    EFFORT_ORDER,
+    RECOMMENDED,
+    TIER_ORDER,
+    StepChoice,
+    at_least,
+)
 
 PROVIDER = "anthropic"
 FALLBACK_BETA = "server-side-fallback-2026-07-01"
@@ -263,6 +272,16 @@ class BatchItem:
     usage: tuple[LLMUsage, ...] = ()
 
 
+def at_floor(floor: StepChoice, tier: Tier, effort: Effort | None) -> tuple[Tier, Effort | None]:
+    """``tier`` and ``effort``, each raised to ``floor``'s where that is higher (10.7.2)."""
+    if floor.tier != "recommended":
+        tier = Tier(at_least(tier.value, floor.tier, TIER_ORDER))
+    if floor.effort != "recommended":
+        # No effort given means the model's default, high.
+        effort = cast("Effort", at_least(effort or "high", floor.effort, EFFORT_ORDER))
+    return tier, effort
+
+
 class AnthropicClient:
     def __init__(
         self, settings: AnthropicSettings, *, http_client: httpx2.AsyncClient | None = None
@@ -270,10 +289,27 @@ class AnthropicClient:
         self._settings = settings
         self._http = http_client
         self._client: anthropic.AsyncAnthropic | None = None
+        self._floor = RECOMMENDED
 
     @property
     def configured(self) -> bool:
         return self._settings.configured
+
+    def floored(self, choice: StepChoice) -> AnthropicClient:
+        """This client with its turns (:meth:`turn`, :meth:`prewarm`) on at least ``choice``'s
+        tier and effort: an org's floor for a step (10.7.2). One-off requests and batches run as
+        they ask."""
+        if choice.recommended:
+            return self
+        other = copy.copy(self)
+        other._floor = choice
+        return other
+
+    def _floored(self, request: LLMTurn) -> LLMTurn:
+        if self._floor.recommended:
+            return request
+        tier, effort = at_floor(self._floor, request.tier, request.effort)
+        return dataclasses.replace(request, tier=tier, effort=effort)
 
     def model_for(self, tier: Tier) -> str:
         match tier:
@@ -325,6 +361,7 @@ class AnthropicClient:
         """One turn, streamed (``on_text`` gets the answer's text as it comes). Its stop reason
         is the caller's to act on: a tool call, the end, ``max_tokens``, a refusal (after any
         fallback). Raises :class:`LLMError` when there was no answer."""
+        request = self._floored(request)
         with _sdk_errors():
             async with self._sdk().beta.messages.stream(**self._turn_params(request)) as stream:
                 async for event in stream:
@@ -350,6 +387,7 @@ class AnthropicClient:
         """Write ``request``'s shared prefix (its tools and system prompt) to the cache before
         the first real turn: ``max_tokens`` 0, a placeholder question, the same model, effort
         and tools (so the entry is the one real turns read), not streamed."""
+        request = self._floored(request)
         params = self._turn_params(request)
         params.update(max_tokens=0, messages=[{"role": "user", "content": WARMUP}])
         del params["cache_control"]  # automatic caching would key the entry to the placeholder

@@ -34,6 +34,7 @@ from sensei_core.fixes.tickets import Ticket
 from sensei_core.logging import get_logger
 from sensei_core.models import AgentRun, AgentStep, FixKind, FixRun, FixStage, FixStatus
 from sensei_core.models.fixes import TERMINAL
+from sensei_core.orgs import model_choices
 from sensei_fixer.budget import Budget
 from sensei_fixer.events import FixOutbox
 from sensei_fixer.stages import Advance, Cancelled, Outcome, StageContext, StageHandler, Step, Stop
@@ -124,12 +125,13 @@ class FixPipeline:
             ticket = Ticket.model_validate(run.ticket)
             repo_id = run.repo_id
             kind = run.kind or FixKind.FIX
+            floor = (await model_choices.load(db, run.org_id)).fixes
         await outbox.publish(self.redis)
         ctx = StageContext(
             fix_id=fix_id, org_id=org_id, repo_id=repo_id, stage=stage, ticket=ticket,
             facts=facts, record=self._recorder(org_id, fix_id, agent_id, repo_id),
             spend=self._spender(org_id, fix_id, agent_id), check=self._checker(org_id, fix_id),
-            kind=kind,
+            kind=kind, floor=floor,
         )  # fmt: skip
         return ctx, outbox
 

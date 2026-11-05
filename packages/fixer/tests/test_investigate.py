@@ -9,6 +9,7 @@ import json
 import subprocess
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from dataclasses import replace
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -18,6 +19,7 @@ import pytest
 
 from sensei_core.fixes.tickets import parse_ticket
 from sensei_core.models import FixStage, FixStatus
+from sensei_core.orgs.model_choices import RECOMMENDED, StepChoice
 from sensei_engine.agent.tools import ToolContext
 from sensei_engine.llm.anthropic_client import Tier
 from sensei_fixer.history import GitHistory, HistoryError
@@ -274,6 +276,33 @@ async def test_the_stage_keeps_the_findings_or_stops(repo: tuple[Path, str, str]
     assert isinstance(stopped, Stop)
     assert stopped.status is FixStatus.FAILED
     assert stopped.reason == "Investigation: The investigation ended without findings."
+
+
+async def test_the_orgs_floor_raises_every_turn_of_the_stage(repo: tuple[Path, str, str]) -> None:
+    root, bad, head = repo
+
+    @asynccontextmanager
+    async def workspace(_ctx_: StageContext) -> AsyncGenerator[tuple[ToolContext, GitHistory]]:
+        yield _ctx(root, head), GitHistory(root, head)
+
+    seen = Seen()
+    stage = StageContext(
+        fix_id=None, org_id=None, repo_id=None, stage=FixStage.INVESTIGATE,  # type: ignore[arg-type]
+        ticket=parse_ticket(TRACE, paths=[STATS]), facts={},
+        record=seen.hooks().record, spend=seen.hooks().spend, check=seen.hooks().check,
+        floor=StepChoice(tier="deep", effort="high"),
+    )  # fmt: skip
+    fake = _fake(_answer([_tool("t1", "read_code", {"path": STATS})]),
+                 _answer([_tool("t2", SUBMIT, _findings(bad))]))  # fmt: skip
+    outcome = await investigate_stage(workspace, fake.client, None)(stage)
+    assert isinstance(outcome, Advance)
+    # The report points into the repository (Sonnet at medium) but the org asked for Opus at high.
+    for body in fake.bodies(PATH):
+        assert (body["model"], body["output_config"]) == ("claude-opus-5-5", {"effort": "high"})
+    recommended = _fake(_answer([_tool("t1", SUBMIT, _findings(bad))]))
+    await investigate_stage(workspace, recommended.client, None)(replace(stage, floor=RECOMMENDED))
+    (body,) = recommended.bodies(PATH)
+    assert (body["model"], body["output_config"]) == ("claude-sonnet-5-5", {"effort": "medium"})
 
 
 async def test_a_shallow_boundary_is_no_suspect_and_a_suspect_is_its_full_id(

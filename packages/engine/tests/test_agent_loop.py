@@ -14,6 +14,7 @@ from typing import Any
 import httpx2
 import pytest
 
+from sensei_core.orgs.model_choices import StepChoice
 from sensei_core.usage import DEFAULT_PRICE_TABLE, CostCalculator
 from sensei_engine.agent.evidence import (
     INTRO,
@@ -344,6 +345,39 @@ def test_the_question_picks_the_model_and_effort(
 ) -> None:
     plan = plan_for(classify(question).route, mode)
     assert (plan.tier, plan.effort) == (tier, effort)
+
+
+@pytest.mark.parametrize(
+    ("question", "floor", "tier", "effort"),
+    [
+        # A floor raises a lookup ...
+        ("where is create_item defined?", StepChoice(tier="deep"), Tier.DEEP, "low"),
+        ("where is create_item defined?", StepChoice(effort="medium"), Tier.STANDARD, "medium"),
+        # ... and never lowers a question that already runs higher.
+        ("what is the architecture of the backend?", StepChoice(effort="medium"), Tier.DEEP,
+         "high"),
+        ("how is a new item created?", StepChoice(), Tier.STANDARD, "medium"),
+    ],
+)  # fmt: skip
+def test_the_orgs_floor_raises_the_model_and_effort(
+    question: str, floor: StepChoice, tier: Tier, effort: str
+) -> None:
+    plan = plan_for(classify(question).route, Mode.FAST, floor=floor)
+    assert (plan.tier, plan.effort) == (tier, effort)
+    assert plan.escalated == (tier is Tier.DEEP and floor.tier == "recommended")
+
+
+async def test_a_raised_floor_answers_on_opus_and_warms_opus(tmp_path: Path) -> None:
+    fake = _fake(_answer([_text("Yes.")], "end_turn"), _answer([_text("Yes.")], "end_turn"))
+    agent = AskAgent(fake.client(), pre_retrieval=False, verify=False,
+                     floor=StepChoice(tier="deep", effort="high"))  # fmt: skip
+    ctx = _ctx(tmp_path)
+    await agent.prewarm(ctx, overview=OVERVIEW)
+    await _events(agent, "where is create_item defined?", ctx)
+    bodies = fake.bodies(PATH)
+    assert bodies[0]["max_tokens"] == 0  # the pre-warm, then the answer's turns
+    for body in bodies:
+        assert (body["model"], body["output_config"]) == ("claude-opus-5-5", {"effort": "high"})
 
 
 async def test_deep_runs_on_the_deep_model(tmp_path: Path) -> None:

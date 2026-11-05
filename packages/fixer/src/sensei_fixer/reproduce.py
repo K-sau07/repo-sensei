@@ -40,7 +40,7 @@ from sensei_fixer.history import GitHistory
 from sensei_fixer.investigate import READ_TOOLS, Hooks, fenced, first_message
 from sensei_fixer.patching import PatchError, remove_file, write_file
 from sensei_fixer.runs import FixRunner, RunResult, SetupFailed
-from sensei_fixer.stages import Advance, Outcome, StageContext, StageHandler, Step, Stop
+from sensei_fixer.stages import Advance, Outcome, StageContext, StageHandler, Step, Stop, chosen
 from sensei_fixer.tooling import guarded, settle, turn_cost
 
 PROMPT_VERSION = "reproduce.v1"
@@ -371,7 +371,9 @@ def reproduce_stage(
             try:
                 async with runners(tools.root, setup) as runner:
                     writing = _Writing(tools, runner, setup, path, ctx.ticket, hooks, paths)
-                    attempt = await TestWriter(client(), costs).write(writing, root_cause)
+                    attempt = await TestWriter(chosen(client(), ctx), costs).write(
+                        writing, root_cause
+                    )
                     runs = await _judge(runner, setup, path, attempt, hooks)
             except SetupFailed as error:
                 return _stopped(str(error), None, [], setup)

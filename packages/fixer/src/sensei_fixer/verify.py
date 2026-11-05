@@ -56,7 +56,7 @@ from sensei_fixer.patching import Diff, PatchError, apply, read_text, write_file
 from sensei_fixer.reproduce import RUNS, Runners, Workspace
 from sensei_fixer.risk import higher, readiness
 from sensei_fixer.runs import RunResult, SetupFailed
-from sensei_fixer.stages import Advance, Outcome, StageContext, StageHandler, Step, Stop
+from sensei_fixer.stages import Advance, Outcome, StageContext, StageHandler, Step, Stop, chosen
 from sensei_fixer.suites import SuiteRun, SuiteVerdict, compare, count_tests, read_suite
 from sensei_fixer.tooling import text_result
 
@@ -234,7 +234,8 @@ def verify_stage(
         if not patch or not patch.get("diff"):
             return Stop(FixStatus.FAILED, "There is no patch to verify.")
         try:
-            async with working(ctx, workspace, runners, plan, (client(), costs)) as job:
+            model = (chosen(client(), ctx), costs)
+            async with working(ctx, workspace, runners, plan, model) as job:
                 tested = await _tests_pass(job, patch)
                 if isinstance(tested, Stop):
                     return tested

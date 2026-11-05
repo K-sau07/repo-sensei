@@ -17,6 +17,8 @@ from typing import Any, Protocol
 
 from sensei_core.fixes.tickets import Ticket
 from sensei_core.models import FixKind, FixStage, FixStatus
+from sensei_core.orgs.model_choices import RECOMMENDED, StepChoice
+from sensei_engine.llm.anthropic_client import AnthropicClient
 
 
 class Cancelled(Exception):
@@ -67,6 +69,12 @@ class StageContext:
     spend: Callable[[int, Decimal, float], Awaitable[None]]
     check: Callable[[], Awaitable[None]]
     kind: FixKind = FixKind.FIX  # a fix, or a requested change (9.1)
+    floor: StepChoice = RECOMMENDED  # the org's for fixes and changes (10.7.2)
+
+
+def chosen(client: AnthropicClient, ctx: StageContext) -> AnthropicClient:
+    """``client`` with every agent turn on at least the org's model and effort for fixes."""
+    return client.floored(ctx.floor)
 
 
 class StageHandler(Protocol):

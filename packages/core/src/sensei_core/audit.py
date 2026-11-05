@@ -30,6 +30,7 @@ class AuditAction(enum.StrEnum):
     LOGOUT_ALL = "auth.logout_all"
     ORG_CREATE = "org.create"
     ORG_UPDATE = "org.update"
+    ORG_MODELS_UPDATE = "org.models_update"
     ORG_DELETE = "org.delete"
     ORG_RESTORE = "org.restore"
     ORG_PURGE = "org.purge"

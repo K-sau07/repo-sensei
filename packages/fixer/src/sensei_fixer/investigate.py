@@ -35,7 +35,7 @@ from sensei_engine.agent.tools.base import ToolResult
 from sensei_engine.llm.anthropic_client import AnthropicClient, Effort, LLMTurn, Tier
 from sensei_engine.snapshots import read_file
 from sensei_fixer.history import GitHistory, HistoryError
-from sensei_fixer.stages import Advance, Outcome, StageContext, StageHandler, Step, Stop
+from sensei_fixer.stages import Advance, Outcome, StageContext, StageHandler, Step, Stop, chosen
 from sensei_fixer.tooling import guarded, settle, text_result, turn_cost
 
 PROMPT_VERSION = "investigate.v1"
@@ -460,7 +460,9 @@ def investigate_stage(
     async def handler(ctx: StageContext) -> Outcome:
         hooks = Hooks(record=ctx.record, spend=ctx.spend, check=ctx.check)
         async with workspace(ctx) as (tools, history):
-            done = await Investigator(client(), costs).run(tools, history, ctx.ticket, hooks)
+            done = await Investigator(chosen(client(), ctx), costs).run(
+                tools, history, ctx.ticket, hooks
+            )
         if done.findings is None:
             return Stop(FixStatus.FAILED, f"Investigation: {done.reason}")
         return Advance({"root_cause": done.findings.json(), "commit_sha": tools.sha})

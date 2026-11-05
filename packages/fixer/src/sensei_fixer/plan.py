@@ -38,7 +38,7 @@ from sensei_fixer.frameworks import dependencies
 from sensei_fixer.investigate import READ_TOOLS, Hooks, fenced, first_message
 from sensei_fixer.reproduce import Workspace
 from sensei_fixer.risk import Areas, assess, graph_areas, path_areas, text_areas
-from sensei_fixer.stages import Advance, Outcome, StageContext, StageHandler, Stop
+from sensei_fixer.stages import Advance, Outcome, StageContext, StageHandler, Stop, chosen
 from sensei_fixer.tooling import text_result
 
 PROMPT_VERSION = "plan.v1"
@@ -269,8 +269,8 @@ def plan_stage(
             deps = await asyncio.to_thread(dependencies, tools.root, project)
             planning = _Planning(tools, cast("str | None", repro.get("test_path")), deps)
             ended = await Conversation(
-                client(), costs, hooks, tools, system_prompt(), definitions(), Tier.STANDARD,
-                "medium", MAX_TURNS, REMINDER, "a plan",
+                chosen(client(), ctx), costs, hooks, tools, system_prompt(), definitions(),
+                Tier.STANDARD, "medium", MAX_TURNS, REMINDER, "a plan",
             ).run(brief(ctx, root_cause, repro, previous), planning.call,
                   lambda: planning.plan is not None)  # fmt: skip
             plan = planning.plan

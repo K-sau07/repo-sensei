@@ -28,9 +28,11 @@ from sensei_core.models import (
     FixSource,
     FixStage,
     FixStatus,
+    Org,
     Repo,
     RepoSource,
 )
+from sensei_core.orgs.model_choices import RECOMMENDED, StepChoice
 from sensei_core.orgs.service import OrgService
 from sensei_fixer.budget import Budget
 from sensei_fixer.events import fix_stream
@@ -380,3 +382,24 @@ async def test_a_change_goes_from_its_request_to_its_plan_then_on_as_a_fix_does(
     agent = await db_session.get(AgentRun, run.run_id)
     assert agent is not None
     assert (agent.kind, agent.mode) == ("change", "change")
+
+
+async def test_each_stage_is_told_the_orgs_floor_for_fixes(
+    db_session: AsyncSession, fake_redis: FakeAsyncRedis
+) -> None:
+    run = await _fix(db_session)
+    org = await db_session.get(Org, run.org_id)
+    assert org is not None
+    floors: list[StepChoice] = []
+
+    async def handler(ctx: StageContext) -> Outcome:
+        floors.append(ctx.floor)
+        return Advance({})
+
+    pipeline = _pipeline(db_session, fake_redis, {FixStage.INTAKE: handler})
+    await pipeline.run_stage(run.org_id, run.id)
+    run.status, run.stage = FixStatus.QUEUED, FixStage.INTAKE
+    org.model_choices = {"fixes": {"tier": "deep", "effort": "high"}}
+    await db_session.flush()
+    await pipeline.run_stage(run.org_id, run.id)
+    assert floors == [RECOMMENDED, StepChoice(tier="deep", effort="high")]
