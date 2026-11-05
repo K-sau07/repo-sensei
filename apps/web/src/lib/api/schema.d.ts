@@ -4643,6 +4643,30 @@ export interface components {
             /** Tokens Out */
             tokens_out: number;
         };
+        /** ModelStepOut */
+        ModelStepOut: {
+            /**
+             * Effort
+             * @enum {string}
+             */
+            effort: "recommended" | "medium" | "high";
+            /**
+             * Efforts
+             * @description What it may be set to, recommended first.
+             */
+            efforts: ("recommended" | "medium" | "high")[];
+            step: components["schemas"]["Step"];
+            /**
+             * Tier
+             * @enum {string}
+             */
+            tier: "recommended" | "standard" | "deep";
+            /**
+             * Tiers
+             * @description What it may be set to, recommended first.
+             */
+            tiers: ("recommended" | "standard" | "deep")[];
+        };
         /** ModelsOut */
         ModelsOut: {
             /**
@@ -4653,7 +4677,7 @@ export interface components {
                 [key: string]: string;
             };
             /** Steps */
-            steps: components["schemas"]["sensei_api__routers__model_settings__StepOut"][];
+            steps: components["schemas"]["ModelStepOut"][];
         };
         /**
          * ModelsUpdate
@@ -5129,7 +5153,7 @@ export interface components {
             /** Status */
             status: string;
             /** Steps */
-            steps: components["schemas"]["sensei_api__routers__runs__StepOut"][];
+            steps: components["schemas"]["StepOut"][];
             /** Stopped */
             stopped: string | null;
             /** Tokens In */
@@ -5591,6 +5615,31 @@ export interface components {
             /** Path */
             path: string;
         };
+        /** StepOut */
+        StepOut: {
+            /** Has Output */
+            has_output: boolean;
+            /** Idx */
+            idx: number;
+            /** Input */
+            input: {
+                [key: string]: unknown;
+            };
+            /** Kind */
+            kind: string;
+            /** Ms */
+            ms: number;
+            /** Name */
+            name: string;
+            /** Offset Ms */
+            offset_ms: number;
+            /** Output */
+            output: unknown | null;
+            /** Summary */
+            summary: string;
+            /** Tokens */
+            tokens: number;
+        };
         /** SummaryOut */
         SummaryOut: {
             /** Directories */
@@ -5974,55 +6023,6 @@ export interface components {
              * @enum {string}
              */
             status: "queued" | "duplicate";
-        };
-        /** StepOut */
-        sensei_api__routers__model_settings__StepOut: {
-            /**
-             * Effort
-             * @enum {string}
-             */
-            effort: "recommended" | "medium" | "high";
-            /**
-             * Efforts
-             * @description What it may be set to, recommended first.
-             */
-            efforts: ("recommended" | "medium" | "high")[];
-            step: components["schemas"]["Step"];
-            /**
-             * Tier
-             * @enum {string}
-             */
-            tier: "recommended" | "standard" | "deep";
-            /**
-             * Tiers
-             * @description What it may be set to, recommended first.
-             */
-            tiers: ("recommended" | "standard" | "deep")[];
-        };
-        /** StepOut */
-        sensei_api__routers__runs__StepOut: {
-            /** Has Output */
-            has_output: boolean;
-            /** Idx */
-            idx: number;
-            /** Input */
-            input: {
-                [key: string]: unknown;
-            };
-            /** Kind */
-            kind: string;
-            /** Ms */
-            ms: number;
-            /** Name */
-            name: string;
-            /** Offset Ms */
-            offset_ms: number;
-            /** Output */
-            output: unknown | null;
-            /** Summary */
-            summary: string;
-            /** Tokens */
-            tokens: number;
         };
     };
     responses: never;

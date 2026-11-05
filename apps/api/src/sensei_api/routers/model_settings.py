@@ -31,7 +31,7 @@ from sensei_core.orgs.service import require_role
 router = APIRouter(prefix="/orgs/{org}/settings", tags=["models"])
 
 
-class StepOut(BaseModel):
+class ModelStepOut(BaseModel):
     step: Step
     tier: TierChoice
     effort: EffortChoice
@@ -40,7 +40,7 @@ class StepOut(BaseModel):
 
 
 class ModelsOut(BaseModel):
-    steps: list[StepOut]
+    steps: list[ModelStepOut]
     models: dict[str, str] = Field(description="The model each tier runs on: fast, standard, deep.")
 
 
@@ -57,11 +57,11 @@ class ModelsUpdate(BaseModel):
 def _out(request: Request, choices: ModelChoices) -> ModelsOut:
     settings: Settings = request.app.state.settings
     llm = settings.anthropic
-    steps: list[StepOut] = []
+    steps: list[ModelStepOut] = []
     for step in Step:
         tiers, efforts = OPTIONS[step]
         choice = choices.of(step)
-        steps.append(StepOut(
+        steps.append(ModelStepOut(
             step=step, tier=choice.tier, effort=choice.effort,
             tiers=["recommended", *tiers], efforts=["recommended", *efforts],
         ))  # fmt: skip

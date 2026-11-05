@@ -5885,6 +5885,66 @@
         "title": "ModelOut",
         "type": "object"
       },
+      "ModelStepOut": {
+        "properties": {
+          "effort": {
+            "enum": [
+              "recommended",
+              "medium",
+              "high"
+            ],
+            "title": "Effort",
+            "type": "string"
+          },
+          "efforts": {
+            "description": "What it may be set to, recommended first.",
+            "items": {
+              "enum": [
+                "recommended",
+                "medium",
+                "high"
+              ],
+              "type": "string"
+            },
+            "title": "Efforts",
+            "type": "array"
+          },
+          "step": {
+            "$ref": "#/components/schemas/Step"
+          },
+          "tier": {
+            "enum": [
+              "recommended",
+              "standard",
+              "deep"
+            ],
+            "title": "Tier",
+            "type": "string"
+          },
+          "tiers": {
+            "description": "What it may be set to, recommended first.",
+            "items": {
+              "enum": [
+                "recommended",
+                "standard",
+                "deep"
+              ],
+              "type": "string"
+            },
+            "title": "Tiers",
+            "type": "array"
+          }
+        },
+        "required": [
+          "step",
+          "tier",
+          "effort",
+          "tiers",
+          "efforts"
+        ],
+        "title": "ModelStepOut",
+        "type": "object"
+      },
       "ModelsOut": {
         "properties": {
           "models": {
@@ -5897,7 +5957,7 @@
           },
           "steps": {
             "items": {
-              "$ref": "#/components/schemas/sensei_api__routers__model_settings__StepOut"
+              "$ref": "#/components/schemas/ModelStepOut"
             },
             "title": "Steps",
             "type": "array"
@@ -7228,7 +7288,7 @@
           },
           "steps": {
             "items": {
-              "$ref": "#/components/schemas/sensei_api__routers__runs__StepOut"
+              "$ref": "#/components/schemas/StepOut"
             },
             "title": "Steps",
             "type": "array"
@@ -8610,6 +8670,70 @@
         "title": "StepEdit",
         "type": "object"
       },
+      "StepOut": {
+        "properties": {
+          "has_output": {
+            "title": "Has Output",
+            "type": "boolean"
+          },
+          "idx": {
+            "title": "Idx",
+            "type": "integer"
+          },
+          "input": {
+            "additionalProperties": true,
+            "title": "Input",
+            "type": "object"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "ms": {
+            "title": "Ms",
+            "type": "integer"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "offset_ms": {
+            "title": "Offset Ms",
+            "type": "integer"
+          },
+          "output": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Output"
+          },
+          "summary": {
+            "title": "Summary",
+            "type": "string"
+          },
+          "tokens": {
+            "title": "Tokens",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "idx",
+          "kind",
+          "name",
+          "input",
+          "summary",
+          "tokens",
+          "ms",
+          "offset_ms",
+          "has_output",
+          "output"
+        ],
+        "title": "StepOut",
+        "type": "object"
+      },
       "SummaryOut": {
         "properties": {
           "directories": {
@@ -9753,130 +9877,6 @@
           "status"
         ],
         "title": "WebhookAccepted",
-        "type": "object"
-      },
-      "sensei_api__routers__model_settings__StepOut": {
-        "properties": {
-          "effort": {
-            "enum": [
-              "recommended",
-              "medium",
-              "high"
-            ],
-            "title": "Effort",
-            "type": "string"
-          },
-          "efforts": {
-            "description": "What it may be set to, recommended first.",
-            "items": {
-              "enum": [
-                "recommended",
-                "medium",
-                "high"
-              ],
-              "type": "string"
-            },
-            "title": "Efforts",
-            "type": "array"
-          },
-          "step": {
-            "$ref": "#/components/schemas/Step"
-          },
-          "tier": {
-            "enum": [
-              "recommended",
-              "standard",
-              "deep"
-            ],
-            "title": "Tier",
-            "type": "string"
-          },
-          "tiers": {
-            "description": "What it may be set to, recommended first.",
-            "items": {
-              "enum": [
-                "recommended",
-                "standard",
-                "deep"
-              ],
-              "type": "string"
-            },
-            "title": "Tiers",
-            "type": "array"
-          }
-        },
-        "required": [
-          "step",
-          "tier",
-          "effort",
-          "tiers",
-          "efforts"
-        ],
-        "title": "StepOut",
-        "type": "object"
-      },
-      "sensei_api__routers__runs__StepOut": {
-        "properties": {
-          "has_output": {
-            "title": "Has Output",
-            "type": "boolean"
-          },
-          "idx": {
-            "title": "Idx",
-            "type": "integer"
-          },
-          "input": {
-            "additionalProperties": true,
-            "title": "Input",
-            "type": "object"
-          },
-          "kind": {
-            "title": "Kind",
-            "type": "string"
-          },
-          "ms": {
-            "title": "Ms",
-            "type": "integer"
-          },
-          "name": {
-            "title": "Name",
-            "type": "string"
-          },
-          "offset_ms": {
-            "title": "Offset Ms",
-            "type": "integer"
-          },
-          "output": {
-            "anyOf": [
-              {},
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Output"
-          },
-          "summary": {
-            "title": "Summary",
-            "type": "string"
-          },
-          "tokens": {
-            "title": "Tokens",
-            "type": "integer"
-          }
-        },
-        "required": [
-          "idx",
-          "kind",
-          "name",
-          "input",
-          "summary",
-          "tokens",
-          "ms",
-          "offset_ms",
-          "has_output",
-          "output"
-        ],
-        "title": "StepOut",
         "type": "object"
       }
     }
