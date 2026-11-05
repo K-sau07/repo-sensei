@@ -476,6 +476,7 @@ function RepoPalette({ location, onClose }: Omit<PaletteProps, "repo">) {
     version: indexedSha ?? (running ? `run:${running.id}:${running.stage ?? "queued"}` : null),
     indexing: features.active !== null,
     admin: roleAtLeast(role, "admin"),
+    member: roleAtLeast(role, "member"),
     featuresReady: features.ready,
     unlocked: (feature) => features.state(feature).available,
   };

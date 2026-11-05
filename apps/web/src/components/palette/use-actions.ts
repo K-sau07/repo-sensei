@@ -23,8 +23,10 @@ import { useShellStore } from "@/components/shell/shell-store";
 import { signOut } from "@/components/shell/sign-out";
 import { ApiError } from "@/lib/api/errors";
 import { impactHref } from "@/lib/api/impact";
+import type { Feature } from "@/lib/indexing";
 import { actionId } from "@/lib/palette/locations";
 import { orgPath, repoPath } from "@/lib/routes";
+import { traceHref } from "@/lib/trace/url-state";
 
 import { isFullCommit, permalinkFor, type RepoContext, type ShownItem } from "./items";
 import { renderedCommit } from "./rendered";
@@ -36,6 +38,12 @@ interface ActionScope {
   code: boolean;
   path: string | null;
   ref: string | null;
+}
+
+/** Disabled with `reason` until the repository's index has unlocked `feature`. */
+function ready(repo: RepoContext, feature: Feature, reason: string): Pick<ShownItem, "disabled"> {
+  if (!repo.featuresReady) return { disabled: { reason: "Checking…" } };
+  return repo.unlocked(feature) ? {} : { disabled: { reason } };
 }
 
 /** The Do group: a small registry of actions, each shown only where it makes sense. */
@@ -184,19 +192,30 @@ export function useActions({ org, repo, code, path, ref }: ActionScope): ShownIt
         id: actionId("trace"),
         group: "do",
         kind: "action",
-        title: "Trace this",
-        keywords: ["flow", "path", "follow"],
+        // In the code browser it traces the open file; elsewhere it opens the entry picker.
+        title: code && path !== null ? "Trace this file" : "Trace a flow…",
+        keywords: ["trace this", "flow", "path", "follow"],
         icon: TraceIcon,
-        disabled: { reason: "Tracing is coming soon" },
+        scope: { org, repo: slug },
+        ...ready(repo, "trace", "Tracing opens once the code graph is built"),
+        run: () => {
+          router.push(traceHref(org, slug, code && path !== null ? { from: path } : {}));
+        },
       },
       {
         id: actionId("new-fix"),
         group: "do",
         kind: "action",
         title: "New fix",
-        keywords: ["bug", "repair", "patch"],
+        keywords: ["bug", "repair", "patch", "issue", "stack trace"],
         icon: Wrench,
-        disabled: { reason: "Fixes are coming soon" },
+        scope: { org, repo: slug },
+        ...(repo.member
+          ? ready(repo, "fixes", "Fixes open once the cross-layer links are built")
+          : { disabled: { reason: "Viewers can't start fixes" } }),
+        run: () => {
+          router.push(repoPath(org, slug, "fixes/new"));
+        },
       },
     );
   }

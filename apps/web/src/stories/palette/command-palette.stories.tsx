@@ -1,11 +1,13 @@
 import type { Decorator, Meta, StoryObj } from "@storybook/nextjs-vite";
-import { delay, http } from "msw";
+import { delay, http, HttpResponse } from "msw";
 import { expect, screen, userEvent, waitFor, within } from "storybook/test";
 
 import { CommandBar } from "@/components/shell/command-bar";
 import { useShellStore } from "@/components/shell/shell-store";
 import { clearHistory } from "@/lib/palette/history";
+import { db, OCTO } from "@/mocks/db";
 import { apiError, handlers } from "@/mocks/handlers";
+import { meOf } from "@/mocks/handlers/me";
 
 /** The palette as ⌘K opens it, in the code browser of the mock repository. */
 function Palette() {
@@ -27,6 +29,17 @@ const IN_REPO = navigation("/acme/api/code", [
   ["org", "acme"],
   ["repo", "api"],
 ]);
+
+/** The signed-in user (Octo) seen as a viewer of Acme. */
+const asViewer = http.get("*/api/v1/me", () => {
+  const octo = db.users.find((u) => u.id === OCTO);
+  if (!octo) throw new Error("mock seed is missing Octo");
+  const me = meOf(octo);
+  return HttpResponse.json({
+    ...me,
+    orgs: me.orgs.map((o) => (o.slug === "acme" ? { ...o, role: "viewer" as const } : o)),
+  });
+});
 
 const meta = {
   title: "Shell/Command palette",
@@ -158,15 +171,16 @@ export const NotIndexed: Story = {
   },
 };
 
-/** Actions that aren't ready are listed with why, and can't be picked. */
+/** Actions that aren't open to the viewer are listed with why, and can't be picked. */
 export const DisabledAction: Story = {
+  parameters: { msw: [asViewer, ...handlers] },
   play: async () => {
-    await userEvent.type(await input(), "trace this");
-    const trace = await within(await group("Do")).findByRole("option", { name: /Trace this/ });
-    await expect(trace).toHaveAttribute("aria-disabled", "true");
-    await expect(trace).toHaveTextContent("Tracing is coming soon");
+    await userEvent.type(await input(), "new fix");
+    const fix = await within(await group("Do")).findByRole("option", { name: /New fix/ });
+    await waitFor(() => expect(fix).toHaveTextContent("Viewers can't start fixes"));
+    await expect(fix).toHaveAttribute("aria-disabled", "true");
     // The selection skips it.
-    await expect(await selectedOption()).not.toBe(trace);
+    await expect(await selectedOption()).not.toBe(fix);
   },
 };
 

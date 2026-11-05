@@ -26,6 +26,7 @@ const repo = (unlocked: Feature[], admin = false): RepoContext => ({
   version: SHA,
   indexing: false,
   admin,
+  member: true,
   featuresReady: true,
   unlocked: (feature) => unlocked.includes(feature),
 });

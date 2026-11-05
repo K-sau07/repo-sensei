@@ -46,6 +46,8 @@ export interface RepoContext {
   /** A run is queued or running. */
   indexing: boolean;
   admin: boolean;
+  /** Not a viewer: can start fixes. */
+  member: boolean;
   /** Its features have loaded, and which are unlocked. */
   featuresReady: boolean;
   unlocked: (feature: Feature) => boolean;

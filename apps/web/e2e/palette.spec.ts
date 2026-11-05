@@ -149,19 +149,34 @@ test.describe("command palette", () => {
     await expect(options.filter({ hasText: "web · src/routes" })).toContainText("Recent");
   });
 
-  test("actions show their shortcuts; coming-soon ones are shown, not runnable", async ({
-    page,
-  }) => {
+  test("actions show their shortcuts; trace and new fix open their pages", async ({ page }) => {
     await openShell(page, "/acme/api");
     await openPalette(page);
     await page.keyboard.type("toggle side");
     await expect(selected(page)).toContainText("Toggle the sidebar");
     await expect(selected(page).getByRole("img")).toHaveAccessibleName("[");
     await page.keyboard.press("ControlOrMeta+a");
+    await page.keyboard.type("new fix");
+    const fix = palette(page).getByRole("option", { name: /New fix/ });
+    await expect(fix).not.toHaveAttribute("aria-disabled", "true");
+    await fix.click();
+    await expect(page).toHaveURL(/\/acme\/api\/fixes\/new$/);
+    await openPalette(page);
+    await page.keyboard.type("trace a flow");
+    await palette(page)
+      .getByRole("option", { name: /Trace a flow/ })
+      .click();
+    await expect(page).toHaveURL(/\/acme\/api\/trace$/);
+  });
+
+  test("in the code browser, trace this file starts from the open file", async ({ page }) => {
+    await openShell(page, "/acme/api/code/backend/app/main.py");
+    await openPalette(page);
     await page.keyboard.type("trace this");
-    const trace = palette(page).getByRole("option", { name: /Trace this/ });
-    await expect(trace).toHaveAttribute("aria-disabled", "true");
-    await expect(trace).toContainText("Tracing is coming soon");
+    await palette(page)
+      .getByRole("option", { name: /Trace this file/ })
+      .click();
+    await expect(page).toHaveURL(/\/acme\/api\/trace\?from=backend(%2F|\/)app(%2F|\/)main\.py$/);
   });
 
   test("repositories come from the sidebar's cache, with no request of their own", async ({
