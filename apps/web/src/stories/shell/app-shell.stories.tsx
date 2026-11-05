@@ -4,6 +4,7 @@ import { expect, screen, userEvent, waitFor } from "storybook/test";
 import { ComingSoon } from "@/components/coming-soon";
 import { AppShell } from "@/components/shell/app-shell";
 import { applyShellLayout, useShellStore } from "@/components/shell/shell-store";
+import { resetMockDb } from "@/mocks/db";
 
 function ShellPreview() {
   return (
@@ -32,6 +33,10 @@ const meta = {
       appDirectory: true,
       navigation: { pathname: "/acme", segments: [["org", "acme"]] },
     },
+  },
+  // The mock data as seeded, whatever stories before these (in this browser) changed in it.
+  beforeEach: () => {
+    resetMockDb();
   },
 } satisfies Meta<typeof ShellPreview>;
 
