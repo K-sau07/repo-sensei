@@ -40,6 +40,7 @@ from sensei_api.routers import (
     impact,
     index_jobs,
     indexing,
+    insights,
     internal,
     invitations,
     mcp_setup,
@@ -246,6 +247,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         sentry,
         notifications,
         usage,
+        insights,
         model_settings,
         oauth,
     ):  # the order routes are matched in

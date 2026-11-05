@@ -1151,6 +1151,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/orgs/{org}/insights": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Insights
+         * @description The last 30 days of questions, answers, cited modules and adoption, in the repositories
+         *     the signed-in user can read.
+         */
+        get: operations["insights_api_v1_orgs__org__insights_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/orgs/{org}/integrations/sentry": {
         parameters: {
             query?: never;
@@ -4330,6 +4351,135 @@ export interface components {
             stages: components["schemas"]["StageOut"][];
             /** Started At */
             started_at: string | null;
+        };
+        /** InsightAnswersOut */
+        InsightAnswersOut: {
+            /**
+             * Abstained
+             * @description Said it couldn't answer from the code.
+             */
+            abstained: number;
+            /** Answered */
+            answered: number;
+            /** Helpful */
+            helpful: number;
+            /**
+             * Not Helpful
+             * @description What was wrong, by kind.
+             */
+            not_helpful: {
+                [key: string]: number;
+            };
+        };
+        /** InsightDayOut */
+        InsightDayOut: {
+            /**
+             * Cost Usd
+             * @description Asks' spend (admins only; else None).
+             */
+            cost_usd: string | null;
+            /**
+             * Day
+             * Format: date
+             */
+            day: string;
+            /**
+             * People
+             * @description Signed-in people who asked that day.
+             */
+            people: number;
+            /** Questions */
+            questions: number;
+        };
+        /** InsightModuleOut */
+        InsightModuleOut: {
+            /**
+             * Cited
+             * @description Answers citing a file in it.
+             */
+            cited: number;
+            /** Full Name */
+            full_name: string;
+            /**
+             * Path
+             * @description The folder, '' for files at the root.
+             */
+            path: string;
+            /**
+             * Repo Id
+             * Format: uuid
+             */
+            repo_id: string;
+        };
+        /** InsightRepoOut */
+        InsightRepoOut: {
+            /** Cost Usd */
+            cost_usd: string | null;
+            /** Full Name */
+            full_name: string;
+            /** Questions */
+            questions: number;
+            /**
+             * Repo Id
+             * Format: uuid
+             */
+            repo_id: string;
+            /** Slug */
+            slug: string;
+        };
+        /** InsightWeekOut */
+        InsightWeekOut: {
+            /** Abstained */
+            abstained: number;
+            /** Answered */
+            answered: number;
+            /** Askers */
+            askers: number;
+            /** Changes */
+            changes: number;
+            /** Diagrams */
+            diagrams: number;
+            /** Fixes */
+            fixes: number;
+            /** Helpful */
+            helpful: number;
+            /** Not Helpful */
+            not_helpful: number;
+            /**
+             * Week
+             * Format: date
+             * @description The week's Monday (UTC).
+             */
+            week: string;
+        };
+        /** InsightsOut */
+        InsightsOut: {
+            answers: components["schemas"]["InsightAnswersOut"];
+            /**
+             * Costs
+             * @description Whether the costs are shown (admins).
+             */
+            costs: boolean;
+            /**
+             * Days
+             * @description The last 30 days (UTC), oldest first.
+             */
+            days: components["schemas"]["InsightDayOut"][];
+            /**
+             * Modules
+             * @description The most cited first.
+             */
+            modules: components["schemas"]["InsightModuleOut"][];
+            /**
+             * Repos
+             * @description The most asked about first.
+             */
+            repos: components["schemas"]["InsightRepoOut"][];
+            /**
+             * Weeks
+             * @description Each week the 30 days touch, oldest first.
+             */
+            weeks: components["schemas"]["InsightWeekOut"][];
         };
         /**
          * InstallReturn
@@ -8078,6 +8228,38 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["InboxCount"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    insights_api_v1_orgs__org__insights_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization slug */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InsightsOut"];
                 };
             };
             /** @description Validation Error */

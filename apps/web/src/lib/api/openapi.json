@@ -5073,6 +5073,258 @@
         "title": "IndexSummaryOut",
         "type": "object"
       },
+      "InsightAnswersOut": {
+        "properties": {
+          "abstained": {
+            "description": "Said it couldn't answer from the code.",
+            "title": "Abstained",
+            "type": "integer"
+          },
+          "answered": {
+            "title": "Answered",
+            "type": "integer"
+          },
+          "helpful": {
+            "title": "Helpful",
+            "type": "integer"
+          },
+          "not_helpful": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "description": "What was wrong, by kind.",
+            "title": "Not Helpful",
+            "type": "object"
+          }
+        },
+        "required": [
+          "answered",
+          "abstained",
+          "helpful",
+          "not_helpful"
+        ],
+        "title": "InsightAnswersOut",
+        "type": "object"
+      },
+      "InsightDayOut": {
+        "properties": {
+          "cost_usd": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Asks' spend (admins only; else None).",
+            "title": "Cost Usd"
+          },
+          "day": {
+            "format": "date",
+            "title": "Day",
+            "type": "string"
+          },
+          "people": {
+            "description": "Signed-in people who asked that day.",
+            "title": "People",
+            "type": "integer"
+          },
+          "questions": {
+            "title": "Questions",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "day",
+          "questions",
+          "people",
+          "cost_usd"
+        ],
+        "title": "InsightDayOut",
+        "type": "object"
+      },
+      "InsightModuleOut": {
+        "properties": {
+          "cited": {
+            "description": "Answers citing a file in it.",
+            "title": "Cited",
+            "type": "integer"
+          },
+          "full_name": {
+            "title": "Full Name",
+            "type": "string"
+          },
+          "path": {
+            "description": "The folder, '' for files at the root.",
+            "title": "Path",
+            "type": "string"
+          },
+          "repo_id": {
+            "format": "uuid",
+            "title": "Repo Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "repo_id",
+          "full_name",
+          "path",
+          "cited"
+        ],
+        "title": "InsightModuleOut",
+        "type": "object"
+      },
+      "InsightRepoOut": {
+        "properties": {
+          "cost_usd": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cost Usd"
+          },
+          "full_name": {
+            "title": "Full Name",
+            "type": "string"
+          },
+          "questions": {
+            "title": "Questions",
+            "type": "integer"
+          },
+          "repo_id": {
+            "format": "uuid",
+            "title": "Repo Id",
+            "type": "string"
+          },
+          "slug": {
+            "title": "Slug",
+            "type": "string"
+          }
+        },
+        "required": [
+          "repo_id",
+          "full_name",
+          "slug",
+          "questions",
+          "cost_usd"
+        ],
+        "title": "InsightRepoOut",
+        "type": "object"
+      },
+      "InsightWeekOut": {
+        "properties": {
+          "abstained": {
+            "title": "Abstained",
+            "type": "integer"
+          },
+          "answered": {
+            "title": "Answered",
+            "type": "integer"
+          },
+          "askers": {
+            "title": "Askers",
+            "type": "integer"
+          },
+          "changes": {
+            "title": "Changes",
+            "type": "integer"
+          },
+          "diagrams": {
+            "title": "Diagrams",
+            "type": "integer"
+          },
+          "fixes": {
+            "title": "Fixes",
+            "type": "integer"
+          },
+          "helpful": {
+            "title": "Helpful",
+            "type": "integer"
+          },
+          "not_helpful": {
+            "title": "Not Helpful",
+            "type": "integer"
+          },
+          "week": {
+            "description": "The week's Monday (UTC).",
+            "format": "date",
+            "title": "Week",
+            "type": "string"
+          }
+        },
+        "required": [
+          "week",
+          "answered",
+          "abstained",
+          "helpful",
+          "not_helpful",
+          "askers",
+          "fixes",
+          "changes",
+          "diagrams"
+        ],
+        "title": "InsightWeekOut",
+        "type": "object"
+      },
+      "InsightsOut": {
+        "properties": {
+          "answers": {
+            "$ref": "#/components/schemas/InsightAnswersOut"
+          },
+          "costs": {
+            "description": "Whether the costs are shown (admins).",
+            "title": "Costs",
+            "type": "boolean"
+          },
+          "days": {
+            "description": "The last 30 days (UTC), oldest first.",
+            "items": {
+              "$ref": "#/components/schemas/InsightDayOut"
+            },
+            "title": "Days",
+            "type": "array"
+          },
+          "modules": {
+            "description": "The most cited first.",
+            "items": {
+              "$ref": "#/components/schemas/InsightModuleOut"
+            },
+            "title": "Modules",
+            "type": "array"
+          },
+          "repos": {
+            "description": "The most asked about first.",
+            "items": {
+              "$ref": "#/components/schemas/InsightRepoOut"
+            },
+            "title": "Repos",
+            "type": "array"
+          },
+          "weeks": {
+            "description": "Each week the 30 days touch, oldest first.",
+            "items": {
+              "$ref": "#/components/schemas/InsightWeekOut"
+            },
+            "title": "Weeks",
+            "type": "array"
+          }
+        },
+        "required": [
+          "days",
+          "repos",
+          "answers",
+          "weeks",
+          "modules",
+          "costs"
+        ],
+        "title": "InsightsOut",
+        "type": "object"
+      },
       "InstallReturn": {
         "description": "Where the browser goes after installing.",
         "enum": [
@@ -13062,6 +13314,51 @@
         "summary": "Read Inbox",
         "tags": [
           "notifications"
+        ]
+      }
+    },
+    "/api/v1/orgs/{org}/insights": {
+      "get": {
+        "description": "The last 30 days of questions, answers, cited modules and adoption, in the repositories\nthe signed-in user can read.",
+        "operationId": "insights_api_v1_orgs__org__insights_get",
+        "parameters": [
+          {
+            "description": "Organization slug",
+            "in": "path",
+            "name": "org",
+            "required": true,
+            "schema": {
+              "description": "Organization slug",
+              "title": "Org",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InsightsOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Insights",
+        "tags": [
+          "insights"
         ]
       }
     },

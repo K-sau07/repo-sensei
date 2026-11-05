@@ -202,3 +202,10 @@ async def test_indexing_stages_are_published(client: httpx.AsyncClient) -> None:
     unlocks = {entry["stage"]: entry["unlocks"] for entry in body["stages"]}
     assert unlocks["embeddings"] == ["semantic_search"]
     assert unlocks["chunks"] == ["keyword_search", "ask"]
+
+
+def test_every_schema_has_a_name_of_its_own(app: FastAPI) -> None:
+    # Two models with one name across routers get module-path names (sensei_api__routers__...),
+    # renaming the web's generated types out from under it.
+    names = list(app.openapi()["components"]["schemas"])
+    assert [name for name in names if "__" in name] == []
