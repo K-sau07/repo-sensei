@@ -38,12 +38,19 @@ const meta = {
 export default meta;
 type Story = StoryObj<typeof meta>;
 
+// The mock API answers late when the whole suite runs at once.
+const LOAD_MS = 10_000;
+
 export const Expanded: Story = {
   decorators: [withLayout({})],
   play: async ({ canvas }) => {
     // The user and org come from the mock API.
     await expect(
-      await canvas.findByRole("button", { name: "Acme (switch organization)" }),
+      await canvas.findByRole(
+        "button",
+        { name: "Acme (switch organization)" },
+        { timeout: LOAD_MS },
+      ),
     ).toBeVisible();
     await expect(canvas.getByRole("link", { name: "Home" })).toHaveAttribute(
       "aria-current",
@@ -59,7 +66,7 @@ export const Collapsed: Story = {
     await waitFor(() => expect(sidebar.getBoundingClientRect().width).toBe(56));
     // Icon-only links keep their names for screen readers (the inbox's with what's unread).
     await expect(
-      await canvas.findByRole("link", { name: "Inbox 3 unread" }, { timeout: 5000 }),
+      await canvas.findByRole("link", { name: "Inbox 3 unread" }, { timeout: LOAD_MS }),
     ).toBeInTheDocument();
   },
 };
