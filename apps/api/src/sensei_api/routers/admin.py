@@ -4,7 +4,9 @@ in every org, failed ones retried and stuck ones cancelled.
 Reads across orgs go through the ``staff_read`` row-level policy (SELECT only, and only while
 the transaction names a user the database says is staff: ``set_staff_context``). The two actions
 are an org owner's, done in the run's org by the staff member as its owner would: the same role
-checks, the same dispatch, recorded in that org's audit log under the staff member's name.
+checks, the same dispatch, recorded in that org's audit log under the staff member's name, with
+an entry saying staff did it. A disconnected repository's or deleted org's run isn't retried
+(cancelling it is still allowed: stopping work is always safe).
 
 The read-only switch stops anything new that costs from starting, today, everywhere, as the
 spend cap does; lifting it lasts only while today's spend is under the cap (the worker sets it
@@ -30,6 +32,7 @@ from sensei_api.auth import CurrentStaff
 from sensei_api.deps import DbSession, RedisClient, Writable
 from sensei_api.errors import NotFound
 from sensei_api.routers.index_jobs import IndexJobOut, _jobs, _service, dispatch_index  # pyright: ignore[reportPrivateUsage]
+from sensei_core.audit import AuditAction, audit
 from sensei_core.db.tenancy import set_org_context, set_staff_context
 from sensei_core.errors import ConflictError
 from sensei_core.indexing.events import JobOutbox
@@ -94,6 +97,12 @@ class ReadOnlyIn(BaseModel):
     on: bool
 
 
+def _like(q: str) -> str:
+    """``q`` as a case-insensitive substring pattern, its own ``%``, ``_`` and ``\\`` literal."""
+    escaped = q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return f"%{escaped}%"
+
+
 def _midnight(now: datetime) -> datetime:
     return now.replace(hour=0, minute=0, second=0, microsecond=0)
 
@@ -112,9 +121,9 @@ async def overview(request: Request, db: StaffDb, redis: RedisClient) -> AdminOv
         spent_today_usd=Decimal(spent or 0),
         cap_usd=cap if cap > 0 else None,
         read_only=await read_only(redis, now=now),
-        users=await db.scalar(select(func.count()).select_from(User)) or 0,
+        users=await db.scalar(select(func.count()).where(User.deleted_at.is_(None))) or 0,
         orgs=await db.scalar(select(func.count()).where(Org.deleted_at.is_(None))) or 0,
-        repos=await db.scalar(select(func.count()).select_from(Repo)) or 0,
+        repos=await db.scalar(select(func.count()).where(Repo.deleted_at.is_(None))) or 0,
         failed_runs_today=await db.scalar(
             select(func.count()).where(
                 IndexJob.status == JobStatus.FAILED, IndexJob.created_at >= _midnight(now)
@@ -134,8 +143,10 @@ async def users(
     orgs = select(func.count()).where(Membership.user_id == User.id).scalar_subquery()
     query = select(User, orgs).order_by(User.created_at.desc()).limit(limit)
     if q:
-        like = f"%{q}%"
-        query = query.where(or_(User.login.ilike(like), User.name.ilike(like)))
+        like = _like(q)
+        query = query.where(
+            or_(User.login.ilike(like, escape="\\"), User.name.ilike(like, escape="\\"))
+        )
     return [
         AdminUserOut(
             id=user.id,
@@ -167,8 +178,10 @@ async def orgs(
     )
     query = select(Org, members, repos, spent).order_by(Org.created_at.desc()).limit(limit)
     if q:
-        like = f"%{q}%"
-        query = query.where(or_(Org.slug.ilike(like), Org.name.ilike(like)))
+        like = _like(q)
+        query = query.where(
+            or_(Org.slug.ilike(like, escape="\\"), Org.name.ilike(like, escape="\\"))
+        )
     return [
         AdminOrgOut(
             id=org.id,
@@ -214,14 +227,18 @@ async def jobs(
 
 
 async def _as_owner(
-    db: AsyncSession, staff: User, job_id: uuid.UUID
+    db: AsyncSession, staff: User, job_id: uuid.UUID, *, live: bool
 ) -> tuple[OrgAccess, Repo, IndexJob]:
+    """The run, its repository and its org as an owner sees them (``live``: refused for a
+    disconnected repository or a deleted org, as their own pages refuse them)."""
     job = await db.get(IndexJob, job_id)
     if job is None:
         raise NotFound("Index run not found.")
     org = await db.get(Org, job.org_id)
     repo = await db.get(Repo, job.repo_id)
-    if org is None or repo is None or org.deleted_at is not None:
+    if org is None or repo is None:
+        raise NotFound("Index run not found.")
+    if live and (org.deleted_at is not None or repo.deleted_at is not None):
         raise NotFound("Index run not found.")
     await set_org_context(db, org.id)  # the run's org: its writes are org-scoped as ever
     return OrgAccess(org=org, role=Role.OWNER, user=staff), repo, job
@@ -239,11 +256,15 @@ async def retry_job(
 ) -> AdminJobOut:
     """Index the failed run's repository again, as its org's owner would (staff): 409
     ``index_job_running`` while another run is under way, ``not_failed`` unless it failed."""
-    access, repo, found = await _as_owner(db, staff, job)
+    access, repo, found = await _as_owner(db, staff, job, live=True)
     if found.status is not JobStatus.FAILED:
         raise ConflictError("Only a failed run is retried.", code="not_failed")
     outbox = JobOutbox()
     started = await _service(request).start(db, access, repo, outbox)
+    await audit(db, AuditAction.STAFF_INDEX_RETRY, actor_user_id=staff.id, org_id=repo.org_id,
+                target_type="repo", target_id=repo.id,
+                meta={"full_name": repo.full_name, "failed_run": str(found.id),
+                      "run": str(started.id)})  # fmt: skip
     background.add_task(
         dispatch_index, redis, _jobs(request), outbox,
         org_id=repo.org_id, repo_id=repo.id, job_id=started.id,
@@ -262,9 +283,12 @@ async def cancel_job(
     background: BackgroundTasks,
 ) -> AdminJobOut:
     """Cancel a queued or running run, as its org's owner would (staff)."""
-    access, repo, found = await _as_owner(db, staff, job)
+    access, repo, found = await _as_owner(db, staff, job, live=False)
     outbox = JobOutbox()
     cancelled = await _service(request).cancel(db, access, repo, found.id, outbox)
+    await audit(db, AuditAction.STAFF_INDEX_CANCEL, actor_user_id=staff.id, org_id=repo.org_id,
+                target_type="repo", target_id=repo.id,
+                meta={"full_name": repo.full_name, "run": str(found.id)})  # fmt: skip
 
     async def after_commit() -> None:
         await outbox.publish(redis)
@@ -280,7 +304,7 @@ async def cancel_job(
 
 @router.put("/read-only", response_model=AdminOverviewOut)
 async def set_read_only(
-    body: ReadOnlyIn, request: Request, db: StaffDb, redis: RedisClient
+    body: ReadOnlyIn, request: Request, staff: CurrentStaff, db: StaffDb, redis: RedisClient
 ) -> AdminOverviewOut:
     """Stop (``on``) anything new that costs from starting until midnight UTC, everywhere, or
     lift today's stop (staff). Lifted, it comes back within a minute while today's spend is past
@@ -292,4 +316,5 @@ async def set_read_only(
         await redis.set(key, "staff", ex=lasts)
     else:
         await redis.delete(key)
+    await audit(db, AuditAction.SERVICE_READ_ONLY, actor_user_id=staff.id, meta={"on": body.on})
     return await overview(request, db, redis)

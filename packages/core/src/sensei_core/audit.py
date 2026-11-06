@@ -53,6 +53,9 @@ class AuditAction(enum.StrEnum):
     REPO_UNPUBLISHED = "repo.unpublished"
     REPO_INDEX_STARTED = "repo.index_started"
     REPO_INDEX_CANCELLED = "repo.index_cancelled"
+    STAFF_INDEX_RETRY = "staff.index_retry"  # staff retried an org's failed run, as its owner
+    STAFF_INDEX_CANCEL = "staff.index_cancel"  # staff cancelled an org's run, as its owner
+    SERVICE_READ_ONLY = "service.read_only"  # staff stopped (or allowed) new spending everywhere
     AGENT_COST_CAP_WARNING = "agent.cost_cap_warning"
     CONVERSATION_SHARED = "conversation.shared"
     CONVERSATION_UNSHARED = "conversation.unshared"

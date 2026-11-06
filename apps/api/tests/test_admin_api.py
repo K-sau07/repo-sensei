@@ -17,6 +17,7 @@ from fastapi import FastAPI
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from sensei_core.audit import AuditAction
 from sensei_core.db.tenancy import set_org_context, set_staff_context
 from sensei_core.limits import READ_ONLY
 from sensei_core.mail import MemoryMailer
@@ -121,12 +122,19 @@ async def test_staff_see_every_org_and_retry_a_failed_run_as_its_owner(
     assert (again.status_code, again.json()["error"]["code"]) == (409, "not_failed")
     cancelled = await client.post(f"{ADMIN}/jobs/{retried.json()['id']}/cancel", headers=headers)
     assert (cancelled.status_code, cancelled.json()["status"]) == (200, "cancelled")
-    # Done in the run's org, by the staff member, as its audit log says.
+    # Done in the run's org, by the staff member, and its audit log says staff did it.
     await set_org_context(db_session, second.org_id)
-    actions = (await db_session.scalars(select(AuditEvent.action).where(
+    actions = set(await db_session.scalars(select(AuditEvent.action).where(
         AuditEvent.org_id == second.org_id, AuditEvent.actor_user_id == staff.id,
-    ))).all()  # fmt: skip
-    assert len(actions) == 2
+    )))  # fmt: skip
+    assert {AuditAction.STAFF_INDEX_RETRY.value, AuditAction.STAFF_INDEX_CANCEL.value} <= actions
+    assert AuditAction.REPO_INDEX_STARTED.value in actions
+
+    # A disconnected repository's failed run isn't retried (its page doesn't exist either).
+    second.deleted_at = datetime.now(UTC)
+    await db_session.flush()
+    gone = await client.post(f"{ADMIN}/jobs/{failed.id}/retry", headers=headers)
+    assert gone.status_code == 404
     assert first.org_id != second.org_id
 
 
@@ -143,6 +151,11 @@ async def test_staff_stop_new_spending_and_lift_it(
     assert await fake_redis.exists(READ_ONLY.format(day=datetime.now(UTC).date().isoformat()))
     lifted = await client.put(f"{ADMIN}/read-only", json={"on": False}, headers=headers)
     assert lifted.json()["read_only"] is False
+    said = (await db_session.scalars(select(AuditEvent.meta).where(
+        AuditEvent.action == AuditAction.SERVICE_READ_ONLY.value,
+        AuditEvent.actor_user_id == staff.id,
+    ).order_by(AuditEvent.id))).all()  # fmt: skip
+    assert said == [{"on": True}, {"on": False}]
 
 
 async def test_no_one_else_sees_the_console(
