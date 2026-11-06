@@ -33,6 +33,7 @@ import { RateLimited } from "@/components/search/rate-limited";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { MD, useMediaQuery } from "@/hooks/use-media-query";
 import { ApiError } from "@/lib/api/errors";
 import { impactHref } from "@/lib/api/impact";
 import {
@@ -236,6 +237,7 @@ function TraceView({ entry }: { entry: string }) {
   const { org, repo } = useRepoSlug();
   const [state, setState] = useTraceState();
   const trace = useTrace(entry);
+  const wide = useMediaQuery(MD);
   const key = `${org}/${repo}/${entry}`;
   // The beam runs on the path first shown, the first time this trace resolves here.
   const [fresh] = useState(() => !PULSED.has(key));
@@ -258,6 +260,8 @@ function TraceView({ entry }: { entry: string }) {
   const entryHop = path?.hops[path.entry_index];
   const firstPlace = entryHop ? hopPlace(entryHop) : null;
   const select = (next: number | null) => void setState({ hop: next });
+  // A phone shows the list: the swimlanes need the width (the guide's list fallback).
+  const view = wide ? state.view : "list";
 
   return (
     <div className="flex flex-col gap-3 px-6 py-4" data-testid="trace-view">
@@ -282,7 +286,9 @@ function TraceView({ entry }: { entry: string }) {
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-1">
-          <ViewToggle view={state.view} onChange={(view) => void setState({ view })} />
+          {wide && (
+            <ViewToggle view={state.view} onChange={(next) => void setState({ view: next })} />
+          )}
           {path && (
             <Link
               href={overviewTraceHref(org, repo, entry, at + 1)}
@@ -358,7 +364,11 @@ function TraceView({ entry }: { entry: string }) {
             void setState({ path: value + 1, hop: null });
           }}
         >
-          <TabsList aria-label="Paths, best first" variant="line" className="h-auto flex-wrap">
+          <TabsList
+            aria-label="Paths, best first"
+            variant="line"
+            className="h-auto max-w-full justify-start overflow-x-auto"
+          >
             {data.paths.map((candidate, i) => (
               <PathTab key={i} path={candidate} index={i} trace={data} />
             ))}
@@ -366,7 +376,7 @@ function TraceView({ entry }: { entry: string }) {
           {data.paths.map((candidate, i) => (
             <TabsContent key={i} value={i} className="flex flex-col gap-3 pt-1">
               <PathSummary path={candidate} trace={data} />
-              {state.view === "list" ? (
+              {view === "list" ? (
                 <TraceList path={candidate} selected={selected} onSelect={select} />
               ) : (
                 <TraceSwimlane

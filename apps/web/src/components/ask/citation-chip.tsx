@@ -136,7 +136,8 @@ function CitationPeek({
               onOpen(citation);
             }}
           >
-            Open beside the answer
+            <span className="md:hidden">Open the cited code</span>
+            <span className="hidden md:inline">Open beside the answer</span>
           </Button>
         </div>
       ) : null}

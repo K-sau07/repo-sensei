@@ -1,17 +1,20 @@
 "use client";
 
-import { FileQuestion, Hourglass } from "lucide-react";
+import { FileQuestion, FolderTree, Hourglass } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useMemo, type ReactNode } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 
 import { EmptyState } from "@/components/feedback/empty-state";
 import { ErrorState } from "@/components/feedback/error-state";
 import { LockedState } from "@/components/feedback/locked-state";
 import { useRepoFeatures } from "@/components/repo/use-repo";
 import { useRightRail } from "@/components/shell/right-rail";
+import { Button } from "@/components/ui/button";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
+import { Sheet, SheetContent, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
+import { LG, useMediaQuery } from "@/hooks/use-media-query";
 import { ApiError } from "@/lib/api/errors";
 import { parentOf } from "@/lib/code/tree";
 import { STAGE_LABELS } from "@/lib/indexing";
@@ -60,11 +63,14 @@ function NotIndexed() {
 
 /**
  * `/[org]/[repo]/code/…`: the file tree beside whatever is open. It's the code tab's layout, so
- * the tree (what's expanded, where it's scrolled) stays as files open.
+ * the tree (what's expanded, where it's scrolled) stays as files open. Below `lg` (tablets and
+ * phones) the file has the width and the tree is a drawer, closed again once a file opens.
  */
 export function CodeBrowser({ children }: { children: ReactNode }) {
   const { org, repo, path, ref } = useCodeLocation();
   const router = useRouter();
+  const wide = useMediaQuery(LG);
+  const [filesOpen, setFilesOpen] = useState(false);
   const root = useListing("");
   const error = root.error instanceof ApiError ? root.error : null;
   // The rail reads where it is itself, so its element never changes.
@@ -104,6 +110,36 @@ export function CodeBrowser({ children }: { children: ReactNode }) {
     );
   }
   if (content) return content;
+
+  if (!wide) {
+    return (
+      <div className="flex min-h-[28rem] flex-1 flex-col">
+        <div className="flex items-center border-b border-line px-2 py-1">
+          <Sheet open={filesOpen} onOpenChange={setFilesOpen}>
+            <SheetTrigger render={<Button variant="ghost" size="sm" />}>
+              <FolderTree aria-hidden />
+              Files
+            </SheetTrigger>
+            <SheetContent side="left" className="w-80 max-w-[85vw] gap-0 p-0">
+              <SheetTitle className="sr-only">Files</SheetTitle>
+              <FileTree
+                className="h-full bg-surface-1"
+                current={path}
+                onOpenFile={(file) => {
+                  setFilesOpen(false);
+                  router.push(codePath(org, repo, file, { ref }));
+                }}
+              />
+            </SheetContent>
+          </Sheet>
+        </div>
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+          {children}
+          <ReferencesDrawer />
+        </div>
+      </div>
+    );
+  }
 
   return (
     // Fills what the repository header leaves; the tree and the file scroll on their own.

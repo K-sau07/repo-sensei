@@ -20,6 +20,8 @@ import { LockedState } from "@/components/feedback/locked-state";
 import { useViewRef, withRef } from "@/components/repo/use-ref";
 import { useRepoFeatures, useRepoSlug } from "@/components/repo/use-repo";
 import { Button } from "@/components/ui/button";
+import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
+import { MD, useMediaQuery } from "@/hooks/use-media-query";
 import {
   answerText,
   citationsOf,
@@ -135,6 +137,7 @@ function Ask({ onNamed }: { onNamed: (id: string) => void }) {
   const [opened, setOpened] = useState<CitationData | null>(null);
   const [scope, setScope] = useState<ScopeData>(NO_SCOPE);
   const artifacts = useArtifacts();
+  const wide = useMediaQuery(MD);
   const [ref] = useViewRef();
   const codeHref: CodeHref = (path, [start, end]) =>
     codePath(org, repo, path, { lines: start === end ? `${start}` : `${start}-${end}`, ref });
@@ -249,6 +252,38 @@ function Ask({ onNamed }: { onNamed: (id: string) => void }) {
           {announcement}
         </p>
       </section>
+      {/* A phone has no room beside the answer: what is opened comes up from the bottom. */}
+      {!wide && (
+        <Sheet
+          open={opened !== null || artifacts.current !== null}
+          onOpenChange={(open) => {
+            if (open) return;
+            setOpened(null);
+            artifacts.close();
+          }}
+        >
+          <SheetContent side="bottom" className="max-h-[85dvh] gap-0 overflow-auto p-0">
+            <SheetTitle className="sr-only">{opened ? "Cited code" : "Artifact"}</SheetTitle>
+            {opened ? (
+              <CitedCode
+                citation={opened}
+                onClose={() => {
+                  setOpened(null);
+                }}
+              />
+            ) : artifacts.current ? (
+              <ArtifactPanel
+                pinned={artifacts.pinned}
+                current={artifacts.current}
+                onShow={artifacts.show}
+                onClose={artifacts.close}
+                codeHref={codeHref}
+                traceHref={traceHref}
+              />
+            ) : null}
+          </SheetContent>
+        </Sheet>
+      )}
       <div className="hidden min-h-0 md:block">
         {opened ? (
           <CitedCode

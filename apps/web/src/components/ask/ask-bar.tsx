@@ -83,7 +83,7 @@ export function AskBar() {
     <>
       <Button
         variant="outline"
-        className="fixed right-6 bottom-6 z-40 hidden gap-2 rounded-full shadow-md md:inline-flex"
+        className="fixed right-6 bottom-6 z-40 hidden gap-2 rounded-full shadow-md lg:inline-flex"
         onClick={() => {
           setDropped(false);
           setShown(true);
