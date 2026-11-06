@@ -13,9 +13,10 @@ from datetime import datetime
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Query
-from pydantic import BaseModel, Field
-from sqlalchemy import select
+from pydantic import BaseModel, Field, ValidationError
+from sqlalchemy import func, literal, select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import defer
 
 from sensei_api.auth import CurrentStaff
 from sensei_api.deps import DbSession
@@ -99,27 +100,59 @@ class EvalComparisonOut(BaseModel):
     warnings: list[str] = Field(description="Why the two runs may not be alike.")
 
 
+SAME_KIND = (EvalRun.suite, EvalRun.suite_version, EvalRun.retriever)
+
+
 async def _baseline(db: AsyncSession, run: EvalRun) -> EvalRun | None:
+    """The run before ``run`` of its suite, version and retriever (by when, then id)."""
     return await db.scalar(
         select(EvalRun)
         .where(
-            EvalRun.suite == run.suite,
-            EvalRun.suite_version == run.suite_version,
-            EvalRun.retriever == run.retriever,
-            EvalRun.created_at < run.created_at,
+            *(column == getattr(run, column.key) for column in SAME_KIND),
+            tuple_(EvalRun.created_at, EvalRun.id)
+            < tuple_(literal(run.created_at), literal(run.id)),
         )
         .order_by(EvalRun.created_at.desc(), EvalRun.id.desc())
         .limit(1)
     )
 
 
-async def _summary(db: AsyncSession, run: EvalRun) -> EvalRunSummary:
+def _summarized(run: EvalRun, baseline: uuid.UUID | None, metrics: Any) -> EvalRunSummary:
     summary = EvalRunSummary.build(run)
-    baseline = await _baseline(db, run)
     if baseline is not None:
-        summary.baseline_id = baseline.id
-        summary.regressions = len(metric_changes(baseline.metrics, run.metrics)[0])
+        summary.baseline_id = baseline
+        summary.regressions = len(metric_changes(metrics, run.metrics)[0])
     return summary
+
+
+async def _summaries(db: AsyncSession, runs: list[EvalRun]) -> list[EvalRunSummary]:
+    """Each run with its baseline: two queries for any number of runs (each run's previous by
+    a window over its kind, then those runs' metrics alone)."""
+    previous = (
+        select(
+            EvalRun.id,
+            func.lag(EvalRun.id)
+            .over(partition_by=SAME_KIND, order_by=(EvalRun.created_at, EvalRun.id))
+            .label("previous"),
+        )
+        .where(tuple_(*SAME_KIND).in_({(r.suite, r.suite_version, r.retriever) for r in runs}))
+        .subquery()
+    )
+    rows = await db.execute(
+        select(previous.c.id, previous.c.previous).where(
+            previous.c.id.in_([r.id for r in runs]), previous.c.previous.is_not(None)
+        )
+    )
+    before: dict[uuid.UUID, uuid.UUID] = dict(rows.tuples().all())
+    metrics: dict[uuid.UUID, Any] = dict(
+        (await db.execute(select(EvalRun.id, EvalRun.metrics).where(
+            EvalRun.id.in_(set(before.values()))
+        ))).tuples().all()
+    ) if before else {}  # fmt: skip
+    return [
+        _summarized(r, before.get(r.id), metrics.get(before[r.id]) if r.id in before else None)
+        for r in runs
+    ]
 
 
 @router.get("/evals", response_model=EvalRunPage)
@@ -135,14 +168,17 @@ async def list_eval_runs(
 ) -> EvalRunPage:
     """Stored eval runs, newest first, each with its baseline and how many metrics got worse
     (staff). ``sort=regressions``: the newest ``limit`` runs, most regressions first."""
-    query = select(EvalRun).order_by(EvalRun.id.desc()).limit(limit)
+    # The items aren't listed: their JSON stays in the table.
+    query = select(EvalRun).options(defer(EvalRun.per_item)).order_by(EvalRun.id.desc())
+    query = query.limit(limit)
     if suite is not None:
         query = query.where(EvalRun.suite == suite)
     if retriever is not None:
         query = query.where(EvalRun.retriever == retriever)
     if before is not None:
         query = query.where(EvalRun.id < before)
-    items = [await _summary(db, run) for run in await db.scalars(query)]
+    runs = list(await db.scalars(query))
+    items = await _summaries(db, runs) if runs else []
     if sort == "regressions":
         items.sort(key=lambda item: -(item.regressions or 0))  # stable: newest first among ties
         return EvalRunPage(items=items, next_cursor=None)
@@ -155,7 +191,9 @@ async def get_eval_run(_staff: CurrentStaff, db: DbSession, run: uuid.UUID) -> E
     found = await db.get(EvalRun, run)
     if found is None:
         raise NotFound("Eval run not found.")
-    return EvalRunOut(**(await _summary(db, found)).model_dump(), per_item=found.per_item)
+    base = await _baseline(db, found)
+    summary = _summarized(found, base.id if base else None, base.metrics if base else None)
+    return EvalRunOut(**summary.model_dump(), per_item=found.per_item)
 
 
 @router.get("/evals/{run}/compare", response_model=EvalComparisonOut)
@@ -169,28 +207,36 @@ async def compare_eval_run(
     base = await db.get(EvalRun, baseline) if baseline is not None else await _baseline(db, found)
     if baseline is not None and base is None:
         raise NotFound("Baseline run not found.")
-    summary = await _summary(db, found)
+    summary = _summarized(found, base.id if base else None, base.metrics if base else None)
     if base is None:
         return EvalComparisonOut(
             run=summary, baseline=None, metric=None, regressions=[], improvements=[],
             unchanged=[], items_worse=[], items_better=[], warnings=[],
         )  # fmt: skip
-    if baseline is not None:  # another run than its own baseline: what changed from that one
-        summary.baseline_id = base.id
-        summary.regressions = len(metric_changes(base.metrics, found.metrics)[0])
-    made = compare(from_row(base), from_row(found))
-
-    def metrics(changes: list[Any]) -> list[MetricChangeOut]:
-        return [MetricChangeOut(name=c.name, before=c.before, after=c.after, delta=c.delta)
-                for c in changes]  # fmt: skip
-
-    def items(changes: list[Any]) -> list[ItemChangeOut]:
-        return [ItemChangeOut(id=c.id, query=c.query, before=c.before, after=c.after)
-                for c in changes]  # fmt: skip
+    try:
+        made = compare(from_row(base), from_row(found))
+    except ValidationError:  # a row stored by hand, not by sensei-eval: its metrics still compare
+        worse, better, same = metric_changes(base.metrics, found.metrics)
+        return EvalComparisonOut(
+            run=summary, baseline=EvalRunSummary.build(base), metric=None,
+            regressions=_metrics(worse), improvements=_metrics(better), unchanged=_metrics(same),
+            items_worse=[], items_better=[],
+            warnings=["An item of one of the runs can't be read, so items aren't compared."],
+        )  # fmt: skip
 
     return EvalComparisonOut(
         run=summary, baseline=EvalRunSummary.build(base), metric=made.metric,
-        regressions=metrics(made.regressions), improvements=metrics(made.improvements),
-        unchanged=metrics(made.unchanged), items_worse=items(made.items_worse),
-        items_better=items(made.items_better), warnings=made.warnings,
+        regressions=_metrics(made.regressions), improvements=_metrics(made.improvements),
+        unchanged=_metrics(made.unchanged), items_worse=_items(made.items_worse),
+        items_better=_items(made.items_better), warnings=made.warnings,
     )  # fmt: skip
+
+
+def _metrics(changes: list[Any]) -> list[MetricChangeOut]:
+    return [MetricChangeOut(name=c.name, before=c.before, after=c.after, delta=c.delta)
+            for c in changes]  # fmt: skip
+
+
+def _items(changes: list[Any]) -> list[ItemChangeOut]:
+    return [ItemChangeOut(id=c.id, query=c.query, before=c.before, after=c.after)
+            for c in changes]  # fmt: skip

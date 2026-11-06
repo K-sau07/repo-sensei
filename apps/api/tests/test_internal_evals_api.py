@@ -197,3 +197,36 @@ async def test_each_run_is_compared_with_the_one_before_it(
         f"{API}/internal/evals/{worse.id}/compare", params={"baseline": str(uuid.uuid4())}
     )
     assert unknown.status_code == 404
+
+
+async def test_runs_at_one_moment_are_ordered_by_id_and_hand_stored_rows_still_compare(
+    api_app: FastAPI, api_client: httpx.AsyncClient, db_session: AsyncSession,
+    migrated_test_db: Settings,
+) -> None:  # fmt: skip
+    suite = f"ties-{uuid.uuid4().hex[:8]}"
+    when = datetime(2026, 11, 2, tzinfo=UTC)
+    rows = [_run(suite, "hybrid", recall) for recall in (0.4, 0.8)]
+    for row in rows:
+        row.created_at = when  # the same moment: the id orders them
+    database = make_system_database(migrated_test_db.database)
+    try:
+        async with database.session() as db:
+            db.add_all(rows)
+        await _staff(api_app, api_client, db_session)
+        first, second = sorted(rows, key=lambda r: r.id)
+        listed = (await api_client.get(f"{API}/internal/evals", params={"suite": suite})).json()
+        baselines = {item["id"]: item["baseline_id"] for item in listed["items"]}
+        assert baselines == {str(first.id): None, str(second.id): str(first.id)}
+        # These rows' items aren't sensei-eval's (no query, no hits): metrics still compare.
+        compared = await api_client.get(f"{API}/internal/evals/{second.id}/compare")
+        assert compared.status_code == 200, compared.text
+        body = compared.json()
+        assert [m["name"] for m in body["improvements"]] == ["recall_symbol@10"]
+        assert body["items_worse"] == []
+        assert body["warnings"] == [
+            "An item of one of the runs can't be read, so items aren't compared."
+        ]
+    finally:
+        async with database.session() as db:
+            await db.execute(delete(EvalRun).where(EvalRun.suite == suite))
+        await database.dispose()
