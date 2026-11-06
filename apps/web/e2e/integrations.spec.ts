@@ -221,3 +221,34 @@ test.describe("internal evals", () => {
     await expect(page.getByRole("table", { name: "Eval runs" })).toHaveCount(0);
   });
 });
+
+test.describe("admin console", () => {
+  test("staff retry a failed run, and the runs filter is kept in the address", async ({ page }) => {
+    await page.goto("/internal/admin");
+    const rows = page.getByTestId("admin-run");
+    await expect(rows).toHaveCount(2);
+    await page.getByRole("button", { name: "Retry acme-gh/api" }).click();
+    await expect(page.getByText("acme-gh/api is being indexed again")).toBeVisible();
+    await page.getByRole("button", { name: "Queued" }).click();
+    await expect(page).toHaveURL(/runs=queued/);
+    await expect(rows).toHaveCount(1);
+    await expect(rows.first()).toContainText("acme-gh/api");
+  });
+
+  test("staff cancel a run under way in another org", async ({ page }) => {
+    await page.goto("/internal/admin?runs=running");
+    await expect(page.getByRole("navigation", { name: "Staff" })).toBeVisible();
+    const run = page.getByTestId("admin-run").filter({ hasText: "globex-gh/web" });
+    await run.getByRole("button", { name: "Cancel globex-gh/web" }).click();
+    await expect(page.getByText("globex-gh/web's run is cancelled")).toBeVisible();
+    await expect(page.getByTestId("admin-run")).toHaveCount(0);
+    await noAxeViolations(page);
+  });
+
+  test("someone who isn't staff sees no console and no staff nav", async ({ context, page }) => {
+    await useMockScenario(context, "as-member");
+    await page.goto("/internal/admin");
+    await expect(page.getByText(/not found|couldn.t find/i).first()).toBeVisible();
+    await expect(page.getByRole("navigation", { name: "Staff" })).toHaveCount(0);
+  });
+});

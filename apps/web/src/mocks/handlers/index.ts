@@ -1,3 +1,4 @@
+import { adminHandlers } from "./admin";
 import { apiKeyHandlers } from "./api-keys";
 import { askHandlers } from "./ask";
 import { auditHandlers } from "./audit";
@@ -47,6 +48,7 @@ export const handlers = [
   ...auditHandlers,
   ...insightHandlers,
   ...internalHandlers,
+  ...adminHandlers,
   ...refHandlers,
   ...diagramHandlers,
   ...inboxHandlers,
