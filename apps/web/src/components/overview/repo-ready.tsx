@@ -388,7 +388,7 @@ export function RepoReady({
       {overview.data && (
         <>
           <WhatItDoes org={org} repo={repo} overview={overview.data} />
-          <div className="grid gap-6 lg:grid-cols-[2fr_1fr]">
+          <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
             <Architecture org={org} repo={repo} overview={overview.data} />
             <div className="flex flex-col gap-6">
               <Questions org={org} repo={repo} overview={overview.data} />

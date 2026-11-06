@@ -31,7 +31,7 @@ export function SettingsNav() {
           {back ? `Back to ${back.name}` : "Back"}
         </Link>
         <h1 className="text-xl font-semibold tracking-[-0.015em]">Your settings</h1>
-        <nav aria-label="Settings" className="flex gap-4">
+        <nav aria-label="Settings" className="-mx-1 flex gap-4 overflow-x-auto px-1">
           {ITEMS.map((item) => {
             const active = pathname === item.href;
             return (
@@ -39,7 +39,7 @@ export function SettingsNav() {
                 key={item.href}
                 href={item.href}
                 aria-current={active ? "page" : undefined}
-                className="-mb-px border-b-2 border-transparent pb-2 text-sm text-fg-muted hover:text-fg focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none aria-[current=page]:border-fg aria-[current=page]:text-fg"
+                className="-mb-px shrink-0 border-b-2 border-transparent pb-2 text-sm whitespace-nowrap text-fg-muted hover:text-fg focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none aria-[current=page]:border-fg aria-[current=page]:text-fg"
               >
                 {item.label}
               </Link>

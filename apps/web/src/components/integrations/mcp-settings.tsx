@@ -58,7 +58,7 @@ interface ShownCheck {
 
 function Snippet({ label, value, copyLabel }: { label: string; value: string; copyLabel: string }) {
   return (
-    <div className="grid gap-1.5">
+    <div className="grid min-w-0 grid-cols-1 gap-1.5">
       <p className="text-sm">{label}</p>
       <div className="flex items-start gap-2 rounded-sm border border-line bg-surface-1 p-2">
         <pre className="min-w-0 flex-1 overflow-x-auto font-mono text-xs leading-relaxed">

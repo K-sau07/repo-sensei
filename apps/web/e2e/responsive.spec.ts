@@ -8,8 +8,53 @@ const TABLET = { width: 834, height: 1112 };
 const overflow = (page: Page) =>
   page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
 
+/** What reaches past the screen's right edge outside anything that scrolls or clips it (the
+ * page itself scrolls in `main`, which a document-wide check can't see). */
+const sticksOut = (page: Page) =>
+  page.evaluate(() => {
+    const width = window.innerWidth;
+    const main = document.querySelector("main");
+    const held = (el: Element) => {
+      for (let up = el.parentElement; up; up = up.parentElement) {
+        if (up === main || up === document.body) continue;
+        if (["auto", "scroll", "hidden", "clip"].includes(getComputedStyle(up).overflowX))
+          return true;
+      }
+      return false;
+    };
+    return [...document.querySelectorAll("body *")]
+      .filter((el) => {
+        const box = el.getBoundingClientRect();
+        return (
+          box.width > 0 &&
+          box.height > 0 &&
+          box.right > width + 1 &&
+          !held(el) &&
+          getComputedStyle(el).position !== "fixed"
+        );
+      })
+      .slice(0, 3)
+      .map((el) => `${el.tagName.toLowerCase()}.${el.getAttribute("class") ?? ""}`.slice(0, 80));
+  });
+
+const PHONE_PAGES = [
+  "/acme", "/acme/inbox", "/acme/insights", "/acme/api", "/acme/api/ask", "/acme/api/fixes",
+  "/acme/api/fixes/0199f000-0000-7000-8000-00000000f001", "/acme/api/index",
+  "/acme/settings/general", "/acme/settings/models", "/acme/settings/mcp", "/acme/settings/usage",
+  "/settings/profile", "/settings/appearance", "/pricing", "/docs",
+]; // prettier-ignore
+
 test.describe("on a phone", () => {
   test.use({ viewport: PHONE });
+
+  for (const path of PHONE_PAGES) {
+    test(`${path} fits the screen`, async ({ page }) => {
+      await page.goto(path);
+      await expect(page.locator("main, body").first()).toBeVisible();
+      await page.waitForLoadState("networkidle");
+      expect(await sticksOut(page)).toEqual([]);
+    });
+  }
 
   test("a trace is a list, and nothing is wider than the screen", async ({ page }) => {
     await page.goto("/acme/api/trace?from=frontend%2Fsrc%2Froutes%2Flogin.tsx");

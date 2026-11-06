@@ -22,8 +22,8 @@ const PAGES = [
   ["pricing", "/pricing", "Pricing"],
 ] as const;
 
-// What moves or isn't the page's own: the dev server's badge, canvases (the constellation).
-const masks = (page: Page) => [page.locator("nextjs-portal"), page.locator("canvas")];
+// What moves: canvases (the landing's globe).
+const masks = (page: Page) => [page.locator("canvas")];
 
 for (const [size, width, height] of WIDTHS) {
   test.describe(size, () => {
@@ -34,6 +34,8 @@ for (const [size, width, height] of WIDTHS) {
         await page.goto(path);
         await expect(page.getByRole("heading", { name: heading }).first()).toBeVisible();
         await page.evaluate(() => document.fonts.ready);
+        // The dev server's badge isn't the page's (a mask can't reach into its shadow root).
+        await page.addStyleTag({ content: "nextjs-portal { display: none !important; }" });
         await expect(page).toHaveScreenshot(`${name}-${size}.png`, {
           fullPage: true,
           animations: "disabled",
