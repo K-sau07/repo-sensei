@@ -17,7 +17,7 @@ export default defineConfig({
   // No device preset: its spoofed Windows user agent would make the app expect Ctrl where the
   // real platform sends ⌘ (and vice versa), breaking the shortcut tests.
   projects: [
-    { name: "chromium", use: chromium, grepInvert: /@perf/ },
+    { name: "chromium", use: chromium, grepInvert: /@perf|@visual/ },
     // Timing tests (tagged @perf) run after the rest, on one worker, so no other test steals
     // their frames.
     {
@@ -27,6 +27,9 @@ export default defineConfig({
       dependencies: ["chromium"],
       fullyParallel: false,
     },
+    // Screenshots against baselines made in the Playwright image (e2e/visual.spec.ts); only
+    // asked for by name (`--project visual`), never with the rest.
+    ...(process.env.E2E_VISUAL ? [{ name: "visual", use: chromium, grep: /@visual/ }] : []),
   ],
   webServer: {
     command: `pnpm exec next dev --port ${port}`,
