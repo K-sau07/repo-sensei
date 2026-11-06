@@ -180,6 +180,149 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/internal/admin": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Overview
+         * @description The service today (staff).
+         */
+        get: operations["overview_api_v1_internal_admin_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/internal/admin/jobs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Jobs
+         * @description Index runs in every org, newest first: failed ones by default (staff).
+         */
+        get: operations["jobs_api_v1_internal_admin_jobs_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/internal/admin/jobs/{job}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Cancel Job
+         * @description Cancel a queued or running run, as its org's owner would (staff).
+         */
+        post: operations["cancel_job_api_v1_internal_admin_jobs__job__cancel_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/internal/admin/jobs/{job}/retry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Retry Job
+         * @description Index the failed run's repository again, as its org's owner would (staff): 409
+         *     ``index_job_running`` while another run is under way, ``not_failed`` unless it failed.
+         */
+        post: operations["retry_job_api_v1_internal_admin_jobs__job__retry_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/internal/admin/orgs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Orgs
+         * @description Orgs, newest first, deleted ones too; ``q`` matches slug or name (staff).
+         */
+        get: operations["orgs_api_v1_internal_admin_orgs_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/internal/admin/read-only": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Set Read Only
+         * @description Stop (``on``) anything new that costs from starting until midnight UTC, everywhere, or
+         *     lift today's stop (staff). Lifted, it comes back within a minute while today's spend is past
+         *     the cap.
+         */
+        put: operations["set_read_only_api_v1_internal_admin_read_only_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/internal/admin/users": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Users
+         * @description People, newest first; ``q`` matches login or name (staff).
+         */
+        get: operations["users_api_v1_internal_admin_users_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/internal/evals": {
         parameters: {
             query?: never;
@@ -2557,6 +2700,148 @@ export interface components {
          * @enum {string}
          */
         ActorType: "user" | "system" | "api_key" | "oauth";
+        /** AdminJobOut */
+        AdminJobOut: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Error */
+            error: {
+                [key: string]: unknown;
+            } | null;
+            /**
+             * Eta S
+             * @description Seconds left, when there is a rate to go by.
+             */
+            eta_s: number | null;
+            /**
+             * Features
+             * @description What the repository can do after this run.
+             */
+            features: components["schemas"]["Feature"][];
+            /** Finished At */
+            finished_at: string | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            kind: components["schemas"]["JobKind"];
+            /** Org Slug */
+            org_slug: string;
+            /**
+             * Partial
+             * @description Stages done with work left for the next index, by stage: what was cut short. A feature they unlock works on what was written.
+             */
+            partial: {
+                [key: string]: components["schemas"]["PartialOut"];
+            };
+            /**
+             * Progress
+             * @description 0 to 1, weighted by how long stages usually take.
+             */
+            progress: number;
+            /** Repo Full Name */
+            repo_full_name: string;
+            /**
+             * Repo Id
+             * Format: uuid
+             */
+            repo_id: string;
+            /** Repo Slug */
+            repo_slug: string;
+            /** Snapshot Id */
+            snapshot_id: string | null;
+            stage: components["schemas"]["Stage"] | null;
+            /**
+             * Stages
+             * @description Per-stage progress: status, done/total, rate, timestamps, details, error.
+             */
+            stages: {
+                [key: string]: unknown;
+            };
+            /** Started At */
+            started_at: string | null;
+            status: components["schemas"]["JobStatus"];
+        };
+        /** AdminOrgOut */
+        AdminOrgOut: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Deleted At */
+            deleted_at: string | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Members */
+            members: number;
+            /** Name */
+            name: string;
+            /** Plan */
+            plan: string;
+            /** Repos */
+            repos: number;
+            /** Slug */
+            slug: string;
+            /** Spent 30D Usd */
+            spent_30d_usd: string;
+        };
+        /** AdminOverviewOut */
+        AdminOverviewOut: {
+            /**
+             * Cap Usd
+             * @description The day's cap for all of it (None: no cap).
+             */
+            cap_usd: string | null;
+            /** Failed Runs Today */
+            failed_runs_today: number;
+            /** Orgs */
+            orgs: number;
+            /**
+             * Read Only
+             * @description Nothing new that costs starts until midnight UTC.
+             */
+            read_only: boolean;
+            /** Repos */
+            repos: number;
+            /**
+             * Spent Today Usd
+             * @description Every org's metered spend since midnight UTC.
+             */
+            spent_today_usd: string;
+            /** Users */
+            users: number;
+        };
+        /** AdminUserOut */
+        AdminUserOut: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Deleted */
+            deleted: boolean;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Is Staff */
+            is_staff: boolean;
+            /** Login */
+            login: string;
+            /** Name */
+            name: string | null;
+            /** Orgs */
+            orgs: number;
+        };
         /** AffectedByCategory */
         AffectedByCategory: {
             /** Routes */
@@ -5181,6 +5466,11 @@ export interface components {
             overview: components["schemas"]["OverviewOut"];
             repo: components["schemas"]["PublicRepoOut"];
         };
+        /** ReadOnlyIn */
+        ReadOnlyIn: {
+            /** On */
+            on: boolean;
+        };
         /** ReadinessResponse */
         ReadinessResponse: {
             /** Checks */
@@ -6505,6 +6795,217 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["StagesOut"];
+                };
+            };
+        };
+    };
+    overview_api_v1_internal_admin_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminOverviewOut"];
+                };
+            };
+        };
+    };
+    jobs_api_v1_internal_admin_jobs_get: {
+        parameters: {
+            query?: {
+                status?: "failed" | "running" | "queued" | "any";
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminJobOut"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    cancel_job_api_v1_internal_admin_jobs__job__cancel_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                job: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminJobOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    retry_job_api_v1_internal_admin_jobs__job__retry_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                job: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminJobOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    orgs_api_v1_internal_admin_orgs_get: {
+        parameters: {
+            query?: {
+                q?: string | null;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminOrgOut"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    set_read_only_api_v1_internal_admin_read_only_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReadOnlyIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminOverviewOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    users_api_v1_internal_admin_users_get: {
+        parameters: {
+            query?: {
+                q?: string | null;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminUserOut"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

@@ -90,6 +90,330 @@
         "title": "ActorType",
         "type": "string"
       },
+      "AdminJobOut": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "eta_s": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Seconds left, when there is a rate to go by.",
+            "title": "Eta S"
+          },
+          "features": {
+            "description": "What the repository can do after this run.",
+            "items": {
+              "$ref": "#/components/schemas/Feature"
+            },
+            "title": "Features",
+            "type": "array"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/JobKind"
+          },
+          "org_slug": {
+            "title": "Org Slug",
+            "type": "string"
+          },
+          "partial": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/PartialOut"
+            },
+            "description": "Stages done with work left for the next index, by stage: what was cut short. A feature they unlock works on what was written.",
+            "title": "Partial",
+            "type": "object"
+          },
+          "progress": {
+            "description": "0 to 1, weighted by how long stages usually take.",
+            "title": "Progress",
+            "type": "number"
+          },
+          "repo_full_name": {
+            "title": "Repo Full Name",
+            "type": "string"
+          },
+          "repo_id": {
+            "format": "uuid",
+            "title": "Repo Id",
+            "type": "string"
+          },
+          "repo_slug": {
+            "title": "Repo Slug",
+            "type": "string"
+          },
+          "snapshot_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Snapshot Id"
+          },
+          "stage": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Stage"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "stages": {
+            "additionalProperties": true,
+            "description": "Per-stage progress: status, done/total, rate, timestamps, details, error.",
+            "title": "Stages",
+            "type": "object"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "status": {
+            "$ref": "#/components/schemas/JobStatus"
+          }
+        },
+        "required": [
+          "id",
+          "repo_id",
+          "snapshot_id",
+          "kind",
+          "status",
+          "stage",
+          "stages",
+          "progress",
+          "eta_s",
+          "error",
+          "features",
+          "partial",
+          "created_at",
+          "started_at",
+          "finished_at",
+          "org_slug",
+          "repo_full_name",
+          "repo_slug"
+        ],
+        "title": "AdminJobOut",
+        "type": "object"
+      },
+      "AdminOrgOut": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "deleted_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deleted At"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "members": {
+            "title": "Members",
+            "type": "integer"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "plan": {
+            "title": "Plan",
+            "type": "string"
+          },
+          "repos": {
+            "title": "Repos",
+            "type": "integer"
+          },
+          "slug": {
+            "title": "Slug",
+            "type": "string"
+          },
+          "spent_30d_usd": {
+            "title": "Spent 30D Usd",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "slug",
+          "name",
+          "plan",
+          "members",
+          "repos",
+          "spent_30d_usd",
+          "deleted_at",
+          "created_at"
+        ],
+        "title": "AdminOrgOut",
+        "type": "object"
+      },
+      "AdminOverviewOut": {
+        "properties": {
+          "cap_usd": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The day's cap for all of it (None: no cap).",
+            "title": "Cap Usd"
+          },
+          "failed_runs_today": {
+            "title": "Failed Runs Today",
+            "type": "integer"
+          },
+          "orgs": {
+            "title": "Orgs",
+            "type": "integer"
+          },
+          "read_only": {
+            "description": "Nothing new that costs starts until midnight UTC.",
+            "title": "Read Only",
+            "type": "boolean"
+          },
+          "repos": {
+            "title": "Repos",
+            "type": "integer"
+          },
+          "spent_today_usd": {
+            "description": "Every org's metered spend since midnight UTC.",
+            "title": "Spent Today Usd",
+            "type": "string"
+          },
+          "users": {
+            "title": "Users",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "spent_today_usd",
+          "cap_usd",
+          "read_only",
+          "users",
+          "orgs",
+          "repos",
+          "failed_runs_today"
+        ],
+        "title": "AdminOverviewOut",
+        "type": "object"
+      },
+      "AdminUserOut": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "deleted": {
+            "title": "Deleted",
+            "type": "boolean"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "is_staff": {
+            "title": "Is Staff",
+            "type": "boolean"
+          },
+          "login": {
+            "title": "Login",
+            "type": "string"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "orgs": {
+            "title": "Orgs",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "login",
+          "name",
+          "is_staff",
+          "deleted",
+          "orgs",
+          "created_at"
+        ],
+        "title": "AdminUserOut",
+        "type": "object"
+      },
       "AffectedByCategory": {
         "properties": {
           "routes": {
@@ -7228,6 +7552,19 @@
         "title": "PublicRepoPage",
         "type": "object"
       },
+      "ReadOnlyIn": {
+        "properties": {
+          "on": {
+            "title": "On",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "on"
+        ],
+        "title": "ReadOnlyIn",
+        "type": "object"
+      },
       "ReadinessResponse": {
         "properties": {
           "checks": {
@@ -10724,6 +11061,358 @@
         "summary": "Indexing Stages",
         "tags": [
           "indexing"
+        ]
+      }
+    },
+    "/api/v1/internal/admin": {
+      "get": {
+        "description": "The service today (staff).",
+        "operationId": "overview_api_v1_internal_admin_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminOverviewOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Overview",
+        "tags": [
+          "internal"
+        ]
+      }
+    },
+    "/api/v1/internal/admin/jobs": {
+      "get": {
+        "description": "Index runs in every org, newest first: failed ones by default (staff).",
+        "operationId": "jobs_api_v1_internal_admin_jobs_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "default": "failed",
+              "enum": [
+                "failed",
+                "running",
+                "queued",
+                "any"
+              ],
+              "title": "Status",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/AdminJobOut"
+                  },
+                  "title": "Response Jobs Api V1 Internal Admin Jobs Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Jobs",
+        "tags": [
+          "internal"
+        ]
+      }
+    },
+    "/api/v1/internal/admin/jobs/{job}/cancel": {
+      "post": {
+        "description": "Cancel a queued or running run, as its org's owner would (staff).",
+        "operationId": "cancel_job_api_v1_internal_admin_jobs__job__cancel_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Job",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminJobOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Cancel Job",
+        "tags": [
+          "internal"
+        ]
+      }
+    },
+    "/api/v1/internal/admin/jobs/{job}/retry": {
+      "post": {
+        "description": "Index the failed run's repository again, as its org's owner would (staff): 409\n``index_job_running`` while another run is under way, ``not_failed`` unless it failed.",
+        "operationId": "retry_job_api_v1_internal_admin_jobs__job__retry_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Job",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminJobOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Retry Job",
+        "tags": [
+          "internal"
+        ]
+      }
+    },
+    "/api/v1/internal/admin/orgs": {
+      "get": {
+        "description": "Orgs, newest first, deleted ones too; ``q`` matches slug or name (staff).",
+        "operationId": "orgs_api_v1_internal_admin_orgs_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 100,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Q"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/AdminOrgOut"
+                  },
+                  "title": "Response Orgs Api V1 Internal Admin Orgs Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Orgs",
+        "tags": [
+          "internal"
+        ]
+      }
+    },
+    "/api/v1/internal/admin/read-only": {
+      "put": {
+        "description": "Stop (``on``) anything new that costs from starting until midnight UTC, everywhere, or\nlift today's stop (staff). Lifted, it comes back within a minute while today's spend is past\nthe cap.",
+        "operationId": "set_read_only_api_v1_internal_admin_read_only_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReadOnlyIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminOverviewOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Set Read Only",
+        "tags": [
+          "internal"
+        ]
+      }
+    },
+    "/api/v1/internal/admin/users": {
+      "get": {
+        "description": "People, newest first; ``q`` matches login or name (staff).",
+        "operationId": "users_api_v1_internal_admin_users_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 100,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Q"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/AdminUserOut"
+                  },
+                  "title": "Response Users Api V1 Internal Admin Users Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Users",
+        "tags": [
+          "internal"
         ]
       }
     },

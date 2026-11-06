@@ -22,6 +22,7 @@ from sensei_api.browse import ConstellationCache, TreeCache
 from sensei_api.errors import install_error_handlers
 from sensei_api.middleware import RequestIdMiddleware
 from sensei_api.routers import (
+    admin,
     api_keys,
     ask,
     auth,
@@ -223,6 +224,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         browse,
         constellation,
         internal,
+        admin,
         symbols,
         search,
         graph,

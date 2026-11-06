@@ -19,6 +19,7 @@ USER_SETTING = "app.user_id"
 INVITE_SETTING = "app.invite_token_hash"
 SHARE_SETTING = "app.share_token_hash"
 API_KEY_SETTING = "app.api_key_prefix"
+STAFF_SETTING = "app.staff_user_id"
 APP_ROLE = "sensei_app"
 SYSTEM_ROLE = "sensei_system"
 
@@ -28,6 +29,13 @@ _ACTOR_EXPR = f"actor_user_id = NULLIF(current_setting('{USER_SETTING}', true), 
 _INVITE_EXPR = f"token_hash = decode(NULLIF(current_setting('{INVITE_SETTING}', true), ''), 'hex')"
 _SHARE_EXPR = f"share_token_hash = NULLIF(current_setting('{SHARE_SETTING}', true), '')"
 _API_KEY_EXPR = f"prefix = NULLIF(current_setting('{API_KEY_SETTING}', true), '')"
+# Staff read every org's rows of a few tables (the admin console, 10.6.3): only while the
+# transaction names a user the database itself says is staff.
+_STAFF_ID = f"NULLIF(current_setting('{STAFF_SETTING}', true), '')::uuid"
+_STAFF_EXPR = f"EXISTS (SELECT 1 FROM users WHERE users.is_staff AND users.id = {_STAFF_ID})"  # noqa: S608 (constants only)
+
+# The tables the admin console reads across orgs, and only reads.
+STAFF_READ_TABLES = ("memberships", "repos", "index_jobs", "usage_events")
 
 
 class OrgScopedMixin:
@@ -48,6 +56,11 @@ def enable_org_rls_sql(table: str) -> list[str]:
         f'CREATE POLICY org_isolation ON "{table}" USING ({_POLICY_EXPR}) '
         f"WITH CHECK ({_POLICY_EXPR})",
     ]
+
+
+def staff_read_sql(table: str) -> list[str]:
+    """A read-only policy on ``table`` for staff (see ``_STAFF_EXPR``); writes stay org-scoped."""
+    return [f'CREATE POLICY staff_read ON "{table}" FOR SELECT USING ({_STAFF_EXPR})']
 
 
 def memberships_rls_sql(table: str = "memberships") -> list[str]:
@@ -154,6 +167,15 @@ async def set_invite_context(session: AsyncSession, token_hash: bytes) -> None:
     await session.execute(
         text("SELECT set_config(:name, :value, true)"),
         {"name": INVITE_SETTING, "value": token_hash.hex()},
+    )
+
+
+async def set_staff_context(session: AsyncSession, user_id: uuid.UUID) -> None:
+    """Let the current transaction read every org's rows of ``STAFF_READ_TABLES`` (no writes),
+    if ``user_id`` is staff in the database."""
+    await session.execute(
+        text("SELECT set_config(:name, :value, true)"),
+        {"name": STAFF_SETTING, "value": str(user_id)},
     )
 
 
