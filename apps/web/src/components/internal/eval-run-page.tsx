@@ -194,7 +194,8 @@ function Items({
   kind: RunKind;
   comparison: EvalComparison;
 }) {
-  const metric = itemMetric(run);
+  // The API's: runs at other depths compare on the smaller one both have.
+  const metric = comparison.metric ?? itemMetric(run);
   const items = run.per_item as unknown as Item[];
   const worse = new Map(comparison.items_worse.map((c) => [c.id, c]));
   const better = new Map(comparison.items_better.map((c) => [c.id, c]));

@@ -7,7 +7,6 @@
  * Retry and cancel act in the run's org as its owner would, and its audit log says who.
  */
 import { useQueryClient } from "@tanstack/react-query";
-import Link from "next/link";
 import { parseAsStringLiteral, useQueryState } from "nuqs";
 import { useState } from "react";
 import { toast } from "sonner";
@@ -37,6 +36,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { $api } from "@/lib/api/client";
 import { ApiError } from "@/lib/api/errors";
 import type { Schemas } from "@/lib/api/types";
@@ -331,8 +331,9 @@ function Search({
 
 function Orgs() {
   const [q, setQ] = useState("");
+  const wanted = useDebouncedValue(q.trim());
   const orgs = $api.useQuery("get", "/api/v1/internal/admin/orgs", {
-    params: { query: q.trim() ? { q: q.trim() } : {} },
+    params: { query: wanted ? { q: wanted } : {} },
   });
   return (
     <section className="flex flex-col gap-3" aria-labelledby="admin-orgs">
@@ -361,13 +362,8 @@ function Orgs() {
             {orgs.data.map((org) => (
               <TableRow key={org.id}>
                 <TableCell>
-                  {org.deleted_at ? (
-                    <span>{org.name}</span>
-                  ) : (
-                    <Link href={`/${org.slug}`} className="hover:underline">
-                      {org.name}
-                    </Link>
-                  )}{" "}
+                  {/* Not a link: staff aren't its members, so its pages would be a 404. */}
+                  <span>{org.name}</span>{" "}
                   <span className="font-mono text-xs text-fg-muted">{org.slug}</span>{" "}
                   {org.deleted_at && <Badge variant="outline">Deleted</Badge>}
                 </TableCell>
@@ -388,8 +384,9 @@ function Orgs() {
 
 function People() {
   const [q, setQ] = useState("");
+  const wanted = useDebouncedValue(q.trim());
   const people = $api.useQuery("get", "/api/v1/internal/admin/users", {
-    params: { query: q.trim() ? { q: q.trim() } : {} },
+    params: { query: wanted ? { q: wanted } : {} },
   });
   return (
     <section className="flex flex-col gap-3" aria-labelledby="admin-people">

@@ -38,7 +38,8 @@ export function itemMetric(run: Pick<EvalSummary, "metrics" | "retriever" | "con
     case "answers":
       return "checklist";
     case "retrieval": {
-      const ks = Array.isArray(run.config.ks) ? (run.config.ks as number[]) : [RANK_K];
+      const listed = Array.isArray(run.config.ks) ? (run.config.ks as number[]) : [];
+      const ks = listed.length > 0 ? listed : [RANK_K]; // as Python's `ks or [RANK_K]`
       return `recall_symbol@${ks.includes(RANK_K) ? RANK_K : Math.min(...ks)}`;
     }
   }

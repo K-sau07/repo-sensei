@@ -16,6 +16,7 @@ describe("evals dashboard", () => {
     expect(itemMetric(run({}, "ask:fast"))).toBe("checklist");
     expect(itemMetric(run({}, "hybrid", [5, 50]))).toBe("recall_symbol@5");
     expect(itemMetric(run({}, "hybrid", [10, 50]))).toBe("recall_symbol@10");
+    expect(itemMetric(run({}, "hybrid", []))).toBe("recall_symbol@10");
   });
 
   it("knows cost, time, calibration and errors are better lower", () => {
