@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -158,26 +158,62 @@ class Comparison:
     warnings: list[str]
 
 
-def compare(a: RunRecord, b: RunRecord) -> Comparison:
-    """What changed from run ``a`` to run ``b``; regressions sorted worst first."""
-    before: dict[str, Any] = a.metrics.get("overall", {})
-    after: dict[str, Any] = b.metrics.get("overall", {})
+# Overall metrics where less is better: errors, calibration, cost and time, what went unsafe or
+# unasked. Every other metric is a score (more is better).
+LOWER_IS_BETTER = frozenset({"contradicted", "unasked", "failed", "unsafe", "blocked",
+                             "not_reproduced", "cost_usd"})  # fmt: skip
+
+
+def lower_is_better(name: str) -> bool:
+    return name in LOWER_IS_BETTER or name.endswith(("_ece", "_brier", "_ms"))
+
+
+def item_metric(run: RunRecord) -> str:
+    """The per-item score a run's items are compared on, by the kind of run it is."""
+    if run.metrics.get("fixbench"):
+        return "fixed"
+    if run.metrics.get("bench"):
+        return "hop_recall"
+    if run.retriever.startswith("ask:"):
+        return "checklist"
+    return f"recall_symbol@{_headline_k(run)}"
+
+
+def metric_changes(
+    a: Mapping[str, Any], b: Mapping[str, Any]
+) -> tuple[list[MetricChange], list[MetricChange], list[MetricChange]]:
+    """Overall metrics ``a`` → ``b``: regressions (worst first), improvements, unchanged."""
+    before: dict[str, Any] = dict(a.get("overall", {}))
+    after: dict[str, Any] = dict(b.get("overall", {}))
     changes = [
         MetricChange(name, before.get(name), after.get(name))
         for name in dict.fromkeys([*before, *after])
+        # Scores only: a breakdown kept beside them (a dict of percentiles) isn't one.
+        if all(v is None or _number(v) for v in (before.get(name), after.get(name)))
     ]
-    regressions = sorted(
-        (c for c in changes if c.delta is not None and c.delta < -EPSILON),
-        key=lambda c: c.delta or 0.0,
-    )
-    improvements = sorted(
-        (c for c in changes if c.delta is not None and c.delta > EPSILON),
-        key=lambda c: -(c.delta or 0.0),
-    )
-    unchanged = [c for c in changes if c not in regressions and c not in improvements]
 
-    k = min(_headline_k(a), _headline_k(b))
-    metric = "hop_recall" if a.metrics.get("bench") else f"recall_symbol@{k}"
+    def gain(c: MetricChange) -> float:
+        delta = c.delta or 0.0
+        return -delta if lower_is_better(c.name) else delta
+
+    regressions = sorted((c for c in changes if c.delta is not None and gain(c) < -EPSILON),
+                         key=gain)  # fmt: skip
+    improvements = sorted((c for c in changes if c.delta is not None and gain(c) > EPSILON),
+                          key=lambda c: -gain(c))  # fmt: skip
+    unchanged = [c for c in changes if c not in regressions and c not in improvements]
+    return regressions, improvements, unchanged
+
+
+def _number(value: object) -> bool:
+    return isinstance(value, int | float) and not isinstance(value, bool)
+
+
+def compare(a: RunRecord, b: RunRecord) -> Comparison:
+    """What changed from run ``a`` to run ``b``; regressions sorted worst first."""
+    regressions, improvements, unchanged = metric_changes(a.metrics, b.metrics)
+    metric = item_metric(b)
+    if item_metric(a) != metric:  # different ks: the smaller, as both have it
+        metric = f"recall_symbol@{min(_headline_k(a), _headline_k(b))}"
     items_a = {item.id: item for item in a.per_item}
     worse: list[ItemChange] = []
     better: list[ItemChange] = []

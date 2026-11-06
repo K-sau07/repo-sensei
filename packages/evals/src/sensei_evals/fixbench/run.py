@@ -16,12 +16,14 @@ from pathlib import Path
 from typing import Literal
 
 from pydantic import BaseModel
+from uuid_utils.compat import uuid7
 
 from sensei_evals.fixbench.bench import Bench, BenchError, Bug
 from sensei_evals.fixbench.pipelines import FixAttempt, FixPipeline, FixTask
 from sensei_evals.fixbench.review import FileChange, literals, parse_diff, review
 from sensei_evals.fixbench.runners import TestResult, TestRunner
 from sensei_evals.fixbench.workspace import PatchError, workspace
+from sensei_evals.runner import ItemResult, RunRecord
 
 Verdict = Literal["fixed", "unsafe", "not_reproduced", "blocked", "failed"]
 
@@ -168,3 +170,55 @@ async def run_bench(
     return BenchRun(id=run_id, started_at=started, pipeline=pipeline.name, runner=runner_name,
                     bench_version=bench.spec.version, git_sha=git_sha, dirty=dirty,
                     results=results)  # fmt: skip
+
+
+FIXBENCH_SUITE = "fixbench"
+
+
+def as_record(run: BenchRun) -> RunRecord:
+    """The run as ``eval_runs`` keeps runs (for the staff dashboard and ``compare``): one item per
+    bug, ``fixed`` 1 or 0 its score, the verdict's reason as its error when it isn't fixed."""
+    total = len(run.results) or 1
+    verdicts: tuple[Verdict, ...] = ("fixed", "unsafe", "not_reproduced", "blocked", "failed")
+    overall: dict[str, float] = {v: run.count(v) / total for v in verdicts}
+    overall["cost_usd"] = float(run.cost_usd)
+    return RunRecord(
+        id=uuid7(),
+        suite=FIXBENCH_SUITE,
+        suite_version=run.bench_version,
+        retriever=run.pipeline,
+        config={
+            "bench_run": run.id,
+            "runner": run.runner,
+            "dirty": run.dirty,
+            "items": len(run.results),
+        },
+        repo_sha="",  # the bench's app has no commit of its own: the bench version pins it
+        metrics={
+            "fixbench": True,
+            "overall": overall,
+            "counts": {v: run.count(v) for v in verdicts},
+        },
+        per_item=[
+            ItemResult(
+                id=r.id,
+                query_class=r.category,
+                answerable=True,
+                query=f"{r.category} ({r.layer}, {r.risk} risk)",
+                abstained=r.verdict != "fixed",
+                latency_ms=round(r.seconds * 1000, 3),
+                metrics={
+                    "fixed": float(r.verdict == "fixed"),
+                    "unsafe": float(r.verdict == "unsafe"),
+                    "cost_usd": float(r.cost_usd),
+                },
+                hits=[],
+                missed=[],
+                error=None if r.verdict == "fixed" else f"{r.verdict}: {r.reason}",
+                claims=[{"text": finding} for finding in r.findings] or None,
+            )
+            for r in run.results
+        ],
+        created_at=run.started_at,
+        git_sha=run.git_sha,
+    )

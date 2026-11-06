@@ -189,7 +189,8 @@ export interface paths {
         };
         /**
          * List Eval Runs
-         * @description Stored eval runs, newest first (staff).
+         * @description Stored eval runs, newest first, each with its baseline and how many metrics got worse
+         *     (staff). ``sort=regressions``: the newest ``limit`` runs, most regressions first.
          */
         get: operations["list_eval_runs_api_v1_internal_evals_get"];
         put?: never;
@@ -212,6 +213,26 @@ export interface paths {
          * @description One eval run with its per-item results (staff).
          */
         get: operations["get_eval_run_api_v1_internal_evals__run__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/internal/evals/{run}/compare": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Compare Eval Run
+         * @description What changed from ``baseline`` (by default the run's own) to the run (staff).
+         */
+        get: operations["compare_eval_run_api_v1_internal_evals__run__compare_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -3512,8 +3533,44 @@ export interface components {
             /** Url */
             url?: string | null;
         };
+        /** EvalComparisonOut */
+        EvalComparisonOut: {
+            baseline: components["schemas"]["EvalRunSummary"] | null;
+            /** Improvements */
+            improvements: components["schemas"]["MetricChangeOut"][];
+            /** Items Better */
+            items_better: components["schemas"]["ItemChangeOut"][];
+            /**
+             * Items Worse
+             * @description The worst first.
+             */
+            items_worse: components["schemas"]["ItemChangeOut"][];
+            /**
+             * Metric
+             * @description The per-item score items are compared on.
+             */
+            metric: string | null;
+            /**
+             * Regressions
+             * @description The worst first.
+             */
+            regressions: components["schemas"]["MetricChangeOut"][];
+            run: components["schemas"]["EvalRunSummary"];
+            /** Unchanged */
+            unchanged: components["schemas"]["MetricChangeOut"][];
+            /**
+             * Warnings
+             * @description Why the two runs may not be alike.
+             */
+            warnings: string[];
+        };
         /** EvalRunOut */
         EvalRunOut: {
+            /**
+             * Baseline Id
+             * @description The run before it of the same suite, version and retriever.
+             */
+            baseline_id?: string | null;
             /** Config */
             config: {
                 [key: string]: unknown;
@@ -3544,6 +3601,11 @@ export interface components {
             per_item: {
                 [key: string]: unknown;
             }[];
+            /**
+             * Regressions
+             * @description Overall metrics worse than the baseline's (None: no baseline).
+             */
+            regressions?: number | null;
             /** Repo Sha */
             repo_sha: string;
             /** Retriever */
@@ -3557,11 +3619,19 @@ export interface components {
         EvalRunPage: {
             /** Items */
             items: components["schemas"]["EvalRunSummary"][];
-            /** Next Cursor */
+            /**
+             * Next Cursor
+             * @description None when sorted by regressions.
+             */
             next_cursor: string | null;
         };
         /** EvalRunSummary */
         EvalRunSummary: {
+            /**
+             * Baseline Id
+             * @description The run before it of the same suite, version and retriever.
+             */
+            baseline_id?: string | null;
             /** Config */
             config: {
                 [key: string]: unknown;
@@ -3585,6 +3655,11 @@ export interface components {
             metrics: {
                 [key: string]: unknown;
             };
+            /**
+             * Regressions
+             * @description Overall metrics worse than the baseline's (None: no baseline).
+             */
+            regressions?: number | null;
             /** Repo Sha */
             repo_sha: string;
             /** Retriever */
@@ -4598,6 +4673,17 @@ export interface components {
             /** Status */
             status: string;
         };
+        /** ItemChangeOut */
+        ItemChangeOut: {
+            /** After */
+            after: number | null;
+            /** Before */
+            before: number | null;
+            /** Id */
+            id: string;
+            /** Query */
+            query: string;
+        };
         /**
          * JobKind
          * @enum {string}
@@ -4771,6 +4857,17 @@ export interface components {
              * @enum {string}
              */
             status: "streaming" | "done" | "failed";
+        };
+        /** MetricChangeOut */
+        MetricChangeOut: {
+            /** After */
+            after: number | null;
+            /** Before */
+            before: number | null;
+            /** Delta */
+            delta: number | null;
+            /** Name */
+            name: string;
         };
         /**
          * Mode
@@ -6419,6 +6516,7 @@ export interface operations {
                 retriever?: string | null;
                 before?: string | null;
                 limit?: number;
+                sort?: "newest" | "regressions";
             };
             header?: never;
             path?: never;
@@ -6464,6 +6562,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["EvalRunOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    compare_eval_run_api_v1_internal_evals__run__compare_get: {
+        parameters: {
+            query?: {
+                baseline?: string | null;
+            };
+            header?: never;
+            path: {
+                run: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EvalComparisonOut"];
                 };
             };
             /** @description Validation Error */

@@ -209,6 +209,7 @@ def run(
             pipeline=retriever,
             options=_options(opt or []),
             reports=reports_dir or paths.reports_dir(root),
+            store=store,
         )
         return
     bench_file = crosslayer.bench_path(root, suite)
@@ -339,7 +340,13 @@ async def _fixbench_runner(bench: fixbench_bench.Bench, kind: str) -> fixbench_r
 
 
 def _run_fixbench(
-    root: Path, bench_root: Path, *, pipeline: str, options: dict[str, str], reports: Path
+    root: Path,
+    bench_root: Path,
+    *,
+    pipeline: str,
+    options: dict[str, str],
+    reports: Path,
+    store: bool = True,
 ) -> None:
     factory = fixbench_pipelines.PIPELINES.get(pipeline)
     if factory is None:
@@ -366,6 +373,10 @@ def _run_fixbench(
     json_path, md_path = fixbench_report.write_run(record, reports)
     typer.echo(fixbench_report.render_run(record))
     typer.echo(f"run {record.id}: {json_path} and {md_path}")
+    if store:
+        stored = fixbench_run.as_record(record)
+        asyncio.run(_store(stored))
+        typer.echo(f"stored as eval run {stored.id}")
     if record.unsafe:
         raise typer.Exit(code=2)  # unsafe fixes: the one number that must be zero
 

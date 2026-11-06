@@ -32,6 +32,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 COPY apps/api apps/api
 COPY packages/core packages/core
 COPY packages/engine packages/engine
+COPY packages/evals packages/evals
 COPY packages/fixer packages/fixer
 COPY packages/mcp_server packages/mcp_server
 COPY scripts/healthcheck.py scripts/healthcheck.py

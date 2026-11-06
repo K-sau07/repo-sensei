@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import AsyncGenerator
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import httpx
 import pytest
@@ -123,3 +123,77 @@ async def test_everyone_else_sees_nothing(
         response = await api_client.get(f"{API}{path}")
         assert response.status_code == 404
         assert response.json()["error"]["code"] == "not_found"
+
+
+def _item(recall: float) -> dict[str, object]:
+    return {"id": "item-1", "query_class": "lookup", "answerable": True, "query": "Where?",
+            "abstained": False, "latency_ms": 1.0, "metrics": {"recall_symbol@10": recall},
+            "hits": [{"path": "a.py"}], "missed": []}  # fmt: skip
+
+
+@pytest.fixture
+async def history(migrated_test_db: Settings) -> AsyncGenerator[tuple[str, list[EvalRun]]]:
+    """Three runs of one retriever, oldest first: better, then worse (and dearer)."""
+    suite = f"history-{uuid.uuid4().hex[:8]}"
+    start = datetime(2026, 11, 1, tzinfo=UTC)
+    rows: list[EvalRun] = []
+    for n, (recall, cost) in enumerate([(0.5, 1.0), (0.9, 1.0), (0.4, 2.0)]):
+        row = _run(suite, "hybrid", recall)
+        row.metrics = {"overall": {"recall_symbol@10": recall, "cost_usd": cost}}
+        row.per_item = [_item(recall)]
+        row.created_at = start + timedelta(hours=n)
+        rows.append(row)
+    database = make_system_database(migrated_test_db.database)
+    try:
+        async with database.session() as db:
+            db.add_all(rows)
+        yield suite, rows
+    finally:
+        async with database.session() as db:
+            await db.execute(delete(EvalRun).where(EvalRun.suite == suite))
+        await database.dispose()
+
+
+async def test_each_run_is_compared_with_the_one_before_it(
+    api_app: FastAPI,
+    api_client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    history: tuple[str, list[EvalRun]],
+) -> None:
+    suite, (first, better, worse) = history
+    await _staff(api_app, api_client, db_session)
+    listed = (await api_client.get(f"{API}/internal/evals", params={"suite": suite})).json()
+    summaries = {item["id"]: item for item in listed["items"]}
+    assert summaries[str(first.id)]["baseline_id"] is None
+    assert summaries[str(first.id)]["regressions"] is None
+    assert (summaries[str(better.id)]["baseline_id"], summaries[str(better.id)]["regressions"]) == (
+        str(first.id), 0,
+    )  # fmt: skip
+    # Recall fell and the cost rose: two regressions (cost is better lower).
+    assert summaries[str(worse.id)]["regressions"] == 2
+    ranked = await api_client.get(
+        f"{API}/internal/evals", params={"suite": suite, "sort": "regressions"}
+    )
+    assert ranked.json()["items"][0]["id"] == str(worse.id)
+    assert ranked.json()["next_cursor"] is None
+
+    compared = await api_client.get(f"{API}/internal/evals/{worse.id}/compare")
+    assert compared.status_code == 200, compared.text
+    body = compared.json()
+    assert body["baseline"]["id"] == str(better.id)
+    assert body["metric"] == "recall_symbol@10"
+    assert [m["name"] for m in body["regressions"]] == ["cost_usd", "recall_symbol@10"]
+    assert [(i["id"], i["before"], i["after"]) for i in body["items_worse"]] == [
+        ("item-1", 0.9, 0.4)
+    ]
+    against_first = await api_client.get(
+        f"{API}/internal/evals/{worse.id}/compare", params={"baseline": str(first.id)}
+    )
+    assert against_first.json()["run"]["baseline_id"] == str(first.id)
+    assert [i["before"] for i in against_first.json()["items_worse"]] == [0.5]
+    alone = (await api_client.get(f"{API}/internal/evals/{first.id}/compare")).json()
+    assert (alone["baseline"], alone["regressions"]) == (None, [])
+    unknown = await api_client.get(
+        f"{API}/internal/evals/{worse.id}/compare", params={"baseline": str(uuid.uuid4())}
+    )
+    assert unknown.status_code == 404

@@ -13,6 +13,7 @@ dependencies = [
     "sensei-engine",
     "sensei-mcp",
     "sensei-fixer",
+    "sensei-evals",
     "sse-starlette>=2.2",
     "uuid-utils>=0.11",
     "uvicorn[standard]>=0.37",
@@ -29,3 +30,4 @@ packages = ["src/sensei_api"]
 sensei-engine = { workspace = true }
 sensei-mcp = { workspace = true }
 sensei-fixer = { workspace = true }
+sensei-evals = { workspace = true }

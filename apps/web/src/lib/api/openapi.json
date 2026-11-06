@@ -2847,8 +2847,108 @@
         "title": "EstimateRequest",
         "type": "object"
       },
+      "EvalComparisonOut": {
+        "properties": {
+          "baseline": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EvalRunSummary"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "improvements": {
+            "items": {
+              "$ref": "#/components/schemas/MetricChangeOut"
+            },
+            "title": "Improvements",
+            "type": "array"
+          },
+          "items_better": {
+            "items": {
+              "$ref": "#/components/schemas/ItemChangeOut"
+            },
+            "title": "Items Better",
+            "type": "array"
+          },
+          "items_worse": {
+            "description": "The worst first.",
+            "items": {
+              "$ref": "#/components/schemas/ItemChangeOut"
+            },
+            "title": "Items Worse",
+            "type": "array"
+          },
+          "metric": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The per-item score items are compared on.",
+            "title": "Metric"
+          },
+          "regressions": {
+            "description": "The worst first.",
+            "items": {
+              "$ref": "#/components/schemas/MetricChangeOut"
+            },
+            "title": "Regressions",
+            "type": "array"
+          },
+          "run": {
+            "$ref": "#/components/schemas/EvalRunSummary"
+          },
+          "unchanged": {
+            "items": {
+              "$ref": "#/components/schemas/MetricChangeOut"
+            },
+            "title": "Unchanged",
+            "type": "array"
+          },
+          "warnings": {
+            "description": "Why the two runs may not be alike.",
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "run",
+          "baseline",
+          "metric",
+          "regressions",
+          "improvements",
+          "unchanged",
+          "items_worse",
+          "items_better",
+          "warnings"
+        ],
+        "title": "EvalComparisonOut",
+        "type": "object"
+      },
       "EvalRunOut": {
         "properties": {
+          "baseline_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The run before it of the same suite, version and retriever.",
+            "title": "Baseline Id"
+          },
           "config": {
             "additionalProperties": true,
             "title": "Config",
@@ -2889,6 +2989,18 @@
             },
             "title": "Per Item",
             "type": "array"
+          },
+          "regressions": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Overall metrics worse than the baseline's (None: no baseline).",
+            "title": "Regressions"
           },
           "repo_sha": {
             "title": "Repo Sha",
@@ -2941,6 +3053,7 @@
                 "type": "null"
               }
             ],
+            "description": "None when sorted by regressions.",
             "title": "Next Cursor"
           }
         },
@@ -2953,6 +3066,19 @@
       },
       "EvalRunSummary": {
         "properties": {
+          "baseline_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The run before it of the same suite, version and retriever.",
+            "title": "Baseline Id"
+          },
           "config": {
             "additionalProperties": true,
             "title": "Config",
@@ -2984,6 +3110,18 @@
             "description": "Averages: overall, by_class, counts and latency_ms.",
             "title": "Metrics",
             "type": "object"
+          },
+          "regressions": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Overall metrics worse than the baseline's (None: no baseline).",
+            "title": "Regressions"
           },
           "repo_sha": {
             "title": "Repo Sha",
@@ -5581,6 +5719,48 @@
         "title": "InvitationPreviewOut",
         "type": "object"
       },
+      "ItemChangeOut": {
+        "properties": {
+          "after": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "After"
+          },
+          "before": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Before"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "query": {
+            "title": "Query",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "query",
+          "before",
+          "after"
+        ],
+        "title": "ItemChangeOut",
+        "type": "object"
+      },
       "JobKind": {
         "enum": [
           "full",
@@ -6085,6 +6265,55 @@
           "citations"
         ],
         "title": "MessageOut",
+        "type": "object"
+      },
+      "MetricChangeOut": {
+        "properties": {
+          "after": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "After"
+          },
+          "before": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Before"
+          },
+          "delta": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Delta"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "before",
+          "after",
+          "delta"
+        ],
+        "title": "MetricChangeOut",
         "type": "object"
       },
       "Mode": {
@@ -10500,7 +10729,7 @@
     },
     "/api/v1/internal/evals": {
       "get": {
-        "description": "Stored eval runs, newest first (staff).",
+        "description": "Stored eval runs, newest first, each with its baseline and how many metrics got worse\n(staff). ``sort=regressions``: the newest ``limit`` runs, most regressions first.",
         "operationId": "list_eval_runs_api_v1_internal_evals_get",
         "parameters": [
           {
@@ -10562,6 +10791,20 @@
               "minimum": 1,
               "title": "Limit",
               "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sort",
+            "required": false,
+            "schema": {
+              "default": "newest",
+              "enum": [
+                "newest",
+                "regressions"
+              ],
+              "title": "Sort",
+              "type": "string"
             }
           }
         ],
@@ -10632,6 +10875,67 @@
           }
         },
         "summary": "Get Eval Run",
+        "tags": [
+          "internal"
+        ]
+      }
+    },
+    "/api/v1/internal/evals/{run}/compare": {
+      "get": {
+        "description": "What changed from ``baseline`` (by default the run's own) to the run (staff).",
+        "operationId": "compare_eval_run_api_v1_internal_evals__run__compare_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Run",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "baseline",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Baseline"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvalComparisonOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Compare Eval Run",
         "tags": [
           "internal"
         ]
