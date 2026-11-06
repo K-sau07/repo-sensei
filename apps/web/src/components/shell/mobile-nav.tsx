@@ -1,8 +1,9 @@
 "use client";
 
 import { cn } from "cn";
-import { House, Inbox, Menu, MessageSquare } from "lucide-react";
+import { House, Inbox, Menu, MessageSquare, PanelRight } from "lucide-react";
 import Link from "next/link";
+import { useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
@@ -13,12 +14,16 @@ import { SidebarContent } from "./sidebar";
 import { useOrgSlug } from "./use-org-slug";
 import { useShellData } from "./use-shell-data";
 
-/** Below `lg`: a top bar that opens the sidebar as a sheet. */
+/** Below `lg`: a top bar that opens the sidebar as a sheet, and the page's right rail (the
+ * code's symbols, a run's activity) as a drawer: no room to dock either beside the page. */
 export function MobileTopBar({ className }: { className?: string }) {
   const org = useOrgSlug();
   const open = useShellStore((state) => state.mobileNavOpen);
   const setOpen = useShellStore((state) => state.setMobileNavOpen);
   const { currentOrg } = useShellData();
+  const railTitle = useShellStore((state) => state.railTitle);
+  const railContent = useShellStore((state) => state.railContent);
+  const [railShown, setRailShown] = useState(false);
   return (
     <header
       className={cn(
@@ -36,7 +41,29 @@ export function MobileTopBar({ className }: { className?: string }) {
       >
         <Menu aria-hidden />
       </Button>
-      <span className="truncate text-sm font-medium">{currentOrg?.name ?? org}</span>
+      <span className="min-w-0 flex-1 truncate text-sm font-medium">{currentOrg?.name ?? org}</span>
+      {railTitle && railContent ? (
+        <>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              setRailShown(true);
+            }}
+          >
+            <PanelRight aria-hidden />
+            {railTitle}
+          </Button>
+          <Sheet open={railShown} onOpenChange={setRailShown}>
+            <SheetContent side="right" className="w-80 max-w-[85vw] gap-0 p-0">
+              <SheetTitle className="flex h-10 items-center border-b border-line px-3 text-sm font-medium">
+                {railTitle}
+              </SheetTitle>
+              <div className="min-h-0 flex-1 overflow-y-auto p-3 text-sm">{railContent}</div>
+            </SheetContent>
+          </Sheet>
+        </>
+      ) : null}
       <Sheet open={open} onOpenChange={setOpen}>
         <SheetContent
           side="left"

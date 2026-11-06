@@ -59,3 +59,17 @@ test.describe("on a tablet", () => {
     ).toHaveCount(0);
   });
 });
+
+test.describe("on a tablet, the right rail", () => {
+  test.use({ viewport: { width: 834, height: 1112 } });
+
+  test("opens as a drawer from the top bar", async ({ page }) => {
+    await page.goto("/acme/api/code/backend/app/main.py");
+    await page.getByRole("button", { name: "Symbol" }).click();
+    const drawer = page.getByRole("dialog", { name: "Symbol" });
+    await expect(drawer).toBeVisible();
+    await expect(drawer.getByText(/Outline/).first()).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(drawer).toHaveCount(0);
+  });
+});
