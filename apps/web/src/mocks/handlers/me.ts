@@ -1,7 +1,7 @@
 import { http, HttpResponse } from "msw";
 
 import type { Me, MyOrg, SessionInfo } from "@/lib/api/types";
-import { db, roleIn, saveDb, type MockUser } from "@/mocks/db";
+import { db, OCTO, roleIn, saveDb, type MockUser } from "@/mocks/db";
 import { mockScenario } from "@/mocks/scenario";
 
 import { apiError } from "./errors";
@@ -22,7 +22,7 @@ export function meOf(user: MockUser): Me {
     name: user.name,
     email: user.email,
     avatar_url: null,
-    is_staff: false,
+    is_staff: user.id === OCTO, // the mock's signed-in user is staff; Hubot isn't
     orgs,
     last_org_slug: orgs.some((org) => org.slug === last) ? last : null,
   };

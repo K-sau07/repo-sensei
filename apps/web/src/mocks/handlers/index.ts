@@ -13,6 +13,7 @@ import { graphHandlers } from "./graph";
 import { impactHandlers } from "./impact";
 import { inboxHandlers } from "./inbox";
 import { insightHandlers } from "./insights";
+import { internalHandlers } from "./internal";
 import { invitationHandlers } from "./invitations";
 import { mcpHandlers } from "./mcp";
 import { meHandlers } from "./me";
@@ -45,6 +46,7 @@ export const handlers = [
   ...askHandlers,
   ...auditHandlers,
   ...insightHandlers,
+  ...internalHandlers,
   ...refHandlers,
   ...diagramHandlers,
   ...inboxHandlers,

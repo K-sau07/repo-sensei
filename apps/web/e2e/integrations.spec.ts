@@ -198,3 +198,26 @@ test.describe("insights", () => {
     await noAxeViolations(page);
   });
 });
+
+test.describe("internal evals", () => {
+  test("staff see runs by regressions and a run against its baseline", async ({ page }) => {
+    await page.goto("/internal?sort=regressions");
+    const rows = page.getByTestId("eval-run");
+    await expect(rows.first()).toContainText("3 regressions");
+    await noAxeViolations(page);
+    await rows.first().getByRole("link").click();
+    await expect(page).toHaveURL(/\/internal\/evals\/[0-9a-f-]{36}$/);
+    await expect(page.getByRole("table", { name: "Metrics against the baseline" })).toBeVisible();
+    const item = page.getByTestId("eval-item").first();
+    await item.locator("summary").click();
+    await expect(item.getByText("Gold it missed")).toBeVisible();
+    await noAxeViolations(page);
+  });
+
+  test("someone who isn't staff is told the page isn't there", async ({ context, page }) => {
+    await useMockScenario(context, "as-member");
+    await page.goto("/internal");
+    await expect(page.getByText(/not found|couldn.t find/i).first()).toBeVisible();
+    await expect(page.getByRole("table", { name: "Eval runs" })).toHaveCount(0);
+  });
+});

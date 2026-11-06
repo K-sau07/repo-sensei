@@ -1,9 +1,14 @@
 import type { Metadata } from "next";
+import { Suspense } from "react";
 
-import { ComingSoon } from "@/components/coming-soon";
+import { EvalsList } from "@/components/internal/evals-list";
 
-export const metadata: Metadata = { title: "Internal", robots: { index: false } };
+export const metadata: Metadata = { title: "Evals", robots: { index: false } };
 
 export default function InternalPage() {
-  return <ComingSoon title="Internal" />;
+  return (
+    <Suspense>
+      <EvalsList />
+    </Suspense>
+  );
 }
