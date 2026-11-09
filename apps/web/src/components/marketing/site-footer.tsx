@@ -8,6 +8,7 @@ import { Brand } from "@/components/brand/logo";
 import { SITE_LINKS } from "./site-header";
 
 const MORE: readonly { href: Route; label: string }[] = [
+  { href: "/benchmarks", label: "Benchmarks" },
   { href: "/blog", label: "Blog" },
   { href: "/changelog", label: "Changelog" },
   { href: "/security", label: "Security" },
