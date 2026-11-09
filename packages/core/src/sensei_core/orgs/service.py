@@ -42,6 +42,10 @@ RESERVED_SLUGS = frozenset(
     }
 )  # fmt: skip
 INVITE_TTL = timedelta(days=7)
+MAX_PENDING_INVITATIONS = 100
+# One address, nothing more: no spaces or line breaks (it goes in an email header), one "@",
+# a dot in the domain.
+EMAIL = re.compile(r"[^@\s]+@[^@\s.]+(\.[^@\s.]+)+")
 
 
 def utcnow() -> datetime:
@@ -342,6 +346,22 @@ class OrgService:
         github_login = (github_login or "").strip().lstrip("@") or None
         if not (email or github_login):
             raise InvalidError("Invite by email or GitHub username.", code="invite_target_required")
+        if email is not None and not EMAIL.fullmatch(email):
+            raise InvalidError("That isn't an email address.", code="invalid_email")
+        pending = await db.scalar(
+            select(func.count()).select_from(Invitation).where(
+                Invitation.org_id == access.org.id,
+                Invitation.accepted_at.is_(None),
+                Invitation.revoked_at.is_(None),
+                Invitation.expires_at > self._clock(),
+            )
+        )  # fmt: skip
+        if (pending or 0) >= MAX_PENDING_INVITATIONS:
+            raise ConflictError(
+                f"This organization has {MAX_PENDING_INVITATIONS} invitations waiting; revoke "
+                "some first.",
+                code="too_many_invitations",
+            )
         token = new_token()
         invitation = Invitation(
             org_id=access.org.id,

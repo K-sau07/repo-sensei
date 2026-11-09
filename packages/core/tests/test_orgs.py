@@ -392,3 +392,15 @@ def test_web_slug_rules_match_the_api() -> None:
     assert reserved_block is not None
     assert web_pattern.group(1) == SLUG_RE.pattern
     assert set(re.findall(r'"([a-z-]+)"', reserved_block.group(1))) == set(RESERVED_SLUGS)
+
+
+async def test_an_org_has_only_so_many_invitations_waiting(
+    db_session: AsyncSession, service: OrgService, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    access, _ = await _org_with(db_session, service, {})
+    monkeypatch.setattr("sensei_core.orgs.service.MAX_PENDING_INVITATIONS", 2)
+    for n in range(2):
+        await service.invite(db_session, access, role=Role.MEMBER, github_login=f"friend{n}")
+    with pytest.raises(ConflictError) as exc:
+        await service.invite(db_session, access, role=Role.MEMBER, email="third@example.com")
+    assert exc.value.code == "too_many_invitations"

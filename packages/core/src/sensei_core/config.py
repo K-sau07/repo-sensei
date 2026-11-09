@@ -467,6 +467,7 @@ class LimitsSettings(BaseSettings):
     public_imports_per_day: int = Field(default=5, ge=0)  # per person (0: none)
     index_runs_per_day: int = Field(default=30, ge=0)  # runs a person starts by hand
     asks_per_day: int = Field(default=200, ge=0)  # questions per person
+    invitation_emails_per_day: int = Field(default=50, ge=0)  # invitations emailed per person
     # Every org's LLM spend today together, past which the service is read-only (0: no cap).
     global_daily_spend_cap_usd: Decimal = Field(default=Decimal(0), ge=0)
     # Repositories nobody may import by URL ("owner/name", any case).

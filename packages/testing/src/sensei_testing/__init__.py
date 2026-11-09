@@ -162,8 +162,11 @@ async def make_user(db: AsyncSession, **overrides: object) -> User:
 
 
 @pytest.fixture
-def api_app(migrated_test_db: Settings, db_session: AsyncSession) -> FastAPI:
-    """The real app, with every request using the rolled-back ``db_session``."""
+def api_app(
+    migrated_test_db: Settings, db_session: AsyncSession, fake_redis: FakeAsyncRedis
+) -> FastAPI:
+    """The real app, with every request using the rolled-back ``db_session`` and an in-memory
+    Redis (the same ``fake_redis`` a test may ask for)."""
     from sensei_api.app import create_app  # noqa: PLC0415 - api is only needed by api tests
     from sensei_api.deps import get_db  # noqa: PLC0415
 
@@ -173,6 +176,7 @@ def api_app(migrated_test_db: Settings, db_session: AsyncSession) -> FastAPI:
         yield db_session
 
     app.dependency_overrides[get_db] = _test_db
+    app.state.redis = fake_redis
     return app
 
 

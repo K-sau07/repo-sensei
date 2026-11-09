@@ -6,14 +6,16 @@ import uuid
 from datetime import datetime
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Path, Query, Response, status
+from fastapi import APIRouter, Path, Query, Request, Response, status
 from pydantic import BaseModel, Field
 
 from sensei_api.auth import CurrentUser
-from sensei_api.deps import DbSession
+from sensei_api.deps import DbSession, RedisClient
 from sensei_api.orgs import OrgAccessDep, OrgServiceDep
 from sensei_core.audit import MAX_PAGE_SIZE, AuditAction, list_org_audit
+from sensei_core.config import Settings
 from sensei_core.errors import InvalidError
+from sensei_core.limits import check_quota, count_quota
 from sensei_core.models import ActorType, Org, Role
 from sensei_core.orgs import lifecycle
 from sensei_core.orgs.service import require_role, validate_slug
@@ -256,8 +258,22 @@ async def list_invitations(
     "/{org}/invitations", response_model=InvitationCreated, status_code=status.HTTP_201_CREATED
 )
 async def create_invitation(
-    body: InvitationCreate, access: OrgAccessDep, db: DbSession, orgs: OrgServiceDep
+    *,
+    body: InvitationCreate,
+    request: Request,
+    access: OrgAccessDep,
+    db: DbSession,
+    redis: RedisClient,
+    orgs: OrgServiceDep,
 ) -> InvitationCreated:
+    # Each one emailed is mail sent from our domain to an address anyone may type: a day's
+    # number per person, so it can't be used to send mail at will.
+    settings: Settings = request.app.state.settings
+    per_day = settings.limits.invitation_emails_per_day
+    emailing = bool((body.email or "").strip())
+    if emailing:
+        await check_quota(redis, "invitation_emails", access.user.id, per_day,
+                          what="invitations by email")  # fmt: skip
     invitation, token = await orgs.invite(
         db, access, role=body.role, email=body.email, github_login=body.github_login
     )
@@ -265,6 +281,8 @@ async def create_invitation(
     # database after this commit (the request's transaction is over).
     await db.commit()
     emailed = await orgs.send_invitation(access, invitation, token)
+    if invitation.email:
+        await count_quota(redis, "invitation_emails", access.user.id)
     origin: str = orgs.web_origin
     return InvitationCreated(
         id=invitation.id,

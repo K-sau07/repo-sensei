@@ -61,6 +61,9 @@ class EmailMailer:
         except SendError as exc:
             log.warning("invitation email not sent", error=str(exc), retry=exc.retry)
             return False
+        except Exception as exc:  # anything else (a closed client, a bad URL): not sent either
+            log.warning("invitation email not sent", error=type(exc).__name__)
+            return False
         # Development's emailer only logs it: nobody got it, so the inviter shares the link.
         return not isinstance(emailer, ConsoleEmailer)
 

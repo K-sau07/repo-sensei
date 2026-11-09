@@ -210,3 +210,27 @@ async def test_last_org_preference_requires_membership(
         f"{API}/me", json={"last_org_slug": "not-mine"}, headers=headers
     )
     assert denied.status_code == 404
+
+
+async def test_invitations_by_email_are_capped(
+    api_app: FastAPI, api_client: httpx.AsyncClient, db_session: AsyncSession, mailer: MemoryMailer
+) -> None:
+    _, headers = await sign_in(api_app, api_client, db_session)
+    await _create_org(api_client, headers, "capped-org")
+    url = f"{API}/orgs/capped-org/invitations"
+    bad = await api_client.post(url, json={"email": "a@b.c\nBcc: x@y.z"}, headers=headers)
+    assert (bad.status_code, bad.json()["error"]["code"]) == (422, "invalid_email")
+    assert mailer.sent == []
+
+    settings = api_app.state.settings
+    api_app.state.settings = settings.model_copy(
+        update={"limits": settings.limits.model_copy(update={"invitation_emails_per_day": 1})}
+    )
+    first = await api_client.post(url, json={"email": "one@example.com"}, headers=headers)
+    assert first.status_code == 201
+    second = await api_client.post(url, json={"email": "two@example.com"}, headers=headers)
+    assert second.status_code == 429
+    assert second.json()["error"]["details"]["quota"] == "invitation_emails"
+    # By GitHub username nothing is emailed: not counted.
+    by_login = await api_client.post(url, json={"github_login": "octo"}, headers=headers)
+    assert by_login.status_code == 201
