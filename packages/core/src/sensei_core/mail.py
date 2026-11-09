@@ -1,6 +1,7 @@
 """Invitation email, sent with the notifications' emailer (Resend; development logs it). Sent
-only once the invitation is committed, so the link in it always works; one that couldn't be sent
-(no provider, Resend refusing or not answering) says so, and the inviter shares the link."""
+only once the invitation is committed, so the link in it always works. One that wasn't sent (no
+provider, only logged in development, Resend refusing or not answering) says so, and the inviter
+shares the link."""
 
 from __future__ import annotations
 
@@ -10,7 +11,7 @@ from dataclasses import dataclass, field
 from typing import Protocol
 
 from sensei_core.logging import get_logger
-from sensei_core.notifications.senders import Email, Emailer, SendError
+from sensei_core.notifications.senders import ConsoleEmailer, Email, Emailer, SendError
 
 log = get_logger(__name__)
 
@@ -60,7 +61,8 @@ class EmailMailer:
         except SendError as exc:
             log.warning("invitation email not sent", error=str(exc), retry=exc.retry)
             return False
-        return True
+        # Development's emailer only logs it: nobody got it, so the inviter shares the link.
+        return not isinstance(emailer, ConsoleEmailer)
 
 
 @dataclass

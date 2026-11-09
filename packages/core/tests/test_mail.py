@@ -4,7 +4,7 @@ sent (no provider, or Resend refusing, isn't)."""
 from __future__ import annotations
 
 from sensei_core.mail import EmailMailer, InvitationEmail
-from sensei_core.notifications.senders import Emailer, MemoryEmailer, SendError
+from sensei_core.notifications.senders import ConsoleEmailer, Emailer, MemoryEmailer, SendError
 
 INVITE = InvitationEmail(to="friend@example.com", org_name="Acme", inviter="octo",
                          role="admin", link="https://app.example.com/invite/tok")  # fmt: skip
@@ -26,5 +26,7 @@ async def test_an_invitation_is_emailed_with_its_link() -> None:
 
 async def test_one_that_cant_be_sent_says_so() -> None:
     assert not await EmailMailer(lambda: None).send_invitation(INVITE, key="inv-1")
+    # Development's emailer logs it; nobody got it.
+    assert not await EmailMailer(ConsoleEmailer).send_invitation(INVITE, key="inv-1")
     refusing: Emailer = MemoryEmailer(fail=SendError("422 invalid address", retry=False))
     assert not await EmailMailer(lambda: refusing).send_invitation(INVITE, key="inv-1")
