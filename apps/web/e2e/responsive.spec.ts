@@ -117,4 +117,29 @@ test.describe("on a tablet, the right rail", () => {
     await page.keyboard.press("Escape");
     await expect(drawer).toHaveCount(0);
   });
+
+  test("closes once a symbol is picked, and stays closed", async ({ page }) => {
+    await page.goto("/acme/api/code/backend/app/main.py");
+    await page.getByRole("button", { name: "Symbol" }).click();
+    const drawer = page.getByRole("dialog", { name: "Symbol" });
+    await drawer.getByRole("button").filter({ hasText: "function" }).first().click();
+    await expect(drawer).toHaveCount(0);
+    await page.goto("/acme/api/code/backend/app/api/deps.py");
+    await expect(drawer).toHaveCount(0);
+  });
+});
+
+test.describe("on a phone, a settings tab row", () => {
+  test.use({ viewport: PHONE });
+
+  test("shows the page you're on, however far along the row it is", async ({ page }) => {
+    await page.goto("/acme/settings/danger");
+    const row = page.getByRole("navigation", { name: "Organization settings" });
+    const current = row.getByRole("link", { name: "Danger zone" });
+    await expect(current).toHaveAttribute("aria-current", "page");
+    const [inner, outer] = await Promise.all([current.boundingBox(), row.boundingBox()]);
+    expect(
+      inner && outer && inner.x >= outer.x && inner.x + inner.width <= outer.x + outer.width + 1,
+    ).toBe(true);
+  });
 });

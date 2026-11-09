@@ -3,6 +3,7 @@
 import { cn } from "cn";
 import { House, Inbox, Menu, MessageSquare, PanelRight } from "lucide-react";
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { useState } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -23,7 +24,13 @@ export function MobileTopBar({ className }: { className?: string }) {
   const { currentOrg } = useShellData();
   const railTitle = useShellStore((state) => state.railTitle);
   const railContent = useShellStore((state) => state.railContent);
-  const [railShown, setRailShown] = useState(false);
+  // Shown on the page it was opened on: going elsewhere (a symbol, "Trace this") closes it.
+  const pathname = usePathname();
+  const [shownOn, setShownOn] = useState<string | null>(null);
+  const railShown = shownOn === pathname;
+  const setRailShown = (shown: boolean) => {
+    setShownOn(shown ? pathname : null);
+  };
   return (
     <header
       className={cn(
@@ -59,7 +66,16 @@ export function MobileTopBar({ className }: { className?: string }) {
               <SheetTitle className="flex h-10 items-center border-b border-line px-3 text-sm font-medium">
                 {railTitle}
               </SheetTitle>
-              <div className="min-h-0 flex-1 overflow-y-auto p-3 text-sm">{railContent}</div>
+              {/* Picking what takes you to the page (a link, a symbol to jump to) closes it. */}
+              <div
+                className="min-h-0 flex-1 overflow-y-auto p-3 text-sm"
+                onClickCapture={(event) => {
+                  if ((event.target as Element).closest("a, [data-closes-rail]"))
+                    setRailShown(false);
+                }}
+              >
+                {railContent}
+              </div>
             </SheetContent>
           </Sheet>
         </>

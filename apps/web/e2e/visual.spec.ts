@@ -34,8 +34,11 @@ for (const [size, width, height] of WIDTHS) {
         await page.goto(path);
         await expect(page.getByRole("heading", { name: heading }).first()).toBeVisible();
         await page.evaluate(() => document.fonts.ready);
-        // The dev server's badge isn't the page's (a mask can't reach into its shadow root).
-        await page.addStyleTag({ content: "nextjs-portal { display: none !important; }" });
+        // Development's own overlays (Next's, the query devtools' button) aren't the page (a mask
+        // can't reach into a shadow root).
+        await page.addStyleTag({
+          content: "nextjs-portal, .tsqd-parent-container { display: none !important; }",
+        });
         await expect(page).toHaveScreenshot(`${name}-${size}.png`, {
           fullPage: true,
           animations: "disabled",

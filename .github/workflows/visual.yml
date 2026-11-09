@@ -19,7 +19,8 @@ permissions:
 jobs:
   screenshots:
     # Pages against apps/web/e2e/visual.spec.ts-snapshots, in the image (and so the Linux and
-    # fonts) they were made in. A page without a baseline gets one: the artifact to commit.
+    # fonts) they were made in. A pull request's page without a baseline fails (a lost one isn't
+    # passed); on main, or run by hand, it gets one, in the artifact to commit.
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     container:
@@ -36,11 +37,12 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile --filter "web..."
       - name: Pages at 390, 834 and 1440 px against their baselines
-        run: pnpm exec playwright test --project visual --update-snapshots=missing
+        run: pnpm exec playwright test --project visual --update-snapshots="$UPDATE"
         working-directory: apps/web
         env:
           E2E_VISUAL: "1"
           E2E_PORT: "3199"
+          UPDATE: ${{ github.event_name == 'pull_request' && 'none' || 'missing' }}
       - name: Baselines (new ones included)
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

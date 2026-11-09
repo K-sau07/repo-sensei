@@ -262,7 +262,12 @@ function Ask({ onNamed }: { onNamed: (id: string) => void }) {
             artifacts.close();
           }}
         >
-          <SheetContent side="bottom" className="max-h-[85dvh] gap-0 overflow-auto p-0">
+          {/* What's shown has its own Close (the cited code's, the artifact's): no second one. */}
+          <SheetContent
+            side="bottom"
+            className="max-h-[85dvh] gap-0 overflow-auto p-0"
+            showCloseButton={false}
+          >
             <SheetTitle className="sr-only">{opened ? "Cited code" : "Artifact"}</SheetTitle>
             {opened ? (
               <CitedCode
@@ -284,27 +289,30 @@ function Ask({ onNamed }: { onNamed: (id: string) => void }) {
           </SheetContent>
         </Sheet>
       )}
-      <div className="hidden min-h-0 md:block">
-        {opened ? (
-          <CitedCode
-            citation={opened}
-            onClose={() => {
-              setOpened(null);
-            }}
-          />
-        ) : artifacts.current ? (
-          <ArtifactPanel
-            pinned={artifacts.pinned}
-            current={artifacts.current}
-            onShow={artifacts.show}
-            onClose={artifacts.close}
-            codeHref={codeHref}
-            traceHref={traceHref}
-          />
-        ) : (
-          <EvidenceRail message={latest} onOpen={setOpened} codeHref={codeHref} />
-        )}
-      </div>
+      {/* Beside the answer only when there's room (on a phone it's the sheet's alone). */}
+      {wide && (
+        <div className="hidden min-h-0 md:block">
+          {opened ? (
+            <CitedCode
+              citation={opened}
+              onClose={() => {
+                setOpened(null);
+              }}
+            />
+          ) : artifacts.current ? (
+            <ArtifactPanel
+              pinned={artifacts.pinned}
+              current={artifacts.current}
+              onShow={artifacts.show}
+              onClose={artifacts.close}
+              codeHref={codeHref}
+              traceHref={traceHref}
+            />
+          ) : (
+            <EvidenceRail message={latest} onOpen={setOpened} codeHref={codeHref} />
+          )}
+        </div>
+      )}
     </div>
   );
 }

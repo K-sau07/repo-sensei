@@ -75,6 +75,7 @@ function Outline({
         <li key={symbol.symbol_key}>
           <button
             type="button"
+            data-closes-rail
             aria-current={symbol.symbol_key === current ? "location" : undefined}
             onClick={() => {
               onPick(definitionSymbol(symbol, path));
@@ -143,6 +144,7 @@ function Neighbours({
                 <Button
                   variant="ghost"
                   size="icon-xs"
+                  data-closes-rail
                   aria-label={`Open ${hop.node.name}`}
                   onClick={() => {
                     onOpen(hop);

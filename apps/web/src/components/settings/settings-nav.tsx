@@ -4,6 +4,7 @@ import { ArrowLeft } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
+import { useCurrentInView } from "@/hooks/use-current-in-view";
 import { useMe } from "@/hooks/use-me";
 import { orgPath } from "@/lib/routes";
 
@@ -18,6 +19,7 @@ const ITEMS = [
 /** Personal settings sit outside any org; this header leads back to the last one. */
 export function SettingsNav() {
   const pathname = usePathname();
+  const row = useCurrentInView(pathname);
   const me = useMe();
   const back = me.data?.orgs.find((org) => org.slug === me.data.last_org_slug) ?? me.data?.orgs[0];
   return (
@@ -31,7 +33,11 @@ export function SettingsNav() {
           {back ? `Back to ${back.name}` : "Back"}
         </Link>
         <h1 className="text-xl font-semibold tracking-[-0.015em]">Your settings</h1>
-        <nav aria-label="Settings" className="-mx-1 flex gap-4 overflow-x-auto px-1">
+        <nav
+          ref={row}
+          aria-label="Settings"
+          className="-mx-1 -mb-px flex gap-4 overflow-x-auto px-1"
+        >
           {ITEMS.map((item) => {
             const active = pathname === item.href;
             return (
@@ -39,7 +45,7 @@ export function SettingsNav() {
                 key={item.href}
                 href={item.href}
                 aria-current={active ? "page" : undefined}
-                className="-mb-px shrink-0 border-b-2 border-transparent pb-2 text-sm whitespace-nowrap text-fg-muted hover:text-fg focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none aria-[current=page]:border-fg aria-[current=page]:text-fg"
+                className="shrink-0 rounded-sm border-b-2 border-transparent px-0.5 pb-2 text-sm whitespace-nowrap text-fg-muted hover:text-fg focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none focus-visible:ring-inset aria-[current=page]:border-fg aria-[current=page]:text-fg"
               >
                 {item.label}
               </Link>

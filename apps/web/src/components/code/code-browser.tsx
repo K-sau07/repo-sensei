@@ -71,6 +71,10 @@ export function CodeBrowser({ children }: { children: ReactNode }) {
   const router = useRouter();
   const wide = useMediaQuery(LG);
   const [filesOpen, setFilesOpen] = useState(false);
+  // The drawer is for narrow windows: one left open doesn't come back when the window narrows
+  // again after widening.
+  if (wide && filesOpen) setFilesOpen(false);
+  const drawerOpen = filesOpen && !wide;
   const root = useListing("");
   const error = root.error instanceof ApiError ? root.error : null;
   // The rail reads where it is itself, so its element never changes.
@@ -111,11 +115,14 @@ export function CodeBrowser({ children }: { children: ReactNode }) {
   }
   if (content) return content;
 
-  if (!wide) {
-    return (
-      <div className="flex min-h-[28rem] flex-1 flex-col">
+  // One tree for every width, so the open file stays mounted (its scroll, its selection) as the
+  // window crosses `lg`: the tree's panel is only left out below it (a hole in the children, so
+  // the file's panel keeps its place), and the drawer offered instead.
+  return (
+    <div className="flex min-h-[28rem] flex-1 flex-col">
+      {!wide && (
         <div className="flex items-center border-b border-line px-2 py-1">
-          <Sheet open={filesOpen} onOpenChange={setFilesOpen}>
+          <Sheet open={drawerOpen} onOpenChange={setFilesOpen}>
             <SheetTrigger render={<Button variant="ghost" size="sm" />}>
               <FolderTree aria-hidden />
               Files
@@ -133,35 +140,30 @@ export function CodeBrowser({ children }: { children: ReactNode }) {
             </SheetContent>
           </Sheet>
         </div>
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-          {children}
-          <ReferencesDrawer />
-        </div>
+      )}
+      {/* Fills what the repository header leaves; the tree and the file scroll on their own. */}
+      <div className="relative min-h-0 flex-1">
+        <ResizablePanelGroup orientation="horizontal" className="absolute inset-0">
+          {wide && (
+            <ResizablePanel id="files" defaultSize="22rem" minSize="14rem" maxSize="50%">
+              <FileTree
+                className="h-full border-r border-line bg-surface-1"
+                current={path}
+                onOpenFile={(file) => {
+                  router.push(codePath(org, repo, file, { ref }));
+                }}
+              />
+            </ResizablePanel>
+          )}
+          {wide && <ResizableHandle />}
+          <ResizablePanel id="file" minSize="30%">
+            <div className="flex h-full min-w-0 flex-col">
+              {children}
+              <ReferencesDrawer />
+            </div>
+          </ResizablePanel>
+        </ResizablePanelGroup>
       </div>
-    );
-  }
-
-  return (
-    // Fills what the repository header leaves; the tree and the file scroll on their own.
-    <div className="relative min-h-[28rem] flex-1">
-      <ResizablePanelGroup orientation="horizontal" className="absolute inset-0">
-        <ResizablePanel defaultSize="22rem" minSize="14rem" maxSize="50%">
-          <FileTree
-            className="h-full border-r border-line bg-surface-1"
-            current={path}
-            onOpenFile={(file) => {
-              router.push(codePath(org, repo, file, { ref }));
-            }}
-          />
-        </ResizablePanel>
-        <ResizableHandle />
-        <ResizablePanel minSize="30%">
-          <div className="flex h-full min-w-0 flex-col">
-            {children}
-            <ReferencesDrawer />
-          </div>
-        </ResizablePanel>
-      </ResizablePanelGroup>
     </div>
   );
 }
