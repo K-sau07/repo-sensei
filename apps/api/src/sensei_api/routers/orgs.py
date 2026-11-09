@@ -87,6 +87,7 @@ class InvitationOut(BaseModel):
 
 class InvitationCreated(InvitationOut):
     link: str = Field(description="One-time link; shown only now.")
+    emailed: bool = Field(description="Whether the link was emailed to them (else: share it).")
 
 
 class AuditEventOut(BaseModel):
@@ -260,6 +261,10 @@ async def create_invitation(
     invitation, token = await orgs.invite(
         db, access, role=body.role, email=body.email, github_login=body.github_login
     )
+    # Emailed once it's committed, so the link in it works by then. Nothing reads or writes the
+    # database after this commit (the request's transaction is over).
+    await db.commit()
+    emailed = await orgs.send_invitation(access, invitation, token)
     origin: str = orgs.web_origin
     return InvitationCreated(
         id=invitation.id,
@@ -269,6 +274,7 @@ async def create_invitation(
         expires_at=invitation.expires_at,
         created_at=invitation.created_at,
         link=f"{origin}/invite/{token}",
+        emailed=emailed,
     )
 
 

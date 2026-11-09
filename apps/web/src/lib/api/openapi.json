@@ -5911,6 +5911,11 @@
             ],
             "title": "Email"
           },
+          "emailed": {
+            "description": "Whether the link was emailed to them (else: share it).",
+            "title": "Emailed",
+            "type": "boolean"
+          },
           "expires_at": {
             "format": "date-time",
             "title": "Expires At",
@@ -5948,7 +5953,8 @@
           "role",
           "expires_at",
           "created_at",
-          "link"
+          "link",
+          "emailed"
         ],
         "title": "InvitationCreated",
         "type": "object"

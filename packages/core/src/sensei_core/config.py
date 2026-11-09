@@ -443,9 +443,9 @@ class FixerSettings(BaseSettings):
 
 
 class NotifySettings(BaseSettings):
-    """Notifications (8.10): email through Resend (no key: emails are logged, in development,
-    or skipped), and how many times a delivery is tried before it is given up (each wait twice
-    the last, from a minute: 8 tries span about two hours)."""
+    """Notifications (8.10) and invitations: email through Resend (no key: emails are logged,
+    in development, or skipped), and how many times a notification is tried before it is given
+    up (each wait twice the last, from a minute: 8 tries span about two hours)."""
 
     model_config = _config("SENSEI_NOTIFY_")
 

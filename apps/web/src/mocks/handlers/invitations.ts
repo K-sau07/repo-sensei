@@ -64,7 +64,11 @@ export const invitationHandlers = [
     db.invitations.push(invitation);
     saveDb();
     return HttpResponse.json<InvitationCreated>(
-      { ...publicShape(invitation), link: `${location.origin}/invite/${invitation.token}` },
+      {
+        ...publicShape(invitation),
+        link: `${location.origin}/invite/${invitation.token}`,
+        emailed: email !== null,
+      },
       { status: 201 },
     );
   }),

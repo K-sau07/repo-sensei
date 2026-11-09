@@ -95,6 +95,8 @@ test("invite, accept as the invitee, change their role, then remove them", async
   await page.getByRole("button", { name: "Invite people" }).click();
   await page.getByLabel("Email or GitHub username").fill("friend@example.com");
   await page.getByRole("button", { name: "Send invitation" }).click();
+  await expect(page.getByRole("heading", { name: "Invitation sent" })).toBeVisible();
+  await expect(page.getByText("We emailed it to friend@example.com.")).toBeVisible();
   const link = await page.getByTestId("invite-link").textContent();
   expect(link).toMatch(/\/invite\/mock-/);
   await page.getByRole("button", { name: "Done" }).click();

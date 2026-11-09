@@ -27,7 +27,7 @@ import {
 } from "@/components/ui/select";
 import { api } from "@/lib/api/client";
 import { ApiError } from "@/lib/api/errors";
-import type { Role } from "@/lib/api/types";
+import type { InvitationCreated, Role } from "@/lib/api/types";
 import { queryKeys } from "@/lib/query/keys";
 
 import { ROLE_LABELS, assignableRoles } from "./roles";
@@ -41,12 +41,21 @@ export function parseInvitee(value: string): { email: string } | { github_login:
   return /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/.test(login) ? { github_login: login } : null;
 }
 
+/** What became of the invitation: emailed, or a link to share (by GitHub username, or an email
+ * that couldn't be sent). */
+export function sentText({ email, emailed }: Pick<InvitationCreated, "email" | "emailed">): string {
+  const once = "It's shown only now, and works once, for 7 days.";
+  if (emailed) return `We emailed it to ${email ?? "them"}. You can also share this link. ${once}`;
+  if (email) return `We couldn't email it, so share this link with them. ${once}`;
+  return `Share this link with them. ${once}`;
+}
+
 export function InviteDialog({ org, myRole }: { org: string; myRole: Role }) {
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
   const [invitee, setInvitee] = useState("");
   const [role, setRole] = useState<Role>("member");
-  const [link, setLink] = useState<string | null>(null);
+  const [created, setCreated] = useState<InvitationCreated | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
   const target = parseInvitee(invitee);
@@ -55,9 +64,10 @@ export function InviteDialog({ org, myRole }: { org: string; myRole: Role }) {
   const reset = () => {
     setInvitee("");
     setRole("member");
-    setLink(null);
+    setCreated(null);
     setError(null);
   };
+  const link = created?.link ?? null;
 
   const send = async (event: SubmitEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -69,7 +79,7 @@ export function InviteDialog({ org, myRole }: { org: string; myRole: Role }) {
         params: { path: { org } },
         body: { ...target, role },
       });
-      setLink(data?.link ?? null);
+      setCreated(data ?? null);
       await queryClient.invalidateQueries({ queryKey: queryKeys.invitations(org) });
     } catch (caught) {
       setError(caught instanceof ApiError ? caught.message : "Couldn't send the invitation.");
@@ -94,10 +104,16 @@ export function InviteDialog({ org, myRole }: { org: string; myRole: Role }) {
       </DialogTrigger>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>{link ? "Invitation created" : "Invite to the organization"}</DialogTitle>
+          <DialogTitle>
+            {created
+              ? created.emailed
+                ? "Invitation sent"
+                : "Invitation created"
+              : "Invite to the organization"}
+          </DialogTitle>
           <DialogDescription>
-            {link
-              ? "Share this link with them. It's shown only now, and works once, for 7 days."
+            {created
+              ? sentText(created)
               : "They'll join when they sign in with the matching email or GitHub account."}
           </DialogDescription>
         </DialogHeader>

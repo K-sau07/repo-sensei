@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { Member, Role } from "@/lib/api/types";
 
-import { parseInvitee } from "./invite-dialog";
+import { parseInvitee, sentText } from "./invite-dialog";
 import { memberPermissions } from "./members-settings";
 import { assignableRoles } from "./roles";
 
@@ -26,6 +26,14 @@ describe("parseInvitee", () => {
     ["-starts-with-hyphen", null],
   ])("%s", (value, expected) => {
     expect(parseInvitee(value)).toEqual(expected);
+  });
+});
+
+describe("sentText", () => {
+  it("says whether the invitation was emailed or is a link to share", () => {
+    expect(sentText({ email: "a@x.io", emailed: true })).toMatch(/^We emailed it to a@x\.io\./);
+    expect(sentText({ email: "a@x.io", emailed: false })).toMatch(/^We couldn't email it/);
+    expect(sentText({ email: null, emailed: false })).toMatch(/^Share this link with them\./);
   });
 });
 

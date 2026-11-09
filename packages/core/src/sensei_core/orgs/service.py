@@ -333,7 +333,8 @@ class OrgService:
         email: str | None = None,
         github_login: str | None = None,
     ) -> tuple[Invitation, str]:
-        """Create an invitation and send it. Returns the invitation and its one-time token."""
+        """Create an invitation; returns it and its one-time token (:meth:`send_invitation`
+        emails it once committed)."""
         require_role(access, Role.ADMIN)
         if role is Role.OWNER:
             require_role(access, Role.OWNER)
@@ -361,17 +362,21 @@ class OrgService:
             invitation.id,
             meta={"role": role.value, "email": email, "github_login": github_login},
         )
-        if email:
-            await self._mailer.send_invitation(
-                InvitationEmail(
-                    to=email,
-                    org_name=access.org.name,
-                    inviter=access.user.login,
-                    role=role.value,
-                    link=f"{self.web_origin}/invite/{token}",
-                )
-            )
         return invitation, token
+
+    async def send_invitation(self, access: OrgAccess, invitation: Invitation, token: str) -> bool:
+        """Email an invitation made by email, once it's committed (its link works by then);
+        whether it was sent (not: the inviter shares the link)."""
+        if not invitation.email:
+            return False
+        message = InvitationEmail(
+            to=invitation.email,
+            org_name=access.org.name,
+            inviter=access.user.login,
+            role=invitation.role.value,
+            link=f"{self.web_origin}/invite/{token}",
+        )
+        return await self._mailer.send_invitation(message, key=str(invitation.id))
 
     async def list_invitations(self, db: AsyncSession, access: OrgAccess) -> list[Invitation]:
         require_role(access, Role.ADMIN)

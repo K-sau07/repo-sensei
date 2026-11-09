@@ -231,12 +231,15 @@ async def test_invitation_by_email_end_to_end(
 ) -> None:
     access, _ = await _org_with(db_session, service, {})
     invitee = await make_user(db_session, email="New.Person@Example.com")
-    _, token = await service.invite(
+    invitation, token = await service.invite(
         db_session, access, role=Role.ADMIN, email="new.person@example.com"
     )
+    assert mailer.sent == []  # sent once committed, by the caller
+    assert await service.send_invitation(access, invitation, token)
 
     assert len(mailer.sent) == 1
     assert mailer.sent[0].link == f"https://app.example.com/invite/{token}"
+    assert (mailer.sent[0].to, mailer.sent[0].role) == ("new.person@example.com", "admin")
 
     preview = await service.preview_invitation(db_session, token)
     assert (preview.org_name, preview.role, preview.status) == ("Acme", Role.ADMIN, "pending")

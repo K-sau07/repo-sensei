@@ -77,7 +77,8 @@ from sensei_core.jobs import (
     make_celery,
 )
 from sensei_core.logging import configure_logging, get_logger
-from sensei_core.mail import ConsoleMailer
+from sensei_core.mail import EmailMailer
+from sensei_core.notifications.senders import Emailer, emailer
 from sensei_core.oauth.clients import ClientRegistry
 from sensei_core.oauth.service import OAuthService
 from sensei_core.orgs.service import OrgService
@@ -114,6 +115,12 @@ SERVICE_NAME = "sensei-api"
 log = get_logger(__name__)
 
 
+def _emailer(app: FastAPI, settings: Settings) -> Emailer | None:
+    """The notifications' emailer, on the app's HTTP client (none before it starts)."""
+    http: httpx.AsyncClient | None = getattr(app.state, "http", None)
+    return emailer(http, settings) if http is not None else None
+
+
 def _install_services(app: FastAPI, settings: Settings) -> None:
     """Process-wide services, on ``app.state`` (tests replace them there)."""
     app.state.settings = settings
@@ -127,7 +134,9 @@ def _install_services(app: FastAPI, settings: Settings) -> None:
         ),
     )
     app.state.token_cipher = TokenCipher.from_settings(settings.auth)
-    app.state.org_service = OrgService(ConsoleMailer(), settings.web.origin)
+    app.state.org_service = OrgService(
+        EmailMailer(lambda: _emailer(app, settings)), settings.web.origin
+    )
     # Sends tasks by name; the workers package defines them.
     producer = make_celery(settings, main="sensei-api")
     app.state.webhook_dispatcher = CeleryDispatcher(producer)

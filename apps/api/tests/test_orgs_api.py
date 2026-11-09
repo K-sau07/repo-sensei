@@ -129,11 +129,27 @@ async def test_invitation_flow_over_http(
     )
     assert created.status_code == 201
     link = created.json()["link"]
+    assert created.json()["emailed"] is True
     assert mailer.sent[0].link == link
     token = link.rsplit("/", 1)[1]
+    # Not emailed (it couldn't be, or it's by GitHub username): the link is shared instead.
+    mailer.sends = False
+    unsent = await api_client.post(
+        f"{API}/orgs/team-org/invitations",
+        json={"email": "other@example.com", "role": "viewer"},
+        headers=owner_headers,
+    )
+    assert unsent.json()["emailed"] is False
+    by_login = await api_client.post(
+        f"{API}/orgs/team-org/invitations",
+        json={"github_login": "octo-friend", "role": "viewer"},
+        headers=owner_headers,
+    )
+    assert by_login.json()["emailed"] is False
+    assert len(mailer.sent) == 2
 
     pending = (await api_client.get(f"{API}/orgs/team-org/invitations")).json()
-    assert [p["email"] for p in pending] == ["friend@example.com"]
+    assert {p["email"] for p in pending} == {"friend@example.com", "other@example.com", None}
     assert "link" not in pending[0]
 
     # The invitee can preview without being signed in.

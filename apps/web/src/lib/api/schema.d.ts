@@ -4905,6 +4905,11 @@ export interface components {
             /** Email */
             email: string | null;
             /**
+             * Emailed
+             * @description Whether the link was emailed to them (else: share it).
+             */
+            emailed: boolean;
+            /**
              * Expires At
              * Format: date-time
              */

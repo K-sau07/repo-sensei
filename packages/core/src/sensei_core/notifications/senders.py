@@ -85,12 +85,14 @@ class MemoryEmailer:
     """Test double: records what it was given (``fail``: raise this instead)."""
 
     sent: list[Email] = field(default_factory=list[Email])
+    keys: list[str] = field(default_factory=list[str])
     fail: SendError | None = None
 
     async def send(self, email: Email, *, key: str) -> None:
         if self.fail is not None:
             raise self.fail
         self.sent.append(email)
+        self.keys.append(key)
 
 
 def emailer(http: httpx.AsyncClient, settings: Settings) -> Emailer | None:
