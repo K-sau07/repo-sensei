@@ -36,9 +36,11 @@ export function RunWaterfall({
   const height = (Math.max(0, ...rows.values()) + 1) * ROW_PX;
   return (
     <div className="flex flex-col gap-1" data-testid="waterfall">
+      {/* A picture of the steps over time, and a shortcut for a pointer: a step is picked from
+          the keyboard (and by a screen reader) in the stage rail or with the replay slider, whose
+          targets are full size (a bar here is as wide as its step took). */}
       <div
-        role="group"
-        aria-label="Steps over time"
+        aria-hidden
         className="relative w-full overflow-hidden rounded-sm bg-surface-2"
         style={{ height }}
       >
@@ -49,6 +51,7 @@ export function RunWaterfall({
             <button
               key={step.idx}
               type="button"
+              tabIndex={-1}
               aria-label={`${String(step.idx + 1)}. ${stepTitle(step)}, ${formatMs(step.ms)}`}
               aria-pressed={selected === step.idx}
               onClick={() => {

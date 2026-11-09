@@ -15,8 +15,9 @@ test.describe("runs", () => {
 
     await expect(page).toHaveURL(/\/acme\/api\/runs\/[0-9a-f-]{36}$/);
     await expect(page.getByRole("heading", { name: "How is an item created?" })).toBeVisible();
+    // The bars are a pointer's shortcut (the stage rail is the keyboard's), out of the a11y tree.
     const waterfall = page.getByTestId("waterfall");
-    await expect(waterfall.getByRole("button")).toHaveCount(40);
+    await expect(waterfall.locator("button")).toHaveCount(40);
     const rail = page.getByTestId("stage-rail");
     await expect(rail).toContainText("Reading files ×2");
 
@@ -30,10 +31,10 @@ test.describe("runs", () => {
     await expect(page.getByTestId("step-card")).toContainText(path);
     const slider = page.getByRole("slider", { name: "Replay to step" });
     await expect(slider).not.toHaveAttribute("aria-valuetext", "Step 40 of 40");
-    await expect(waterfall.getByRole("button").last()).toHaveClass(/opacity-20/);
+    await expect(waterfall.locator("button").last()).toHaveClass(/opacity-20/);
 
     // A bar picks its step.
-    await waterfall.getByRole("button").last().click();
+    await waterfall.locator("button").last().click();
     await expect(page.getByTestId("step-card")).toContainText(
       "Checking the answer against the code",
     );
@@ -51,7 +52,7 @@ test.describe("runs", () => {
     await expect(page.getByText("running")).toBeVisible();
     await page.getByRole("link", { name: "How is an item created?" }).click();
     await expect(page.getByTestId("live")).toBeVisible();
-    await expect(page.getByTestId("waterfall").getByRole("button")).toHaveCount(40, {
+    await expect(page.getByTestId("waterfall").locator("button")).toHaveCount(40, {
       timeout: 15_000,
     });
   });

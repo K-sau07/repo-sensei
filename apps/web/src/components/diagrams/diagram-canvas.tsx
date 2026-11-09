@@ -199,6 +199,8 @@ function Canvas({
         }}
         nodesDraggable={false}
         nodesConnectable={false}
+        // An edge does nothing when focused (the outline lists every one): Tab goes node to node.
+        edgesFocusable={false}
         fitView
         fitViewOptions={{ padding: 0.15 }}
         proOptions={{ hideAttribution: true }}

@@ -41,7 +41,7 @@ export const Recorded: Story = {
     const rail = canvas.getByTestId("stage-rail");
     await expect(within(rail).getByText("Searching before the first turn")).toBeVisible();
     await expect(canvas.getByTestId("step-card")).toHaveTextContent("18 results in 7 files");
-    const bars = within(canvas.getByTestId("waterfall")).getAllByRole("button");
+    const bars = within(canvas.getByTestId("waterfall")).getAllByRole("button", { hidden: true });
     await expect(bars).toHaveLength(40);
   },
 };
@@ -70,7 +70,9 @@ export const TimeTravel: Story = {
     await expect(card).toHaveTextContent(first.textContent);
     const slider = canvas.getByRole("slider", { name: "Replay to step" });
     await expect(Number(slider.getAttribute("aria-valuenow"))).toBeLessThan(39);
-    const last = within(canvas.getByTestId("waterfall")).getAllByRole("button").at(-1);
+    const last = within(canvas.getByTestId("waterfall"))
+      .getAllByRole("button", { hidden: true })
+      .at(-1);
     await expect(last).toHaveClass("opacity-20");
   },
 };
@@ -103,7 +105,9 @@ export const Live: Story = {
     await expect(await canvas.findByTestId("live")).toHaveTextContent("Live");
     await waitFor(
       async () => {
-        const bars = within(canvas.getByTestId("waterfall")).getAllByRole("button");
+        const bars = within(canvas.getByTestId("waterfall")).getAllByRole("button", {
+          hidden: true,
+        });
         await expect(bars).toHaveLength(12);
       },
       { timeout: 3000 },

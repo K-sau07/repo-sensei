@@ -44,13 +44,16 @@ export function DocsSearch() {
         type="button"
         variant="outline"
         className="w-full justify-start gap-2 text-fg-muted"
+        aria-keyshortcuts="Meta+K Control+K"
         onClick={() => {
           setOpen(true);
         }}
       >
         <Search aria-hidden className="size-4" />
         Search the docs
-        <kbd className="ml-auto font-mono text-xs text-fg-faint">⌘K</kbd>
+        <kbd aria-hidden className="ml-auto font-mono text-xs text-fg-faint">
+          ⌘K
+        </kbd>
       </Button>
       <CommandDialog
         open={open}

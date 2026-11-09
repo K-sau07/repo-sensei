@@ -97,6 +97,8 @@
   html {
     @apply bg-background font-sans text-foreground;
     -webkit-font-smoothing: antialiased;
+    /* What focus or a link's #anchor scrolls to isn't left under the site's sticky header. */
+    scroll-padding-top: 4.5rem;
   }
   /* Density sets the body size only; the root stays 16px so rem-based spacing keeps a 4px grid. */
   body {
@@ -433,4 +435,21 @@
     opacity: 1 !important;
     transform: none !important;
   }
+}
+
+/* A diagram's node shows it has focus. Outside the layers, and more specific than React Flow's
+   own `.react-flow__node.selectable:focus-visible { outline: none }` (unlayered, loaded later). */
+.react-flow .react-flow__node:focus-visible,
+.react-flow .react-flow__node.selectable:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+/* React Flow's credit, in the theme's muted text (its own grey on white is too faint to read). */
+.react-flow .react-flow__attribution {
+  background: color-mix(in oklch, var(--bg) 70%, transparent);
+}
+.react-flow .react-flow__attribution a {
+  color: var(--color-fg-muted);
 }

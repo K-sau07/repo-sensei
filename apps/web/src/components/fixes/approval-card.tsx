@@ -406,13 +406,17 @@ function Actions({ fix, plan }: { fix: Fix; plan: FixPlan }) {
             <Button
               type="button"
               disabled={actions.busy || mine || editing}
+              // Said as a shortcut, not read out as part of its name ("command return").
+              aria-keyshortcuts="Meta+Enter Control+Enter"
               onClick={() => {
                 setConfirming(true);
               }}
             >
               <Check aria-hidden />
               {mine ? "You approved it" : "Approve plan"}
-              <kbd className="ml-1 text-[0.7rem] opacity-70">⌘↵</kbd>
+              <kbd aria-hidden className="ml-1 text-[0.7rem] opacity-70">
+                ⌘↵
+              </kbd>
             </Button>
             <Button
               type="button"
