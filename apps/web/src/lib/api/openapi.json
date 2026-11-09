@@ -8030,8 +8030,15 @@
             "type": "integer"
           },
           "cost_usd": {
-            "title": "Cost Usd",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cost Usd"
           },
           "created_at": {
             "format": "date-time",
@@ -8220,8 +8227,15 @@
             "type": "integer"
           },
           "cost_usd": {
-            "title": "Cost Usd",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cost Usd"
           },
           "created_at": {
             "format": "date-time",
@@ -18739,6 +18753,17 @@
         "operationId": "runs_api_v1_orgs__org__repos__repo__runs_get",
         "parameters": [
           {
+            "description": "Organization slug",
+            "in": "path",
+            "name": "org",
+            "required": true,
+            "schema": {
+              "description": "Organization slug",
+              "title": "Org",
+              "type": "string"
+            }
+          },
+          {
             "description": "Repository slug",
             "in": "path",
             "name": "repo",
@@ -18747,17 +18772,6 @@
               "description": "Repository slug",
               "maxLength": 201,
               "title": "Repo",
-              "type": "string"
-            }
-          },
-          {
-            "description": "Organization slug",
-            "in": "path",
-            "name": "org",
-            "required": true,
-            "schema": {
-              "description": "Organization slug",
-              "title": "Org",
               "type": "string"
             }
           },

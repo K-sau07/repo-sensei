@@ -5660,7 +5660,7 @@ export interface components {
             /** Cache Write */
             cache_write: number;
             /** Cost Usd */
-            cost_usd: string;
+            cost_usd: string | null;
             /**
              * Created At
              * Format: date-time
@@ -5721,7 +5721,7 @@ export interface components {
             /** Cache Write */
             cache_write: number;
             /** Cost Usd */
-            cost_usd: string;
+            cost_usd: string | null;
             /**
              * Created At
              * Format: date-time
@@ -11178,10 +11178,10 @@ export interface operations {
             };
             header?: never;
             path: {
-                /** @description Repository slug */
-                repo: string;
                 /** @description Organization slug */
                 org: string;
+                /** @description Repository slug */
+                repo: string;
             };
             cookie?: never;
         };

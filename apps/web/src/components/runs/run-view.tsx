@@ -69,7 +69,9 @@ export function RunView() {
           {data.user ? <Fact label="Asked by" value={data.user} /> : null}
           <Fact label="Steps" value={String(steps.length)} />
           <Fact label="Tokens" value={(data.tokens_in + data.tokens_out).toLocaleString()} />
-          <Fact label="Cost" value={`$${Number(data.cost_usd).toFixed(4)}`} />
+          {data.cost_usd !== null ? (
+            <Fact label="Cost" value={`$${Number(data.cost_usd).toFixed(4)}`} />
+          ) : null}
           {data.latency_ms !== null ? (
             <Fact label="Took" value={formatMs(data.latency_ms)} />
           ) : null}

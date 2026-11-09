@@ -18,7 +18,7 @@ from sensei_api.orgs import OrgAccessDep
 from sensei_api.repos import RepoAccessDep, RepoServiceDep, checked
 from sensei_api.routers.ask import ConversationOut, conversation_out
 from sensei_api.routers.repos import RepoOut
-from sensei_api.routers.runs import RunOut, run_out
+from sensei_api.routers.runs import RunOut, run_out, shows_costs
 from sensei_api.spend import HOLD_SECONDS
 from sensei_core.indexing.jobs import repo_summaries
 from sensei_core.models import AgentRun, Conversation, User
@@ -79,6 +79,6 @@ async def home(
     )
     return HomeOut(
         repos=[RepoOut.build(repo, summary=summaries.get(repo.id)) for repo in visible],
-        live=[run_out(run, login) for run, login in live],
+        live=[run_out(run, login, costs=shows_costs(access)) for run, login in live],
         recent=[conversation_out(found) for found in recent],
     )

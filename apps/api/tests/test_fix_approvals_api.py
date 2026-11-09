@@ -262,3 +262,21 @@ async def test_a_rejected_fix_stops_and_takes_no_more_decisions(
             "fix_not_awaiting_approval",
         )
     assert app.state.fix_jobs.sent == []
+
+
+async def test_github_not_answering_is_said_so_not_a_crash(
+    app: FastAPI, client: httpx.AsyncClient, db_session: AsyncSession, team: dict[str, Any]
+) -> None:
+    run = await _awaiting(db_session, team["repo"], team["owner"], FixRisk.LOW)
+    with respx.mock(assert_all_called=False) as github:
+        github.get(REPO_API).mock(return_value=httpx.Response(502))
+        down = await _decide(app, client, db_session, team["ann"], run)
+    assert (down.status_code, down.json()["error"]["code"]) == (503, "github_unavailable")
+    with respx.mock(assert_all_called=False) as github:
+        github.get(REPO_API).mock(return_value=httpx.Response(401))
+        lapsed = await _decide(app, client, db_session, team["ann"], run)
+    assert (lapsed.status_code, lapsed.json()["error"]["code"]) == (
+        401, "github_reauth_required",
+    )  # fmt: skip
+    await db_session.refresh(run)
+    assert run.status is FixStatus.AWAITING_APPROVAL  # nothing was decided

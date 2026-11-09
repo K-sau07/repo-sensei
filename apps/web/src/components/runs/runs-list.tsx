@@ -74,7 +74,8 @@ export function RunsList() {
                   </Badge>
                 </TableCell>
                 <TableCell className="text-right font-mono text-xs">
-                  ${Number(run.cost_usd).toFixed(4)}
+                  {/* What a run cost is an admin's to see, as spend is everywhere. */}
+                  {run.cost_usd === null ? "—" : `$${Number(run.cost_usd).toFixed(4)}`}
                 </TableCell>
                 <TableCell className="text-right font-mono text-xs">
                   {run.latency_ms !== null ? formatMs(run.latency_ms) : "…"}

@@ -1,6 +1,7 @@
 """Agent runs (4.8): a run with its steps and the data its waterfall draws, a repository's runs,
 and a live run's steps as they come (server-sent events). A run is seen by whoever in its org
-may read its repository."""
+may read its repository; what it cost only by the org's admins and owners, as spend is
+everywhere else (usage, insights)."""
 
 from __future__ import annotations
 
@@ -24,7 +25,7 @@ from sensei_api.repos import RepoAccessDep, RepoDep, checked
 from sensei_api.runs import RUN_PREFIX, step_data
 from sensei_api.streams import HEADERS, HEARTBEAT_SECONDS, READ_BLOCK_MS, last_event_id
 from sensei_core.errors import NotFoundError
-from sensei_core.models import AgentRun, AgentStep, Repo, User
+from sensei_core.models import AgentRun, AgentStep, Repo, Role, User
 from sensei_core.orgs.service import OrgAccess
 from sensei_core.repos.access import RepoAccess
 
@@ -59,7 +60,7 @@ class RunOut(BaseModel):
     tokens_out: int
     cache_read: int
     cache_write: int
-    cost_usd: Decimal
+    cost_usd: Decimal | None  # None below admin
     latency_ms: int | None
     first_token_ms: int | None
     error: str | None
@@ -90,7 +91,7 @@ async def run(
     )
     login = await _login(db, found.user_id)
     return RunDetail(
-        **run_out(found, login).model_dump(),
+        **run_out(found, login, costs=shows_costs(access)).model_dump(),
         steps=[StepOut(**step_data(step, found), output=step.output) for step in steps],
     )
 
@@ -98,6 +99,7 @@ async def run(
 @router.get("/repos/{repo}/runs", response_model=RunList)
 async def runs(
     *,
+    access: OrgAccessDep,
     repo: RepoDep,
     db: DbSession,
     limit: Annotated[int, Query(ge=1, le=100)] = 30,
@@ -116,7 +118,10 @@ async def runs(
     more = len(rows) > limit
     rows = rows[:limit]
     after = rows[-1][0].created_at.isoformat() if more and rows else None
-    return RunList(runs=[run_out(found, login) for found, login in rows], next_cursor=after)
+    costs = shows_costs(access)
+    return RunList(
+        runs=[run_out(found, login, costs=costs) for found, login in rows], next_cursor=after
+    )
 
 
 @router.get("/agent-runs/{run_id}/events", response_class=EventSourceResponse)
@@ -189,7 +194,12 @@ async def _login(db: AsyncSession, user_id: uuid.UUID | None) -> str | None:
     return await db.scalar(select(User.login).where(User.id == user_id))
 
 
-def run_out(found: AgentRun, login: str | None) -> RunOut:
+def shows_costs(access: OrgAccess) -> bool:
+    """Whether the caller sees what runs cost (admins and owners)."""
+    return access.role.at_least(Role.ADMIN)
+
+
+def run_out(found: AgentRun, login: str | None, *, costs: bool) -> RunOut:
     return RunOut(
         id=found.id,
         repo_id=found.repo_id,
@@ -205,7 +215,7 @@ def run_out(found: AgentRun, login: str | None) -> RunOut:
         tokens_out=found.tokens_out,
         cache_read=found.cache_read,
         cache_write=found.cache_write,
-        cost_usd=found.cost_usd,
+        cost_usd=found.cost_usd if costs else None,
         latency_ms=found.latency_ms,
         first_token_ms=found.first_token_ms,
         error=found.error,

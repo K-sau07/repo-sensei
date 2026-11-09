@@ -110,6 +110,19 @@ async def checked(readers: RepoAccess, user: User, repos: list[Repo]) -> list[Re
         raise GitHubUnavailableError("GitHub is not responding.") from exc
 
 
+async def can_write(readers: RepoAccess, user: User, repo: Repo) -> bool:
+    """Whether the user may push to ``repo`` on GitHub, with GitHub problems as API errors (a
+    lapsed sign-in: 401 to sign in again; GitHub not answering: 503), never a 500."""
+    try:
+        return await readers.can_write(user, repo)
+    except OAuthError as exc:
+        raise GitHubReauthRequiredError(
+            "Sign in with GitHub again to decide on this repository's fixes."
+        ) from exc
+    except GitHubError as exc:
+        raise GitHubUnavailableError("GitHub is not responding.") from exc
+
+
 async def get_repo(
     repo: Annotated[str, Path(description="Repository slug", max_length=201)],
     access: OrgAccessDep,

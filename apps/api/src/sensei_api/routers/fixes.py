@@ -26,7 +26,7 @@ from sse_starlette import EventSourceResponse, ServerSentEvent
 from sensei_api import streams
 from sensei_api.deps import DbSession, RedisClient, Writable
 from sensei_api.orgs import OrgAccessDep
-from sensei_api.repos import RepoAccessDep, RepoDep, checked, get_viewer, github_client
+from sensei_api.repos import RepoAccessDep, RepoDep, can_write, checked, get_viewer, github_client
 from sensei_core.audit import AuditAction, audit
 from sensei_core.db.tenancy import set_org_context
 from sensei_core.errors import ConflictError, ForbiddenError, InvalidError, NotFoundError
@@ -518,7 +518,7 @@ async def decide_fix(
     asked for it can't be the only one. Every decision is audited."""
     require_role(access, Role.MEMBER)
     run, repo = await _visible(request, access, db, readers, fix_id)
-    if not await readers.can_write(access.user, repo):
+    if not await can_write(readers, access.user, repo):
         raise ForbiddenError(
             "Deciding on its plan needs write access to the repository on GitHub.",
             code="github_write_required",

@@ -1228,11 +1228,6 @@ async def test_insights_show_costs_to_admins_only(world: World) -> None:
         assert all((day["cost_usd"] is not None) is admin for day in body["days"]), principal
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="10.10 finding: agent runs show their cost and asker to every member, though spend "
-    "is an admin's to see everywhere else (/usage 403, /insights cost_usd null below admin)",
-)
 async def test_run_costs_are_shown_to_admins_only(world: World) -> None:
     await set_org_context(world.db, world.org_id)
     await _talk(world, "author")
@@ -1244,3 +1239,5 @@ async def test_run_costs_are_shown_to_admins_only(world: World) -> None:
         outcome = await _request(world, name, "viewer", {"run_id": _authors("run")})
         assert outcome.status == 200, str(outcome)
         assert b"1.25" not in outcome.body, name
+        shown = await _request(world, name, "admin", {"run_id": _authors("run")})
+        assert b"1.25" in shown.body, name
