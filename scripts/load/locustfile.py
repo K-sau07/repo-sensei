@@ -12,6 +12,10 @@ against a stub model (``SENSEI_ANTHROPIC_BASE_URL``), not through this file.
         --headless -u 50 -r 5 -t 5m --csv load
 
 Every request is named by its route (not its arguments), so the report has one line each.
+Every virtual user is the key's one person, and search allows 60 a minute a person: on the
+target, raise ``SENSEI_SEARCH_RATE_PER_MINUTE`` for the run (or give each user a key of its
+own), or the run measures the limit. A refusal is counted as its own line (``… 429``), apart
+from the searches' latency.
 """
 
 from __future__ import annotations
@@ -63,7 +67,11 @@ class Reader(HttpUser):
     @task(3)
     def search(self) -> None:
         body = {"q": random.choice(QUERIES), "mode": "keyword", "limit": 20}  # noqa: S311
-        self.client.post(f"{BASE}/search", json=body, name="POST search (keyword)")
+        with self.client.post(
+            f"{BASE}/search", json=body, name="POST search (keyword)", catch_response=True
+        ) as response:
+            if response.status_code == 429:
+                response.failure("429: the per-person search limit, not the search")
 
     @task(2)
     def neighbors(self) -> None:
@@ -76,33 +84,32 @@ class Reader(HttpUser):
         )
 
 
-class Watcher(HttpUser):
-    """An open tab: the org's live events, held for a while, then opened again."""
+SESSION = os.environ.get("SENSEI_LOAD_SESSION", "")
 
-    wait_time = between(1, 2)
-    weight = 1
 
-    def on_start(self) -> None:
-        # The session cookie's name: __Host-session over HTTPS, session in development.
-        session = os.environ.get("SENSEI_LOAD_SESSION", "")
-        name = os.environ.get("SENSEI_LOAD_SESSION_COOKIE", "__Host-session")
-        self.signed_in = bool(session)
-        if self.signed_in:
-            self.client.cookies.set(name, session)
+if SESSION:  # Locust runs the user classes the file defines: this one only with a session
 
-    @task
-    def events(self) -> None:
-        if not self.signed_in:
-            time.sleep(EVENTS_SECONDS)  # no session given: this scenario is left out
-            return
-        started = time.monotonic()
-        with self.client.get(
-            f"/api/v1/orgs/{ORG}/events", stream=True, name="SSE events", catch_response=True
-        ) as response:
-            if response.status_code != 200:
-                response.failure(f"status {response.status_code}")
-                return
-            for _ in response.iter_lines():
-                if time.monotonic() - started > EVENTS_SECONDS:
-                    break
-            response.success()
+    class Watcher(HttpUser):
+        """An open tab: the org's live events, held for a while, then opened again. Only with a
+        session (``SENSEI_LOAD_SESSION``): without one, no users of this kind."""
+
+        wait_time = between(1, 2)
+
+        def on_start(self) -> None:
+            # The session cookie's name: __Host-session over HTTPS, session in development.
+            name = os.environ.get("SENSEI_LOAD_SESSION_COOKIE", "__Host-session")
+            self.client.cookies.set(name, SESSION)
+
+        @task
+        def events(self) -> None:
+            started = time.monotonic()
+            with self.client.get(
+                f"/api/v1/orgs/{ORG}/events", stream=True, name="SSE events", catch_response=True
+            ) as response:
+                if response.status_code != 200:
+                    response.failure(f"status {response.status_code}")
+                    return
+                for _ in response.iter_lines():
+                    if time.monotonic() - started > EVENTS_SECONDS:
+                        break
+                response.success()

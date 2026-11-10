@@ -17,7 +17,7 @@ from decimal import Decimal
 from typing import Any, Literal
 
 from fastapi import APIRouter, Response, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import Date, String, cast, column, distinct, func, select, true
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -47,7 +47,10 @@ TOP_MODULES = 40
 MODULE_DEPTH = 2  # a module is a file's first two folders (or fewer, for a shallow file)
 # The budgets at p75 (frontend design 9): LCP in ms, INP in ms, CLS unitless.
 SPEED_BUDGETS: dict[str, float] = {"LCP": 1800.0, "INP": 100.0, "CLS": 0.05}
-VITAL_REPORTS_PER_DAY = 2000  # a person's page views reported a day; past it, not stored
+VITAL_REPORTS_PER_DAY = 300  # a person's page views reported a day; past it, not stored
+# What a real page measures at most (LCP and INP in ms; CLS unitless, a whole page's shift is
+# a few at worst): past it, a report isn't a measure, and one person can't skew the p75 with it.
+VITAL_MAX: dict[str, float] = {"LCP": 60_000.0, "INP": 60_000.0, "CLS": 10.0}
 
 
 class InsightDayOut(BaseModel):
@@ -227,12 +230,19 @@ async def insights(
 
 class VitalIn(BaseModel):
     name: Literal["LCP", "INP", "CLS"]
-    value: float = Field(ge=0, le=600_000)
+    value: float = Field(ge=0)
     route: str = Field(
         max_length=200,
         pattern=r"^(/[\w\[\].-]*)+$",
         description="The page's route as a pattern (/[org]/[repo]/ask), never its names.",
     )
+
+    @model_validator(mode="after")
+    def _measured(self) -> VitalIn:
+        if self.value > VITAL_MAX[self.name]:
+            msg = f"{self.name} of at most {VITAL_MAX[self.name]:g}"
+            raise ValueError(msg)
+        return self
 
 
 class VitalsIn(BaseModel):

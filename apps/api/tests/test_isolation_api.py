@@ -544,7 +544,7 @@ async def test_a_key_for_a_doesnt_open_b_for_someone_in_both(
         ("GET", f"{repo}/index-jobs/{orgs.ids['job']}", None),
         ("GET", f"{repo}/runs", None),
         ("GET", f"{org}/agent-runs/{orgs.ids['run']}", None),
-        ("POST", f"{repo}/search", {"query": "x"}),
+        ("POST", f"{repo}/search", {"q": "x"}),
         ("POST", f"{repo}/ask", {"question": "What is this?"}),
     ):
         response = await _send(client, method, url, headers, body)

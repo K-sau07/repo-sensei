@@ -216,6 +216,8 @@ async def test_speed_is_what_the_orgs_browsers_reported_at_p75(
         {"vitals": []},
         {"vitals": [{"name": "FID", "value": 1, "route": "/[org]"}]},
         {"vitals": [{"name": "LCP", "value": -1, "route": "/[org]"}]},
+        {"vitals": [{"name": "CLS", "value": 600_000, "route": "/[org]"}]},  # no real page's
+        {"vitals": [{"name": "INP", "value": 60_001, "route": "/[org]"}]},
         {"vitals": [{"name": "LCP", "value": 1, "route": "https://elsewhere.example/"}]},
         {"vitals": [{"name": "LCP", "value": 1, "route": "/[org]"}] * 11},
     ]
@@ -226,7 +228,7 @@ async def test_speed_is_what_the_orgs_browsers_reported_at_p75(
     today = datetime.now(UTC).date().isoformat()
     await fake_redis.set(QUOTA.format(name="vital_reports", user=owner.id, day=today),
                          VITAL_REPORTS_PER_DAY)  # fmt: skip
-    capped = {"vitals": [{"name": "LCP", "value": 99999.0, "route": "/[org]"}]}
+    capped = {"vitals": [{"name": "LCP", "value": 59999.0, "route": "/[org]"}]}
     assert (await client.post(f"{url}/vitals", json=capped, headers=headers)).status_code == 204
     speed = {s["name"]: s for s in (await client.get(f"{url}/insights")).json()["speed"]}
     assert speed["LCP"]["samples"] == 4
