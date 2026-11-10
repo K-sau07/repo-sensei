@@ -10,7 +10,7 @@
 import { History, List, RefreshCw, Share2, ShieldCheck, Trash2, Workflow } from "lucide-react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { parseAsString, useQueryState } from "nuqs";
+import { parseAsString, parseAsStringLiteral, useQueryState } from "nuqs";
 import { useState } from "react";
 import { toast } from "sonner";
 
@@ -19,14 +19,15 @@ import { StaleBadge } from "@/components/feedback/banners";
 import { EmptyState } from "@/components/feedback/empty-state";
 import { ErrorState } from "@/components/feedback/error-state";
 import { useRepoSlug } from "@/components/repo/use-repo";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   citedFiles,
+  DIAGRAM_KINDS,
   KIND_LABELS,
   outline,
   redrawInput,
@@ -79,6 +80,9 @@ function Loaded({ diagram }: { diagram: Diagram }) {
   const [showOutline, setShowOutline] = useState(false);
   const [selected, setSelected] = useState<SpecNode | null>(null);
   const [since] = useQueryState("since", parseAsString);
+  // Any diagram in any of the three views (6.6.2): drawn as its kind until another is picked.
+  const [picked, setView] = useQueryState("view", parseAsStringLiteral(DIAGRAM_KINDS));
+  const view = picked ?? diagram.kind;
   const before = useDiagram(since ?? "", since !== null);
   const diff = since && before.data ? specDiff(specOf(before.data), spec) : null;
   const cited = citedFiles(spec, diagram.commit_sha);
@@ -131,7 +135,20 @@ function Loaded({ diagram }: { diagram: Diagram }) {
           /
         </span>
         <Title diagram={diagram} />
-        <Badge variant="outline">{KIND_LABELS[diagram.kind]}</Badge>
+        <ToggleGroup
+          aria-label="View as"
+          value={[view]}
+          onValueChange={(value: string[]) => {
+            const next = DIAGRAM_KINDS.find((kind) => kind === value[0]);
+            if (next) void setView(next === diagram.kind ? null : next);
+          }}
+        >
+          {DIAGRAM_KINDS.map((kind) => (
+            <ToggleGroupItem key={kind} value={kind} size="sm">
+              {KIND_LABELS[kind]}
+            </ToggleGroupItem>
+          ))}
+        </ToggleGroup>
         <Tooltip>
           <TooltipTrigger
             render={
@@ -209,6 +226,7 @@ function Loaded({ diagram }: { diagram: Diagram }) {
               selected={selected?.id ?? null}
               onSelect={setSelected}
               added={diff?.added}
+              view={view}
             />
           )}
         </div>

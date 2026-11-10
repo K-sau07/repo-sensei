@@ -7,7 +7,7 @@
 import { http, HttpResponse } from "msw";
 
 import type { Diagram, DiagramSummary, Spec } from "@/lib/api/diagrams";
-import { mermaid, ratio, specOfTrace } from "@/lib/diagrams/from-trace";
+import { mermaid, ratio, specOfTrace, TEMPLATE_MEMBERS } from "@/lib/diagrams/from-trace";
 import { db, saveDb, type MockRepo } from "@/mocks/db";
 import { LOGIN_ENTRY, mockTraces } from "@/mocks/trace";
 
@@ -66,7 +66,7 @@ export const diagramHandlers = [
       return apiError(404, "trace_entry_not_found", "Nothing in the graph is that entry.");
     const kind = body.kind ?? "flowchart";
     const title = body.question ?? `The flow from ${trace.entries[0]?.name ?? entry}`;
-    const spec = specOfTrace(trace, title, kind, Boolean(body.question));
+    const spec = specOfTrace(trace, title, kind, Boolean(body.question), TEMPLATE_MEMBERS);
     const made: Diagram = {
       id: crypto.randomUUID(),
       title,

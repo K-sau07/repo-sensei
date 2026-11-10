@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/nextjs-vite";
-import { expect, fn, waitFor } from "storybook/test";
+import { expect, fn, userEvent, waitFor } from "storybook/test";
 
 import { BlueprintCard } from "@/components/diagrams/blueprint-node";
 import { DiagramCanvas } from "@/components/diagrams/diagram-canvas";
@@ -15,6 +15,10 @@ const SPEC: Spec = {
       layer: "ui",
       kind: "component",
       citation: { path: "frontend/src/routes/login.tsx", start_line: 12, end_line: 80 },
+      members: [
+        { name: "useAuth", kind: "hook" },
+        { name: "useForm", kind: "hook" },
+      ],
     },
     {
       id: "route",
@@ -37,7 +41,19 @@ const SPEC: Spec = {
       kind: "function",
       citation: { path: "backend/app/crud.py", start_line: 52, end_line: 61 },
     },
-    { id: "table", label: "user", layer: "db", kind: "table", citation: null },
+    {
+      id: "table",
+      label: "user",
+      layer: "db",
+      kind: "table",
+      citation: null,
+      members: [
+        { name: "id", kind: "column" },
+        { name: "email", kind: "column" },
+        { name: "hashed_password", kind: "column" },
+      ],
+      more_members: 3,
+    },
   ],
   edges: [
     {
@@ -171,5 +187,52 @@ export const Cards: Story = {
   play: async ({ canvas }) => {
     await expect(canvas.getByText("Endpoint")).toBeVisible();
     await expect(canvas.getByText("crud.py:52–61")).toBeVisible();
+  },
+};
+
+/** A flowchart reads top to bottom: each step numbered in reading order, its start and end said. */
+export const FlowchartSteps: Story = {
+  args: { view: "flowchart" },
+  play: async ({ canvas }) => {
+    await waitFor(() => expect(canvas.getAllByTestId("blueprint-node")).toHaveLength(5), {
+      timeout: 5000,
+    });
+    const steps = canvas.getAllByText("Step").map((word) => word.parentElement?.textContent);
+    await expect(steps.sort()).toEqual(["Step 1", "Step 2", "Step 3", "Step 4", "Step 5"]);
+    // React Flow shows a node once it has measured it.
+    await waitFor(() => expect(canvas.getByText("End")).toBeVisible(), { timeout: 5000 });
+  },
+};
+
+/** The same diagram as a sequence: participants across, lifelines down, messages numbered in order. */
+export const Sequence: Story = {
+  args: { view: "sequence" },
+  play: async ({ canvas, args }) => {
+    await expect(canvas.getByTestId("sequence-view")).toBeVisible();
+    await expect(canvas.getAllByTestId("blueprint-node")).toHaveLength(5);
+    const messages = canvas
+      .getByTestId("sequence-view")
+      .querySelectorAll('[data-testid="sequence-message"]');
+    await expect(messages).toHaveLength(5);
+    await expect(messages[4]?.classList.contains("inferred")).toBe(true);
+    await userEvent.click(canvas.getByRole("button", { name: /\buser\b/ }));
+    await expect(args.onSelect).toHaveBeenCalledWith(expect.objectContaining({ id: "table" }));
+  },
+};
+
+/** The same diagram as an entity diagram: a band per layer, each part a card with its members. */
+export const ArchitectureEntities: Story = {
+  args: { view: "architecture" },
+  play: async ({ canvas }) => {
+    await waitFor(() => expect(canvas.getAllByTestId("entity-node")).toHaveLength(5), {
+      timeout: 5000,
+    });
+    await expect(canvas.getAllByTestId("layer-band").length).toBeGreaterThanOrEqual(4);
+    const members = canvas.getByRole("list", { name: "user's members" });
+    await expect(members).toHaveTextContent("hashed_password");
+    await expect(members).toHaveTextContent("+3 more");
+    await expect(canvas.getByRole("list", { name: "Login's members" })).toHaveTextContent(
+      "useAuth",
+    );
   },
 };

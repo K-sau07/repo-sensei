@@ -7,7 +7,7 @@
 
 import type { Spec } from "@/lib/api/diagrams";
 import { pipOf, type Pip, type Trace, type TracePath } from "@/lib/api/trace";
-import { mermaid, ratio, specOfTrace } from "@/lib/diagrams/from-trace";
+import { mermaid, ratio, specOfTrace, TEMPLATE_MEMBERS } from "@/lib/diagrams/from-trace";
 import fixture from "@/mocks/fixtures/trace.json";
 import { LOGIN_ENTRY } from "@/mocks/trace";
 
@@ -46,6 +46,7 @@ export function demoDiagram(): { spec: Spec; mermaid: string; verifiedRatio: num
     "Signing in",
     "flowchart",
     false,
+    TEMPLATE_MEMBERS,
   );
   return { spec, mermaid: mermaid(spec), verifiedRatio: ratio(spec) };
 }

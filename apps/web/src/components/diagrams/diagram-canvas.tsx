@@ -1,11 +1,16 @@
 "use client";
 
 /**
- * A diagram's canvas (6.6): its nodes as blueprint cards on a dot grid, laid out by ELK (off the
- * main thread), its edges solid where the graph proves them and dashed amber where they are
- * inferred, each with its label. A floating toolbar fits the view, zooms, turns the flow (left
- * to right or top to bottom) and exports it (SVG, PNG, Mermaid); a minimap shows where the view
- * is. A click on a node picks it (its code opens beside the canvas).
+ * A diagram's canvas (6.6), in one of three views of the same checked spec (6.6.2):
+ * - **flowchart**: its steps top to bottom, numbered in reading order, where it starts and ends;
+ * - **sequence**: who takes part as columns with lifelines, the messages numbered down the page
+ *   (sequence-view.tsx);
+ * - **architecture**: an entity diagram, a band per layer holding a card per part with its
+ *   members (entity-node.tsx).
+ * Laid out by ELK (off the main thread); edges solid where the graph proves them and dashed
+ * amber where they are inferred, each with its label. A floating toolbar fits the view, zooms,
+ * turns a flowchart, and exports (SVG, PNG, Mermaid); a minimap shows where the view is. A click
+ * on a node picks it (its code opens beside the canvas).
  */
 import "@xyflow/react/dist/style.css";
 
@@ -31,19 +36,33 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import type { Spec, SpecEdge, SpecNode } from "@/lib/api/diagrams";
+import {
+  flowEnds,
+  stepOrder,
+  type DiagramKind,
+  type Spec,
+  type SpecEdge,
+  type SpecNode,
+} from "@/lib/api/diagrams";
 import {
   elkGraph,
+  ENTITY_WIDTH,
+  entityHeight,
   layout,
+  layoutArchitecture,
   positionsOf,
+  tierOf,
   type FlowDirection,
   type Placed,
 } from "@/lib/diagrams/elk-layout";
-import { exportPng, exportSvg, download } from "@/lib/diagrams/export";
+import { download, exportSequenceSvg, exportSvg, svgToPng } from "@/lib/diagrams/export";
 
 import { BlueprintNode, laneOf, type BlueprintData } from "./blueprint-node";
+import { BandNode, EntityNode, type BandData, type EntityData } from "./entity-node";
+import { SequenceView } from "./sequence-view";
 
-const NODE_TYPES: NodeTypes = { blueprint: BlueprintNode };
+const NODE_TYPES: NodeTypes = { blueprint: BlueprintNode, entity: EntityNode, band: BandNode };
+const ENTITY_SIZE = { width: () => ENTITY_WIDTH, height: entityHeight };
 const VERIFIED = "var(--text-muted)";
 const INFERRED = "var(--warn)";
 
@@ -92,15 +111,75 @@ interface CanvasProps {
   selected: string | null;
   onSelect: (node: SpecNode | null) => void;
   added?: ReadonlySet<string> | undefined;
-  /** Which way it is laid out first (left to right unless said). */
+  /** Which view (the diagram's own kind unless said). */
+  view?: DiagramKind | undefined;
+  /** Which way a flowchart is laid out first (top to bottom unless said). */
   initialDirection?: FlowDirection;
 }
 
 export function DiagramCanvas(props: CanvasProps) {
+  const view = props.view ?? props.spec.kind;
+  if (view === "sequence") return <Sequence {...props} />;
   return (
     <ReactFlowProvider>
-      <Canvas {...props} />
+      <Canvas {...props} view={view} />
     </ReactFlowProvider>
+  );
+}
+
+function Sequence({ spec, edges, mermaid, title, selected, onSelect, added }: CanvasProps) {
+  return (
+    <div className="relative h-full min-h-[28rem] w-full" data-testid="diagram-canvas">
+      <SequenceView
+        spec={spec}
+        edges={edges}
+        selected={selected}
+        onSelect={onSelect}
+        added={added}
+      />
+      <div
+        className="absolute top-3 right-3 flex items-center gap-0.5 rounded-lg border border-line bg-surface-1/80 p-1 shadow-sm backdrop-blur"
+        role="toolbar"
+        aria-label="Diagram tools"
+      >
+        <ExportMenu
+          svg={() => {
+            download(`${title}.svg`, exportSequenceSvg(spec, edges), "image/svg+xml");
+          }}
+          png={() =>
+            void svgToPng(exportSequenceSvg(spec, edges)).then((blob) => {
+              download(`${title}.png`, blob);
+            })
+          }
+          mermaid={() => {
+            download(`${title}.mmd`, mermaid, "text/plain");
+          }}
+        />
+      </div>
+    </div>
+  );
+}
+
+function ExportMenu({
+  svg,
+  png,
+  mermaid,
+}: {
+  svg: () => void;
+  png: () => void;
+  mermaid: () => void;
+}) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger render={<Button size="icon-sm" variant="ghost" aria-label="Export" />}>
+        <Download aria-hidden />
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end">
+        <DropdownMenuItem onClick={svg}>SVG</DropdownMenuItem>
+        <DropdownMenuItem onClick={png}>PNG</DropdownMenuItem>
+        <DropdownMenuItem onClick={mermaid}>Mermaid</DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 
@@ -112,25 +191,63 @@ function Canvas({
   selected,
   onSelect,
   added,
-  initialDirection = "RIGHT",
+  view = "flowchart",
+  initialDirection = "DOWN",
 }: CanvasProps) {
+  const architecture = view === "architecture";
   const [direction, setDirection] = useState<FlowDirection>(initialDirection);
-  const placed = useLaidOut(spec, edges, direction);
+  const flowPlaced = useLaidOut(spec, edges, direction);
+  const steps = useMemo(() => stepOrder(spec, edges), [spec, edges]);
+  const archPlaced = useMemo(
+    () => (architecture ? layoutArchitecture(spec, steps) : null),
+    [architecture, spec, steps],
+  );
+  const placed = architecture ? (archPlaced?.absolute ?? null) : flowPlaced;
   const flow = useReactFlow();
   const vertical = direction === "DOWN";
-  const nodes: Node<BlueprintData>[] = useMemo(
-    () =>
-      spec.nodes.map((node) => ({
+  const ends = useMemo(() => flowEnds(spec, edges), [spec, edges]);
+  const nodes: Node[] = useMemo(() => {
+    if (architecture) {
+      if (!archPlaced) return [];
+      const bands: Node<BandData>[] = archPlaced.bands.map((band) => ({
+        id: `band:${band.tier.tier}`,
+        type: "band",
+        position: { x: band.x, y: band.y },
+        data: { tier: band.tier, width: band.width, height: band.height },
+        selectable: false,
+        draggable: false,
+        connectable: false,
+        focusable: false,
+        style: { width: band.width, height: band.height },
+      }));
+      const cards: Node<EntityData>[] = spec.nodes.map((node) => ({
         id: node.id,
-        type: "blueprint",
-        position: placed?.[node.id] ?? { x: 0, y: 0 },
-        data: { node, added: added?.has(node.id) ?? false, vertical },
+        type: "entity",
+        parentId: `band:${tierOf(node.layer).tier}`,
+        position: archPlaced.inside[node.id] ?? { x: 0, y: 0 },
+        data: { node, added: added?.has(node.id) ?? false },
         selected: node.id === selected,
         draggable: false,
         connectable: false,
-      })),
-    [spec.nodes, placed, added, vertical, selected],
-  );
+      }));
+      return [...bands, ...cards];
+    }
+    return spec.nodes.map((node): Node<BlueprintData> => ({
+      id: node.id,
+      type: "blueprint",
+      position: flowPlaced?.[node.id] ?? { x: 0, y: 0 },
+      data: {
+        node,
+        added: added?.has(node.id) ?? false,
+        vertical,
+        step: steps.get(node.id),
+        end: ends.get(node.id),
+      },
+      selected: node.id === selected,
+      draggable: false,
+      connectable: false,
+    }));
+  }, [architecture, archPlaced, flowPlaced, spec.nodes, added, vertical, selected, steps, ends]);
   const lines: Edge[] = useMemo(
     () =>
       edges.map((edge, i) => ({
@@ -143,12 +260,14 @@ function Canvas({
           type: MarkerType.ArrowClosed,
           color: edge.verified ? VERIFIED : INFERRED,
         },
+        // An entity diagram's lines run square, as its relations do.
+        ...(architecture ? { type: "smoothstep" } : {}),
         labelStyle: { fill: "var(--text-muted)", fontSize: 11 },
         labelBgStyle: { fill: "var(--surface-1)" },
         data: { verified: edge.verified },
         className: edge.verified ? "verified" : "inferred",
       })),
-    [edges],
+    [edges, architecture],
   );
   useEffect(() => {
     // Again whenever the layout changes (turned), once the nodes are drawn where it put them.
@@ -159,13 +278,17 @@ function Canvas({
     };
   }, [placed, flow]);
 
+  const svgOf = (at: Readonly<Record<string, Placed>>) =>
+    architecture
+      ? exportSvg(spec, edges, at, { sized: ENTITY_SIZE, bands: archPlaced?.bands ?? [] })
+      : exportSvg(spec, edges, at);
   const exports = {
     svg: () => {
-      if (placed) download(`${title}.svg`, exportSvg(spec, edges, placed), "image/svg+xml");
+      if (placed) download(`${title}.svg`, svgOf(placed), "image/svg+xml");
     },
     png: () => {
       if (placed)
-        void exportPng(spec, edges, placed).then((blob) => {
+        void svgToPng(svgOf(placed)).then((blob) => {
           download(`${title}.png`, blob);
         });
     },
@@ -192,6 +315,7 @@ function Canvas({
         edges={lines}
         nodeTypes={NODE_TYPES}
         onNodeClick={(_, node) => {
+          if (node.type === "band") return;
           onSelect(spec.nodes.find((n) => n.id === node.id) ?? null);
         }}
         onPaneClick={() => {
@@ -211,7 +335,11 @@ function Canvas({
         <MiniMap
           pannable
           zoomable
-          nodeColor={(node) => laneOf((node.data as BlueprintData).node.layer).color}
+          nodeColor={(node) =>
+            node.type === "band"
+              ? "transparent"
+              : laneOf((node.data as BlueprintData).node.layer).color
+          }
           className="!bg-surface-2"
           // What is outside the view, dimmed in the theme's own background (React Flow's default
           // is a light grey, a pale block on the dark theme).
@@ -224,16 +352,18 @@ function Canvas({
         role="toolbar"
         aria-label="Diagram tools"
       >
-        <Button
-          size="icon-sm"
-          variant="ghost"
-          aria-label={vertical ? "Flow left to right" : "Flow top to bottom"}
-          onClick={() => {
-            setDirection(vertical ? "RIGHT" : "DOWN");
-          }}
-        >
-          {vertical ? <ArrowRight aria-hidden /> : <ArrowDown aria-hidden />}
-        </Button>
+        {architecture ? null : (
+          <Button
+            size="icon-sm"
+            variant="ghost"
+            aria-label={vertical ? "Flow left to right" : "Flow top to bottom"}
+            onClick={() => {
+              setDirection(vertical ? "RIGHT" : "DOWN");
+            }}
+          >
+            {vertical ? <ArrowRight aria-hidden /> : <ArrowDown aria-hidden />}
+          </Button>
+        )}
         <Button
           size="icon-sm"
           variant="ghost"
@@ -258,18 +388,7 @@ function Canvas({
         >
           <Minus aria-hidden />
         </Button>
-        <DropdownMenu>
-          <DropdownMenuTrigger
-            render={<Button size="icon-sm" variant="ghost" aria-label="Export" />}
-          >
-            <Download aria-hidden />
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
-            <DropdownMenuItem onClick={exports.svg}>SVG</DropdownMenuItem>
-            <DropdownMenuItem onClick={exports.png}>PNG</DropdownMenuItem>
-            <DropdownMenuItem onClick={exports.mermaid}>Mermaid</DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
+        <ExportMenu svg={exports.svg} png={exports.png} mermaid={exports.mermaid} />
       </div>
     </div>
   );

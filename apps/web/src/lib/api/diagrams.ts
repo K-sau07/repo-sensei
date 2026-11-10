@@ -25,12 +25,21 @@ export interface Citation {
   end_line: number;
 }
 
+/** Something a node holds or uses, as an entity diagram lists it. */
+export interface SpecMember {
+  name: string;
+  kind: string; // method, function, variable, class, column, hook, renders
+}
+
 export interface SpecNode {
   id: string; // the node's symbol key
   label: string;
   layer: string;
   kind: string;
   citation: Citation | null;
+  /** Its members (diagrams drawn before 6.6.2 have none). */
+  members?: SpecMember[];
+  more_members?: number;
 }
 
 export interface SpecEdge {
@@ -118,4 +127,41 @@ export function redrawInput(diagram: Diagram): DiagramInput | null {
   if (prompt.question) return { question: prompt.question, kind: diagram.kind };
   if (prompt.from_trace) return { from_trace: prompt.from_trace, kind: diagram.kind };
   return null;
+}
+
+/** An edge's words: its label, else its type read aloud (`issues_request`: "issues request"). */
+export function edgeWords(edge: SpecEdge): string {
+  if (edge.label) return edge.label;
+  if (edge.type) return edge.type.replaceAll("_", " ");
+  return edge.inferred ? "inferred" : "";
+}
+
+/** The order to read a flow in: from its starts (no edge into them), along its edges in the
+ * order the diagram gives them, then whatever is left. Each node's place, from 1. */
+export function stepOrder(spec: Spec, edges: readonly SpecEdge[]): Map<string, number> {
+  const into = new Set(edges.map((edge) => edge.to));
+  const next = new Map<string, string[]>();
+  for (const edge of edges) next.set(edge.from, [...(next.get(edge.from) ?? []), edge.to]);
+  const order = new Map<string, number>();
+  const queue = spec.nodes.filter((node) => !into.has(node.id)).map((node) => node.id);
+  for (let at = queue.shift(); at !== undefined; at = queue.shift()) {
+    if (order.has(at)) continue;
+    order.set(at, order.size + 1);
+    queue.push(...(next.get(at) ?? []));
+  }
+  for (const node of spec.nodes) if (!order.has(node.id)) order.set(node.id, order.size + 1);
+  return order;
+}
+
+/** Where a flow starts (no edge into it) and ends (none out of it). */
+export function flowEnds(spec: Spec, edges: readonly SpecEdge[]): Map<string, "start" | "end"> {
+  const into = new Set(edges.map((edge) => edge.to));
+  const out = new Set(edges.map((edge) => edge.from));
+  const ends = new Map<string, "start" | "end">();
+  if (edges.length === 0) return ends;
+  for (const node of spec.nodes) {
+    if (!into.has(node.id) && out.has(node.id)) ends.set(node.id, "start");
+    else if (into.has(node.id) && !out.has(node.id)) ends.set(node.id, "end");
+  }
+  return ends;
 }

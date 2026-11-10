@@ -3,7 +3,7 @@
  * example, 10.3): its hops as the nodes, its edges as the trace found them, the Mermaid the API
  * would compile for it, and the share of its edges that are verified.
  */
-import type { Spec, SpecEdge, SpecNode } from "@/lib/api/diagrams";
+import type { Spec, SpecEdge, SpecMember, SpecNode } from "@/lib/api/diagrams";
 import type { Trace } from "@/lib/api/trace";
 
 /** A flowchart's Mermaid, as the API compiles it. */
@@ -31,14 +31,32 @@ export function mermaid(spec: Spec): string {
   return `${lines.join("\n")}\n`;
 }
 
+/** What the full-stack template's parts hold, as the API lists them for an entity diagram (the
+ * mock's and the product page's diagrams; the API reads them from the graph). */
+export const TEMPLATE_MEMBERS: Readonly<Record<string, SpecMember[]>> = {
+  Login: [
+    { name: "useAuth", kind: "hook" },
+    { name: "useForm", kind: "hook" },
+  ],
+  user: [
+    { name: "id", kind: "column" },
+    { name: "email", kind: "column" },
+    { name: "hashed_password", kind: "column" },
+    { name: "is_active", kind: "column" },
+    { name: "is_superuser", kind: "column" },
+    { name: "full_name", kind: "column" },
+  ],
+};
+
 /** The spec of a trace's first path: its hops (each once) and the edges along it (each the
  * trace's own: verified). `inferred` adds one edge the graph can't show, as the validator keeps
- * those (the mock's, for a diagram asked by question). */
+ * those (the mock's, for a diagram asked by question); `members`, each node's, by its name. */
 export function specOfTrace(
   trace: Trace,
   title: string,
   kind: Spec["kind"],
   inferred: boolean,
+  members: Readonly<Record<string, SpecMember[]>> = {},
 ): Spec {
   const path = trace.paths[0];
   const nodes: SpecNode[] = [];
@@ -58,6 +76,7 @@ export function specOfTrace(
           hop.node.path && hop.node.lines
             ? { path: hop.node.path, start_line: hop.node.lines[0], end_line: hop.node.lines[1] }
             : null,
+        members: members[hop.node.name] ?? [],
       });
     }
     if (previous !== null && hop.edge && previous !== key) {
