@@ -5,13 +5,14 @@
  * repository's files as stars by layer and its directory tree as faint links, a globe that turns
  * without stopping and leans toward the pointer (eased, never snapping); and the Trace Beam,
  * light that flows along the sign-in trace from the Login page to the user table without a
- * pause, each stop flaring as a pulse goes through it and fading after (only what moves glows:
- * the stops rest just under the bloom's threshold), the lead pulse naming the stop it passed
- * (the labels are DOM, placed from the scene each frame). Frames are drawn only while it is on
- * screen and not paused.
+ * pause: small bright pulses with a soft halo and a thin trail, each stop flaring (a halo, a
+ * little larger and whiter) as a pulse goes through it and fading after. The glow is drawn,
+ * not post-processed: a halo is a sprite with a soft radial falloff, added to what is behind
+ * it, so it stays where the light is instead of blurring the scene into blobs. The lead pulse
+ * names the stop it passed (the labels are DOM, placed from the scene each frame). Frames are
+ * drawn only while it is on screen and not paused.
  */
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
-import { Bloom, EffectComposer } from "@react-three/postprocessing";
 import { useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
 
@@ -21,7 +22,6 @@ import { SKY_LAYERS, type HeroSky } from "@/lib/demo/hero-sky";
 
 const STAR = 0.0085;
 const STOP = 0.02;
-const GLOW = 3.2; // the signal color times this: over 1, so the bloom pass takes it
 const DRIFT = 0.07; // rad/s: always turning
 const LEAN = 0.18; // rad, at the window's edge
 const EASE = 2.2; // how quickly the lean follows the pointer (per second)
@@ -30,10 +30,36 @@ const PULSES = 3; // always this many on the path, evenly spaced: the flow never
 const TRAIL = 0.14; // each pulse's lit tail, as a share of the path
 const TRAIL_POINTS = 24;
 const SAMPLES = 240;
-const STOP_REST = 0.9; // a stop's color at rest: bright, under the bloom's threshold (1)
-const STOP_FLARE = 2.6; // added as a pulse passes through it
 const FLARE_WIDTH = 0.045; // how long (as a share of the path) a stop stays lit around a pulse
-const FLARE_GROW = 0.7; // how much bigger a stop is at its brightest
+const FLARE_GROW = 0.6; // how much bigger a stop is at its brightest
+const FLARE_WHITE = 0.55; // how far toward white a stop goes at its brightest
+const HEAD = 0.009; // a pulse's bright core
+const HEAD_HALO = 0.13; // its soft halo, across
+const STOP_HALO = 0.1; // a flaring stop's halo, across
+const WHITE = new THREE.Color(1, 1, 1);
+
+/** A soft round glow: white at the centre, falling off to nothing at the edge (a sprite's map,
+ * tinted by its material and added to what is behind it). */
+function glowTexture(): THREE.Texture {
+  const size = 64;
+  const canvas = document.createElement("canvas");
+  canvas.width = size;
+  canvas.height = size;
+  const context = canvas.getContext("2d");
+  if (context) {
+    const half = size / 2;
+    const gradient = context.createRadialGradient(half, half, 0, half, half, half);
+    gradient.addColorStop(0, "rgba(255,255,255,1)");
+    gradient.addColorStop(0.25, "rgba(255,255,255,0.55)");
+    gradient.addColorStop(0.6, "rgba(255,255,255,0.12)");
+    gradient.addColorStop(1, "rgba(255,255,255,0)");
+    context.fillStyle = gradient;
+    context.fillRect(0, 0, size, size);
+  }
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  return texture;
+}
 
 function color([r, g, b]: Rgb, times = 1): THREE.Color {
   return new THREE.Color().setRGB(r * times, g * times, b * times, THREE.SRGBColorSpace);
@@ -54,6 +80,8 @@ function Scene({ sky, labels, onReady }: SceneProps) {
   const group = useRef<THREE.Group>(null);
   const stars = useRef<THREE.InstancedMesh>(null);
   const heads = useRef<(THREE.Mesh | null)[]>([]);
+  const headHalos = useRef<(THREE.Sprite | null)[]>([]);
+  const stopHalos = useRef<(THREE.Sprite | null)[]>([]);
   const pointer = useRef({ x: 0, y: 0 });
   const { camera, size } = useThree();
   const count = sky.points.length / 3;
@@ -123,6 +151,23 @@ function Scene({ sky, labels, onReady }: SceneProps) {
     tint: new THREE.Color(),
   });
   const litMaterials = useRef<THREE.LineBasicMaterial[]>([]);
+  const glow = useMemo(() => glowTexture(), []);
+  useEffect(
+    () => () => {
+      glow.dispose();
+    },
+    [glow],
+  );
+  const signal = useMemo(() => (colors ? color(colors.signal) : new THREE.Color()), [colors]);
+  const headColor = useMemo(() => signal.clone().lerp(WHITE, 0.6), [signal]);
+  const haloMaterial = {
+    map: glow,
+    color: signal,
+    transparent: true,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    toneMapped: false,
+  } as const;
 
   const lines = useMemo(() => {
     if (!colors) return null;
@@ -140,8 +185,10 @@ function Scene({ sky, labels, onReady }: SceneProps) {
         new THREE.Line(
           geometry,
           new THREE.LineBasicMaterial({
-            color: color(colors.signal, GLOW),
+            color: color(colors.signal),
             transparent: true,
+            blending: THREE.AdditiveBlending,
+            depthWrite: false,
             toneMapped: false,
           }),
         ),
@@ -167,7 +214,7 @@ function Scene({ sky, labels, onReady }: SceneProps) {
       matrix.makeScale(scale, scale, scale).setPosition(positions[i] ?? new THREE.Vector3());
       mesh.setMatrixAt(i, matrix);
       const layer = SKY_LAYERS[sky.layers[i] ?? 4] ?? "other";
-      mesh.setColorAt(i, stop ? color(colors.signal, STOP_REST) : color(colors.layers[layer]));
+      mesh.setColorAt(i, stop ? color(colors.signal) : color(colors.layers[layer]));
     }
     mesh.instanceMatrix.needsUpdate = true;
     if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
@@ -205,6 +252,11 @@ function Scene({ sky, labels, onReady }: SceneProps) {
         curve.getPointAt(t, head.position);
         head.scale.setScalar(0.6 + 0.4 * strength);
       }
+      const halo = headHalos.current[p];
+      if (halo) {
+        curve.getPointAt(t, halo.position);
+        halo.material.opacity = 0.9 * strength;
+      }
       const from = Math.max(0, t - TRAIL);
       const { tail } = scratch.current;
       for (let i = 0; i < TRAIL_POINTS; i += 1) {
@@ -213,7 +265,7 @@ function Scene({ sky, labels, onReady }: SceneProps) {
       }
       trails[p]?.setFromPoints(tail);
       const material = litMaterials.current[p];
-      if (material) material.opacity = strength;
+      if (material) material.opacity = 0.85 * strength;
     }
 
     // Each stop flares as a pulse goes through it, so the light visibly travels stop to stop.
@@ -231,12 +283,12 @@ function Scene({ sky, labels, onReady }: SceneProps) {
         const scale = STOP * (1 + FLARE_GROW * flare);
         matrix.makeScale(scale, scale, scale).setPosition(positions[stop.star] ?? origin);
         mesh.setMatrixAt(stop.star, matrix);
-        const [r, gr, b] = colors.signal;
-        const times = STOP_REST + STOP_FLARE * flare;
-        mesh.setColorAt(
-          stop.star,
-          tint.setRGB(r * times, gr * times, b * times, THREE.SRGBColorSpace),
-        );
+        mesh.setColorAt(stop.star, tint.copy(signal).lerp(WHITE, FLARE_WHITE * flare));
+        const halo = stopHalos.current[i];
+        if (halo) {
+          halo.material.opacity = flare;
+          halo.scale.setScalar(STOP_HALO * (0.7 + 0.3 * flare));
+        }
       });
       mesh.instanceMatrix.needsUpdate = true;
       if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
@@ -276,16 +328,37 @@ function Scene({ sky, labels, onReady }: SceneProps) {
       {lines.lit.map((line, p) => (
         <primitive key={p} object={line} />
       ))}
-      {Array.from({ length: PULSES }, (_, p) => (
-        <mesh
-          key={p}
+      {sky.beam.map((stop, i) => (
+        <sprite
+          key={stop.star}
+          position={positions[stop.star] ?? origin}
+          scale={STOP_HALO}
           ref={(node) => {
-            heads.current[p] = node;
+            stopHalos.current[i] = node;
           }}
         >
-          <sphereGeometry args={[0.02, 16, 16]} />
-          <meshBasicMaterial color={color(colors.signal, GLOW)} toneMapped={false} />
-        </mesh>
+          <spriteMaterial {...haloMaterial} opacity={0} />
+        </sprite>
+      ))}
+      {Array.from({ length: PULSES }, (_, p) => (
+        <group key={p}>
+          <mesh
+            ref={(node) => {
+              heads.current[p] = node;
+            }}
+          >
+            <sphereGeometry args={[HEAD, 12, 12]} />
+            <meshBasicMaterial color={headColor} toneMapped={false} />
+          </mesh>
+          <sprite
+            scale={HEAD_HALO}
+            ref={(node) => {
+              headHalos.current[p] = node;
+            }}
+          >
+            <spriteMaterial {...haloMaterial} />
+          </sprite>
+        </group>
       ))}
     </group>
   );
@@ -313,17 +386,6 @@ export default function HeroSkyCanvas({
         aria-hidden
       >
         <Scene sky={sky} labels={labels} onReady={onReady} />
-        {/* Half-float buffers: a soft glow without banding. A tight radius: each pulse and
-            flaring stop glows on its own instead of merging with its neighbours. */}
-        <EffectComposer frameBufferType={THREE.HalfFloatType}>
-          <Bloom
-            luminanceThreshold={1}
-            luminanceSmoothing={0.1}
-            intensity={0.9}
-            mipmapBlur
-            radius={0.4}
-          />
-        </EffectComposer>
       </Canvas>
       <ol aria-hidden className="pointer-events-none absolute inset-0 max-lg:hidden">
         {sky.beam.map((stop, i) => (
