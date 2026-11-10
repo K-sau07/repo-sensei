@@ -308,3 +308,15 @@ def key_access(
         request.state.key_scope = needed
 
     return rule
+
+
+def bearer_scope(scope: Scope) -> Callable[..., Awaitable[None]]:
+    """An endpoint's own scope for bearers, over its router's (a read that is part of
+    connecting, say). An endpoint dependency: it runs after the router's rule, before the
+    bearer is checked."""
+
+    async def rule(request: Request) -> None:
+        if getattr(request.state, "key_scope", None) is not None:
+            request.state.key_scope = scope
+
+    return rule

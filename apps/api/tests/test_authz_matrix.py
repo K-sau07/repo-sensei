@@ -347,13 +347,12 @@ MATRIX: dict[str, Rule] = {
 
 # What the owner's API key, with every scope a key can be granted (``read:repo``, ``ask``), gets
 # (7.1; ``KEY_ACCESS`` in sensei_api.app): the reading routers' GETs and the few POSTs that only
-# read or ask. Connecting a repository wants ``connect:repo``, which no key is granted (403
-# ``api_key_scope``); OAuth's client side ignores a bearer; every other operation refuses keys
-# outright (403 ``api_key_not_allowed``), public ones included.
+# read or ask. Connecting a repository, and listing what could be, wants ``connect:repo``, which
+# no key is granted (403 ``api_key_scope``); OAuth's client side ignores a bearer; every other
+# operation refuses keys outright (403 ``api_key_not_allowed``), public ones included.
 KEY_OK = {
     f"GET {API}/me",
     f"GET {API}/indexing/stages",
-    f"GET {ORGS}/github/repos",  # a read of the repos router: what the org could connect
     f"GET {ORGS}/repos",
     f"GET {REPO}",
     f"GET {REPO}/index-jobs",
@@ -399,7 +398,10 @@ KEY_OK = {
     f"POST {API}/oauth/device/code",
     f"POST {API}/oauth/revoke",
 }
-KEY_SCOPE = {f"POST {ORGS}/repos", f"POST {ORGS}/repos/import", f"POST {ORGS}/repos/estimate"}
+KEY_SCOPE = {
+    f"GET {ORGS}/github/repos",  # what the org could connect: part of connecting
+    f"POST {ORGS}/repos", f"POST {ORGS}/repos/import", f"POST {ORGS}/repos/estimate",
+}  # fmt: skip
 
 
 def key_rule(name: str) -> Expect:

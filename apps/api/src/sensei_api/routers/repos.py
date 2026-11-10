@@ -7,15 +7,17 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Annotated
 
-from fastapi import APIRouter, BackgroundTasks, Query, Request, Response, status
+from fastapi import APIRouter, BackgroundTasks, Depends, Query, Request, Response, status
 from pydantic import BaseModel, Field
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from sensei_api.auth import bearer_scope
 from sensei_api.deps import DbSession, RedisClient, Writable
 from sensei_api.orgs import OrgAccessDep
 from sensei_api.repos import RepoAccessDep, RepoDep, RepoServiceDep, ViewerDep, checked
 from sensei_api.routers.index_jobs import dispatch_index
+from sensei_core.auth.api_keys import Scope
 from sensei_core.config import ExploreSettings, LimitsSettings
 from sensei_core.indexing.events import JobOutbox
 from sensei_core.indexing.jobs import IndexJobService, RepoSummary, repo_summaries
@@ -194,7 +196,13 @@ def _jobs(request: Request) -> RepoJobs:
     return jobs
 
 
-@router.get("/github/repos", response_model=AvailablePage)
+# What the org could connect (private repositories it hasn't, by name) is part of connecting: a
+# bearer needs connect:repo for it, not read:repo, which reads what is connected.
+@router.get(
+    "/github/repos",
+    response_model=AvailablePage,
+    dependencies=[Depends(bearer_scope(Scope.CONNECT_REPO))],
+)
 async def available_repos(
     *,
     access: OrgAccessDep,
