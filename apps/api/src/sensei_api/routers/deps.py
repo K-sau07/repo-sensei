@@ -173,7 +173,8 @@ def _cache(request: Request) -> DepsCache:
     return found
 
 
-async def _roots(request: Request, db: DbSession, snapshot: Snapshot) -> Grouping:
+async def snapshot_roots(request: Request, db: DbSession, snapshot: Snapshot) -> Grouping:
+    """The snapshot's grouping roots (its manifests and frameworks), cached."""
     key = ("roots", snapshot.id)
     cache = _cache(request)
     held: Grouping | None = cache.get(key)
@@ -220,7 +221,7 @@ async def _level(
 ) -> tuple[Snapshot, GraphSnapshot, DepGraph, DepGraph]:
     """The snapshot, its graph, the whole level, and the level as filtered."""
     snapshot, graph = await _graph(request, db, repo, ref)
-    roots = await _roots(request, db, snapshot)
+    roots = await snapshot_roots(request, db, snapshot)
     cache = _cache(request)
     plain_key = ("level", snapshot.id, graph.version, level)
     whole: DepGraph | None = cache.get(plain_key)
@@ -416,7 +417,7 @@ async def edge_evidence(
     with its line, surest first."""
     await limit_graph(request, redis, access)
     snapshot, graph = await _graph(request, db, repo, ref)
-    roots = await _roots(request, db, snapshot)
+    roots = await snapshot_roots(request, db, snapshot)
     found, total = await asyncio.to_thread(
         evidence, graph, level, roots, src, dst,
         types=_types(types), min_conf=min_conf, limit=limit,

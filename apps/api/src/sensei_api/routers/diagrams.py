@@ -32,6 +32,7 @@ from sensei_api.ratelimit import TokenBucket
 from sensei_api.repos import RepoDep
 from sensei_api.routers import search
 from sensei_api.routers.browse import RefParam
+from sensei_api.routers.deps import snapshot_roots
 from sensei_api.routers.graph import limit_graph
 from sensei_api.sharing import new_share_token, share_token_hash
 from sensei_api.spend import remaining_today
@@ -43,6 +44,7 @@ from sensei_core.models import Diagram, DiagramKind, DiagramSource, Repo, Role
 from sensei_core.orgs import model_choices
 from sensei_core.orgs.service import OrgAccess
 from sensei_core.storage import ObjectStorage
+from sensei_engine.architecture import whole_app
 from sensei_engine.diagrams import (
     DiagramError,
     DiagramSpec,
@@ -83,6 +85,11 @@ class FromTrace(BaseModel):
 class DiagramIn(BaseModel):
     from_trace: FromTrace | None = None
     question: str | None = Field(default=None, min_length=1, max_length=2000)
+    whole_app: bool | None = Field(
+        default=None,
+        description="The whole app's architecture: its modules by tier and how they depend on "
+        "each other, from the graph alone (no model: free). Drawn as an architecture.",
+    )
     kind: DiagramKind = DiagramKind.FLOWCHART
     title: str | None = Field(default=None, min_length=1, max_length=200)
 
@@ -209,10 +216,16 @@ async def create_diagram(
     body: DiagramIn,
     ref: RefParam = None,
 ) -> DiagramOut:
-    """Draw a diagram from a trace or a question, at the index (or ``ref``), and keep it."""
-    if (body.from_trace is None) == (body.question is None):
-        raise InvalidError("Give from_trace or a question, not both.", code="diagram_source")
+    """Draw a diagram from a trace, a question or the whole app, at the index (or ``ref``), and
+    keep it."""
+    given = sum([body.from_trace is not None, body.question is not None, bool(body.whole_app)])
+    if given != 1:
+        raise InvalidError(
+            "Give one of from_trace, a question or whole_app.", code="diagram_source"
+        )
     await limit_graph(request, redis, access)
+    if body.whole_app:
+        return await _whole_app(request, access=access, repo=repo, db=db, body=body, ref=ref)
     # A model labels it (up to three calls): its own bucket, within the org's day of spend.
     settings: Settings = request.app.state.settings
     bucket = TokenBucket(redis, name="diagram", per_minute=settings.agent.diagrams_per_minute)
@@ -272,6 +285,40 @@ async def create_diagram(
     )  # fmt: skip
     for usage in used:
         await ledger(usage)
+    return diagram_out(found, access.org.slug, repo)
+
+
+async def _whole_app(
+    request: Request,
+    *,
+    access: OrgAccess,
+    repo: Repo,
+    db: DbSession,
+    body: DiagramIn,
+    ref: str | None,
+) -> DiagramOut:
+    """The whole app's architecture, from the graph alone (no model, no spend)."""
+    snapshot = await resolve_snapshot(db, repo, ref)
+    store: GraphStore = request.app.state.graph_store
+    storage: ObjectStorage = request.app.state.storage
+    graph = await store.get(db, storage, snapshot)
+    roots = await snapshot_roots(request, db, snapshot)
+    title = body.title or f"Architecture of {repo.full_name}"
+    spec = await asyncio.to_thread(whole_app, graph, roots, title)
+    if not spec.nodes:
+        raise NotFoundError(
+            "The graph has no modules to draw yet; index the repository first.",
+            code="diagram_nothing_found",
+        )
+    found = Diagram(
+        org_id=repo.org_id, repo_id=repo.id, snapshot_id=snapshot.id,
+        commit_sha=snapshot.commit_sha, title=spec.title, kind=DiagramKind.ARCHITECTURE,
+        source=DiagramSource.REPO, prompt={"whole_app": True}, spec=spec.as_json(),
+        verified_ratio=spec.verified_ratio, created_by=access.user.id,
+    )  # fmt: skip
+    db.add(found)
+    await db.flush()
+    await db.refresh(found)
     return diagram_out(found, access.org.slug, repo)
 
 

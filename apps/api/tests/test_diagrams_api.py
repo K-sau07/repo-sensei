@@ -266,3 +266,35 @@ async def test_drawing_is_limited_per_minute(
     again = await client.post(f"{url}/diagrams", json=asked, headers=headers)
     assert again.status_code == 429
     assert int(again.headers["Retry-After"]) >= 1
+
+
+@pytest.mark.integration
+async def test_the_whole_apps_architecture_is_drawn_from_the_graph_alone(
+    api_app: FastAPI, client: httpx.AsyncClient, db_session: AsyncSession, tmp_path: Path
+) -> None:
+    url, _, headers = await _indexed(api_app, client, db_session, tmp_path)
+    # A model that would fail the test if asked: the architecture is the graph's, for nothing.
+    asked: list[object] = []
+
+    def reply(request: httpx2.Request) -> httpx2.Response:
+        asked.append(request)
+        return httpx2.Response(500)
+
+    api_app.state.ask_client = FakeAnthropic(routes={"/v1/messages": reply}).client()
+    made = await client.post(f"{url}/diagrams", json={"whole_app": True}, headers=headers)
+    assert made.status_code == 201, made.text
+    body = made.json()
+    assert (body["source"], body["kind"], body["prompt"]) == (
+        "repo", "architecture", {"whole_app": True},
+    )  # fmt: skip
+    assert body["title"] == "Architecture of o/items"
+    assert asked == []
+    nodes = body["spec"]["nodes"]
+    assert nodes, body
+    assert all(n["kind"] == "module" for n in nodes)
+    assert body["verified_ratio"] == 1.0
+    assert all(e["verified"] for e in body["spec"]["edges"])
+    both = await client.post(
+        f"{url}/diagrams", json={"whole_app": True, "question": "items"}, headers=headers
+    )
+    assert (both.status_code, both.json()["error"]["code"]) == (422, "diagram_source")

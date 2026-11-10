@@ -35,6 +35,7 @@ class DiagramKind(enum.StrEnum):
 class DiagramSource(enum.StrEnum):
     TRACE = "trace"  # a trace's path
     QUESTION = "question"  # a question: its trace, or a walk from what it names
+    REPO = "repo"  # the whole app: its modules and how they depend on each other
 
 
 def _values(kind: type[enum.StrEnum]) -> list[str]:
