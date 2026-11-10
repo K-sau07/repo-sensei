@@ -2,7 +2,8 @@
 
 Questions by day and by repository (each first question and follow-up, answered afresh or from
 the cache), how the answers went (answered, abstained, and what people said of them), the
-modules answers cite most, and each week's adoption (people asking, fixes, changes, diagrams).
+modules answers cite most, each week's adoption (people asking, fixes, changes, diagrams), and
+how fast the app's pages were for its people (10.11: web vitals their browsers report, at p75).
 Everyone in the org reads it, counted over the repositories they can read on GitHub (as their
 home lists them); what it cost is shown to admins only, as on the usage page.
 """
@@ -13,18 +14,19 @@ import uuid
 from collections import Counter
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
-from typing import Any
+from typing import Any, Literal
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Response, status
 from pydantic import BaseModel, Field
 from sqlalchemy import Date, String, cast, column, distinct, func, select, true
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from sensei_api.deps import DbSession
+from sensei_api.deps import DbSession, RedisClient
 from sensei_api.orgs import OrgAccessDep
 from sensei_api.repos import RepoAccessDep, RepoServiceDep, checked
 from sensei_api.spend import day_start
+from sensei_core.limits import QuotaExceededError, check_quota, count_quota
 from sensei_core.models import (
     AgentRun,
     Conversation,
@@ -34,6 +36,7 @@ from sensei_core.models import (
     FixRun,
     MessageFeedback,
     Role,
+    WebVital,
 )
 
 router = APIRouter(prefix="/orgs/{org}", tags=["insights"])
@@ -42,6 +45,9 @@ DAYS = 30
 TOP_REPOS = 10
 TOP_MODULES = 40
 MODULE_DEPTH = 2  # a module is a file's first two folders (or fewer, for a shallow file)
+# The budgets at p75 (frontend design 9): LCP in ms, INP in ms, CLS unitless.
+SPEED_BUDGETS: dict[str, float] = {"LCP": 1800.0, "INP": 100.0, "CLS": 0.05}
+VITAL_REPORTS_PER_DAY = 2000  # a person's page views reported a day; past it, not stored
 
 
 class InsightDayOut(BaseModel):
@@ -85,12 +91,20 @@ class InsightModuleOut(BaseModel):
     cited: int = Field(description="Answers citing a file in it.")
 
 
+class InsightSpeedOut(BaseModel):
+    name: Literal["LCP", "INP", "CLS"]
+    p75: float | None = Field(description="The 75th percentile (ms; CLS unitless); None: none.")
+    budget: float = Field(description="What p75 should be within.")
+    samples: int
+
+
 class InsightsOut(BaseModel):
     days: list[InsightDayOut] = Field(description="The last 30 days (UTC), oldest first.")
     repos: list[InsightRepoOut] = Field(description="The most asked about first.")
     answers: InsightAnswersOut
     weeks: list[InsightWeekOut] = Field(description="Each week the 30 days touch, oldest first.")
     modules: list[InsightModuleOut] = Field(description="The most cited first.")
+    speed: list[InsightSpeedOut] = Field(description="LCP, INP and CLS over the 30 days.")
     costs: bool = Field(description="Whether the costs are shown (admins).")
 
 
@@ -167,6 +181,7 @@ async def insights(
     answers = await _answers(db, org_id, first, seen)
     adoption = await _adoption(db, org_id, first, seen, asked)
     modules = await _modules(db, org_id, first, seen)
+    speed = await _speed(db, org_id, first)
     return InsightsOut(
         days=[
             InsightDayOut(
@@ -205,8 +220,63 @@ async def insights(
             )
             for (repo_id, path), count in modules.most_common(TOP_MODULES)
         ],
+        speed=speed,
         costs=costs,
     )
+
+
+class VitalIn(BaseModel):
+    name: Literal["LCP", "INP", "CLS"]
+    value: float = Field(ge=0, le=600_000)
+    route: str = Field(
+        max_length=200,
+        pattern=r"^(/[\w\[\].-]*)+$",
+        description="The page's route as a pattern (/[org]/[repo]/ask), never its names.",
+    )
+
+
+class VitalsIn(BaseModel):
+    vitals: list[VitalIn] = Field(min_length=1, max_length=10)
+
+
+@router.post("/vitals", status_code=status.HTTP_204_NO_CONTENT, response_class=Response)
+async def report_vitals(
+    *, body: VitalsIn, access: OrgAccessDep, db: DbSession, redis: RedisClient
+) -> Response:
+    """What a page view measured, as the browser reports it (a person's day past
+    ``VITAL_REPORTS_PER_DAY`` is not stored: nothing to say back)."""
+    try:
+        await check_quota(redis, "vital_reports", access.user.id, VITAL_REPORTS_PER_DAY,
+                          what="speed reports")  # fmt: skip
+    except QuotaExceededError:
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+    db.add_all(
+        WebVital(org_id=access.org.id, name=v.name, value=v.value, route=v.route)
+        for v in body.vitals
+    )
+    await count_quota(redis, "vital_reports", access.user.id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+async def _speed(db: AsyncSession, org_id: uuid.UUID, first: datetime) -> list[InsightSpeedOut]:
+    p75 = func.percentile_cont(0.75).within_group(WebVital.value)
+    found = {
+        name: (value, count)
+        for name, value, count in await db.execute(
+            select(WebVital.name, p75, func.count())
+            .where(WebVital.org_id == org_id, WebVital.created_at >= first)
+            .group_by(WebVital.name)
+        )
+    }
+    return [
+        InsightSpeedOut(
+            name=name,  # pyright: ignore[reportArgumentType]  # a key of SPEED_BUDGETS
+            p75=found[name][0] if name in found else None,
+            budget=budget,
+            samples=found[name][1] if name in found else 0,
+        )
+        for name, budget in SPEED_BUDGETS.items()
+    ]
 
 
 def _answered(org_id: uuid.UUID, first: datetime, seen: list[uuid.UUID]) -> Any:

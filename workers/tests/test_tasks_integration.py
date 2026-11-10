@@ -17,13 +17,22 @@ from sqlalchemy import delete, select
 from sensei_core.config import Settings
 from sensei_core.db import Database
 from sensei_core.github.webhooks import record_delivery
-from sensei_core.models import DeliveryStatus, JobFailure, Org, Repo, RepoSource, WebhookDelivery
+from sensei_core.models import (
+    VITALS_RETENTION_DAYS,
+    DeliveryStatus,
+    JobFailure,
+    Org,
+    Repo,
+    RepoSource,
+    WebhookDelivery,
+    WebVital,
+)
 from sensei_core.orgs.lifecycle import ORG_GRACE
 from sensei_core.storage import Bucket, artifact_key, repo_prefix, snapshot_key
 from sensei_workers.app import celery_app
 from sensei_workers.base import SenseiTask
 from sensei_workers.runtime import Runtime, set_runtime
-from sensei_workers.tasks.maintenance import purge_deleted_orgs
+from sensei_workers.tasks.maintenance import prune_vitals, purge_deleted_orgs
 from sensei_workers.tasks.repos import purge_repo
 from sensei_workers.tasks.webhooks import process_github_webhook, sweep_webhooks
 
@@ -274,3 +283,36 @@ def test_an_org_deleted_past_its_grace_is_purged_with_what_it_stored(
         runtime.run(_drop_org(system_db, gone_id))
         for repo_id in (disconnected, live):
             runtime.run(_drop_objects(runtime, gone_id, repo_id))
+
+
+async def _vitals(system_db: Database, *, ages: tuple[timedelta, ...]) -> uuid.UUID:
+    async with system_db.session() as db:
+        org = Org(slug=f"vitals-{uuid.uuid4().hex[:8]}", name="Vitals")
+        db.add(org)
+        await db.flush()
+        now = datetime.now(UTC)
+        db.add_all(
+            WebVital(org_id=org.id, name="LCP", value=1000.0, route="/[org]", created_at=now - age)
+            for age in ages
+        )
+        return org.id
+
+
+async def _vital_count(system_db: Database, org_id: uuid.UUID) -> int:
+    async with system_db.session() as db:
+        return len((await db.scalars(select(WebVital.id).where(WebVital.org_id == org_id))).all())
+
+
+def test_web_vitals_are_kept_as_long_as_insights_look_back(
+    runtime: Runtime, system_db: Database
+) -> None:
+    keep, drop = (
+        timedelta(days=VITALS_RETENTION_DAYS - 1),
+        timedelta(days=VITALS_RETENTION_DAYS + 1),
+    )
+    org_id = runtime.run(_vitals(system_db, ages=(timedelta(0), keep, drop, drop)))
+    try:
+        assert prune_vitals.apply().get() >= 2
+        assert runtime.run(_vital_count(system_db, org_id)) == 2
+    finally:
+        runtime.run(_drop_org(system_db, org_id))

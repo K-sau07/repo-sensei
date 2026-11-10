@@ -20,7 +20,15 @@ from sqlalchemy.exc import DBAPIError
 from sensei_core.indexing import retention
 from sensei_core.jobs import TaskName
 from sensei_core.logging import get_logger
-from sensei_core.models import ACTIVE_JOB_STATUSES, IndexJob, Repo, RepoRef, Snapshot
+from sensei_core.models import (
+    ACTIVE_JOB_STATUSES,
+    VITALS_RETENTION_DAYS,
+    IndexJob,
+    Repo,
+    RepoRef,
+    Snapshot,
+    WebVital,
+)
 from sensei_core.oauth.service import prune as oauth_prune
 from sensei_core.orgs.lifecycle import drop_org, orgs_to_purge
 from sensei_core.storage import Bucket, repo_prefix, snapshot_key
@@ -224,6 +232,21 @@ def prune_oauth(self: SenseiTask) -> dict[str, int]:
 async def _prune_oauth() -> dict[str, int]:
     async with get_runtime().system_database.session() as db:
         return await oauth_prune(db, datetime.now(UTC))
+
+
+@celery_app.task(bind=True, base=SenseiTask, name=TaskName.PRUNE_VITALS.value, system=True)
+def prune_vitals(self: SenseiTask) -> int:
+    """Delete the web vitals older than insights look back; returns how many went."""
+    return get_runtime().run(_prune_vitals(datetime.now(UTC)))
+
+
+async def _prune_vitals(now: datetime) -> int:
+    before = now - timedelta(days=VITALS_RETENTION_DAYS)
+    async with get_runtime().system_database.session() as db:
+        gone = await db.execute(delete(WebVital).where(WebVital.created_at < before))
+    count = int(getattr(gone, "rowcount", 0) or 0)
+    log.info("vitals pruned", count=count)
+    return count
 
 
 @celery_app.task(bind=True, base=SenseiTask, name=TaskName.PURGE_DELETED_ORGS.value, system=True)

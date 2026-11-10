@@ -5681,6 +5681,48 @@
         "title": "InsightRepoOut",
         "type": "object"
       },
+      "InsightSpeedOut": {
+        "properties": {
+          "budget": {
+            "description": "What p75 should be within.",
+            "title": "Budget",
+            "type": "number"
+          },
+          "name": {
+            "enum": [
+              "LCP",
+              "INP",
+              "CLS"
+            ],
+            "title": "Name",
+            "type": "string"
+          },
+          "p75": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The 75th percentile (ms; CLS unitless); None: none.",
+            "title": "P75"
+          },
+          "samples": {
+            "title": "Samples",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "name",
+          "p75",
+          "budget",
+          "samples"
+        ],
+        "title": "InsightSpeedOut",
+        "type": "object"
+      },
       "InsightWeekOut": {
         "properties": {
           "abstained": {
@@ -5770,6 +5812,14 @@
             "title": "Repos",
             "type": "array"
           },
+          "speed": {
+            "description": "LCP, INP and CLS over the 30 days.",
+            "items": {
+              "$ref": "#/components/schemas/InsightSpeedOut"
+            },
+            "title": "Speed",
+            "type": "array"
+          },
           "weeks": {
             "description": "Each week the 30 days touch, oldest first.",
             "items": {
@@ -5785,6 +5835,7 @@
           "answers",
           "weeks",
           "modules",
+          "speed",
           "costs"
         ],
         "title": "InsightsOut",
@@ -10701,6 +10752,57 @@
           "type"
         ],
         "title": "ValidationError",
+        "type": "object"
+      },
+      "VitalIn": {
+        "properties": {
+          "name": {
+            "enum": [
+              "LCP",
+              "INP",
+              "CLS"
+            ],
+            "title": "Name",
+            "type": "string"
+          },
+          "route": {
+            "description": "The page's route as a pattern (/[org]/[repo]/ask), never its names.",
+            "maxLength": 200,
+            "pattern": "^(/[\\w\\[\\].-]*)+$",
+            "title": "Route",
+            "type": "string"
+          },
+          "value": {
+            "maximum": 600000.0,
+            "minimum": 0.0,
+            "title": "Value",
+            "type": "number"
+          }
+        },
+        "required": [
+          "name",
+          "value",
+          "route"
+        ],
+        "title": "VitalIn",
+        "type": "object"
+      },
+      "VitalsIn": {
+        "properties": {
+          "vitals": {
+            "items": {
+              "$ref": "#/components/schemas/VitalIn"
+            },
+            "maxItems": 10,
+            "minItems": 1,
+            "title": "Vitals",
+            "type": "array"
+          }
+        },
+        "required": [
+          "vitals"
+        ],
+        "title": "VitalsIn",
         "type": "object"
       },
       "WebhookAccepted": {
@@ -19895,6 +19997,54 @@
         "summary": "Usage",
         "tags": [
           "usage"
+        ]
+      }
+    },
+    "/api/v1/orgs/{org}/vitals": {
+      "post": {
+        "description": "What a page view measured, as the browser reports it (a person's day past\n``VITAL_REPORTS_PER_DAY`` is not stored: nothing to say back).",
+        "operationId": "report_vitals_api_v1_orgs__org__vitals_post",
+        "parameters": [
+          {
+            "description": "Organization slug",
+            "in": "path",
+            "name": "org",
+            "required": true,
+            "schema": {
+              "description": "Organization slug",
+              "title": "Org",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VitalsIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Report Vitals",
+        "tags": [
+          "insights"
         ]
       }
     },

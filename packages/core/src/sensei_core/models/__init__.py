@@ -75,12 +75,15 @@ from sensei_core.models.org import Invitation, Membership, Org, Role
 from sensei_core.models.repo import Repo, RepoSource, RepoStatus
 from sensei_core.models.symbols import CodeNode
 from sensei_core.models.user import OAuthToken, User, UserSession
+from sensei_core.models.vitals import VITALS, VITALS_RETENTION_DAYS, WebVital
 from sensei_core.models.webhook import DeliveryStatus, WebhookDelivery
 
 __all__ = [
     "ACTIVE_JOB_STATUSES",
     "GRAPH_KINDS",
     "SYMBOL_KINDS",
+    "VITALS",
+    "VITALS_RETENTION_DAYS",
     "ActorType",
     "AgentRun",
     "AgentStep",
@@ -155,5 +158,6 @@ __all__ = [
     "UsageKind",
     "User",
     "UserSession",
+    "WebVital",
     "WebhookDelivery",
 ]

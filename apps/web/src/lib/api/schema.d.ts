@@ -2494,6 +2494,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/orgs/{org}/vitals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Report Vitals
+         * @description What a page view measured, as the browser reports it (a person's day past
+         *     ``VITAL_REPORTS_PER_DAY`` is not stored: nothing to say back).
+         */
+        post: operations["report_vitals_api_v1_orgs__org__vitals_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/public/repos": {
         parameters: {
             query?: never;
@@ -4787,6 +4808,26 @@ export interface components {
             /** Slug */
             slug: string;
         };
+        /** InsightSpeedOut */
+        InsightSpeedOut: {
+            /**
+             * Budget
+             * @description What p75 should be within.
+             */
+            budget: number;
+            /**
+             * Name
+             * @enum {string}
+             */
+            name: "LCP" | "INP" | "CLS";
+            /**
+             * P75
+             * @description The 75th percentile (ms; CLS unitless); None: none.
+             */
+            p75: number | null;
+            /** Samples */
+            samples: number;
+        };
         /** InsightWeekOut */
         InsightWeekOut: {
             /** Abstained */
@@ -4835,6 +4876,11 @@ export interface components {
              * @description The most asked about first.
              */
             repos: components["schemas"]["InsightRepoOut"][];
+            /**
+             * Speed
+             * @description LCP, INP and CLS over the 30 days.
+             */
+            speed: components["schemas"]["InsightSpeedOut"][];
             /**
              * Weeks
              * @description Each week the 30 days touch, oldest first.
@@ -6557,6 +6603,26 @@ export interface components {
             msg: string;
             /** Error Type */
             type: string;
+        };
+        /** VitalIn */
+        VitalIn: {
+            /**
+             * Name
+             * @enum {string}
+             */
+            name: "LCP" | "INP" | "CLS";
+            /**
+             * Route
+             * @description The page's route as a pattern (/[org]/[repo]/ask), never its names.
+             */
+            route: string;
+            /** Value */
+            value: number;
+        };
+        /** VitalsIn */
+        VitalsIn: {
+            /** Vitals */
+            vitals: components["schemas"]["VitalIn"][];
         };
         /** WebhookAccepted */
         WebhookAccepted: {
@@ -11719,6 +11785,40 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["UsageOut"];
                 };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    report_vitals_api_v1_orgs__org__vitals_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization slug */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["VitalsIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Validation Error */
             422: {

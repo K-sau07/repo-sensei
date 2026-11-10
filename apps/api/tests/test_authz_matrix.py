@@ -207,6 +207,7 @@ MATRIX: dict[str, Rule] = {
     f"GET {ORGS}/events": VIEWER,
     f"GET {ORGS}/usage": ADMIN,
     f"GET {ORGS}/insights": VIEWER,  # costs only shown to admins (checked below)
+    f"POST {ORGS}/vitals": VIEWER,
     f"GET {ORGS}/settings/models": ADMIN,
     f"PATCH {ORGS}/settings/models": ADMIN,
     f"GET {ORGS}/inbox": VIEWER,

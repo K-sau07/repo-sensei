@@ -15,9 +15,10 @@ from fakeredis import FakeAsyncRedis
 from fastapi import FastAPI
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from sensei_api.routers.insights import module_of
+from sensei_api.routers.insights import VITAL_REPORTS_PER_DAY, module_of
 from sensei_core.db.tenancy import set_org_context
 from sensei_core.fixes.tickets import parse_ticket
+from sensei_core.limits import QUOTA
 from sensei_core.mail import MemoryMailer
 from sensei_core.models import (
     AgentRun,
@@ -37,6 +38,7 @@ from sensei_core.models import (
     RepoSource,
     Role,
     User,
+    WebVital,
 )
 from sensei_core.orgs.service import OrgService
 from sensei_core.repos.access import RepoAccess
@@ -179,3 +181,52 @@ async def test_insights_count_what_the_reader_can_read_and_costs_for_admins(
     assert seen["days"][-1]["cost_usd"] is None
     assert seen["repos"][0]["cost_usd"] is None
     assert seen["days"][-1]["questions"] == 3
+
+
+async def test_speed_is_what_the_orgs_browsers_reported_at_p75(
+    api_app: FastAPI,
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    fake_redis: FakeAsyncRedis,
+) -> None:
+    owner, headers = await sign_in(api_app, client, db_session)
+    access = await api_app.state.org_service.create(
+        db_session, owner, name="Acme", slug=f"acme-{owner.id.hex[:8]}"
+    )
+    url = f"{API}/orgs/{access.org.slug}"
+    for lcp in (1000.0, 1200.0, 1400.0, 3000.0):
+        sent = await client.post(
+            f"{url}/vitals",
+            json={"vitals": [{"name": "LCP", "value": lcp, "route": "/[org]/[repo]/ask"},
+                             {"name": "CLS", "value": 0.01, "route": "/[org]/[repo]/ask"}]},
+            headers=headers,
+        )  # fmt: skip
+        assert sent.status_code == 204, sent.text
+    old = WebVital(org_id=access.org.id, name="INP", value=900.0, route="/[org]",
+                   created_at=datetime.now(UTC) - timedelta(days=40))  # fmt: skip
+    db_session.add(old)
+    await db_session.flush()
+
+    speed = {s["name"]: s for s in (await client.get(f"{url}/insights")).json()["speed"]}
+    assert speed["LCP"] == {"name": "LCP", "p75": 1800.0, "budget": 1800.0, "samples": 4}
+    assert (speed["CLS"]["p75"], speed["CLS"]["samples"]) == (0.01, 4)
+    assert speed["INP"] == {"name": "INP", "p75": None, "budget": 100.0, "samples": 0}  # too old
+
+    wrongs: list[dict[str, list[dict[str, Any]]]] = [
+        {"vitals": []},
+        {"vitals": [{"name": "FID", "value": 1, "route": "/[org]"}]},
+        {"vitals": [{"name": "LCP", "value": -1, "route": "/[org]"}]},
+        {"vitals": [{"name": "LCP", "value": 1, "route": "https://elsewhere.example/"}]},
+        {"vitals": [{"name": "LCP", "value": 1, "route": "/[org]"}] * 11},
+    ]
+    for wrong in wrongs:
+        assert (await client.post(f"{url}/vitals", json=wrong, headers=headers)).status_code == 422
+
+    # A day's reports past the cap aren't stored, and aren't an error either.
+    today = datetime.now(UTC).date().isoformat()
+    await fake_redis.set(QUOTA.format(name="vital_reports", user=owner.id, day=today),
+                         VITAL_REPORTS_PER_DAY)  # fmt: skip
+    capped = {"vitals": [{"name": "LCP", "value": 99999.0, "route": "/[org]"}]}
+    assert (await client.post(f"{url}/vitals", json=capped, headers=headers)).status_code == 204
+    speed = {s["name"]: s for s in (await client.get(f"{url}/insights")).json()["speed"]}
+    assert speed["LCP"]["samples"] == 4

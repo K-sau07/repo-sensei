@@ -19,6 +19,8 @@ BEAT_SCHEDULE: dict[str, dict[str, Any]] = {
     "sweep-snapshots": {"task": TaskName.SWEEP_SNAPSHOTS.value, "schedule": 86400.0},
     # Expired OAuth requests, device codes and tokens (7.2) don't pile up.
     "prune-oauth": {"task": TaskName.PRUNE_OAUTH.value, "schedule": 86400.0},
+    # Web vitals (10.11) are kept as long as insights look back.
+    "prune-vitals": {"task": TaskName.PRUNE_VITALS.value, "schedule": 86400.0},
     # Orgs deleted more than their grace period ago (10.7.3) go, with everything in them.
     "purge-deleted-orgs": {"task": TaskName.PURGE_DELETED_ORGS.value, "schedule": 86400.0},
     # Notifications' emails and Slack posts (8.10) go out within a minute; a round not taken
