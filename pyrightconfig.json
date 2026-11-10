@@ -3,7 +3,7 @@
   "venvPath": ".",
   "venv": ".venv",
   "include": ["apps/api", "workers", "packages", "scripts"],
-  "exclude": ["**/node_modules", "**/__pycache__", "**/.venv", "apps/web"],
+  "exclude": ["**/node_modules", "**/__pycache__", "**/.venv", "apps/web", "scripts/load"],
   "typeCheckingMode": "strict",
   "reportMissingTypeStubs": "none"
 }
