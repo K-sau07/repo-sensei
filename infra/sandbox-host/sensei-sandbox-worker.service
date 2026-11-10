@@ -1,0 +1,30 @@
+# The fix stages' worker on the sandbox host (10.12): the agent and sandbox queues only (Fly's
+# workers take the rest), with gVisor required for every sandbox run.
+[Unit]
+Description=repo-sensei sandbox worker (agent, sandbox queues)
+After=docker.service network-online.target
+Requires=docker.service
+Wants=network-online.target
+
+[Service]
+User=sensei
+Group=sensei
+WorkingDirectory=/opt/repo-sensei/src
+EnvironmentFile=/etc/repo-sensei/worker.env
+Environment=SENSEI_WORKER_QUEUES=agent,sandbox
+Environment=SENSEI_SANDBOX_RUNTIME=runsc
+Environment=SENSEI_SANDBOX_REQUIRE_GVISOR=true
+Environment=SENSEI_INGEST_CACHE_DIR=/data/repos
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/repo-sensei/src/.venv/bin/celery -A sensei_workers.app worker --loglevel=INFO --queues=${SENSEI_WORKER_QUEUES} --concurrency=2 --hostname=sandbox@%H --without-gossip --without-mingle
+# Warm shutdown: running stages finish (up to the stage limit), the rest go back to the queue.
+KillSignal=SIGTERM
+TimeoutStopSec=1200
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+ProtectSystem=full
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

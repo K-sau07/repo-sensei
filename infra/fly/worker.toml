@@ -12,6 +12,9 @@ primary_region = "iad"
 [env]
   SENSEI_ENV = "staging"
   SENSEI_WORKER_CONCURRENCY = "2"
+  # Every queue but the fix stages' (agent, sandbox): those run a repository's code, in gVisor,
+  # on the sandbox host (infra/sandbox-host), which Fly's machines can't be.
+  SENSEI_WORKER_QUEUES = "default,webhooks,ingest,parse,embed,llm,graph,maintenance"
   # Repository code runs in gVisor only (8.2): without it, sandbox runs are refused.
   SENSEI_SANDBOX_REQUIRE_GVISOR = "true"
 

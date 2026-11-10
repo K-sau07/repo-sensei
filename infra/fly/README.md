@@ -49,3 +49,40 @@ so the browser only ever talks to one origin (cookies stay first-party).
 ```sh
 scripts/smoke.sh https://<web-staging-domain>
 ```
+
+## Production
+
+The same files, under the production apps' names and environment: pass `--app` and
+`-e SENSEI_ENV=production` to every deploy, and set the production secrets (its own GitHub App,
+database, Redis, buckets and keys; never staging's).
+
+| What          | App                  | Deploy                                                                                                                                  |
+| ------------- | -------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| Postgres      | `repo-sensei-db`     | `fly deploy infra/postgres --config infra/fly/postgres.toml --app repo-sensei-db`                                                       |
+| API           | `repo-sensei-api`    | `fly deploy . --config infra/fly/api.toml --app repo-sensei-api -e SENSEI_ENV=production`                                               |
+| Workers, beat | `repo-sensei-worker` | `fly deploy . --config infra/fly/worker.toml --app repo-sensei-worker -e SENSEI_ENV=production`, then `fly scale count worker=1 beat=1` |
+| Fix stages    | the sandbox host     | `infra/sandbox-host/setup.sh` on a dedicated VM (Docker + gVisor), the `agent` and `sandbox` queues                                     |
+| Web           | Vercel               | project root `apps/web`, `SENSEI_API_PROXY_ORIGIN=https://repo-sensei-api.fly.dev`                                                      |
+
+### Backups and restores
+
+Postgres archives its WAL to the backup bucket and takes a base backup a day (`postgres.toml`;
+secrets `WALG_S3_PREFIX`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_ENDPOINT`). Check
+after the first deploy: `fly ssh console --app repo-sensei-db -C "gosu postgres wal-g backup-list"`
+lists a backup within a few minutes, and `select * from pg_stat_archiver` shows no failures.
+
+To restore to a moment (a bad migration, a deletion), into a **new** app, never over the
+running one:
+
+1. `fly apps create repo-sensei-db-restore` and a volume `pgdata` in the same region;
+2. its secrets: the same bucket credentials, `SENSEI_RESTORE=LATEST` (or a backup's name),
+   `SENSEI_RESTORE_PREFIX` = the old `WALG_S3_PREFIX`, `SENSEI_RESTORE_TARGET_TIME` (UTC, e.g.
+   `2026-11-10 13:05:00+00`), and a new `WALG_S3_PREFIX` for the restored server's own history;
+3. deploy it with `postgres.toml` and `--app repo-sensei-db-restore`; it fetches the backup,
+   replays the WAL to the target and promotes itself;
+4. check the data, then point the API's and workers' database URLs at it (or copy what was lost
+   back), and remove `SENSEI_RESTORE` from its secrets.
+
+`scripts/restore-drill.sh` runs the whole thing locally against the dev stack (a backup, rows
+before and after a moment, a restore to it) and passes only when the restored server has exactly
+the rows from before. Run it after changing the Postgres image.
