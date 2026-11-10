@@ -202,6 +202,14 @@ class AuthSettings(BaseSettings):
     session_absolute_days: int = Field(default=30, ge=1, le=365)
     session_touch_after_seconds: int = Field(default=3600, ge=60)
     cookie_secure: bool | None = None  # None means: secure everywhere except dev
+    # The GitHub logins that may sign in, comma-separated ("octocat,hubot"); empty: anyone. For a
+    # deployment that is one person's (or a team's): nobody else can sign in and spend on it.
+    allowed_logins: str = ""
+
+    def allows(self, login: str) -> bool:
+        """Whether ``login`` may sign in (GitHub logins are case-insensitive)."""
+        allowed = {name.strip().lower() for name in self.allowed_logins.split(",") if name.strip()}
+        return not allowed or login.lower() in allowed
 
 
 class OAuthSettings(BaseSettings):

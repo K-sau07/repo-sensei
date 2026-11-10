@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select
@@ -55,9 +56,19 @@ async def store_tokens(
 
 
 async def complete_login(
-    db: AsyncSession, cipher: TokenCipher, oauth: GitHubOAuth, tokens: GitHubTokens
+    db: AsyncSession,
+    cipher: TokenCipher,
+    oauth: GitHubOAuth,
+    tokens: GitHubTokens,
+    *,
+    allows: Callable[[str], bool] | None = None,
 ) -> User:
+    """The signed-in user (made or updated from their GitHub profile), their tokens kept.
+    ``allows``: who may sign in, by GitHub login; anyone else is refused before an account is
+    made (``OAuthError("not_allowed")``)."""
     profile = await oauth.fetch_user(tokens.access_token)
+    if allows is not None and not allows(profile.login):
+        raise OAuthError("not_allowed", "This GitHub account may not sign in here.")
     user = await upsert_user(db, profile)
     await store_tokens(db, cipher, user, tokens)
     return user

@@ -123,7 +123,9 @@ async def github_callback(
         browser_state = request.cookies.get(oauth_state_cookie_name(_settings(request)))
         pending, tokens = await oauth.finish(code, state, browser_state)
         cipher: TokenCipher = request.app.state.token_cipher
-        user = await complete_login(db, cipher, oauth, tokens)
+        user = await complete_login(
+            db, cipher, oauth, tokens, allows=_settings(request).auth.allows
+        )
     except OAuthError as exc:
         log.warning("github sign-in failed", reason=exc.code)
         return _web_redirect(request, f"/login?error={quote(exc.code)}")

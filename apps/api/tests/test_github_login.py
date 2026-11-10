@@ -437,3 +437,40 @@ async def test_fresh_access_token_requires_reauth_when_refresh_expired(
         with pytest.raises(OAuthError) as exc:
             await fresh_access_token(db_session, cipher, oauth, user, now=now)
     assert exc.value.code == "github_reauth_required"
+
+
+@pytest.mark.integration
+async def test_only_the_allowed_logins_sign_in(
+    github_app: FastAPI, github_client: httpx.AsyncClient, db_session: AsyncSession
+) -> None:
+    """A deployment that is one person's: anyone else is turned away before an account is made."""
+    settings: Settings = github_app.state.settings
+    auth = settings.auth.model_copy(update={"allowed_logins": "someone-else, HUBOT"})
+    github_app.state.settings = settings.model_copy(update={"auth": auth})
+    state = await _start_login(github_app, github_client, "/")
+    with respx.mock(assert_all_mocked=False, assert_all_called=False) as router:
+        router.route(host="testserver").pass_through()
+        _github_mocks(router)  # signs in as "octo"
+        refused = await github_client.get(
+            f"{API}/auth/github/callback", params={"code": "c1", "state": state}
+        )
+    origin = github_app.state.settings.web.origin
+    assert refused.headers["location"] == f"{origin}/login?error=not_allowed"
+    assert await db_session.scalar(select(User).where(User.github_id == 4242)) is None
+    session_cookie, _ = cookie_names(github_app.state.settings)
+    assert not any(
+        c.startswith(f"{session_cookie}=") for c in refused.headers.get_list("set-cookie")
+    )
+
+    # Named (in any case), the same login is let in.
+    auth = settings.auth.model_copy(update={"allowed_logins": "Octo"})
+    github_app.state.settings = settings.model_copy(update={"auth": auth})
+    state = await _start_login(github_app, github_client, "/")
+    with respx.mock(assert_all_mocked=False, assert_all_called=False) as router:
+        router.route(host="testserver").pass_through()
+        _github_mocks(router)
+        allowed = await github_client.get(
+            f"{API}/auth/github/callback", params={"code": "c2", "state": state}
+        )
+    assert allowed.headers["location"] == f"{origin}/auth/callback?next=/"
+    assert await db_session.scalar(select(User).where(User.github_id == 4242)) is not None

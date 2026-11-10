@@ -16,6 +16,7 @@ const ERRORS: Record<string, string> = {
     "This sign-in was started in another browser or tab. Start again here to continue.",
   invalid_state: "That sign-in link expired. Please start again.",
   github_not_configured: "GitHub sign-in isn't set up on this server yet.",
+  not_allowed: "This GitHub account can't sign in here: this repo-sensei is private.",
 };
 const GENERIC_ERROR = "Sign-in didn't complete. Please try again.";
 
