@@ -11,6 +11,7 @@ const PAGES = [
   ["/changelog", "Changelog"],
   ["/blog", "Blog"],
   ["/blog/how-an-answer-is-checked", "How an answer is checked"],
+  ["/blog/what-went-wrong", "What went wrong"],
   ["/security", "Security"],
   ["/privacy", "Privacy"],
   ["/terms", "Terms"],

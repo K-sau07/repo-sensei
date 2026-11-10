@@ -12,6 +12,14 @@ export interface Post {
 
 export const POSTS: readonly Post[] = [
   {
+    slug: "what-went-wrong",
+    title: "What went wrong",
+    date: "2026-11-10",
+    description:
+      "Where repo-sensei fell short once we measured: a tracer that matched names, an answer that could have loaded a stranger's image, pages twice too heavy, and what we changed.",
+    load: () => import("./blog/what-went-wrong.mdx"),
+  },
+  {
     slug: "how-an-answer-is-checked",
     title: "How an answer is checked",
     date: "2026-11-04",

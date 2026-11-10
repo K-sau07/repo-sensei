@@ -34,7 +34,7 @@ const PAGES = [
   // The public site
   "/", "/product", "/product/understand", "/product/trace", "/product/diagrams", "/product/fix",
   "/product/mcp", "/pricing", "/benchmarks", "/docs", "/docs/getting-started", "/blog",
-  "/blog/how-an-answer-is-checked", "/changelog", "/security", "/privacy", "/terms",
+  "/blog/how-an-answer-is-checked", "/blog/what-went-wrong", "/changelog", "/security", "/privacy", "/terms",
   "/explore", "/explore/fastapi/full-stack-fastapi-template", "/s/not-a-real-token",
   "/d/not-a-real-token",
 ]; // prettier-ignore
