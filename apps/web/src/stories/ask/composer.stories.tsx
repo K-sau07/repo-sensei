@@ -4,7 +4,9 @@ import { expect, fn, userEvent, within } from "storybook/test";
 
 import { Composer, NO_SCOPE } from "@/components/ask/composer";
 import type { AskMode, ScopeData } from "@/lib/api/ask";
+import { resetMockDb } from "@/mocks/db";
 import { handlers } from "@/mocks/handlers";
+import { SCENARIO_KEY } from "@/mocks/scenario";
 
 const navigation = {
   appDirectory: true,
@@ -49,6 +51,10 @@ const meta = {
   args: { onSend: fn() },
   beforeEach: () => {
     localStorage.removeItem("story-composer");
+    // The mock API as seeded: a story run before this one in the same browser (deleting the
+    // account, picking another scenario) mustn't leave the repository's search answering nothing.
+    localStorage.removeItem(SCENARIO_KEY);
+    resetMockDb();
   },
 } satisfies Meta<typeof Box>;
 
