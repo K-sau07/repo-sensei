@@ -75,7 +75,7 @@ from sensei_engine.search.layers import lane_of
 from sensei_engine.search.rerank import Reranker, RerankUsageSink
 from sensei_engine.search.route import QueryClass, Route, classify
 
-PROMPT_VERSION = "ask_system.v1"
+PROMPT_VERSION = "ask_system.v2"
 LOOKUPS = frozenset({QueryClass.SYMBOL, QueryClass.REGEX})
 CROSS_CUTTING = frozenset({QueryClass.ARCHITECTURE, QueryClass.IMPACT})
 LAST_TURN_NOTE = (

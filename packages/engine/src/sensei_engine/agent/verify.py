@@ -310,7 +310,7 @@ async def support(
             parts.append(f"  cites {one.path}:{one.start_line}-{one.end_line}\n{shown}")
     request = LLMRequest(
         "\n\n".join(parts),
-        system=_prompt("verify_support.v1"),
+        system=_prompt("verify_support.v2"),
         tier=Tier.FAST,
         max_tokens=4_000,
         effort="low",
@@ -530,7 +530,7 @@ async def whole(
     )
     request = LLMRequest(
         prompt,
-        system=_prompt("verify_answer.v1"),
+        system=_prompt("verify_answer.v2"),
         tier=Tier.STANDARD if deep else Tier.FAST,
         max_tokens=2_000,
         effort="low",
