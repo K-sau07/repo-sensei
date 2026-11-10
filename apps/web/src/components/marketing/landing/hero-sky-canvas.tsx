@@ -5,8 +5,10 @@
  * repository's files as stars by layer and its directory tree as faint links, a globe that turns
  * without stopping and leans toward the pointer (eased, never snapping); and the Trace Beam,
  * light that flows along the sign-in trace from the Login page to the user table without a
- * pause, its lead pulse naming each stop it passes (the labels are DOM, placed from the scene
- * each frame). Frames are drawn only while it is on screen and not paused.
+ * pause, each stop flaring as a pulse goes through it and fading after (only what moves glows:
+ * the stops rest just under the bloom's threshold), the lead pulse naming the stop it passed
+ * (the labels are DOM, placed from the scene each frame). Frames are drawn only while it is on
+ * screen and not paused.
  */
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { Bloom, EffectComposer } from "@react-three/postprocessing";
@@ -28,6 +30,10 @@ const PULSES = 3; // always this many on the path, evenly spaced: the flow never
 const TRAIL = 0.14; // each pulse's lit tail, as a share of the path
 const TRAIL_POINTS = 24;
 const SAMPLES = 240;
+const STOP_REST = 0.9; // a stop's color at rest: bright, under the bloom's threshold (1)
+const STOP_FLARE = 2.6; // added as a pulse passes through it
+const FLARE_WIDTH = 0.045; // how long (as a share of the path) a stop stays lit around a pulse
+const FLARE_GROW = 0.7; // how much bigger a stop is at its brightest
 
 function color([r, g, b]: Rgb, times = 1): THREE.Color {
   return new THREE.Color().setRGB(r * times, g * times, b * times, THREE.SRGBColorSpace);
@@ -35,6 +41,7 @@ function color([r, g, b]: Rgb, times = 1): THREE.Color {
 
 /** Smooth in and out at the path's ends, so a pulse appears and fades instead of popping. */
 const fade = (t: number) => Math.min(1, t / 0.08, (1 - t) / 0.08);
+const origin = new THREE.Vector3();
 
 interface SceneProps {
   sky: HeroSky;
@@ -112,6 +119,8 @@ function Scene({ sky, labels, onReady }: SceneProps) {
   const scratch = useRef({
     vector: new THREE.Vector3(),
     tail: Array.from({ length: TRAIL_POINTS }, () => new THREE.Vector3()),
+    matrix: new THREE.Matrix4(),
+    tint: new THREE.Color(),
   });
   const litMaterials = useRef<THREE.LineBasicMaterial[]>([]);
 
@@ -158,7 +167,7 @@ function Scene({ sky, labels, onReady }: SceneProps) {
       matrix.makeScale(scale, scale, scale).setPosition(positions[i] ?? new THREE.Vector3());
       mesh.setMatrixAt(i, matrix);
       const layer = SKY_LAYERS[sky.layers[i] ?? 4] ?? "other";
-      mesh.setColorAt(i, stop ? color(colors.signal, GLOW * 0.6) : color(colors.layers[layer]));
+      mesh.setColorAt(i, stop ? color(colors.signal, STOP_REST) : color(colors.layers[layer]));
     }
     mesh.instanceMatrix.needsUpdate = true;
     if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
@@ -205,6 +214,32 @@ function Scene({ sky, labels, onReady }: SceneProps) {
       trails[p]?.setFromPoints(tail);
       const material = litMaterials.current[p];
       if (material) material.opacity = strength;
+    }
+
+    // Each stop flares as a pulse goes through it, so the light visibly travels stop to stop.
+    const mesh = stars.current;
+    if (mesh && colors) {
+      const { matrix, tint } = scratch.current;
+      sky.beam.forEach((stop, i) => {
+        const at = reachedAt[i] ?? 0;
+        let flare = 0;
+        for (let p = 0; p < PULSES; p += 1) {
+          const t = (phase + p / PULSES) % 1;
+          const distance = (t - at) / FLARE_WIDTH;
+          flare = Math.max(flare, Math.exp(-distance * distance) * fade(t));
+        }
+        const scale = STOP * (1 + FLARE_GROW * flare);
+        matrix.makeScale(scale, scale, scale).setPosition(positions[stop.star] ?? origin);
+        mesh.setMatrixAt(stop.star, matrix);
+        const [r, gr, b] = colors.signal;
+        const times = STOP_REST + STOP_FLARE * flare;
+        mesh.setColorAt(
+          stop.star,
+          tint.setRGB(r * times, gr * times, b * times, THREE.SRGBColorSpace),
+        );
+      });
+      mesh.instanceMatrix.needsUpdate = true;
+      if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
     }
 
     // The lead pulse names the stop it last passed.
@@ -278,8 +313,16 @@ export default function HeroSkyCanvas({
         aria-hidden
       >
         <Scene sky={sky} labels={labels} onReady={onReady} />
-        <EffectComposer>
-          <Bloom luminanceThreshold={1} intensity={1.3} mipmapBlur radius={0.7} />
+        {/* Half-float buffers: a soft glow without banding. A tight radius: each pulse and
+            flaring stop glows on its own instead of merging with its neighbours. */}
+        <EffectComposer frameBufferType={THREE.HalfFloatType}>
+          <Bloom
+            luminanceThreshold={1}
+            luminanceSmoothing={0.1}
+            intensity={0.9}
+            mipmapBlur
+            radius={0.4}
+          />
         </EffectComposer>
       </Canvas>
       <ol aria-hidden className="pointer-events-none absolute inset-0 max-lg:hidden">
