@@ -48,3 +48,6 @@ next-env.d.ts
 
 # Tooling workspace
 .context/
+
+# A deployment's GitHub App key (infra/single-server/github-app.pem) and any other key file
+*.pem
