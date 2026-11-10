@@ -60,9 +60,13 @@ export const Mention: Story = {
   play: async ({ canvas }) => {
     const box = canvas.getByRole("textbox", { name: "Ask about this repository" });
     await userEvent.type(box, "what calls @create_it");
-    const list = await canvas.findByRole("listbox", { name: "Mention a file or symbol" });
-    // The list opens at once; its matches (a worker's and the server's) arrive after it.
-    const options = await within(list).findAllByRole("option", {}, { timeout: 5000 });
+    // The list opens when the server's matches (debounced) arrive: on a slow runner, past 1 s.
+    const list = await canvas.findByRole(
+      "listbox",
+      { name: "Mention a file or symbol" },
+      { timeout: 5000 },
+    );
+    const options = within(list).getAllByRole("option");
     await expect(options.length).toBeGreaterThan(0);
     await userEvent.keyboard("{Enter}");
     // The raw value (the matcher's leaves out the trailing space): the name, then a space.
