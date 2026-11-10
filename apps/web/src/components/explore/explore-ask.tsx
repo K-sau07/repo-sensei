@@ -17,7 +17,8 @@ import { useAnnouncement } from "@/components/ask/use-announcement";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { chipLabel, type AskMessage, type CitationData } from "@/lib/api/ask";
-import { askFailure, DUMMY_TOKEN, githubBlob, publicAskTransport } from "@/lib/api/explore";
+import { publicAskTransport } from "@/lib/api/ask-transport";
+import { askFailure, DUMMY_TOKEN, githubBlob } from "@/lib/api/explore";
 
 import { Turnstile } from "./turnstile";
 

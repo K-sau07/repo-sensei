@@ -5,11 +5,11 @@
  * answer's text, each tool call, and `data-*` parts for its citations (each a span of the text
  * and the lines it cites), the run's progress, its confidence, what it searched, an abstention
  * and a cache hit. `useChat` assembles them into messages; the helpers here turn those into the
- * page's pieces: the citation chips in the text, the status line, the evidence rail.
+ * page's pieces: the citation chips in the text, the status line, the evidence rail. Types only
+ * from the AI SDK here: the transport (its code, and zod's) is `ask-transport`, loaded where a
+ * question is sent, not wherever an answer's pieces are read.
  */
-import { DefaultChatTransport, type UIMessage } from "ai";
-
-import { readCsrfCookie } from "./client";
+import type { UIMessage } from "ai";
 
 export type AskMode = "fast" | "deep";
 
@@ -94,54 +94,6 @@ export function lastQuestion(messages: readonly AskMessage[]): string {
   const asked = [...messages].reverse().find((message) => message.role === "user");
   if (asked === undefined) return "";
   return asked.parts.map((part) => (part.type === "text" ? part.text : "")).join("");
-}
-
-/**
- * The transport `useChat` sends a question through: the API takes the question alone (it keeps
- * the conversation), with the conversation it belongs to, the mode and the ref the page is read
- * at (given with each message: `sendMessage({ text }, { body: { conversationId, mode, ref } })`);
- * the CSRF header the API wants on a POST; the session's cookies.
- */
-export function askTransport(options: {
-  org: string;
-  repo: string;
-  getCsrfToken?: () => string | null;
-}): DefaultChatTransport<AskMessage> {
-  const csrf =
-    options.getCsrfToken ??
-    (() => (typeof document === "undefined" ? null : readCsrfCookie(document.cookie)));
-  return new DefaultChatTransport<AskMessage>({
-    api: askEndpoint(options.org, options.repo),
-    credentials: "include",
-    headers: () => {
-      const token = csrf();
-      const headers: Record<string, string> = {};
-      if (token) headers["X-CSRF-Token"] = token;
-      return headers;
-    },
-    prepareSendMessagesRequest: ({ messages, body }) => {
-      const scope = body?.scope as ScopeData | null | undefined;
-      const ref = body?.ref as string | null | undefined;
-      return {
-        body: {
-          message: lastQuestion(messages),
-          conversation_id: (body?.conversationId as string | null | undefined) ?? null,
-          mode: (body?.mode as AskMode | undefined) ?? "fast",
-          ...(ref ? { ref } : {}),
-          ...(scope
-            ? {
-                scope: {
-                  path: scope.path,
-                  start_line: scope.startLine,
-                  end_line: scope.endLine,
-                  layers: scope.layers ?? [],
-                },
-              }
-            : {}),
-        },
-      };
-    },
-  });
 }
 
 // ------------------------------------------------------------------ reading a message

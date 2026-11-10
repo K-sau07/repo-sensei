@@ -3,7 +3,6 @@ import { describe, expect, it } from "vitest";
 import {
   activity,
   answerText,
-  askTransport,
   chipLabel,
   citationsOf,
   confidenceLines,
@@ -16,6 +15,7 @@ import {
   type AskMessage,
   type CitationData,
 } from "./ask";
+import { askTransport } from "./ask-transport";
 
 function cite(n: number, path: string, lines: [number, number], span: [number, number]) {
   const data: CitationData = {

@@ -4,10 +4,6 @@
  * (`POST …/ask`, behind a Cloudflare Turnstile check). The helpers here are what its pages draw
  * from that: where a symbol's lines are on GitHub, at the commit the page was verified at.
  */
-import { DefaultChatTransport } from "ai";
-
-import { lastQuestion, type AskMessage } from "./ask";
-import { fetchAfterMocks } from "./client";
 import type { Schemas } from "./types";
 
 export type PublicRepo = Schemas["PublicRepoOut"];
@@ -103,26 +99,6 @@ export function languageShares(
 
 export function publicAskEndpoint(owner: string, name: string): string {
   return `/api/v1/public/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/ask`;
-}
-
-/**
- * The transport a public page's question goes through: the question alone (a first question,
- * every time) and the Turnstile token given with it (`sendMessage({ text }, { body: { token }
- * })`). No cookies: whoever asks, it is asked as no one.
- */
-export function publicAskTransport(owner: string, name: string): DefaultChatTransport<AskMessage> {
-  return new DefaultChatTransport<AskMessage>({
-    api: publicAskEndpoint(owner, name),
-    credentials: "omit",
-    // In mock mode, after the mock API is up (a public page asks nothing of it before this).
-    fetch: (input, init) => fetchAfterMocks(new Request(input, init)),
-    prepareSendMessagesRequest: ({ messages, body }) => ({
-      body: {
-        message: lastQuestion(messages),
-        turnstile_token: (body?.token as string | undefined) ?? "",
-      },
-    }),
-  });
 }
 
 /** What a refused question says: the transport's error carries the API's body as its message

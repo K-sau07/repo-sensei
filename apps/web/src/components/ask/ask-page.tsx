@@ -9,11 +9,11 @@
  */
 import { MessageSquare } from "lucide-react";
 import type { Route } from "next";
+import dynamic from "next/dynamic";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState, type ComponentProps } from "react";
 
-import { CodeViewer } from "@/components/code/code-viewer";
 import { useFileAt } from "@/components/code/use-code";
 import { EmptyState } from "@/components/feedback/empty-state";
 import { LockedState } from "@/components/feedback/locked-state";
@@ -48,6 +48,12 @@ import type { CodeHref } from "./tool-cards";
 import { useAnnouncement } from "./use-announcement";
 import { useAsk, useConversations } from "./use-ask";
 import { useStaleness } from "./use-staleness";
+
+// CodeMirror, for a citation's lines once one is opened: in the browser only, in its own chunk.
+const CodeViewer = dynamic(
+  () => import("@/components/code/code-viewer").then((module) => module.CodeViewer),
+  { ssr: false, loading: () => <p className="p-3 text-xs text-fg-faint">Loading…</p> },
+);
 
 /** The conversation an address names (`/ask/<id>`; none: a new one). */
 function conversationIn(pathname: string): string | null {

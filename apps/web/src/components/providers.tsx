@@ -1,6 +1,6 @@
 "use client";
 
-import { domAnimation, LazyMotion, MotionConfig } from "motion/react";
+import { LazyMotion, MotionConfig } from "motion/react";
 import { ThemeProvider } from "next-themes";
 import { NuqsAdapter } from "nuqs/adapters/next/app";
 import { useEffect, useSyncExternalStore, type ReactNode } from "react";
@@ -17,9 +17,11 @@ import {
 import { QueryProvider } from "@/lib/query/provider";
 
 export const THEMES = ["dark", "light"] as const;
+
+const loadFeatures = () => import("@/lib/motion-features").then((module) => module.default);
 export const DEFAULT_THEME = "dark";
 
-/** Motion setup: lazy-loaded DOM features and the user's reduced-motion preference (the
+/** Motion setup: DOM features loaded after the first paint (their own chunk), and the user's reduced-motion preference (the
  * system's, or always reduced when their appearance settings say so). */
 export function MotionProvider({ children }: { children: ReactNode }) {
   const saved = useSyncExternalStore(subscribeAppearance, savedAppearance, serverAppearance);
@@ -29,7 +31,7 @@ export function MotionProvider({ children }: { children: ReactNode }) {
   }, []);
   return (
     // `strict` makes a full `motion.*` import an error, keeping the bundle on `m.*`.
-    <LazyMotion features={domAnimation} strict>
+    <LazyMotion features={loadFeatures} strict>
       <MotionConfig reducedMotion={reduce ? "always" : "user"}>{children}</MotionConfig>
     </LazyMotion>
   );

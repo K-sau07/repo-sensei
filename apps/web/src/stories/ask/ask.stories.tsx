@@ -9,6 +9,9 @@ import { citedKey } from "@/lib/api/refs";
 import { MOCK_SHA, mockAbstainParts, mockAnswerParts } from "@/mocks/ask";
 import { PUSHED_SHA } from "@/mocks/push";
 
+// The markdown renderer is its own chunk: under a full parallel run, it can take a moment.
+const RENDERER_MS = 10_000;
+
 const navigation = {
   appDirectory: true,
   navigation: {
@@ -83,7 +86,9 @@ type Story = StoryObj<typeof meta>;
 /** A finished answer: chips after the words they back, its confidence, feedback buttons. */
 export const Cited: Story = {
   play: async ({ canvas }) => {
-    await expect(canvas.getAllByTestId("citation-chip")).toHaveLength(2);
+    await expect(
+      await canvas.findAllByTestId("citation-chip", {}, { timeout: RENDERER_MS }),
+    ).toHaveLength(2);
     await expect(canvas.getByTestId("confidence")).toHaveTextContent("Confidence: high");
     await expect(canvas.getByRole("button", { name: "Helpful" })).toHaveAttribute(
       "aria-pressed",
@@ -145,7 +150,7 @@ export const Stale: Story = {
   play: async ({ args, canvas }) => {
     const stale = canvas.getByTestId("answer-stale");
     await expect(stale).toHaveTextContent("1 cited file changed since");
-    const chips = canvas.getAllByTestId("citation-chip");
+    const chips = await canvas.findAllByTestId("citation-chip", {}, { timeout: RENDERER_MS });
     await expect(chips.filter((chip) => chip.dataset.stale === "changed")).toHaveLength(1);
     await userEvent.click(within(stale).getByRole("button", { name: "Re-run on latest" }));
     await expect(args.onRerun).toHaveBeenCalledOnce();
@@ -172,7 +177,9 @@ export const Redacted: Story = {
     ),
   },
   play: async ({ canvas }) => {
-    await expect(canvas.getAllByTestId("citation-chip")).toHaveLength(2);
+    await expect(
+      await canvas.findAllByTestId("citation-chip", {}, { timeout: RENDERER_MS }),
+    ).toHaveLength(2);
     await expect(canvas.queryByText(/items\.py/)).toBeNull();
     await expect(canvas.queryByTestId("feedback")).toBeNull();
     await expect(canvas.getByText(/An item is created by the/)).toBeVisible();
@@ -197,15 +204,18 @@ export const InjectedContent: Story = {
     message: { ...CITED, parts: [{ type: "text", text: INJECTED }] as AskMessage["parts"] },
   },
   play: async ({ canvas }) => {
+    // Once the markdown renderer is here (its own chunk), not the text shown until then.
+    const image = await canvas.findByRole(
+      "link",
+      { name: "the diagram" },
+      { timeout: RENDERER_MS },
+    );
     await expect(canvas.getByText(/The handler saves the item/)).toBeVisible();
     const answer = canvas.getByTestId("answer");
     await expect(answer.querySelectorAll("img, iframe, video, audio, source, style")).toHaveLength(
       0,
     );
-    await expect(canvas.getByRole("link", { name: "the diagram" })).toHaveAttribute(
-      "href",
-      "https://attacker.example/leak.png?d=SECRET",
-    );
+    await expect(image).toHaveAttribute("href", "https://attacker.example/leak.png?d=SECRET");
     for (const link of answer.querySelectorAll("a")) {
       await expect(link.getAttribute("href") ?? "").not.toMatch(/^javascript:/i);
     }

@@ -11,7 +11,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { useViewRef } from "@/components/repo/use-ref";
 import { useRepoSlug } from "@/components/repo/use-repo";
-import { askTransport, type AskMessage, type AskMode, type ScopeData } from "@/lib/api/ask";
+import type { AskMessage, AskMode, ScopeData } from "@/lib/api/ask";
+import { askTransport } from "@/lib/api/ask-transport";
 import { api } from "@/lib/api/client";
 import { queryKeys } from "@/lib/query/keys";
 

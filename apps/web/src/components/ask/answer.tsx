@@ -13,8 +13,8 @@ import { cn } from "cn";
 import { ChevronRight, CornerDownRight, FileCode2, Loader2, RotateCw } from "lucide-react";
 import type { Route } from "next";
 import NextLink from "next/link";
-import { useState, type ReactNode } from "react";
-import { Streamdown, type Components } from "streamdown";
+import { lazy, Suspense, useState, type ReactNode } from "react";
+import type { Components } from "streamdown";
 
 import { StaleBadge } from "@/components/feedback/banners";
 import {
@@ -43,6 +43,12 @@ import { CitationChip } from "./citation-chip";
 import { ConfidenceBadge } from "./confidence-badge";
 import { FeedbackButtons } from "./feedback";
 import { ToolCards, type Artifact, type CodeHref } from "./tool-cards";
+
+// The markdown renderer (Streamdown, with its highlighting and diagrams) in its own chunk: a
+// page that shows no answer yet doesn't wait for it. Until it's here, the text as it is.
+const Streamdown = lazy(() =>
+  import("streamdown").then((module) => ({ default: module.Streamdown })),
+);
 
 const MARKER = /^#cite-(\d+)$/;
 
@@ -168,14 +174,16 @@ export function Answer({
       ) : null}
       {text ? (
         <div className="prose prose-sm max-w-none text-fg">
-          <Streamdown
-            mode={streaming ? "streaming" : "static"}
-            isAnimating={streaming}
-            linkSafety={{ enabled: false }}
-            components={{ a: Link, img: Image }}
-          >
-            {withMarkers(text, citations)}
-          </Streamdown>
+          <Suspense fallback={<p className="whitespace-pre-wrap">{text}</p>}>
+            <Streamdown
+              mode={streaming ? "streaming" : "static"}
+              isAnimating={streaming}
+              linkSafety={{ enabled: false }}
+              components={{ a: Link, img: Image }}
+            >
+              {withMarkers(text, citations)}
+            </Streamdown>
+          </Suspense>
         </div>
       ) : null}
       <ToolCards slots={slots} codeHref={codeHref} traceHref={traceHref} onPromote={onPromote} />

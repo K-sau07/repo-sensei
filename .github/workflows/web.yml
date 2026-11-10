@@ -66,5 +66,8 @@ jobs:
       - name: Build
         run: pnpm --filter web build
 
+      - name: Bundle budgets (each route's first JavaScript, gzipped, within its ceiling)
+        run: pnpm --filter web exec node scripts/bundle-budget.mjs
+
       - name: Storybook builds
         run: pnpm --filter web storybook:build
