@@ -38,7 +38,7 @@ import { parseLines } from "@/lib/code/lines";
 import { STAGE_LABELS } from "@/lib/indexing";
 import { codePath, repoPath } from "@/lib/routes";
 
-import { Answer, Question } from "./answer";
+import { Answer, preloadMarkdown, Question } from "./answer";
 import { ArtifactPanel, useArtifacts } from "./artifact-panel";
 import { Composer, NO_SCOPE } from "./composer";
 import { EvidenceRail } from "./evidence-rail";
@@ -86,6 +86,7 @@ function useThreadKey(): { key: number; named: (id: string) => void } {
 }
 
 export function AskPage() {
+  useEffect(preloadMarkdown, []);
   const { state, ready } = useRepoFeatures();
   const thread = useThreadKey();
   if (!ready) return null; // what the repository can do is still being read

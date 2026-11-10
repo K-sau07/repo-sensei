@@ -194,6 +194,7 @@ const INJECTED = [
   '<video src="https://attacker.example/v.mp4" poster="https://attacker.example/p.png"></video>',
   "<style>@import url(https://attacker.example/s.css);</style>",
   '<a href="javascript:alert(1)">run me</a> and [open](javascript:alert(2)).',
+  "[![build](https://attacker.example/badge.svg)](https://ci.example/runs)",
 ].join("\n\n");
 
 /** What a repository's text could get an answer to say (10.10): nothing in it loads or runs on
@@ -205,9 +206,10 @@ export const InjectedContent: Story = {
   },
   play: async ({ canvas }) => {
     // Once the markdown renderer is here (its own chunk), not the text shown until then.
+    // Its words, and where it points, so the link says what it would open.
     const image = await canvas.findByRole(
       "link",
-      { name: "the diagram" },
+      { name: "the diagram (attacker.example)" },
       { timeout: RENDERER_MS },
     );
     await expect(canvas.getByText(/The handler saves the item/)).toBeVisible();
@@ -220,6 +222,12 @@ export const InjectedContent: Story = {
       await expect(link.getAttribute("href") ?? "").not.toMatch(/^javascript:/i);
     }
     await expect(canvas.queryByRole("link", { name: /run me|open/ })).toBeNull();
+    // A badge in a link: the link, with the image's words in it; no link inside a link.
+    await expect(canvas.getByRole("link", { name: "build" })).toHaveAttribute(
+      "href",
+      "https://ci.example/runs",
+    );
+    await expect(answer.querySelectorAll("a a")).toHaveLength(0);
     // Nothing of it asked for anything from elsewhere.
     const fetched = performance
       .getEntriesByType("resource")

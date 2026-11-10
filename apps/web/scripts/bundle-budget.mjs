@@ -5,8 +5,9 @@
  * counted.
  *
  * Each route has a ceiling (`bundle-budget.json`): what it weighed when last recorded, plus a
- * little. Growing past it fails the build, so the size only goes down; `--update` records the
- * sizes as they are now (after making a route lighter). The design's target (180 KB for the
+ * little; a route not recorded, the design's target. Growing past it fails the build, so the
+ * size only goes down; `--update` records the sizes as they are now (after making a route
+ * lighter, or for a new route that can't yet be within the target: say why in its commit). The design's target (180 KB for the
  * workspace's routes) is reported alongside: the distance still to go.
  *
  *   node scripts/bundle-budget.mjs [--update] [distDir]
@@ -81,11 +82,10 @@ if (update) {
 }
 
 const ceilings = existsSync(CEILINGS) ? JSON.parse(readFileSync(CEILINGS, "utf8")) : {};
-const widest = Math.max(TARGET_KB, ...Object.values(ceilings)); // a new route: no heavier
 let over = 0;
 for (const route of names) {
   const kb = routes[route];
-  const ceiling = ceilings[route] ?? widest;
+  const ceiling = ceilings[route] ?? TARGET_KB; // a new route: the design's target
   const past = kb > ceiling;
   if (past) over += 1;
   const target = kb > TARGET_KB ? `+${(kb - TARGET_KB).toFixed(0)} KB to target` : "within target";

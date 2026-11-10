@@ -13,7 +13,7 @@ import { cn } from "cn";
 import { ChevronRight, CornerDownRight, FileCode2, Loader2, RotateCw } from "lucide-react";
 import type { Route } from "next";
 import NextLink from "next/link";
-import { lazy, Suspense, useState, type ReactNode } from "react";
+import { createContext, lazy, Suspense, useContext, useState, type ReactNode } from "react";
 import type { Components } from "streamdown";
 
 import { StaleBadge } from "@/components/feedback/banners";
@@ -46,9 +46,34 @@ import { ToolCards, type Artifact, type CodeHref } from "./tool-cards";
 
 // The markdown renderer (Streamdown, with its highlighting and diagrams) in its own chunk: a
 // page that shows no answer yet doesn't wait for it. Until it's here, the text as it is.
-const Streamdown = lazy(() =>
-  import("streamdown").then((module) => ({ default: module.Streamdown })),
-);
+const loadMarkdown = () => import("streamdown");
+const Streamdown = lazy(() => loadMarkdown().then((module) => ({ default: module.Streamdown })));
+
+/** Start fetching the markdown renderer now: a page that will show answers calls it as it
+ * mounts, so the renderer arrives with the answers, not after them. */
+export function preloadMarkdown(): void {
+  void loadMarkdown();
+}
+
+// Whether what is being drawn is already inside a link (a link can't hold another).
+const InLink = createContext(false);
+
+/** An answer's image: its words, and where it points (a link, unless it is already in one),
+ * never loaded: an answer is written from the repository's text, and an image fetched on sight
+ * could carry what the answer read to someone else. */
+const AnswerImage: NonNullable<Components["img"]> = ({ src, alt }) => {
+  const inLink = useContext(InLink);
+  const safe = typeof src === "string" ? safeHref(src) : null;
+  const words = alt?.trim() ? alt : "image";
+  if (safe === null || inLink) return <span>{words}</span>;
+  const host = safe.startsWith("http") ? new URL(safe).host : null;
+  return (
+    <a href={safe} target="_blank" rel="noreferrer noopener">
+      {words}
+      {host ? ` (${host})` : null}
+    </a>
+  );
+};
 
 const MARKER = /^#cite-(\d+)$/;
 
@@ -146,24 +171,13 @@ export function Answer({
     const safe = safeHref(href);
     if (safe === null) return <span>{children}</span>; // a link it may not open: its words
     return (
-      <a href={safe} target="_blank" rel="noreferrer noopener">
-        {children}
-      </a>
+      <InLink.Provider value={true}>
+        <a href={safe} target="_blank" rel="noreferrer noopener">
+          {children}
+        </a>
+      </InLink.Provider>
     );
   };
-  // An image is its words and a link, never loaded: an answer is written from the repository's
-  // text, and an image fetched on sight could carry what the answer read to someone else.
-  const Image: NonNullable<Components["img"]> = ({ src, alt }) => {
-    const safe = typeof src === "string" ? safeHref(src) : null;
-    const words = alt?.trim() ? alt : "image";
-    if (safe === null) return <span>{words}</span>;
-    return (
-      <a href={safe} target="_blank" rel="noreferrer noopener">
-        {words}
-      </a>
-    );
-  };
-
   return (
     <div className="flex flex-col gap-2" data-testid="answer" aria-busy={streaming}>
       {(streaming || !text) && status ? (
@@ -179,7 +193,7 @@ export function Answer({
               mode={streaming ? "streaming" : "static"}
               isAnimating={streaming}
               linkSafety={{ enabled: false }}
-              components={{ a: Link, img: Image }}
+              components={{ a: Link, img: AnswerImage }}
             >
               {withMarkers(text, citations)}
             </Streamdown>

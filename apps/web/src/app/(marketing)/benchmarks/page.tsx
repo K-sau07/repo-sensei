@@ -27,7 +27,12 @@ function Row({ row }: { row: BenchRow }) {
       <th scope="row" className="font-normal">
         {row.repo}
         {row.renamed ? " (renamed)" : ""}
-        {row.tuned && !row.renamed ? <sup aria-label="tuned on">*</sup> : null}
+        {row.tuned && !row.renamed ? (
+          <>
+            <sup aria-hidden>*</sup>
+            <span className="sr-only"> (tuned on)</span>
+          </>
+        ) : null}
       </th>
       <td>{row.flows}</td>
       <td>{pct(row.hopRecall)}</td>

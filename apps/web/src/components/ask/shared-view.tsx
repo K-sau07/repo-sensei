@@ -8,15 +8,17 @@
 import { EyeOff, Lock } from "lucide-react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
+import { useEffect } from "react";
 
 import { DelayedSpinner } from "@/components/primitives/delayed-spinner";
 import { chipLabel, type AskMessage, type CitationData } from "@/lib/api/ask";
 import { $api } from "@/lib/api/client";
 import { ApiError } from "@/lib/api/errors";
 
-import { Answer, Question } from "./answer";
+import { Answer, preloadMarkdown, Question } from "./answer";
 
 export function SharedConversationView() {
+  useEffect(preloadMarkdown, []);
   const { token } = useParams<{ token: string }>();
   const shared = $api.useQuery(
     "get",

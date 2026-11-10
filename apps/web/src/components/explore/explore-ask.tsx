@@ -12,7 +12,7 @@ import { ArrowUp, ChevronDown, ChevronUp, Loader2 } from "lucide-react";
 import Link from "next/link";
 import { useMemo, useRef, useState, type SubmitEvent } from "react";
 
-import { Answer, Question } from "@/components/ask/answer";
+import { Answer, preloadMarkdown, Question } from "@/components/ask/answer";
 import { useAnnouncement } from "@/components/ask/use-announcement";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -71,6 +71,7 @@ export function ExploreAsk({
     const words = question.trim();
     if (!words || !ready) return;
     asked.current = words;
+    preloadMarkdown(); // the answer's renderer, while the question is answered
     void chat.sendMessage({ text: words }, { body: { token } });
     setText("");
     setFolded(false);
