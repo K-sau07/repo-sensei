@@ -14,6 +14,22 @@ primary_region = "iad"
   source = "pgdata"
   destination = "/var/lib/postgresql"
 
+[env]
+  # Point-in-time restore (10.12, infra/postgres/sensei-postgres.sh): WAL archived as it fills
+  # (at most a minute behind), a base backup a day, the last 7 kept. The bucket (WALG_S3_PREFIX,
+  # s3://<bucket>/<env>), its AWS-style key pair and its endpoint (AWS_ENDPOINT, for R2
+  # https://<account>.r2.cloudflarestorage.com) are set as Fly secrets (README.md).
+  AWS_REGION = "auto"
+  AWS_S3_FORCE_PATH_STYLE = "true"
+  SENSEI_ARCHIVE_TIMEOUT = "60"
+  SENSEI_BACKUP_KEEP_FULL = "7"
+
+[experimental]
+  # The image's CMD only (its entry point, which archives and restores, still runs): postgres
+  # sized for the machine (1 GB).
+  cmd = ["-c", "config_file=/etc/postgresql/postgresql.conf", "-c", "shared_buffers=256MB",
+         "-c", "maintenance_work_mem=256MB", "-c", "work_mem=16MB"]
+
 [[vm]]
   size = "shared-cpu-1x"
   memory = "1gb"
