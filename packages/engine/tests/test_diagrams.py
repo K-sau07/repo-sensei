@@ -23,6 +23,7 @@ from sensei_engine.diagrams import (
     plain,
     render,
     validate,
+    with_members,
 )
 from sensei_engine.graph.snapshot import Edge, GraphSnapshot, Node
 from sensei_testing.anthropic import FakeAnthropic, message
@@ -224,3 +225,80 @@ def test_mermaid_is_compiled_from_the_spec(graph: GraphSnapshot) -> None:
     bad.nodes[0] = type(bad.nodes[0])(ROUTE, 'x"]; click n1 "evil', "api", "function", None, 1, 1)
     drawn = mermaid(bad)
     assert drawn.splitlines()[1] == '  n1["x    click n1  evil"]'
+
+
+def test_each_node_lists_its_members_as_an_entity_diagram_does() -> None:
+    model = Node(
+        "py app/models.py/Item", "orm_model", "Item", "Item", "app/models.py", 1, 30, "python"
+    )
+    method = Node(
+        "py app/models.py/Item.save", "method", "save", "Item.save", "app/models.py", 5, 9, "python"
+    )
+    field = Node(
+        "py app/models.py/Item.title",
+        "variable",
+        "title",
+        "Item.title",
+        "app/models.py",
+        3,
+        3,
+        "python",
+    )
+    nested = Node(
+        "py app/models.py/Item.Meta.x",
+        "variable",
+        "x",
+        "Item.Meta.x",
+        "app/models.py",
+        4,
+        4,
+        "python",
+    )
+    elsewhere = Node(
+        "py app/other.py/Item.save", "method", "save", "Item.save", "app/other.py", 1, 2, "python"
+    )
+    table = Node("table items", "table", "items", "items", "alembic/0001.py", 1, 1, "sql")
+    column = Node(
+        "column items.title", "column", "title", "items.title", "alembic/0001.py", 2, 2, "sql"
+    )
+    page = Node(
+        "ts web/Items.tsx/ItemsPage",
+        "component",
+        "ItemsPage",
+        "ItemsPage",
+        "web/Items.tsx",
+        1,
+        40,
+        "typescript",
+    )
+    hook = Node(
+        "ts web/useItems.ts/useItems",
+        "hook",
+        "useItems",
+        "useItems",
+        "web/useItems.ts",
+        1,
+        9,
+        "typescript",
+    )
+    graph = _graph(
+        [model, method, field, nested, elsewhere, table, column, page, hook],
+        [(page.symbol_key, hook.symbol_key, _edge(EdgeType.USES_HOOK))],
+    )
+    spec = DiagramSpec.from_json({
+        "title": "t", "kind": "architecture",
+        "nodes": [
+            {"id": n.symbol_key, "label": n.name, "layer": "db", "kind": n.kind}
+            for n in (model, table, page)
+        ],
+        "edges": [],
+    })  # fmt: skip
+    drawn = {n.id: n for n in with_members(spec, graph).nodes}
+    assert [(m.name, m.kind) for m in drawn[model.symbol_key].members] == [
+        ("save", "method"), ("title", "variable"),
+    ]  # fmt: skip  # one level down, in its own file only
+    assert [(m.name, m.kind) for m in drawn[table.symbol_key].members] == [("title", "column")]
+    assert [(m.name, m.kind) for m in drawn[page.symbol_key].members] == [("useItems", "hook")]
+    # And they survive being stored.
+    again = DiagramSpec.from_json(with_members(spec, graph).as_json())
+    assert again.nodes[0].members == drawn[model.symbol_key].members

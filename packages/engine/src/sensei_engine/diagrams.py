@@ -18,8 +18,10 @@ what is wrong is left out. ``verified_ratio`` is the share of the diagram's edge
 proves. Without a model (none configured, or it fails), the subgraph is drawn as it is: every
 edge verified, its names as labels.
 
-Each node carries its citation (file and lines, from the graph, not the model). Mermaid
-(flowchart or sequence) is compiled here, from the checked spec.
+Each node carries its citation (file and lines, from the graph, not the model), and its
+**members** as an entity diagram lists them: a class's or model's methods and fields, a table's
+columns, a component's hooks and what it renders (:func:`with_members`, from the graph too).
+Mermaid (flowchart or sequence) is compiled here, from the checked spec.
 """
 
 from __future__ import annotations
@@ -61,6 +63,8 @@ MAX_RETRIES = 2
 MAX_TOKENS = 4_000
 MAX_LABEL = 80
 MAX_TITLE = 120
+MAX_MEMBERS = 8  # listed on a node's card; the rest are counted
+MEMBER_KINDS = frozenset({"method", "function", "variable", "class"})
 # Edges a flow is drawn along (containment and definitions are structure, not flow).
 FLOW_TYPES = frozenset(EdgeType) - {EdgeType.CONTAINS, EdgeType.DEFINES}
 
@@ -197,6 +201,14 @@ def from_entries(
 
 
 @dataclass(frozen=True, slots=True)
+class Member:
+    """Something a node holds or uses, as its card lists it."""
+
+    name: str
+    kind: str  # method, function, variable, class, column, hook, renders
+
+
+@dataclass(frozen=True, slots=True)
 class SpecNode:
     id: str  # the node's symbol key
     label: str
@@ -205,6 +217,8 @@ class SpecNode:
     path: str | None
     start_line: int
     end_line: int
+    members: tuple[Member, ...] = ()
+    more: int = 0  # members past MAX_MEMBERS, not listed
 
     def as_json(self) -> dict[str, Any]:
         return {
@@ -217,6 +231,8 @@ class SpecNode:
                 if self.path
                 else None
             ),
+            "members": [{"name": m.name, "kind": m.kind} for m in self.members],
+            "more_members": self.more,
         }
 
 
@@ -272,11 +288,16 @@ class DiagramSpec:
         nodes: list[SpecNode] = []
         for raw in _items(data.get("nodes")):
             cited = _object(raw.get("citation"))
+            members = tuple(
+                Member(str(m.get("name", "")), str(m.get("kind", "")))
+                for m in _items(raw.get("members"))
+            )
             nodes.append(
                 SpecNode(
                     str(raw.get("id", "")), str(raw.get("label", "")), str(raw.get("layer", "")),
                     str(raw.get("kind", "")), _text(cited.get("path")),
                     int(cited.get("start_line") or 0), int(cited.get("end_line") or 0),
+                    members, int(raw.get("more_members") or 0),
                 )
             )  # fmt: skip
         edges: list[SpecEdge] = []
@@ -492,6 +513,85 @@ class Generated:
     problems: list[str]  # what the last answer had wrong (left out of the spec)
 
 
+def with_members(spec: DiagramSpec, graph: GraphSnapshot) -> DiagramSpec:
+    """``spec`` with each node's members, from the graph (one pass over its nodes):
+    - a class, a model or a component: the definitions inside it (``Item.save``, one level
+      down, in its file);
+    - a table: its columns;
+    - a component: also the hooks it uses and the components it renders."""
+    found: dict[str, list[Member]] = {n.id: [] for n in spec.nodes}
+    inside, tables = _owners(spec, graph)
+    if inside or tables:
+        _held(graph, inside, tables, found)
+    _used(spec, graph, found)
+    nodes: list[SpecNode] = []
+    for spec_node in spec.nodes:
+        members = list(dict.fromkeys(found.get(spec_node.id, [])))  # in order, once
+        nodes.append(
+            SpecNode(
+                spec_node.id, spec_node.label, spec_node.layer, spec_node.kind, spec_node.path,
+                spec_node.start_line, spec_node.end_line, tuple(members[:MAX_MEMBERS]),
+                max(0, len(members) - MAX_MEMBERS),
+            )
+        )  # fmt: skip
+    return DiagramSpec(spec.title, spec.kind, nodes, spec.edges)
+
+
+def _owners(
+    spec: DiagramSpec, graph: GraphSnapshot
+) -> tuple[dict[tuple[str, str], str], dict[str, str]]:
+    """What can hold members: (file, "Qualified.") of a class, model or component, and
+    "table." of a table, each to its node's id."""
+    inside: dict[tuple[str, str], str] = {}
+    tables: dict[str, str] = {}
+    for spec_node in spec.nodes:
+        node = graph.node(spec_node.id)
+        if node is None:
+            continue
+        if node.kind == "table":
+            tables[f"{node.name.lower()}."] = spec_node.id
+        elif node.path and node.kind in {"class", "orm_model", "component"}:
+            inside[(node.path, f"{node.qualified_name or node.name}.")] = spec_node.id
+    return inside, tables
+
+
+def _held(
+    graph: GraphSnapshot,
+    inside: Mapping[tuple[str, str], str],
+    tables: Mapping[str, str],
+    found: dict[str, list[Member]],
+) -> None:
+    """Each owner's definitions one level down, and each table's columns."""
+    paths = {path for path, _ in inside}
+    for node in graph.nodes:
+        qualified = node.qualified_name or node.name
+        if node.kind == "column":
+            table = tables.get(qualified.lower().split(".", 1)[0] + ".")
+            if table is not None:
+                found[table].append(Member(node.name, "column"))
+            continue
+        if node.path not in paths or node.kind not in MEMBER_KINDS or "." not in qualified:
+            continue
+        head, _, name = qualified.rpartition(".")
+        owner = inside.get((node.path, f"{head}."))
+        if owner is not None and name:
+            found[owner].append(Member(name, node.kind))
+
+
+def _used(spec: DiagramSpec, graph: GraphSnapshot, found: dict[str, list[Member]]) -> None:
+    """A component's hooks and the components it renders."""
+    for spec_node in spec.nodes:
+        if spec_node.kind != "component":
+            continue
+        for there, edge in graph.edges_out(spec_node.id):
+            if edge.type not in (EdgeType.USES_HOOK, EdgeType.RENDERS):
+                continue
+            target = graph.node(there)
+            if target is not None:
+                kind = "hook" if edge.type is EdgeType.USES_HOOK else "renders"
+                found[spec_node.id].append(Member(target.name, kind))
+
+
 async def generate(
     client: AnthropicClient | None,
     sub: Subgraph,
@@ -502,9 +602,25 @@ async def generate(
     max_retries: int = MAX_RETRIES,
     floor: StepChoice | None = None,
 ) -> Generated:
-    """The diagram of ``sub`` (see the module). Raises :class:`DiagramError` when nothing is
-    left to draw. ``floor``: the org's for diagrams (10.7.2), raising the labels' model or
-    effort."""
+    """The diagram of ``sub`` (see the module), each node with its members. Raises
+    :class:`DiagramError` when nothing is left to draw. ``floor``: the org's for diagrams
+    (10.7.2), raising the labels' model or effort."""
+    made = await _generate(
+        client, sub, graph, kind, on_usage=on_usage, max_retries=max_retries, floor=floor
+    )
+    return Generated(with_members(made.spec, graph), made.tries, made.problems)
+
+
+async def _generate(
+    client: AnthropicClient | None,
+    sub: Subgraph,
+    graph: GraphSnapshot,
+    kind: DiagramKind,
+    *,
+    on_usage: LLMUsageSink | None = None,
+    max_retries: int = MAX_RETRIES,
+    floor: StepChoice | None = None,
+) -> Generated:
     if not sub.nodes:
         raise DiagramError("nothing to draw")
     if client is None or not client.configured:
