@@ -4,7 +4,8 @@
  * An org's insights (10.6.1): the last 30 days in the repositories the reader can read. The
  * questions (a figure, then one bar a day, each with its numbers on hover and in a table), how
  * the answers went, which repositories are asked about, the modules answers cite most (a treemap,
- * each tile's area its share, and a table), and each week's adoption. Costs show for admins.
+ * each tile's area its share, and a table), each week's adoption, and how fast the app's pages
+ * were for the org's people (10.11: web vitals at p75 against the budgets). Costs show for admins.
  */
 import Link from "next/link";
 
@@ -114,6 +115,7 @@ function InsightsView({ org, data }: { org: string; data: Insights }) {
         </>
       )}
       <Weeks weeks={data.weeks} />
+      <Speed speed={data.speed} />
     </div>
   );
 }
@@ -380,6 +382,71 @@ function Weeks({ weeks }: { weeks: Insights["weeks"] }) {
           ))}
         </TableBody>
       </Table>
+    </section>
+  );
+}
+
+const MEASURES: Record<string, { label: string; format: (value: number) => string }> = {
+  LCP: { label: "Main content shown (LCP)", format: duration },
+  INP: { label: "Response to a click or key (INP)", format: duration },
+  CLS: { label: "Layout shift (CLS)", format: (value) => value.toFixed(2) },
+};
+
+function duration(ms: number): string {
+  return ms >= 1000 ? `${(ms / 1000).toFixed(1)} s` : `${String(Math.round(ms))} ms`;
+}
+
+function Speed({ speed }: { speed: Insights["speed"] }) {
+  const measured = speed.filter((s) => s.samples > 0 && s.p75 !== null);
+  return (
+    <section className="flex flex-col gap-3" aria-labelledby="insight-speed">
+      <div className="flex flex-col gap-1">
+        <h2 id="insight-speed" className="font-medium">
+          How fast pages were
+        </h2>
+        <p className="text-sm text-fg-muted">
+          What your team&apos;s browsers measured: 3 in 4 page views were this fast or faster.
+        </p>
+      </div>
+      {measured.length === 0 ? (
+        <p className="text-sm text-fg-muted">No page views measured in the last 30 days yet.</p>
+      ) : (
+        <Table aria-label="How fast pages were">
+          <TableHeader>
+            <TableRow>
+              <TableHead>Measure</TableHead>
+              <TableHead className="text-right">75th percentile</TableHead>
+              <TableHead className="text-right">Budget</TableHead>
+              <TableHead>Within it</TableHead>
+              <TableHead className="text-right">Page views</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {measured.map((s) => {
+              const measure = MEASURES[s.name];
+              const p75 = s.p75 ?? 0;
+              const within = p75 <= s.budget;
+              return (
+                <TableRow key={s.name}>
+                  <TableCell>{measure?.label ?? s.name}</TableCell>
+                  <TableCell className="text-right tabular-nums">
+                    {measure?.format(p75) ?? p75}
+                  </TableCell>
+                  <TableCell className="text-right text-fg-muted tabular-nums">
+                    {measure?.format(s.budget) ?? s.budget}
+                  </TableCell>
+                  <TableCell className={within ? undefined : "text-danger"}>
+                    {within ? "Yes" : "No, slower"}
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums">
+                    {COUNT.format(s.samples)}
+                  </TableCell>
+                </TableRow>
+              );
+            })}
+          </TableBody>
+        </Table>
+      )}
     </section>
   );
 }

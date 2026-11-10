@@ -1,7 +1,8 @@
 /**
  * The mock insights (10.6.1): a month of an org's questions over its repositories, how the
- * answers went, the modules they cite and each week's adoption, the costs for admins only, as
- * the API counts them. Deterministic: the same numbers every time, ending today (UTC).
+ * answers went, the modules they cite, each week's adoption and how fast its pages were, the
+ * costs for admins only, as the API counts them. Deterministic: the same numbers every time,
+ * ending today (UTC). Web vitals reported are taken and dropped.
  */
 import { http, HttpResponse } from "msw";
 
@@ -80,6 +81,18 @@ export function insights(org: string, costs: boolean): Insights {
             path,
             cited,
           })),
+    speed:
+      repos.length === 0
+        ? [
+            { name: "LCP", p75: null, budget: 1800, samples: 0 },
+            { name: "INP", p75: null, budget: 100, samples: 0 },
+            { name: "CLS", p75: null, budget: 0.05, samples: 0 },
+          ]
+        : [
+            { name: "LCP", p75: 1420, budget: 1800, samples: 812 },
+            { name: "INP", p75: 136, budget: 100, samples: 640 },
+            { name: "CLS", p75: 0.02, budget: 0.05, samples: 812 },
+          ],
     costs,
   };
 }
@@ -95,5 +108,10 @@ export const insightHandlers = [
     const access = orgAccess(params.org);
     if (access instanceof Response) return access;
     return HttpResponse.json(insights(params.org, atLeast(access.role, "admin")));
+  }),
+  http.post<{ org: string }>("*/api/v1/orgs/:org/vitals", ({ params }) => {
+    const access = orgAccess(params.org);
+    if (access instanceof Response) return access;
+    return new HttpResponse(null, { status: 204 });
   }),
 ];

@@ -50,6 +50,14 @@ export const Insights: Story = {
     const weeks = canvas.getByRole("table", { name: "Each week" });
     await expect(within(weeks).getAllByRole("row").length).toBeGreaterThan(4);
     await expect(canvas.getByText(/ · \$/)).toBeVisible(); // spend, for admins
+    // How fast pages were: each measure against its budget, said in words, not only colour.
+    const speed = canvas.getByRole("table", { name: "How fast pages were" });
+    const inp = within(speed).getByRole("row", { name: /Response to a click or key/ });
+    await expect(inp).toHaveTextContent("136 ms");
+    await expect(inp).toHaveTextContent("No, slower");
+    const lcp = within(speed).getByRole("row", { name: /Main content shown/ });
+    await expect(lcp).toHaveTextContent("1.4 s");
+    await expect(lcp).toHaveTextContent("Yes");
   },
 };
 
