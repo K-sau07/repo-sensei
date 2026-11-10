@@ -76,4 +76,38 @@ test.describe("diagrams", () => {
     await expect(page).toHaveURL(/\/diagrams\/[0-9a-f-]{36}\?since=/);
     await expect(page.getByTestId("diagram-changes")).toContainText("Drawn again");
   });
+
+  test("the whole app's architecture: its parts by tier, what each holds, every line verified", async ({
+    page,
+  }) => {
+    await page.goto("/acme/api/diagrams");
+    await page.getByRole("button", { name: "Map the architecture" }).click();
+    await expect(page).toHaveURL(/\/acme\/api\/diagrams\/[0-9a-f-]{36}$/);
+    await expect(page.getByTestId("verified-ratio")).toHaveText("100% statically verified");
+    await expect(
+      page.getByRole("group", { name: "View as" }).getByRole("button", { name: "Architecture" }),
+    ).toHaveAttribute("aria-pressed", "true");
+    const canvas = page.getByTestId("diagram-canvas");
+    await expect(canvas.getByTestId("entity-node")).toHaveCount(7);
+    for (const tier of ["Frontend", "API", "Services", "Data"]) {
+      await expect(canvas.getByTestId("layer-band").filter({ hasText: tier })).toBeVisible();
+    }
+    await expect(canvas.getByRole("list", { name: "backend/app's members" })).toContainText("user");
+    // A part opens as its folder, with what it holds.
+    await canvas.getByTestId("entity-node").filter({ hasText: "backend/app/api/routes" }).click();
+    const panel = page.getByTestId("node-panel");
+    await expect(panel.getByRole("link", { name: "Open the folder" })).toHaveAttribute(
+      "href",
+      /\/acme\/api\/code\/backend\/app\/api\/routes\?ref=/,
+    );
+    await expect(panel).toContainText("POST /api/v1/login/access-token");
+    await expect(panel.getByRole("link", { name: "Trace from here" })).toHaveCount(0);
+  });
+
+  test("the overview opens the architecture as a diagram", async ({ page }) => {
+    await page.goto("/acme/api");
+    await page.getByRole("link", { name: "Open as an architecture diagram" }).click();
+    await expect(page).toHaveURL(/\/acme\/api\/diagrams\/[0-9a-f-]{36}$/);
+    await expect(page.getByTestId("entity-node").first()).toBeVisible();
+  });
 });

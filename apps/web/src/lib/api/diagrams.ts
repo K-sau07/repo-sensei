@@ -123,7 +123,9 @@ export function redrawInput(diagram: Diagram): DiagramInput | null {
   const prompt = diagram.prompt as {
     question?: string;
     from_trace?: DiagramInput["from_trace"];
+    whole_app?: boolean;
   };
+  if (prompt.whole_app) return { whole_app: true, kind: "architecture" };
   if (prompt.question) return { question: prompt.question, kind: diagram.kind };
   if (prompt.from_trace) return { from_trace: prompt.from_trace, kind: diagram.kind };
   return null;

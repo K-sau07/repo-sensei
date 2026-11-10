@@ -2599,6 +2599,18 @@
               }
             ],
             "title": "Title"
+          },
+          "whole_app": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The whole app's architecture: its modules by tier and how they depend on each other, from the graph alone (no model: free). Drawn as an architecture.",
+            "title": "Whole App"
           }
         },
         "title": "DiagramIn",
@@ -2738,7 +2750,8 @@
       "DiagramSource": {
         "enum": [
           "trace",
-          "question"
+          "question",
+          "repo"
         ],
         "title": "DiagramSource",
         "type": "string"
@@ -16804,7 +16817,7 @@
         ]
       },
       "post": {
-        "description": "Draw a diagram from a trace or a question, at the index (or ``ref``), and keep it.",
+        "description": "Draw a diagram from a trace, a question or the whole app, at the index (or ``ref``), and\nkeep it.",
         "operationId": "create_diagram_api_v1_orgs__org__repos__repo__diagrams_post",
         "parameters": [
           {

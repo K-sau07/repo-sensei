@@ -1832,7 +1832,8 @@ export interface paths {
         put?: never;
         /**
          * Create Diagram
-         * @description Draw a diagram from a trace or a question, at the index (or ``ref``), and keep it.
+         * @description Draw a diagram from a trace, a question or the whole app, at the index (or ``ref``), and
+         *     keep it.
          */
         post: operations["create_diagram_api_v1_orgs__org__repos__repo__diagrams_post"];
         delete?: never;
@@ -3603,6 +3604,11 @@ export interface components {
             question?: string | null;
             /** Title */
             title?: string | null;
+            /**
+             * Whole App
+             * @description The whole app's architecture: its modules by tier and how they depend on each other, from the graph alone (no model: free). Drawn as an architecture.
+             */
+            whole_app?: boolean | null;
         };
         /**
          * DiagramKind
@@ -3664,7 +3670,7 @@ export interface components {
          * DiagramSource
          * @enum {string}
          */
-        DiagramSource: "trace" | "question";
+        DiagramSource: "trace" | "question" | "repo";
         /** DiagramSummary */
         DiagramSummary: {
             /** Commit Sha */

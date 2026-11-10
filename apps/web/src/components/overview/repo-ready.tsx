@@ -9,6 +9,7 @@
  */
 import { cn } from "cn";
 import { ChevronDown, MessageCircleQuestion } from "lucide-react";
+import type { Route } from "next";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -187,10 +188,20 @@ function Architecture({ org, repo, overview }: { org: string; repo: string; over
       id="overview-architecture"
       title="Architecture"
       aside={
-        <span className="text-xs text-fg-muted">
-          {plural(modules.length, "module")}
-          {rest > 0 ? ` · ${plural(rest, "file")} in the rest` : ""} ·{" "}
-          {plural(links.length, "link")} between them
+        <span className="flex flex-wrap items-center gap-3 text-xs text-fg-muted">
+          <span>
+            {plural(modules.length, "module")}
+            {rest > 0 ? ` · ${plural(rest, "file")} in the rest` : ""} ·{" "}
+            {plural(links.length, "link")} between them
+          </span>
+          {modules.length > 0 ? (
+            <Link
+              href={`${repoPath(org, repo, "diagrams")}?whole=1` as Route}
+              className="text-fg underline underline-offset-4 hover:text-signal"
+            >
+              Open as an architecture diagram
+            </Link>
+          ) : null}
         </span>
       }
     >

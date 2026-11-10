@@ -1,12 +1,13 @@
 "use client";
 
 /**
- * `/[org]/[repo]/diagrams` (6.6): the repository's diagrams, newest first, each with how much of
- * it the code graph proves; and "New diagram": a question ("How does login work?") or, from a
- * trace's "Open as diagram" (``?from=`` its entry, ``&path=`` which path), its flow, drawn from
- * the graph and opened.
+ * `/[org]/[repo]/diagrams` (6.6): the whole app's architecture first (how the repository is
+ * built: its modules by tier and how they depend on each other, from the graph alone, free);
+ * the repository's diagrams, newest first, each with how much of it the code graph proves; and
+ * "New diagram": a question ("How does login work?") or, from a trace's "Open as diagram"
+ * (``?from=`` its entry, ``&path=`` which path), its flow, drawn from the graph and opened.
  */
-import { ShieldCheck, Workflow } from "lucide-react";
+import { Network, ShieldCheck, Workflow } from "lucide-react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
@@ -73,6 +74,7 @@ function Diagrams() {
   const list = useDiagrams();
   return (
     <div className="mx-auto flex w-full max-w-5xl flex-col gap-6 p-6">
+      <WholeApp />
       <NewDiagram />
       <section aria-labelledby="diagrams-heading" className="flex flex-col gap-2">
         <h2 id="diagrams-heading" className="text-sm font-medium text-fg-muted">
@@ -116,6 +118,61 @@ function Diagrams() {
         )}
       </section>
     </div>
+  );
+}
+
+/** The whole app's architecture, a click away: drawn from the graph, so nothing is spent. */
+function WholeApp() {
+  const { org, repo } = useRepoSlug();
+  const router = useRouter();
+  const search = useSearchParams();
+  const create = useCreateDiagram();
+  const [error, setError] = useState<string | null>(null);
+  const draw = async () => {
+    setError(null);
+    try {
+      const made = await create.draw({ whole_app: true, kind: "architecture" });
+      router.push(repoPath(org, repo, `diagrams/${made.id}`));
+    } catch (caught) {
+      setError(caught instanceof ApiError ? caught.message : "The architecture couldn't be drawn.");
+    }
+  };
+  // The overview's "Open as an architecture diagram" (``?whole=1``): drawn once, the address
+  // left clean.
+  const started = useRef(false);
+  const asked = search.get("whole") === "1";
+  useEffect(() => {
+    if (!asked || started.current) return;
+    started.current = true;
+    window.history.replaceState(null, "", window.location.pathname);
+    void draw();
+    // Once, for the address.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [asked]);
+  return (
+    <section
+      aria-labelledby="whole-app-heading"
+      className="flex flex-wrap items-center gap-4 rounded-lg border border-line bg-surface-1 p-4"
+    >
+      <Network aria-hidden className="size-8 shrink-0 text-signal" />
+      <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+        <h2 id="whole-app-heading" className="text-sm font-medium">
+          The whole app&apos;s architecture
+        </h2>
+        <p className="text-xs text-fg-muted">
+          How this repository is built: its parts by tier (frontend, API, services, data), what each
+          holds, and how they connect. From the code graph, so every line is real.
+        </p>
+      </div>
+      <Button disabled={create.isPending} onClick={() => void draw()}>
+        {create.isPending ? "Mapping…" : "Map the architecture"}
+      </Button>
+      {error ? (
+        <p role="alert" className="w-full text-sm text-danger">
+          {error}
+        </p>
+      ) : null}
+    </section>
   );
 }
 

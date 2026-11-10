@@ -3,9 +3,10 @@
 /**
  * A diagram's node, opened beside the canvas (6.6): its code at the diagram's commit, a question
  * about it (the Ask tab, scoped to its lines), its trace, and "Expand this step": a diagram of
- * the flow from it, drawn from the graph.
+ * the flow from it, drawn from the graph. A module of the whole app's architecture: what it holds,
+ * its folder in the code browser, and a question about it (scoped to the folder).
  */
-import { CornerDownRight, Route as RouteIcon, X } from "lucide-react";
+import { CornerDownRight, FolderOpen, Route as RouteIcon, X } from "lucide-react";
 import type { Route } from "next";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -22,6 +23,7 @@ import { repoPath } from "@/lib/routes";
 import { traceHref } from "@/lib/trace/url-state";
 
 import { laneOf } from "./blueprint-node";
+import { kindWords } from "./entity-node";
 
 export function NodePanel({
   node,
@@ -44,13 +46,14 @@ export function NodePanel({
   const content = cited && file.data && "content" in file.data ? file.data.content : null;
   const language = file.data && "language" in file.data ? (file.data.language ?? null) : null;
   const lane = laneOf(node.layer);
+  const isModule = node.kind === "module"; // a module's id is its folder
   const ask = () => {
     const text = question.trim() || `How does ${node.label} work?`;
     router.push(
       askHref(org, repo, text, {
-        path: cited?.path ?? null,
-        startLine: cited?.start_line ?? null,
-        endLine: cited?.end_line ?? null,
+        path: isModule ? node.id : (cited?.path ?? null),
+        startLine: isModule ? null : (cited?.start_line ?? null),
+        endLine: isModule ? null : (cited?.end_line ?? null),
       }),
     );
   };
@@ -76,14 +79,25 @@ export function NodePanel({
         </Button>
       </header>
       <div className="flex flex-wrap gap-1 border-b border-line px-3 py-2">
-        <Link
-          href={`${traceHref(org, repo, { from: node.id })}&ref=${sha}` as Route}
-          className="inline-flex h-7 items-center gap-1.5 rounded-sm px-2 text-xs text-fg-muted hover:bg-surface-2 hover:text-fg"
-        >
-          <RouteIcon aria-hidden className="size-3.5" />
-          Trace from here
-        </Link>
-        {onExpand ? (
+        {isModule ? (
+          <Link
+            href={`${repoPath(org, repo, `code/${node.id}`)}?ref=${sha}` as Route}
+            className="inline-flex h-7 items-center gap-1.5 rounded-sm px-2 text-xs text-fg-muted hover:bg-surface-2 hover:text-fg"
+          >
+            <FolderOpen aria-hidden className="size-3.5" />
+            Open the folder
+          </Link>
+        ) : null}
+        {isModule ? null : (
+          <Link
+            href={`${traceHref(org, repo, { from: node.id })}&ref=${sha}` as Route}
+            className="inline-flex h-7 items-center gap-1.5 rounded-sm px-2 text-xs text-fg-muted hover:bg-surface-2 hover:text-fg"
+          >
+            <RouteIcon aria-hidden className="size-3.5" />
+            Trace from here
+          </Link>
+        )}
+        {onExpand && !isModule ? (
           <Button
             size="sm"
             variant="ghost"
@@ -117,8 +131,10 @@ export function NodePanel({
           Ask
         </Button>
       </form>
-      <div className="min-h-0 flex-1">
-        {cited && content !== null ? (
+      <div className="min-h-0 flex-1 overflow-auto">
+        {isModule ? (
+          <ModuleParts node={node} />
+        ) : cited && content !== null ? (
           <CodeViewer
             path={cited.path}
             language={language}
@@ -144,5 +160,30 @@ export function NodePanel({
         </Link>
       </p>
     </aside>
+  );
+}
+
+/** What a module holds, as the architecture lists it. */
+function ModuleParts({ node }: { node: SpecNode }) {
+  const members = node.members ?? [];
+  const more = node.more_members ?? 0;
+  if (members.length === 0) {
+    return (
+      <p className="p-3 text-xs text-fg-faint">
+        No endpoints, tables or components in it: its code is functions and classes. Open the folder
+        to read it.
+      </p>
+    );
+  }
+  return (
+    <ul className="flex flex-col gap-1 p-3" aria-label={`What ${node.label} holds`}>
+      {members.map((member) => (
+        <li key={`${member.kind}:${member.name}`} className="flex items-baseline gap-2 text-xs">
+          <span className="w-20 shrink-0 text-fg-faint">{kindWords(member.kind)}</span>
+          <span className="truncate font-mono text-fg">{member.name}</span>
+        </li>
+      ))}
+      {more > 0 ? <li className="text-xs text-fg-faint">and {more} more</li> : null}
+    </ul>
   );
 }
