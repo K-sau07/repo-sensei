@@ -31,11 +31,11 @@ they came from is kept only as a keyed hash, to apply per-address limits.
   change you approve, to open a pull request.
 - **Email**: invitations and the notifications you choose are sent through Resend, which receives
   the recipient's address and the message.
-- **Hosting**: the service runs on Fly.io (the API and its database), Vercel (the web pages) and
-  a Hetzner server (where a fix runs your repository's tests, isolated, reaching nothing
-  but the package registries its dependencies come from). Upstash
-  provides its queues, Cloudflare its storage and DNS. Each stores or carries data only to run
-  the service.
+- **Hosting**: the service runs on one server at Oracle Cloud: the web pages, the API, its
+  database and queues, and the isolated sandbox where a fix runs your repository's tests (reaching
+  nothing but the package registries its dependencies come from). Cloudflare carries its traffic
+  (HTTPS, DNS) and stores its database backups. Each stores or carries data only to run the
+  service.
 - **Sentry and Slack**, only when your organization connects them, to start fixes from errors
   and post notifications.
 - **Error reporting**: errors in the service are reported to Sentry without personal data.
