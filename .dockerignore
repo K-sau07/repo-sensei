@@ -8,6 +8,12 @@
 !workers/
 !scripts/healthcheck.py
 !scripts/worker_healthcheck.py
+# The web app's image (infra/docker/web.Dockerfile)
+!package.json
+!pnpm-lock.yaml
+!pnpm-workspace.yaml
+!patches/
+!apps/web/
 
 # Even inside included folders
 **/__pycache__
@@ -18,3 +24,9 @@
 **/.env.*
 **/*.pem
 **/node_modules
+**/.next
+**/.next-*
+**/storybook-static
+**/test-results
+**/playwright-report
+**/coverage

@@ -109,8 +109,9 @@ make check        # lint, types and unit tests (Python, web, stories with access
 make test-int     # integration tests against the local stack
 ```
 
-Deploying: `infra/fly/README.md` (API, workers, Postgres with point-in-time restore) and
-`infra/sandbox-host/` (the host that runs fixes).
+Deploying: `infra/single-server/` puts everything on one machine (an Oracle Cloud Always Free VM
+works) behind a Cloudflare Tunnel, for $0 beyond the models; `infra/fly/README.md` splits it
+across Fly.io and a sandbox host (`infra/sandbox-host/`), with point-in-time restore either way.
 
 ## License
 

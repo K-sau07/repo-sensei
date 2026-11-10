@@ -32,7 +32,9 @@ echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/gviso
   > /etc/apt/sources.list.d/gvisor.list
 apt-get update
 apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin runsc
-runsc install
+# --overlay2=none: an install's writes are committed into an image, and gVisor's default root
+# overlay would keep them inside the container (the sandbox's notes in .env.example).
+runsc install -- --overlay2=none
 systemctl reload docker
 docker info --format '{{json .Runtimes}}' | grep -q runsc || { echo "runsc isn't a Docker runtime" >&2; exit 1; }
 # A container under gVisor really is: its kernel is gVisor's.
@@ -49,6 +51,7 @@ ufw --force enable
 # which is why the host runs nothing else and holds no secret beyond the worker's).
 id sensei >/dev/null 2>&1 || useradd --system --create-home --home-dir "$HOME_DIR" --shell /usr/sbin/nologin sensei
 usermod -aG docker sensei
+chown -R sensei:sensei "$HOME_DIR"  # a checkout made before (as root, by single-server/setup.sh)
 install -d -o sensei -g sensei -m 0750 /data/repos
 install -d -m 0750 -o root -g sensei /etc/repo-sensei
 

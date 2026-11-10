@@ -1,0 +1,197 @@
+# repo-sensei on one server (10.12, the $0 deployment: an Oracle Cloud Always Free Arm VM or any
+# Ubuntu 24.04 box). Everything runs here: Postgres (our image, WAL-G backups to a bucket when one
+# is set), Redis, local S3-compatible storage, the API, the workers and scheduler, the web app,
+# and a Cloudflare Tunnel, the only way in (no port is open to the internet). The fix stages'
+# worker runs on the host itself, beside Docker and gVisor (infra/sandbox-host), reaching
+# Postgres, Redis and storage on 127.0.0.1. See README.md; setup.sh does it all.
+#
+#   docker compose --env-file .env up -d --build
+
+name: repo-sensei
+
+x-app: &app
+  env_file: .env
+  restart: unless-stopped
+  volumes:
+    - ./github-app.pem:/run/secrets/github-app.pem:ro
+  depends_on:
+    migrate:
+      condition: service_completed_successfully
+    redis:
+      condition: service_healthy
+    s3-init:
+      condition: service_completed_successfully
+
+services:
+  postgres:
+    build: ../postgres
+    image: repo-sensei/postgres:18
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: sensei
+      POSTGRES_PASSWORD: ${SENSEI_PG_PASSWORD:?set in .env}
+      POSTGRES_DB: sensei
+      # Backups (optional, recommended): WAL archived as it fills, a base backup a day.
+      WALG_S3_PREFIX: ${WALG_S3_PREFIX:-}
+      AWS_ACCESS_KEY_ID: ${BACKUP_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${BACKUP_SECRET_ACCESS_KEY:-}
+      AWS_ENDPOINT: ${BACKUP_ENDPOINT:-}
+      AWS_REGION: auto
+      AWS_S3_FORCE_PATH_STYLE: "true"
+    command:
+      - -c
+      - config_file=/etc/postgresql/postgresql.conf
+      - -c
+      - shared_buffers=1GB
+      - -c
+      - maintenance_work_mem=512MB
+      - -c
+      - work_mem=32MB
+    volumes:
+      - pgdata:/var/lib/postgresql
+    ports:
+      - "127.0.0.1:5432:5432" # for the fix stages' worker on the host
+    shm_size: 512mb
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sensei -d sensei"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  redis:
+    image: redis:7.4.7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redisdata:/data
+    ports:
+      - "127.0.0.1:6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  # Snapshots and artifacts, on this disk (backups go to a bucket elsewhere).
+  s3:
+    image: chrislusf/seaweedfs:4.48
+    restart: unless-stopped
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        printf '{"identities":[{"name":"sensei","credentials":[{"accessKey":"%s","secretKey":"%s"}],"actions":["Admin","Read","List","Tagging","Write"]}]}'
+        "$$S3_ACCESS_KEY" "$$S3_SECRET_KEY" > /tmp/s3.json &&
+        exec weed server -dir=/data -volume.max=200 -master.volumeSizeLimitMB=512
+        -s3 -s3.port=8333 -s3.config=/tmp/s3.json
+    environment:
+      S3_ACCESS_KEY: ${SENSEI_S3_ACCESS_KEY:?set in .env}
+      S3_SECRET_KEY: ${SENSEI_S3_SECRET_KEY:?set in .env}
+    volumes:
+      - s3data:/data
+    ports:
+      - "127.0.0.1:8333:8333"
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 8333"]
+      interval: 5s
+      timeout: 3s
+      retries: 40
+
+  s3-init:
+    image: amazon/aws-cli:2.38.1
+    depends_on:
+      s3:
+        condition: service_healthy
+    environment:
+      AWS_ACCESS_KEY_ID: ${SENSEI_S3_ACCESS_KEY}
+      AWS_SECRET_ACCESS_KEY: ${SENSEI_S3_SECRET_KEY}
+      AWS_DEFAULT_REGION: us-east-1
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        for b in sensei-snapshots sensei-artifacts; do
+        until aws --endpoint-url http://s3:8333 s3api head-bucket --bucket $$b 2>/dev/null
+        || aws --endpoint-url http://s3:8333 s3 mb s3://$$b; do sleep 1; done; done
+    restart: "no"
+
+  migrate:
+    build:
+      context: ../..
+      dockerfile: infra/docker/api.Dockerfile
+    image: repo-sensei/api
+    env_file: .env
+    volumes:
+      - ./github-app.pem:/run/secrets/github-app.pem:ro
+    command: ["alembic", "-c", "packages/core/alembic.ini", "upgrade", "head"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    <<: *app
+    image: repo-sensei/api
+    environment:
+      # Set by Cloudflare on every request (a client-sent one is replaced); the web app passes
+      # it on with what it forwards.
+      SENSEI_API_CLIENT_IP_HEADER: cf-connecting-ip
+    volumes:
+      - ./github-app.pem:/run/secrets/github-app.pem:ro
+      - snapshots:/data/snapshots
+
+  worker:
+    <<: *app
+    build:
+      context: ../..
+      dockerfile: infra/docker/worker.Dockerfile
+    image: repo-sensei/worker
+    environment:
+      # Every queue but the fix stages' (agent, sandbox): those run on the host (gVisor).
+      SENSEI_WORKER_QUEUES: default,webhooks,ingest,parse,embed,llm,graph,maintenance
+      SENSEI_WORKER_CONCURRENCY: "2"
+    volumes:
+      - ./github-app.pem:/run/secrets/github-app.pem:ro
+      - repos:/data/repos
+
+  beat:
+    <<: *app
+    image: repo-sensei/worker
+    command:
+      [
+        "celery",
+        "-A",
+        "sensei_workers.app",
+        "beat",
+        "--loglevel=INFO",
+        "--schedule=/tmp/celerybeat-schedule",
+      ]
+
+  web:
+    build:
+      context: ../..
+      dockerfile: infra/docker/web.Dockerfile
+      args:
+        API_ORIGIN: http://api:8000
+        WEB_ORIGIN: ${SENSEI_WEB_ORIGIN:?set in .env}
+    image: repo-sensei/web
+    restart: unless-stopped
+    depends_on:
+      - api
+
+  # The only way in: Cloudflare's edge to this box, outbound (no open port). Its token says which
+  # hostname it serves; that hostname's traffic goes to the web app (set in Cloudflare's
+  # dashboard: Zero Trust → Networks → Tunnels → Public hostname → http://web:3000).
+  cloudflared:
+    image: cloudflare/cloudflared:2026.10.7
+    restart: unless-stopped
+    command: ["tunnel", "--no-autoupdate", "run"]
+    environment:
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:?set in .env}
+    depends_on:
+      - web
+
+volumes:
+  pgdata:
+  redisdata:
+  s3data:
+  snapshots:
+  repos:
