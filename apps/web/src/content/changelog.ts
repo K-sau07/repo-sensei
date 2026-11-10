@@ -7,6 +7,16 @@ export interface Release {
 
 export const RELEASES: readonly Release[] = [
   {
+    date: "2026-11-10",
+    title: "Benchmarks, speed and safety",
+    changes: [
+      "CrossLayerBench: 101 hand-labelled flows over five full-stack repositories, and how the tracer does on them, published.",
+      "Insights say how fast the app's pages were for your team, against their budgets.",
+      "Answers never load images, and every agent treats a repository's text as data.",
+      "The privacy page now names every provider that handles data, page-speed measurements and backups; the terms add limits and liability; privacy and security have their own addresses.",
+    ],
+  },
+  {
     date: "2026-11-04",
     title: "The public site, Explore and settings",
     changes: [

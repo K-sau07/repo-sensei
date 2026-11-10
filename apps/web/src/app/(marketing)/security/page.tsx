@@ -14,7 +14,7 @@ export const metadata: Metadata = {
 /** The same page as the docs' security model, for those who look for it here. */
 export default function SecurityPage() {
   return (
-    <LongPage title="Security" lead={LEAD} updated="2026-11-04">
+    <LongPage title="Security" lead={LEAD} updated="2026-11-10">
       <SecurityModel />
     </LongPage>
   );

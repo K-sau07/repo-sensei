@@ -11,7 +11,7 @@ export const metadata: Metadata = {
 
 export default function TermsPage() {
   return (
-    <LongPage title="Terms" updated="2026-11-04">
+    <LongPage title="Terms" updated="2026-11-10">
       <Terms />
     </LongPage>
   );

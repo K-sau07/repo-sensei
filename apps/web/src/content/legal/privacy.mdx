@@ -1,10 +1,11 @@
-This page says, in plain words, what repo-sensei keeps about you and your code, why, and for how
-long. repo-sensei is in early access; this page will be replaced by a reviewed policy before it
-is generally available, and changes will be listed in the [changelog](/changelog).
+This page says, in plain words, what repo-sensei keeps about you and your code, why, who else
+handles it, and for how long. repo-sensei is in early access; changes to this page are listed in
+the [changelog](/changelog).
 
 ## What is kept
 
-- **Your GitHub account**: its id, login, name, email and avatar, from signing in.
+- **Your GitHub account**: its id, login, name, email and avatar, from signing in, and the
+  GitHub tokens that let repo-sensei act for you (encrypted).
 - **Your sessions**: when each started and was last used, and the address and browser it came
   from. **Settings → Sessions** shows them and signs any out.
 - **What you make**: organizations, memberships and invitations, questions and answers,
@@ -12,23 +13,34 @@ is generally available, and changes will be listed in the [changelog](/changelog
 - **The code of repositories you connect**: a copy of each indexed commit, and the index made
   from it (symbols, search indexes, the code's graph, summaries).
 - **Usage**: what each action cost and on which model, to keep within limits and caps.
+- **How fast pages were**: in the app (not the public site), your browser reports how long a page
+  took to show and to respond, with the page's route as a pattern (`/[org]/[repo]/ask`). It
+  holds no names, and nothing that says who you are beyond your organization. These are kept
+  30 days and shown, combined, on your organization's insights.
 - **The audit log**: sign-ins and changes to members, roles, repositories, keys, integrations
   and fixes, with who made them, when, and the address they came from.
 
-For questions asked without an account on [Explore](/explore), no account is made; the address
+For questions asked without an account on [Explore](/explore), no account is made. The address
 they came from is kept only as a keyed hash, to apply per-address limits.
 
-## Who it is shared with
+## Who handles it
 
 - **AI providers**, to index and answer: parts of your code and your questions go to Anthropic
   (answers, summaries, plans and patches) and to Voyage AI (embeddings and reranking).
-- **GitHub**, which repo-sensei calls to read the repositories you connect.
+- **GitHub**, which repo-sensei calls to read the repositories you connect and, for a fix or
+  change you approve, to open a pull request.
+- **Email**: invitations and the notifications you choose are sent through Resend, which receives
+  the recipient's address and the message.
+- **Hosting**: the service runs on Fly.io (the API and its database), Vercel (the web pages) and
+  a Hetzner server (where a fix runs your repository's tests, isolated, reaching nothing
+  but the package registries its dependencies come from). Upstash
+  provides its queues, Cloudflare its storage and DNS. Each stores or carries data only to run
+  the service.
 - **Sentry and Slack**, only when your organization connects them, to start fixes from errors
   and post notifications.
-- **Error reporting**: when it is set up, errors in the service are reported without personal
-  data.
+- **Error reporting**: errors in the service are reported to Sentry without personal data.
 
-Nothing is sold, and there is no advertising or analytics tracking on these pages.
+Nothing is sold, and there is no advertising or cross-site tracking.
 
 ## Cookies and storage
 
@@ -45,9 +57,11 @@ server.
   at once. What it wrote in organizations stays with them, by an anonymous author. The audit
   log is never edited: its entries keep the anonymous account's id and the addresses they came
   from.
+- **Backups** of the database are kept for 7 days, so anything deleted is gone from them within
+  8 days.
 
 ## Your choices
 
 Disconnect a repository to remove it and its index; delete an organization or your account from
-its settings. For anything else, open an issue on
-[GitHub](https://github.com/K-sau07/repo-sensei/issues).
+its settings. To ask what is kept about you, to have something corrected or removed, or for
+anything else about your data, write to <Contact to="privacy" />.

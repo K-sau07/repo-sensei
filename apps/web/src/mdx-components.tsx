@@ -18,8 +18,20 @@ function Anchor({ href = "", children }: ComponentProps<"a">) {
   );
 }
 
+/** The site's address for ``to`` (privacy@, security@ its domain), from the site's origin. */
+export function contactAddress(to: "privacy" | "security"): string {
+  const origin = process.env.SENSEI_WEB_ORIGIN ?? "http://localhost:3000";
+  return `${to}@${new URL(origin).hostname.replace(/^www\./, "")}`;
+}
+
+function Contact({ to }: { to: "privacy" | "security" }) {
+  const address = contactAddress(to);
+  return <a href={`mailto:${address}`}>{address}</a>;
+}
+
 const components: MDXComponents = {
   a: Anchor,
+  Contact,
 };
 
 export function useMDXComponents(): MDXComponents {

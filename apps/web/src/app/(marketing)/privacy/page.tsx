@@ -11,7 +11,7 @@ export const metadata: Metadata = {
 
 export default function PrivacyPage() {
   return (
-    <LongPage title="Privacy" updated="2026-11-04">
+    <LongPage title="Privacy" updated="2026-11-10">
       <Privacy />
     </LongPage>
   );
