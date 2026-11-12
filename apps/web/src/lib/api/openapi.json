@@ -2609,8 +2609,20 @@
                 "type": "null"
               }
             ],
-            "description": "The whole app's architecture: its modules by tier and how they depend on each other, from the graph alone (no model: free). Drawn as an architecture.",
+            "description": "The whole app's architecture: its parts (named and grouped by the model from its modules), the outside systems it uses, and the graph's lines between them. Drawn as an architecture.",
             "title": "Whole App"
+          },
+          "whole_schema": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The whole schema: its tables, their columns and the foreign keys between them, as the code declares them (no model: free). Drawn as an ER diagram.",
+            "title": "Whole Schema"
           }
         },
         "title": "DiagramIn",
@@ -2620,7 +2632,8 @@
         "enum": [
           "sequence",
           "flowchart",
-          "architecture"
+          "architecture",
+          "er"
         ],
         "title": "DiagramKind",
         "type": "string"

@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from sensei_core.mail import MemoryMailer
 from sensei_core.models import (
+    CodeNode,
     IndexJob,
     JobKind,
     JobStatus,
@@ -269,16 +270,26 @@ async def test_drawing_is_limited_per_minute(
 
 
 @pytest.mark.integration
-async def test_the_whole_apps_architecture_is_drawn_from_the_graph_alone(
+async def test_the_whole_apps_architecture_is_named_by_the_model_and_lined_by_the_graph(
     api_app: FastAPI, client: httpx.AsyncClient, db_session: AsyncSession, tmp_path: Path
 ) -> None:
     url, _, headers = await _indexed(api_app, client, db_session, tmp_path)
-    # A model that would fail the test if asked: the architecture is the graph's, for nothing.
-    asked: list[object] = []
+    sent: list[dict[str, Any]] = []
+    answer = {
+        "name": "Items", "summary": "Creates items.",
+        "components": [
+            {"name": "Items API", "role": "api", "icon": "server",
+             "description": "Takes new items.", "modules": ["backend/app/api/routes"]},
+            {"name": "Items service", "role": "service", "icon": "cog",
+             "description": "Saves them.", "modules": ["backend/app/services"]},
+            {"name": "Settings", "role": "other", "icon": "wrench",
+             "description": "Its values.", "modules": ["backend/app/core"]},
+        ],
+    }  # fmt: skip
 
     def reply(request: httpx2.Request) -> httpx2.Response:
-        asked.append(request)
-        return httpx2.Response(500)
+        sent.append(json.loads(request.content))
+        return httpx2.Response(200, json=message(json.dumps(answer)))
 
     api_app.state.ask_client = FakeAnthropic(routes={"/v1/messages": reply}).client()
     made = await client.post(f"{url}/diagrams", json={"whole_app": True}, headers=headers)
@@ -288,13 +299,89 @@ async def test_the_whole_apps_architecture_is_drawn_from_the_graph_alone(
         "repo", "architecture", {"whole_app": True},
     )  # fmt: skip
     assert body["title"] == "Architecture of o/items"
-    assert asked == []
-    nodes = body["spec"]["nodes"]
-    assert nodes, body
-    assert all(n["kind"] == "module" for n in nodes)
-    assert body["verified_ratio"] == 1.0
-    assert all(e["verified"] for e in body["spec"]["edges"])
+    assert len(sent) == 1
+    assert "backend/app/api/routes [api]" in sent[0]["messages"][0]["content"]
+    spec = body["spec"]
+    assert spec["summary"] == "Creates items."
+    nodes = {n["label"]: n for n in spec["nodes"]}
+    assert {"Items API", "Items service", "Client"} <= set(nodes)
+    assert (nodes["Items API"]["icon"], nodes["Items API"]["note"]) == (
+        "server",
+        "Takes new items.",
+    )
+    lines = {(e["from"], e["to"]): e for e in spec["edges"]}
+    api, service = nodes["Items API"]["id"], nodes["Items service"]["id"]
+    assert lines[(api, service)]["verified"] is True  # the graph's call
+    client_line = lines[("actor:user", api)]
+    assert (client_line["verified"], client_line["inferred"]["reason"]) == (
+        False, "clients call its endpoints over HTTP",
+    )  # fmt: skip
+    # Its use is in the ledger, as a diagram's.
+    events = (await db_session.scalars(select(UsageEvent))).all()
+    assert [e.ref_type for e in events] == ["diagram"]
     both = await client.post(
         f"{url}/diagrams", json={"whole_app": True, "question": "items"}, headers=headers
     )
     assert (both.status_code, both.json()["error"]["code"]) == (422, "diagram_source")
+
+
+def _schema_node(snapshot: Snapshot, kind: str, key: str, name: str, **attrs: Any) -> CodeNode:
+    return CodeNode(
+        org_id=snapshot.org_id, repo_id=snapshot.repo_id, snapshot_id=snapshot.id, kind=kind,
+        symbol_key=key, name=name, qualified_name=name, file_id=None, start_line=1, end_line=1,
+        start_col=0, end_col=0, lang="sql", attrs=attrs, content_hash=b"\0" * 32,
+    )  # fmt: skip
+
+
+@pytest.mark.integration
+async def test_the_whole_schema_is_an_er_diagram_from_the_graph_alone(
+    api_app: FastAPI, client: httpx.AsyncClient, db_session: AsyncSession, tmp_path: Path
+) -> None:
+    url, snapshot, headers = await _indexed(api_app, client, db_session, tmp_path)
+    user, item = "table user", "table item"
+    db_session.add_all([
+        _schema_node(snapshot, "table", user, "user", sources=["model"]),
+        _schema_node(snapshot, "table", item, "item", sources=["model"]),
+        _schema_node(snapshot, "table", "table raw", "raw", sources=["sql"]),  # SQL names it only
+        _schema_node(
+            snapshot, "column", "column user.id", "id", table=user, type="UUID", pk=True,
+            nullable=False,
+        ),
+        _schema_node(snapshot, "column", "column item.id", "id", table=item, type="UUID", pk=True),
+        _schema_node(
+            snapshot, "column", "column item.owner_id", "owner_id", table=item, type="UUID",
+            nullable=False, references=user, references_column="id",
+        ),
+    ])  # fmt: skip
+    await db_session.flush()
+    asked: list[object] = []
+
+    def reply(request: httpx2.Request) -> httpx2.Response:
+        asked.append(request)
+        return httpx2.Response(500)
+
+    api_app.state.ask_client = FakeAnthropic(routes={"/v1/messages": reply}).client()
+    made = await client.post(f"{url}/diagrams", json={"whole_schema": True}, headers=headers)
+    assert made.status_code == 201, made.text
+    body = made.json()
+    assert (body["source"], body["kind"], body["prompt"], body["title"]) == (
+        "repo", "er", {"whole_schema": True}, "Schema of o/items",
+    )  # fmt: skip
+    assert asked == []  # no model
+    nodes = {n["id"]: n for n in body["spec"]["nodes"]}
+    assert set(nodes) == {user, item}  # a table only SQL names, with no columns, is left out
+    assert nodes[item]["members"][1] == {
+        "name": "owner_id", "kind": "fk", "type": "UUID", "ref": "user.id", "nullable": False,
+    }  # fmt: skip
+    [edge] = body["spec"]["edges"]
+    assert (edge["from"], edge["to"], edge["type"], edge["verified"]) == (
+        item, user, "many_to_one", True,
+    )  # fmt: skip
+    assert body["mermaid"].startswith("erDiagram")
+    # An ER diagram of a question: what its code reaches (none of these tables: nothing).
+    asked_er = await client.post(
+        f"{url}/diagrams", json={"question": "create item", "kind": "er"}, headers=headers
+    )
+    assert asked_er.status_code == 404, asked_er.text
+    assert asked_er.json()["error"]["code"] == "diagram_nothing_found"
+    assert asked == []

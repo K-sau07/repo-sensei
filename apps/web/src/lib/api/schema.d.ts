@@ -3606,15 +3606,20 @@ export interface components {
             title?: string | null;
             /**
              * Whole App
-             * @description The whole app's architecture: its modules by tier and how they depend on each other, from the graph alone (no model: free). Drawn as an architecture.
+             * @description The whole app's architecture: its parts (named and grouped by the model from its modules), the outside systems it uses, and the graph's lines between them. Drawn as an architecture.
              */
             whole_app?: boolean | null;
+            /**
+             * Whole Schema
+             * @description The whole schema: its tables, their columns and the foreign keys between them, as the code declares them (no model: free). Drawn as an ER diagram.
+             */
+            whole_schema?: boolean | null;
         };
         /**
          * DiagramKind
          * @enum {string}
          */
-        DiagramKind: "sequence" | "flowchart" | "architecture";
+        DiagramKind: "sequence" | "flowchart" | "architecture" | "er";
         /** DiagramList */
         DiagramList: {
             /** Diagrams */

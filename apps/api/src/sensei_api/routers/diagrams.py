@@ -3,7 +3,12 @@
 ``POST …/diagrams`` draws one, from a trace (``from_trace``: its entry and options, and which
 of its paths) or a question (its trace when one follows from the words; else a bounded walk out
 from the symbols it names). The fast model labels the subgraph; the validator keeps only what
-the graph proves, or what it says why it infers (see :mod:`sensei_engine.diagrams`). It is
+the graph proves, or what it says why it infers (see :mod:`sensei_engine.diagrams`). Two are
+the whole repository's: its architecture (``whole_app``, :mod:`sensei_engine.architecture`: its
+parts named and grouped by the model, every line between them the graph's) and its schema
+(``whole_schema``, an ER diagram, :mod:`sensei_engine.er`, from the graph alone: no model,
+nothing spent); an ER diagram of a question or trace is its tables' and their neighbours',
+from the graph alone too. It is
 kept at the snapshot it was drawn at, with how much of it the graph proves (``verified_ratio``)
 and Mermaid compiled from it, each node linked to its code at that commit.
 
@@ -24,6 +29,7 @@ from urllib.parse import quote
 from fastapi import APIRouter, Query, Request, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import select
+from sqlalchemy.orm import aliased
 
 from sensei_api import streams
 from sensei_api.deps import DbSession, RedisClient, Writable
@@ -40,11 +46,21 @@ from sensei_core.audit import AuditAction, audit
 from sensei_core.config import Settings
 from sensei_core.errors import ForbiddenError, InvalidError, NotFoundError, RateLimitedError
 from sensei_core.indexing.snapshots import resolve_snapshot
-from sensei_core.models import Diagram, DiagramKind, DiagramSource, Repo, Role
+from sensei_core.models import (
+    CodeNode,
+    Diagram,
+    DiagramKind,
+    DiagramSource,
+    NodeKind,
+    Repo,
+    RepoFile,
+    Role,
+    Snapshot,
+)
 from sensei_core.orgs import model_choices
 from sensei_core.orgs.service import OrgAccess
 from sensei_core.storage import ObjectStorage
-from sensei_engine.architecture import whole_app
+from sensei_engine.architecture import draw, facts_of
 from sensei_engine.diagrams import (
     DiagramError,
     DiagramSpec,
@@ -55,6 +71,7 @@ from sensei_engine.diagrams import (
     generate,
     mermaid,
 )
+from sensei_engine.er import SchemaNode, reached_tables, schema
 from sensei_engine.graph.snapshot import GraphSnapshot
 from sensei_engine.graph.store import GraphStore
 from sensei_engine.graph.trace import (
@@ -64,7 +81,7 @@ from sensei_engine.graph.trace import (
     feature_entries,
     trace_feature,
 )
-from sensei_engine.llm.anthropic_client import AnthropicClient, LLMUsage
+from sensei_engine.llm.anthropic_client import AnthropicClient, LLMUsage, LLMUsageSink
 from sensei_engine.llm.ledger import usage_ledger
 
 router = APIRouter(prefix="/orgs/{org}/repos/{repo}", tags=["diagrams"])
@@ -87,8 +104,14 @@ class DiagramIn(BaseModel):
     question: str | None = Field(default=None, min_length=1, max_length=2000)
     whole_app: bool | None = Field(
         default=None,
-        description="The whole app's architecture: its modules by tier and how they depend on "
-        "each other, from the graph alone (no model: free). Drawn as an architecture.",
+        description="The whole app's architecture: its parts (named and grouped by the model "
+        "from its modules), the outside systems it uses, and the graph's lines between them. "
+        "Drawn as an architecture.",
+    )
+    whole_schema: bool | None = Field(
+        default=None,
+        description="The whole schema: its tables, their columns and the foreign keys between "
+        "them, as the code declares them (no model: free). Drawn as an ER diagram.",
     )
     kind: DiagramKind = DiagramKind.FLOWCHART
     title: str | None = Field(default=None, min_length=1, max_length=200)
@@ -218,14 +241,18 @@ async def create_diagram(
 ) -> DiagramOut:
     """Draw a diagram from a trace, a question or the whole app, at the index (or ``ref``), and
     keep it."""
-    given = sum([body.from_trace is not None, body.question is not None, bool(body.whole_app)])
+    given = sum([
+        body.from_trace is not None, body.question is not None, bool(body.whole_app),
+        bool(body.whole_schema),
+    ])  # fmt: skip
     if given != 1:
         raise InvalidError(
-            "Give one of from_trace, a question or whole_app.", code="diagram_source"
+            "Give one of from_trace, a question, whole_app or whole_schema.",
+            code="diagram_source",
         )
     await limit_graph(request, redis, access)
-    if body.whole_app:
-        return await _whole_app(request, access=access, repo=repo, db=db, body=body, ref=ref)
+    if body.whole_schema or (body.kind is DiagramKind.ER and not body.whole_app):
+        return await _schema(request, access=access, repo=repo, db=db, body=body, ref=ref)
     # A model labels it (up to three calls): its own bucket, within the org's day of spend.
     settings: Settings = request.app.state.settings
     bucket = TokenBucket(redis, name="diagram", per_minute=settings.agent.diagrams_per_minute)
@@ -243,12 +270,19 @@ async def create_diagram(
     store: GraphStore = request.app.state.graph_store
     storage: ObjectStorage = request.app.state.storage
     graph = await store.get(db, storage, snapshot)
-    sub, source = await asyncio.to_thread(_subgraph, graph, body)
     used: list[LLMUsage] = []
 
     async def note(usage: LLMUsage) -> None:
         used.append(usage)
 
+    if body.whole_app:
+        found = await _whole_app(
+            request, access=access, repo=repo, db=db, body=body, snapshot=snapshot, graph=graph,
+            on_usage=note,
+        )  # fmt: skip
+        await _ledger(request, db, repo=repo, access=access, found=found, used=used)
+        return diagram_out(found, access.org.slug, repo)
+    sub, source = await asyncio.to_thread(_subgraph, graph, body)
     try:
         floor = (await model_choices.load(db, repo.org_id)).diagrams
         made = await generate(
@@ -267,11 +301,7 @@ async def create_diagram(
         title=spec.title,
         kind=body.kind,
         source=source,
-        prompt=(
-            {"from_trace": body.from_trace.model_dump(by_alias=True, exclude_none=True)}
-            if body.from_trace is not None
-            else {"question": body.question}
-        ),
+        prompt=_prompt(body),
         spec=spec.as_json(),
         verified_ratio=spec.verified_ratio,
         created_by=access.user.id,
@@ -279,13 +309,25 @@ async def create_diagram(
     db.add(found)
     await db.flush()
     await db.refresh(found)
+    await _ledger(request, db, repo=repo, access=access, found=found, used=used)
+    return diagram_out(found, access.org.slug, repo)
+
+
+async def _ledger(
+    request: Request,
+    db: DbSession,
+    *,
+    repo: Repo,
+    access: OrgAccess,
+    found: Diagram,
+    used: list[LLMUsage],
+) -> None:
     ledger = usage_ledger(
         db, search.cost_calculator(request), org_id=repo.org_id, user_id=access.user.id,
         ref_type=REF_TYPE, ref_id=str(found.id),
     )  # fmt: skip
     for usage in used:
         await ledger(usage)
-    return diagram_out(found, access.org.slug, repo)
 
 
 async def _whole_app(
@@ -295,21 +337,25 @@ async def _whole_app(
     repo: Repo,
     db: DbSession,
     body: DiagramIn,
-    ref: str | None,
-) -> DiagramOut:
-    """The whole app's architecture, from the graph alone (no model, no spend)."""
-    snapshot = await resolve_snapshot(db, repo, ref)
-    store: GraphStore = request.app.state.graph_store
-    storage: ObjectStorage = request.app.state.storage
-    graph = await store.get(db, storage, snapshot)
+    snapshot: Snapshot,
+    graph: GraphSnapshot,
+    on_usage: LLMUsageSink,
+) -> Diagram:
+    """The whole app's architecture: the graph's modules, lines and outside systems, the parts
+    named and grouped by the model (by folder without one)."""
     roots = await snapshot_roots(request, db, snapshot)
-    title = body.title or f"Architecture of {repo.full_name}"
-    spec = await asyncio.to_thread(whole_app, graph, roots, title)
-    if not spec.nodes:
+    facts = await asyncio.to_thread(facts_of, graph, roots)
+    if not facts.parts:
         raise NotFoundError(
             "The graph has no modules to draw yet; index the repository first.",
             code="diagram_nothing_found",
         )
+    title = body.title or f"Architecture of {repo.full_name}"
+    floor = (await model_choices.load(db, repo.org_id)).diagrams
+    made = await draw(
+        _client(request), facts, title, repo.full_name, on_usage=on_usage, floor=floor
+    )
+    spec = made.spec
     found = Diagram(
         org_id=repo.org_id, repo_id=repo.id, snapshot_id=snapshot.id,
         commit_sha=snapshot.commit_sha, title=spec.title, kind=DiagramKind.ARCHITECTURE,
@@ -319,7 +365,76 @@ async def _whole_app(
     db.add(found)
     await db.flush()
     await db.refresh(found)
+    return found
+
+
+async def schema_rows(db: DbSession, snapshot: Snapshot) -> list[SchemaNode]:
+    """The snapshot's tables, columns and models, with their attrs (what the ER diagram reads)."""
+    file = aliased(RepoFile)
+    rows = await db.execute(
+        select(
+            CodeNode.symbol_key, CodeNode.kind, CodeNode.name, file.path, CodeNode.start_line,
+            CodeNode.end_line, CodeNode.attrs,
+        )
+        .outerjoin(file, file.id == CodeNode.file_id)
+        .where(
+            CodeNode.snapshot_id == snapshot.id,
+            CodeNode.kind.in_([NodeKind.TABLE, NodeKind.COLUMN, NodeKind.ORM_MODEL]),
+        )
+    )  # fmt: skip
+    return [
+        SchemaNode(key, kind, name, path, start, end, attrs or {})
+        for key, kind, name, path, start, end, attrs in rows.tuples()
+    ]
+
+
+async def _schema(
+    request: Request,
+    *,
+    access: OrgAccess,
+    repo: Repo,
+    db: DbSession,
+    body: DiagramIn,
+    ref: str | None,
+) -> DiagramOut:
+    """An ER diagram, from the graph alone (no model, no spend): the whole schema, or the
+    tables a question or trace reaches and their neighbours."""
+    snapshot = await resolve_snapshot(db, repo, ref)
+    rows = await schema_rows(db, snapshot)
+    only: set[str] | None = None
+    source, prompt = DiagramSource.REPO, {"whole_schema": True}
+    title = body.title or f"Schema of {repo.full_name}"
+    if not body.whole_schema:
+        store: GraphStore = request.app.state.graph_store
+        storage: ObjectStorage = request.app.state.storage
+        graph = await store.get(db, storage, snapshot)
+        sub, source = await asyncio.to_thread(_subgraph, graph, body)
+        only = reached_tables(graph, (c.node.symbol_key for c in sub.nodes))
+        prompt = _prompt(body)
+        title = body.title or f"Tables of {sub.context}"[:200]
+    spec = schema(rows, title, only=only)
+    if not spec.nodes:
+        raise NotFoundError(
+            "No tables to draw: the code declares none"
+            + (" that this reaches." if only is not None else " the index has read."),
+            code="diagram_nothing_found",
+        )
+    found = Diagram(
+        org_id=repo.org_id, repo_id=repo.id, snapshot_id=snapshot.id,
+        commit_sha=snapshot.commit_sha, title=spec.title, kind=DiagramKind.ER, source=source,
+        prompt=prompt, spec=spec.as_json(), verified_ratio=spec.verified_ratio,
+        created_by=access.user.id,
+    )  # fmt: skip
+    db.add(found)
+    await db.flush()
+    await db.refresh(found)
     return diagram_out(found, access.org.slug, repo)
+
+
+def _prompt(body: DiagramIn) -> dict[str, Any]:
+    if body.from_trace is not None:
+        return {"from_trace": body.from_trace.model_dump(by_alias=True, exclude_none=True)}
+    return {"question": body.question}
 
 
 @router.get("/diagrams", response_model=DiagramList)
