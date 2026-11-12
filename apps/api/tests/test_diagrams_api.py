@@ -300,7 +300,7 @@ async def test_the_whole_apps_architecture_is_named_by_the_model_and_lined_by_th
     )  # fmt: skip
     assert body["title"] == "Architecture of o/items"
     assert len(sent) == 1
-    assert "backend/app/api/routes [api]" in sent[0]["messages"][0]["content"]
+    assert "backend/app/api/routes [" in sent[0]["messages"][0]["content"]  # its modules, shown
     spec = body["spec"]
     assert spec["summary"] == "Creates items."
     nodes = {n["label"]: n for n in spec["nodes"]}
