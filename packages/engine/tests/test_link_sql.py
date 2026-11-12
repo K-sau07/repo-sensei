@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from sensei_engine.link.sql import MAX_SQL_CHARS, looks_like_sql, tables
+from sensei_engine.link.sql import MAX_SQL_CHARS, ddl, looks_like_sql, tables
 
 
 @pytest.mark.parametrize(
@@ -65,3 +65,22 @@ def test_a_huge_statement_is_cut_before_parsing() -> None:
     sql = "SELECT * FROM big WHERE a IN (" + ", ".join(["1"] * MAX_SQL_CHARS) + ")"
     found = tables(sql)
     assert found.error  # cut mid-list: parsed, failed, and quickly
+
+
+def test_a_create_table_says_its_keys_types_and_foreign_keys() -> None:
+    [orders, items] = ddl(
+        "CREATE TABLE orders (id BIGSERIAL PRIMARY KEY, user_id bigint NOT NULL REFERENCES "
+        "users(id), note varchar(20), shop int, CONSTRAINT fk FOREIGN KEY (shop) REFERENCES "
+        "public.shops (code));\n"
+        "create table if not exists `items` (code int not null, primary key (code)) engine=InnoDB;"
+    )
+    assert orders.facts == {
+        "id": {"type": "BIGSERIAL", "pk": True, "nullable": False},
+        "user_id": {
+            "type": "BIGINT", "nullable": False, "references": "table users",
+            "references_column": "id",
+        },
+        "note": {"type": "VARCHAR(20)"},
+        "shop": {"type": "INT", "references": "table shops", "references_column": "code"},
+    }  # fmt: skip
+    assert items.facts == {"code": {"type": "INT", "nullable": False, "pk": True}}

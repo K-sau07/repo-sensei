@@ -77,7 +77,7 @@ queries.
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable, Iterator, Sequence
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from posixpath import basename
 from typing import Any, Literal
@@ -130,6 +130,7 @@ _DERIVED_WRITES = frozenset({"delete", "remove"})
 _NOT_COLUMNS = frozenset({"Transient", "Formula", "JoinFormula", "ElementCollection"})
 _TO_MANY = frozenset({"OneToMany", "ManyToMany"})
 _TO_ONE = frozenset({"ManyToOne", "OneToOne"})
+MAX_TYPE = 40
 _EMBEDDED = frozenset({"Embedded", "EmbeddedId"})
 _JOIN_COLUMN_RE = re.compile(r"^@?\s*(?:[\w.]*\.)?JoinColumn\s*(\(.*\))\s*$", re.DOTALL)
 
@@ -521,6 +522,27 @@ def _join_columns(arguments: str | None) -> list[str]:
             if name:
                 found.append(name)
     return found
+
+
+def _column_facts(variable: Variable, marks: Mapping[str, Annotation]) -> dict[str, Any]:
+    """A plain column's facts: its type, ``@Id``, ``@Column(nullable = false)``."""
+    facts = _column_type(variable)
+    column = marks.get("Column")
+    if column is not None and "".join(elements(column.arguments).get("nullable", "").split()) == (
+        "false"
+    ):
+        facts["nullable"] = False
+    if "Id" in marks:
+        facts |= {"pk": True, "nullable": False}
+    return facts
+
+
+def _column_type(variable: Variable) -> dict[str, Any]:
+    """A column's type as its field's says it: ``java.util.UUID`` is ``UUID``, ``Order`` (a
+    relation's target) itself; generics left out."""
+    written = (variable.type or "").split("<", 1)[0].strip()
+    name = written.rsplit(".", 1)[-1][:MAX_TYPE]
+    return {"type": name} if name else {}
 
 
 def _string(arguments: str | None, *keys: str) -> str | None:
@@ -982,7 +1004,14 @@ class _Linker:
                     if name
                     else physical(f"{variable.name}_{self.id_column(target)}", self.naming)
                 )
-                attrs = {"references": f"table {target.table.lower()}"} if target else {}
+                attrs: dict[str, Any] = _column_type(variable)
+                if target is not None:
+                    attrs |= {
+                        "references": f"table {target.table.lower()}",
+                        "references_column": self.id_column(target),
+                    }
+                if "Id" in marks or "MapsId" in marks:
+                    attrs |= {"pk": True, "nullable": False}
                 found.append((variable, column, declared, attrs))
                 continue
             embedded = self.embeddable(declared, variable)
@@ -994,7 +1023,9 @@ class _Linker:
             seen.add(variable.name)
             column = marks.get("Column")
             name = _string(column.arguments, "name") if column is not None else None
-            found.append((variable, physical(name or variable.name, self.naming), declared, {}))
+            column_facts = _column_facts(variable, marks)
+            column_name = physical(name or variable.name, self.naming)
+            found.append((variable, column_name, declared, column_facts))
         return found
 
     def target(self, declared: Declared, variable: Variable) -> _Entity | None:
@@ -1501,7 +1532,8 @@ class _Linker:
             self.nodes[key] = _with_attrs(self.nodes[key], in_migrations=True, migration=tool)
             if self.nodes[key].owner == path:
                 for column, line in change.columns:
-                    self.column(key, name, column, path=path, line=line)
+                    facts = change.facts.get(column, {})
+                    self.column(key, name, column, path=path, line=line, **facts)
 
 
 def _version(path: str) -> tuple[int, ...]:

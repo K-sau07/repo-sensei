@@ -139,7 +139,12 @@ REPO = {
             op.create_table("tags_old", sa.Column("id", sa.Integer()))
             op.rename_table("tags_old", "tags")
             op.create_table(
-                "audit_log", sa.Column("id", sa.Integer()), sa.Column("event", sa.Text())
+                "audit_log",
+                sa.Column("id", sa.Integer(), primary_key=True),
+                sa.Column("event", sa.Text(), nullable=False),
+                sa.Column("post_id", sa.Integer(), sa.ForeignKey("posts.id")),
+                sa.Column("actor", sa.Integer()),
+                sa.ForeignKeyConstraint(["actor"], ["users.id"]),
             )
             op.create_table("legacy_users")
     """,
@@ -380,3 +385,50 @@ def test_the_template_models_and_migrations(template: tuple[OrmGraph, set[str]])
     assert graph.report.sql_errors == 0
     sequences = [k for k in nodes if k.endswith("_seq")]
     assert sequences == []  # the migrations' sequences aren't tables
+
+
+def _facts(graph: OrmGraph, table: str) -> dict[str, dict[str, object]]:
+    keep = ("type", "pk", "nullable", "references", "references_column")
+    return {
+        n.name: {k: n.attrs[k] for k in keep if k in n.attrs}
+        for n in graph.nodes
+        if n.kind is NodeKind.COLUMN and n.attrs["table"] == f"table {table}"
+    }
+
+
+def test_columns_say_their_type_keys_and_foreign_keys(repo: tuple[OrmGraph, set[str]]) -> None:
+    graph, _ = repo
+    assert _facts(graph, "users") == {
+        "id": {"type": "int", "pk": True, "nullable": False},  # Mapped[int], primary_key
+        "email_address": {"type": "String", "nullable": False},  # the column's type: the SQL one
+        "nickname": {"type": "String"},  # Column(String): no annotation
+        "age": {"type": "int", "nullable": True},  # Mapped[int | None]
+    }
+    posts = _facts(graph, "posts")
+    assert posts["id"] == {"type": "int", "pk": True, "nullable": False}
+    assert posts["author_id"] == {
+        "type": "int", "nullable": False, "references": "table users", "references_column": "id",
+    }  # fmt: skip
+    # A migration's own table: sa.ForeignKey in a column, and a ForeignKeyConstraint.
+    audit = _facts(graph, "audit_log")
+    assert audit["id"] == {"type": "Integer", "pk": True, "nullable": False}
+    assert audit["event"] == {"type": "Text", "nullable": False}
+    assert audit["post_id"]["references"] == "table posts"
+    assert audit["actor"] == {
+        "type": "Integer", "references": "table users", "references_column": "id",
+    }  # fmt: skip
+
+
+def test_the_template_foreign_keys(template: tuple[OrmGraph, set[str]]) -> None:
+    graph, _ = template
+    item = _facts(graph, "item")
+    assert item["owner_id"] == {
+        "type": "UUID", "nullable": False, "references": "table user", "references_column": "id",
+    }  # fmt: skip
+    assert item["id"] == {"type": "UUID", "pk": True, "nullable": False}
+    user = _facts(graph, "user")
+    assert user["id"]["pk"] is True
+    assert user["email"]["type"] == "EmailStr"
+    assert user["full_name"] == {"type": "str", "nullable": True}
+    keys = [n for n in user if user[n].get("references")]
+    assert keys == []

@@ -26,7 +26,12 @@ the models (``name_unique``, or ``name_ambiguous`` over the ``k`` candidates). A
 
 What it writes (engine §11.2), all of it in the graph's ``LINKS`` layer:
 
-- ``OrmModel``, ``Table`` and ``Column`` nodes (a column's table is ``attrs.table``);
+- ``OrmModel``, ``Table`` and ``Column`` nodes (a column's table is ``attrs.table``; what its
+  declaration says of it, for the schema's diagram: ``attrs.type``, from its annotation or its
+  ``Column``'s type, ``attrs.pk``, ``attrs.nullable``, and the column a foreign key names,
+  ``attrs.references`` (the table's key) and ``attrs.references_column``: SQLModel's
+  ``Field(foreign_key="user.id")``, a ``ForeignKey("user.id")`` or ``ForeignKey(User.id)`` in a
+  ``Column``/``mapped_column``, Alembic's ``sa.ForeignKeyConstraint``);
   ``class -MAPS_TO-> OrmModel -MAPS_TO-> Table`` and ``field -MAPS_TO-> Column``: what the code
   declares, certain (``contract``);
 - ``function -READS/WRITES-> Table`` for every query site (``attrs.model``, ``attrs.via``), the
@@ -58,7 +63,7 @@ from tree_sitter import Node
 from sensei_core.models import EdgeType, NodeKind, Provenance
 from sensei_engine.graph.confidence import confidence_of
 from sensei_engine.graph.writer import GraphEdge, GraphNode
-from sensei_engine.link.pytree import ancestors, string_value, walk
+from sensei_engine.link.pytree import ancestors, call_args, string_value, walk
 from sensei_engine.link.sql import looks_like_sql, tables
 from sensei_engine.parse.parser import ParseResult
 from sensei_engine.symbols.extract import Symbol, SymbolKind
@@ -91,6 +96,9 @@ _NOT_COLUMNS = frozenset(
 _COLUMN_CALLS = frozenset({"Column", "mapped_column"})
 _SKIPPED_FIELDS = frozenset({"model_config", "metadata", "registry", "__table_args__"})
 _MIGRATION_OPS = frozenset({"create_table", "drop_table", "rename_table", "add_column"})
+_MAPPED_RE = re.compile(r"^Mapped\[(.+)\]$")
+_TYPE_NAME_RE = re.compile(r"[\w.]+")
+MAX_TYPE = 40
 _OPTIONAL_RE = re.compile(r"^(?:Optional\[(.+)\]|(.+?)\s*\|\s*None|None\s*\|\s*(.+))$")
 _ANNOTATED_RE = re.compile(r"^Annotated\[\s*([^,\]]+)")
 
@@ -99,6 +107,13 @@ _ANNOTATED_RE = re.compile(r"^Annotated\[\s*([^,\]]+)")
 class Import:
     module: str  # dotted, with the leading dots of a relative import ("..models")
     name: str | None  # the name imported from it (None: the module itself)
+
+
+# What a column's declaration says of it: its type, pk, nullable, and fk (the column a foreign
+# key names, as written: "user.id", or "User.id" for a model's attribute). None: nothing.
+Facts = tuple[tuple[str, Any], ...] | None
+# A column: its name, its line, what its declaration says of it.
+ColumnDecl = tuple[str, int, Facts]
 
 
 @dataclass(frozen=True, slots=True)
@@ -111,6 +126,7 @@ class FieldDecl:
     column: str | None  # the column name the call gives, when it gives one
     mapped: bool  # annotated Mapped[...]
     excluded: bool  # a relationship, a ClassVar or private: never a column
+    facts: Facts = None  # what the declaration says of the column (:func:`facts_of`)
 
 
 @dataclass(slots=True)
@@ -149,7 +165,7 @@ class TableDecl:
     variable: str | None  # what it's assigned to (users = Table("users", ...))
     path: str
     line: int
-    columns: tuple[tuple[str, int], ...]
+    columns: tuple[ColumnDecl, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -176,7 +192,7 @@ class MigrationOp:
     op: str  # create_table, drop_table, rename_table, add_column
     table: str
     line: int
-    columns: tuple[tuple[str, int], ...] = ()
+    columns: tuple[ColumnDecl, ...] = ()
     renamed_to: str | None = None
 
 
@@ -246,6 +262,26 @@ def _optional(text: str) -> str:
             break
         text = next(group for group in found.groups() if group).strip().strip("'\"")
     return text
+
+
+def _type_name(text: str) -> str | None:
+    """A column's type as an annotation or a ``Column`` argument says it: ``uuid.UUID`` is
+    ``UUID``, ``Mapped[str | None]`` is ``str``, ``String(255)`` is ``String``."""
+    text = _optional(text)
+    mapped = _MAPPED_RE.match(text)
+    if mapped is not None:
+        text = _optional(mapped[1])
+    found = _TYPE_NAME_RE.match(text)
+    name = found[0].rsplit(".", 1)[-1] if found else ""
+    return name[:MAX_TYPE] or None
+
+
+def _nullable(annotation: str) -> bool:
+    text = annotation.strip().strip("'\"")
+    mapped = _MAPPED_RE.match(text)
+    if mapped is not None:
+        text = mapped[1].strip()
+    return _OPTIONAL_RE.match(text) is not None
 
 
 class _Scanner:
@@ -435,8 +471,73 @@ class _Scanner:
                 column=column,
                 mapped=annotation.startswith("Mapped["),
                 excluded=excluded,
+                facts=None if excluded else self.facts_of(right, call, annotation),
             )
         )
+
+    def facts_of(self, right: Node | None, call: str | None, annotation: str) -> Facts:
+        """What a field's declaration says of its column: its type (the annotation's, else the
+        ``Column``'s type argument), ``pk``, ``nullable`` (an optional annotation, else what the
+        call says) and ``fk``: SQLModel's ``Field(primary_key=..., foreign_key=...,
+        nullable=...)``, ``Column``/``mapped_column``'s, ``Field(sa_column=Column(...))``."""
+        found: dict[str, Any] = {}
+        if annotation:
+            found["type"] = _type_name(annotation)
+            found["nullable"] = _nullable(annotation)
+        if right is not None and right.type == "call":
+            if call == "Field":
+                _, keywords = call_args(right)
+                inner = keywords.get("sa_column")
+                if inner is not None and inner.type == "call":
+                    found |= self.column_call_facts(inner)
+                found |= self.keyword_facts(keywords)
+            elif call in _COLUMN_CALLS:
+                found |= self.column_call_facts(right)
+        if found.get("pk"):
+            found["nullable"] = False
+        kept = tuple((k, v) for k, v in sorted(found.items()) if v is not None)
+        return kept or None
+
+    def keyword_facts(self, keywords: dict[str, Node]) -> dict[str, Any]:
+        found: dict[str, Any] = {}
+        for word, fact in (("primary_key", "pk"), ("nullable", "nullable")):
+            value = keywords.get(word)
+            if value is not None and value.type in ("true", "false"):
+                found[fact] = value.type == "true"
+        foreign = keywords.get("foreign_key")
+        if foreign is not None:
+            found["fk"] = self.string(foreign) or self.reference(foreign)
+        return {k: v for k, v in found.items() if v is not None}
+
+    def column_call_facts(self, call: Node) -> dict[str, Any]:
+        """``Column("name", Integer, ForeignKey("user.id"), primary_key=True)``'s facts (and
+        ``mapped_column``'s)."""
+        positional, keywords = call_args(call)
+        found: dict[str, Any] = {}
+        for arg in positional:
+            if arg.type == "call":
+                function = arg.child_by_field_name("function")
+                name = _last_name(function, self.text(function)) if function is not None else ""
+                if name == "ForeignKey":
+                    inner, _ = call_args(arg)
+                    if inner:
+                        found["fk"] = self.string(inner[0]) or self.reference(inner[0])
+                    continue
+                if name and name[:1].isupper() and "type" not in found:
+                    found["type"] = name[:MAX_TYPE]
+            elif arg.type in ("identifier", "attribute") and "type" not in found:
+                name = _last_name(arg, self.text(arg))
+                if name[:1].isupper():
+                    found["type"] = name[:MAX_TYPE]
+        return found | self.keyword_facts(keywords)
+
+    def reference(self, node: Node) -> str | None:
+        """``User.id`` as a foreign key's target (a model's attribute)."""
+        if node.type != "attribute":
+            return None
+        text = self.text(node)
+        head, _, column = text.rpartition(".")
+        return f"{head.rsplit('.', 1)[-1]}.{column}" if head and column else None
 
     def column_name(self, call: Node, name: str | None) -> str | None:
         """The column name ``Column("name", ...)``/``mapped_column("name", ...)`` or
@@ -513,19 +614,47 @@ class _Scanner:
             columns=self.columns(args[1:]),
         )
 
-    def columns(self, args: Iterable[Node]) -> tuple[tuple[str, int], ...]:
-        found: list[tuple[str, int]] = []
+    def columns(self, args: Iterable[Node]) -> tuple[ColumnDecl, ...]:
+        """A ``Table(...)``'s or ``op.create_table(...)``'s columns, with what each says of
+        itself; a ``ForeignKeyConstraint(["owner_id"], ["user.id"])`` among them gives its
+        columns' foreign keys."""
+        found: list[ColumnDecl] = []
+        constraints: dict[str, str] = {}
         for arg in args:
             if arg.type != "call":
                 continue
             function = arg.child_by_field_name("function")
-            if function is None or _last_name(function, self.text(function)) != "Column":
+            called = _last_name(function, self.text(function)) if function is not None else ""
+            if called == "ForeignKeyConstraint":
+                constraints |= self.constraint(arg)
+                continue
+            if called != "Column":
                 continue
             inner = self.args(arg)
             name = self.string(inner[0]) if inner else None
             if name:
-                found.append((name, self.line(arg)))
+                facts = self.column_call_facts(arg)
+                if facts.get("pk"):
+                    facts["nullable"] = False
+                kept = tuple(sorted(facts.items()))
+                found.append((name, self.line(arg), kept or None))
+        if constraints:
+            found = [
+                (name, line, tuple(sorted({**dict(facts or ()), "fk": constraints[name]}.items())))
+                if name in constraints
+                else (name, line, facts)
+                for name, line, facts in found
+            ]
         return tuple(found)
+
+    def constraint(self, call: Node) -> dict[str, str]:
+        """``ForeignKeyConstraint(["owner_id"], ["user.id"])``: each column's target."""
+        positional, _ = call_args(call)
+        if len(positional) < 2 or any(p.type != "list" for p in positional[:2]):
+            return {}
+        names = [self.string(n) for n in positional[0].named_children]
+        targets = [self.string(n) for n in positional[1].named_children]
+        return {n: t for n, t in zip(names, targets, strict=False) if n and t}
 
     def models_in(self, args: Iterable[Node]) -> Iterator[str]:
         """The model names among a statement's arguments (``Item``, ``models.Item``,
@@ -725,6 +854,7 @@ class _Linker:
         self.nodes: dict[str, GraphNode] = {}
         self.edges: list[GraphEdge] = []
         self.report = OrmReport()
+        self.facts: dict[str, dict[str, Any]] = {}  # a column's key → its declaration's facts
 
     # names
 
@@ -836,7 +966,9 @@ class _Linker:
             self.nodes[key] = _with_attrs(existing, sources=sources)
         return key
 
-    def column(self, table_key: str, table: str, name: str, *, path: str, line: int) -> str:
+    def column(
+        self, table_key: str, table: str, name: str, *, path: str, line: int, facts: Facts = None
+    ) -> str:
         key = f"column {table.lower()}.{name}"
         if key not in self.nodes:
             self.nodes[key] = GraphNode(
@@ -852,7 +984,31 @@ class _Linker:
                 owner=path,
             )
             self.report.columns += 1
+        if facts:
+            self.facts.setdefault(key, dict(facts))
         return key
+
+    def foreign_keys(self) -> None:
+        """Each column's facts on its node, its foreign key resolved to the table (and column)
+        it names: ``"user.id"`` a table by its name, ``"User.id"`` a model's (by name: unique)."""
+        tables = {n.name.lower(): k for k, n in self.nodes.items() if n.kind is NodeKind.TABLE}
+        for key, facts in self.facts.items():
+            node = self.nodes.get(key)
+            if node is None:
+                continue
+            attrs = {k: v for k, v in facts.items() if k != "fk"}
+            target = facts.get("fk")
+            if isinstance(target, str) and "." in target:
+                head, _, column = target.rpartition(".")
+                table_key = tables.get(head.lower())
+                if table_key is None:
+                    models = self.models.get(head.rsplit(".", 1)[-1], [])
+                    named = models[0].table if len(models) == 1 else None
+                    table_key = tables.get(named.lower()) if named else None
+                if table_key is not None:
+                    attrs |= {"references": table_key, "references_column": column}
+            if attrs:
+                self.nodes[key] = _with_attrs(node, **attrs)
 
     # passes
 
@@ -861,9 +1017,10 @@ class _Linker:
             self.model(decl)
         for table in (t for f in self.files.values() for t in f.tables):
             key = self.table(table.name, path=table.path, line=table.line, source="table")
-            for name, line in table.columns:
-                self.column(key, table.name, name, path=table.path, line=line)
+            for name, line, facts in table.columns:
+                self.column(key, table.name, name, path=table.path, line=line, facts=facts)
         self.migrations()
+        self.foreign_keys()
         for f in self.files.values():
             for access in f.accesses:
                 self.access(f.path, access)
@@ -916,7 +1073,10 @@ class _Linker:
         )
         for field_decl in self.columns_of(decl):
             column = field_decl.column or field_decl.name
-            column_key = self.column(table_key, table, column, path=decl.path, line=field_decl.line)
+            column_key = self.column(
+                table_key, table, column, path=decl.path, line=field_decl.line,
+                facts=field_decl.facts,
+            )  # fmt: skip
             if field_decl.symbol_key is not None:
                 self.edge(
                     GraphEdge(
@@ -984,8 +1144,8 @@ class _Linker:
             key = self.table(name, path=path, line=op.line, source="migration")
             if key in self.nodes and self.nodes[key].owner == path:
                 self.nodes[key] = _with_attrs(self.nodes[key], in_migrations=True)
-                for column, line in op.columns:
-                    self.column(key, name, column, path=path, line=line)
+                for column, line, facts in op.columns:
+                    self.column(key, name, column, path=path, line=line, facts=facts)
 
     def access(self, path: str, access: Access) -> None:
         found = self.resolve(path, access.target, models_only=True)

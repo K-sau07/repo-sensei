@@ -482,6 +482,13 @@ def test_columns_skip_transients_and_relationships(library: JpaGraph) -> None:
     assert by_table["table book_tags"] == {"book_id", "tag_id"}  # @JoinTable's
     assert by_table["table reviews"] == {"_id", "stars"}
     assert columns["column books.writer_id"].attrs["references"] == "table author"
+    # What the schema's diagram shows: types, the key, a foreign key's column.
+    writer = columns["column books.writer_id"].attrs
+    assert (writer["type"], writer["references_column"]) == ("Author", "author_id")
+    key = columns["column books.id"].attrs
+    assert (key["type"], key["pk"], key["nullable"]) == ("Long", True, False)
+    assert columns["column books.isbn_code"].attrs["nullable"] is False  # @Column(nullable = false)
+    assert "nullable" not in columns["column books.title"].attrs
     # field -MAPS_TO-> column, for the inherited and embedded fields too
     assert _maps(library, _key("domain/Book.java/Book#isbn.")) == {"column books.isbn_code"}
     assert _maps(library, _key("domain/BaseEntity.java/BaseEntity#createdAt.")) == {

@@ -11,15 +11,17 @@ tables, so they are left out.
 :func:`ddl` reads a migration script (Flyway's ``V1__init.sql``, a ``schema.sql``): the tables
 each of its statements creates, renames and drops, by its head (any dialect: ``IF NOT EXISTS``,
 quoted names, a schema), with the columns sqlglot reads of a ``CREATE TABLE`` when one of its
-dialects parses it.
+dialects parses it, and what the statement says of each (:attr:`TableChange.facts`): its type,
+its primary key (a column's or the table's), ``NOT NULL`` and the column a ``REFERENCES`` or a
+``FOREIGN KEY`` names.
 """
 
 from __future__ import annotations
 
 import logging
 import re
-from dataclasses import dataclass
-from typing import Literal
+from dataclasses import dataclass, field
+from typing import Any, Literal
 
 import sqlglot
 from sqlglot import exp
@@ -27,6 +29,7 @@ from sqlglot.errors import SqlglotError
 
 MAX_SQL_CHARS = 20_000
 MAX_TABLES = 50
+MAX_TYPE = 40
 
 _STATEMENT_RE = re.compile(
     r"\s*(?:\(\s*)?(select|with|insert|update|delete|merge|create|alter|drop|truncate)\b",
@@ -125,6 +128,9 @@ class TableChange:
     line: int  # 1-based, the statement's first
     columns: tuple[tuple[str, int], ...] = ()
     renamed_to: str | None = None
+    # A column's name → what the statement says of it: type, pk, nullable, references (the
+    # table's key, "table users") and references_column.
+    facts: dict[str, dict[str, Any]] = field(default_factory=dict[str, dict[str, Any]])
 
 
 _DOLLAR_RE = re.compile(r"\$\w*\$")
@@ -276,19 +282,75 @@ def _semicolons(text: str, *, escapes: bool) -> list[int]:
     return found
 
 
-def _columns(statement: str, line: int) -> tuple[tuple[str, int], ...]:
+def _columns(
+    statement: str, line: int
+) -> tuple[tuple[tuple[str, int], ...], dict[str, dict[str, Any]]]:
     for dialect in _DIALECTS:
         try:
             parsed = sqlglot.parse_one(statement.strip()[:MAX_SQL_CHARS], read=dialect)
         except (SqlglotError, RecursionError, ValueError):
             continue
         if isinstance(parsed, exp.Create) and isinstance(parsed.this, exp.Schema):
-            return tuple(
-                (column.name, line)
-                for column in parsed.this.expressions
-                if isinstance(column, exp.ColumnDef) and column.name
-            )
-    return ()
+            defined = [
+                c for c in parsed.this.expressions if isinstance(c, exp.ColumnDef) and c.name
+            ]
+            return tuple((c.name, line) for c in defined), _facts(parsed.this, defined)
+    return (), {}
+
+
+def _reference(found: exp.Reference) -> dict[str, Any]:
+    target = found.this
+    table = target.this if isinstance(target, exp.Schema) else target
+    if not isinstance(table, exp.Table) or not table.name:
+        return {}
+    columns = target.expressions if isinstance(target, exp.Schema) else []
+    said: dict[str, Any] = {"references": f"table {table.name.lower()}"}
+    if columns:
+        said["references_column"] = columns[0].name
+    return said
+
+
+def _column_facts(column: exp.ColumnDef) -> dict[str, Any]:
+    said: dict[str, Any] = {}
+    kind = column.args.get("kind")
+    if isinstance(kind, exp.DataType):
+        said["type"] = kind.sql()[:MAX_TYPE]  # as written: BIGSERIAL, VARCHAR(20)
+    for constraint in column.constraints:
+        held = constraint.kind
+        if isinstance(held, exp.PrimaryKeyColumnConstraint):
+            said |= {"pk": True, "nullable": False}
+        elif isinstance(held, exp.NotNullColumnConstraint) and not held.args.get("allow_null"):
+            said["nullable"] = False
+        elif isinstance(held, exp.Reference):
+            said |= _reference(held)
+    return said
+
+
+def _foreign_key(part: exp.ForeignKey, facts: dict[str, dict[str, Any]]) -> None:
+    """A table's ``FOREIGN KEY (a) REFERENCES t (b)`` on its columns' facts."""
+    reference = part.args.get("reference")
+    if not isinstance(reference, exp.Reference):
+        return
+    said = _reference(reference)
+    targets = reference.this.expressions if isinstance(reference.this, exp.Schema) else []
+    for i, name in enumerate(e.name for e in part.expressions):
+        if name in facts and said:
+            column = targets[i].name if i < len(targets) else None
+            facts[name] |= {**said, "references_column": column} if column else said
+
+
+def _facts(schema: exp.Schema, defined: list[exp.ColumnDef]) -> dict[str, dict[str, Any]]:
+    """What a ``CREATE TABLE`` says of its columns (see the module)."""
+    facts = {column.name: _column_facts(column) for column in defined}
+    for item in schema.expressions:
+        for part in item.expressions if isinstance(item, exp.Constraint) else [item]:
+            if isinstance(part, exp.PrimaryKey):
+                for name in (e.name for e in part.expressions):
+                    if name in facts:
+                        facts[name] |= {"pk": True, "nullable": False}
+            elif isinstance(part, exp.ForeignKey):
+                _foreign_key(part, facts)
+    return {name: said for name, said in facts.items() if said}
 
 
 def ddl(script: str) -> list[TableChange]:
@@ -296,8 +358,10 @@ def ddl(script: str) -> list[TableChange]:
     changes: list[TableChange] = []
     for statement, line in _statements(script):
         if (found := _CREATE_RE.match(statement)) is not None:
-            columns = _columns(statement, line)
-            changes.append(TableChange("create_table", _unquoted(found[1]), line, columns))
+            columns, facts = _columns(statement, line)
+            changes.append(
+                TableChange("create_table", _unquoted(found[1]), line, columns, facts=facts)
+            )
         elif (found := _RENAME_RE.match(statement) or _RENAME_TABLE_RE.match(statement)) is not (
             None
         ):
