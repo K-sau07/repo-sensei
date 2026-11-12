@@ -1,16 +1,20 @@
 "use client";
 
 /**
- * A diagram's canvas (6.6), in one of three views of the same checked spec (6.6.2):
+ * A diagram's canvas (6.6), in the view asked for. A flow (its checked spec) is drawn in one of
+ * three views:
  * - **flowchart**: its steps top to bottom, numbered in reading order, where it starts and ends;
  * - **sequence**: who takes part as columns with lifelines, the messages numbered down the page
  *   (sequence-view.tsx);
- * - **architecture**: an entity diagram, a band per layer holding a card per part with its
- *   members (entity-node.tsx).
- * Laid out by ELK (off the main thread); edges solid where the graph proves them and dashed
- * amber where they are inferred, each with its label. A floating toolbar fits the view, zooms,
- * turns a flowchart, and exports (SVG, PNG, Mermaid); a minimap shows where the view is. A click
- * on a node picks it (its code opens beside the canvas).
+ * - **architecture**: a system diagram, as drawn on a whiteboard: who uses it at the top, then
+ *   its frontend, API, services and data, the databases and services outside it at the bottom,
+ *   each part a box with its icon (a store a cylinder), the lines square (system-node.tsx);
+ * and an ER diagram (a schema's) as its tables' cards, each relation from its key's row to the
+ * column it names, its ends crow's feet (table-node.tsx).
+ * Flowcharts and ER diagrams are laid out by ELK (off the main thread), the architecture by its
+ * rows; edges solid where the graph proves them and dashed amber where they are inferred. A
+ * floating toolbar fits the view, zooms, turns a flowchart, and exports (SVG, PNG, Mermaid); a
+ * minimap shows where the view is. A click on a node picks it (it opens beside the canvas).
  */
 import "@xyflow/react/dist/style.css";
 
@@ -26,6 +30,7 @@ import {
   type Node,
   type NodeTypes,
 } from "@xyflow/react";
+import type { ElkNode } from "elkjs/lib/elk-api";
 import { ArrowDown, ArrowRight, Download, Maximize, Minus, Plus } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
@@ -46,25 +51,40 @@ import {
 } from "@/lib/api/diagrams";
 import {
   elkGraph,
-  ENTITY_WIDTH,
-  entityHeight,
   layout,
-  layoutArchitecture,
   positionsOf,
-  tierOf,
   type FlowDirection,
   type Placed,
 } from "@/lib/diagrams/elk-layout";
-import { download, exportSequenceSvg, exportSvg, svgToPng } from "@/lib/diagrams/export";
+import { erGraph, relationEnds } from "@/lib/diagrams/er-layout";
+import { layoutSystem, sidesOf } from "@/lib/diagrams/system-layout";
 
 import { BlueprintNode, laneOf, type BlueprintData } from "./blueprint-node";
-import { BandNode, EntityNode, type BandData, type EntityData } from "./entity-node";
+import {
+  RowLabelNode,
+  SystemNode,
+  TableNode,
+  type RowLabelData,
+  type SystemData,
+  type TableData,
+} from "./diagram-nodes";
+import { RelationMarkers, relationMarkers } from "./er-markers";
 import { SequenceView } from "./sequence-view";
+import { colorOf } from "./system-color";
 
-const NODE_TYPES: NodeTypes = { blueprint: BlueprintNode, entity: EntityNode, band: BandNode };
-const ENTITY_SIZE = { width: () => ENTITY_WIDTH, height: entityHeight };
+const NODE_TYPES: NodeTypes = {
+  blueprint: BlueprintNode,
+  system: SystemNode,
+  row: RowLabelNode,
+  table: TableNode,
+};
+// The exports are loaded when one is asked for: no page pays for them until then.
+const exporting = () => import("@/lib/diagrams/export");
 const VERIFIED = "var(--text-muted)";
 const INFERRED = "var(--warn)";
+const ROW_LABEL_WIDTH = 120;
+const ROW_LABEL_GAP = 48;
+const MINIMAP_FROM = 12; // nodes
 
 export function edgeStyle(edge: SpecEdge) {
   return edge.verified
@@ -72,21 +92,14 @@ export function edgeStyle(edge: SpecEdge) {
     : { stroke: INFERRED, strokeWidth: 1.5, strokeDasharray: "6 4" };
 }
 
-/** The spec laid out: each node's place (none until ELK is done). */
-export function useLaidOut(
-  spec: Spec,
-  edges: readonly SpecEdge[],
-  direction: FlowDirection,
-): Record<string, Placed> | null {
+/** A graph laid out by ELK: each node's place (none until it is done). ``key`` says when the
+ * input changed. */
+function useElk(key: string, graph: () => ElkNode, on: boolean): Record<string, Placed> | null {
   const [placed, setPlaced] = useState<Record<string, Placed> | null>(null);
-  const key = useMemo(
-    () =>
-      JSON.stringify([spec.nodes.map((n) => n.id), edges.map((e) => [e.from, e.to]), direction]),
-    [spec.nodes, edges, direction],
-  );
   useEffect(() => {
+    if (!on) return;
     let live = true;
-    void layout(elkGraph(spec, edges, direction)).then(
+    void layout(graph()).then(
       (laid) => {
         if (live) setPlaced(positionsOf(laid));
       },
@@ -99,7 +112,7 @@ export function useLaidOut(
     };
     // The key says when the layout's input changed.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key]);
+  }, [key, on]);
   return placed;
 }
 
@@ -143,17 +156,21 @@ function Sequence({ spec, edges, mermaid, title, selected, onSelect, added }: Ca
         aria-label="Diagram tools"
       >
         <ExportMenu
-          svg={() => {
-            download(`${title}.svg`, exportSequenceSvg(spec, edges), "image/svg+xml");
-          }}
-          png={() =>
-            void svgToPng(exportSequenceSvg(spec, edges)).then((blob) => {
-              download(`${title}.png`, blob);
+          svg={() =>
+            void exporting().then(({ download, exportSequenceSvg }) => {
+              download(`${title}.svg`, exportSequenceSvg(spec, edges), "image/svg+xml");
             })
           }
-          mermaid={() => {
-            download(`${title}.mmd`, mermaid, "text/plain");
-          }}
+          png={() =>
+            void exporting().then(async ({ download, exportSequenceSvg, svgToPng }) => {
+              download(`${title}.png`, await svgToPng(exportSequenceSvg(spec, edges)));
+            })
+          }
+          mermaid={() =>
+            void exporting().then(({ download }) => {
+              download(`${title}.mmd`, mermaid, "text/plain");
+            })
+          }
         />
       </div>
     </div>
@@ -183,6 +200,158 @@ function ExportMenu({
   );
 }
 
+const FIXED = { draggable: false, connectable: false } as const;
+
+/** The architecture view's nodes and lines (see the module). */
+function useSystem(
+  spec: Spec,
+  edges: readonly SpecEdge[],
+  on: boolean,
+  added?: ReadonlySet<string>,
+) {
+  const placed = useMemo(() => (on ? layoutSystem(spec, edges) : null), [on, spec, edges]);
+  const nodes = useMemo((): Node[] => {
+    if (!placed) return [];
+    const left = -placed.width / 2 - ROW_LABEL_WIDTH - ROW_LABEL_GAP;
+    const labels: Node<RowLabelData>[] = placed.rows
+      .filter((row, i, all) => all.findIndex((r) => r.row.row === row.row.row) === i)
+      .map((row) => ({
+        id: `row:${row.row.row}`,
+        type: "row",
+        position: { x: left, y: row.y },
+        data: { row: row.row, height: row.height },
+        selectable: false,
+        focusable: false,
+        ...FIXED,
+      }));
+    const boxes: Node<SystemData>[] = spec.nodes.map((node) => ({
+      id: node.id,
+      type: "system",
+      position: placed.at[node.id] ?? { x: 0, y: 0 },
+      data: { node, added: added?.has(node.id) ?? false },
+      ...FIXED,
+    }));
+    return [...labels, ...boxes];
+  }, [placed, spec.nodes, added]);
+  const lines = useMemo(
+    (): Edge[] =>
+      edges.map((edge, i) => ({
+        id: `e${String(i)}`,
+        source: edge.from,
+        target: edge.to,
+        ...(placed ? sidesOf(placed, edge.from, edge.to) : {}),
+        type: "smoothstep",
+        pathOptions: { borderRadius: 10, offset: 18 },
+        label: edge.label ?? (edge.verified ? undefined : edge.inferred?.reason),
+        style: edgeStyle(edge),
+        markerEnd: { type: MarkerType.ArrowClosed, color: edge.verified ? VERIFIED : INFERRED },
+        labelStyle: { fill: "var(--text-muted)", fontSize: 10 },
+        labelBgStyle: { fill: "var(--surface-1)" },
+        className: edge.verified ? "verified" : "inferred",
+      })),
+    [edges, placed],
+  );
+  return { placed: placed?.at ?? null, system: placed, nodes, lines };
+}
+
+/** The ER view's tables and relations. */
+function useEr(spec: Spec, edges: readonly SpecEdge[], on: boolean, added?: ReadonlySet<string>) {
+  const key = useMemo(
+    () =>
+      JSON.stringify([
+        spec.nodes.map((n) => [n.id, n.members?.length]),
+        edges.map((e) => [e.from, e.to]),
+      ]),
+    [spec.nodes, edges],
+  );
+  const placed = useElk(key, () => erGraph(spec, edges), on);
+  const byId = useMemo(() => new Map(spec.nodes.map((n) => [n.id, n])), [spec.nodes]);
+  const nodes = useMemo(
+    (): Node<TableData>[] =>
+      spec.nodes.map((node) => ({
+        id: node.id,
+        type: "table",
+        position: placed?.[node.id] ?? { x: 0, y: 0 },
+        data: { node, added: added?.has(node.id) ?? false },
+        ...FIXED,
+      })),
+    [placed, spec.nodes, added],
+  );
+  const lines = useMemo(
+    (): Edge[] =>
+      edges.map((edge, i) => {
+        const ends = relationEnds(edge, byId.get(edge.to));
+        const column = ends.sourceHandle.slice("out:".length);
+        const key = byId.get(edge.from)?.members?.find((m) => m.name === column);
+        return {
+          id: `r${String(i)}`,
+          source: edge.from,
+          target: edge.to,
+          ...ends,
+          type: "smoothstep",
+          pathOptions: { borderRadius: 8, offset: 24 },
+          ...relationMarkers(edge.type, key?.nullable ?? false),
+          style: { stroke: "var(--text-muted)", strokeWidth: 1.5 },
+          className: "relation",
+        };
+      }),
+    [edges, byId],
+  );
+  return { placed, nodes, lines };
+}
+
+/** The flowchart's steps and lines. */
+function useFlow(
+  spec: Spec,
+  edges: readonly SpecEdge[],
+  direction: FlowDirection,
+  on: boolean,
+  added?: ReadonlySet<string>,
+) {
+  const key = useMemo(
+    () =>
+      JSON.stringify([spec.nodes.map((n) => n.id), edges.map((e) => [e.from, e.to]), direction]),
+    [spec.nodes, edges, direction],
+  );
+  const placed = useElk(key, () => elkGraph(spec, edges, direction), on);
+  const steps = useMemo(() => stepOrder(spec, edges), [spec, edges]);
+  const ends = useMemo(() => flowEnds(spec, edges), [spec, edges]);
+  const vertical = direction === "DOWN";
+  const nodes = useMemo(
+    (): Node<BlueprintData>[] =>
+      spec.nodes.map((node) => ({
+        id: node.id,
+        type: "blueprint",
+        position: placed?.[node.id] ?? { x: 0, y: 0 },
+        data: {
+          node,
+          added: added?.has(node.id) ?? false,
+          vertical,
+          step: steps.get(node.id),
+          end: ends.get(node.id),
+        },
+        ...FIXED,
+      })),
+    [placed, spec.nodes, added, vertical, steps, ends],
+  );
+  const lines = useMemo(
+    (): Edge[] =>
+      edges.map((edge, i) => ({
+        id: `e${String(i)}`,
+        source: edge.from,
+        target: edge.to,
+        label: edge.label ?? (edge.verified ? undefined : edge.inferred?.reason),
+        style: edgeStyle(edge),
+        markerEnd: { type: MarkerType.ArrowClosed, color: edge.verified ? VERIFIED : INFERRED },
+        labelStyle: { fill: "var(--text-muted)", fontSize: 11 },
+        labelBgStyle: { fill: "var(--surface-1)" },
+        className: edge.verified ? "verified" : "inferred",
+      })),
+    [edges],
+  );
+  return { placed, nodes, lines };
+}
+
 function Canvas({
   spec,
   edges,
@@ -195,79 +364,18 @@ function Canvas({
   initialDirection = "DOWN",
 }: CanvasProps) {
   const architecture = view === "architecture";
+  const er = view === "er";
   const [direction, setDirection] = useState<FlowDirection>(initialDirection);
-  const flowPlaced = useLaidOut(spec, edges, direction);
-  const steps = useMemo(() => stepOrder(spec, edges), [spec, edges]);
-  const archPlaced = useMemo(
-    () => (architecture ? layoutArchitecture(spec, steps) : null),
-    [architecture, spec, steps],
-  );
-  const placed = architecture ? (archPlaced?.absolute ?? null) : flowPlaced;
+  const system = useSystem(spec, edges, architecture, added);
+  const schema = useEr(spec, edges, er, added);
+  const flowchart = useFlow(spec, edges, direction, !architecture && !er, added);
+  const shown = architecture ? system : er ? schema : flowchart;
+  const placed = shown.placed;
   const flow = useReactFlow();
   const vertical = direction === "DOWN";
-  const ends = useMemo(() => flowEnds(spec, edges), [spec, edges]);
-  const nodes: Node[] = useMemo(() => {
-    if (architecture) {
-      if (!archPlaced) return [];
-      const bands: Node<BandData>[] = archPlaced.bands.map((band) => ({
-        id: `band:${band.tier.tier}`,
-        type: "band",
-        position: { x: band.x, y: band.y },
-        data: { tier: band.tier, width: band.width, height: band.height },
-        selectable: false,
-        draggable: false,
-        connectable: false,
-        focusable: false,
-        style: { width: band.width, height: band.height },
-      }));
-      const cards: Node<EntityData>[] = spec.nodes.map((node) => ({
-        id: node.id,
-        type: "entity",
-        parentId: `band:${tierOf(node.layer).tier}`,
-        position: archPlaced.inside[node.id] ?? { x: 0, y: 0 },
-        data: { node, added: added?.has(node.id) ?? false },
-        selected: node.id === selected,
-        draggable: false,
-        connectable: false,
-      }));
-      return [...bands, ...cards];
-    }
-    return spec.nodes.map((node): Node<BlueprintData> => ({
-      id: node.id,
-      type: "blueprint",
-      position: flowPlaced?.[node.id] ?? { x: 0, y: 0 },
-      data: {
-        node,
-        added: added?.has(node.id) ?? false,
-        vertical,
-        step: steps.get(node.id),
-        end: ends.get(node.id),
-      },
-      selected: node.id === selected,
-      draggable: false,
-      connectable: false,
-    }));
-  }, [architecture, archPlaced, flowPlaced, spec.nodes, added, vertical, selected, steps, ends]);
-  const lines: Edge[] = useMemo(
-    () =>
-      edges.map((edge, i) => ({
-        id: `e${String(i)}`,
-        source: edge.from,
-        target: edge.to,
-        label: edge.label ?? (edge.verified ? undefined : edge.inferred?.reason),
-        style: edgeStyle(edge),
-        markerEnd: {
-          type: MarkerType.ArrowClosed,
-          color: edge.verified ? VERIFIED : INFERRED,
-        },
-        // An entity diagram's lines run square, as its relations do.
-        ...(architecture ? { type: "smoothstep" } : {}),
-        labelStyle: { fill: "var(--text-muted)", fontSize: 11 },
-        labelBgStyle: { fill: "var(--surface-1)" },
-        data: { verified: edge.verified },
-        className: edge.verified ? "verified" : "inferred",
-      })),
-    [edges, architecture],
+  const nodes = useMemo(
+    () => shown.nodes.map((node) => (node.id === selected ? { ...node, selected: true } : node)),
+    [shown.nodes, selected],
   );
   useEffect(() => {
     // Again whenever the layout changes (turned), once the nodes are drawn where it put them.
@@ -278,22 +386,31 @@ function Canvas({
     };
   }, [placed, flow]);
 
-  const svgOf = (at: Readonly<Record<string, Placed>>) =>
-    architecture
-      ? exportSvg(spec, edges, at, { sized: ENTITY_SIZE, bands: archPlaced?.bands ?? [] })
-      : exportSvg(spec, edges, at);
+  const svgOf = async (at: Readonly<Record<string, Placed>>) => {
+    const made = await exporting();
+    if (architecture && system.system) return made.exportSystemSvg(spec, edges, system.system);
+    if (er) return made.exportErSvg(spec, edges, at);
+    return made.exportSvg(spec, edges, at);
+  };
   const exports = {
     svg: () => {
-      if (placed) download(`${title}.svg`, svgOf(placed), "image/svg+xml");
+      if (placed)
+        void Promise.all([exporting(), svgOf(placed)]).then(([{ download }, svg]) => {
+          download(`${title}.svg`, svg, "image/svg+xml");
+        });
     },
     png: () => {
       if (placed)
-        void svgToPng(svgOf(placed)).then((blob) => {
-          download(`${title}.png`, blob);
-        });
+        void Promise.all([exporting(), svgOf(placed)]).then(
+          async ([{ download, svgToPng }, svg]) => {
+            download(`${title}.png`, await svgToPng(svg));
+          },
+        );
     },
     mermaid: () => {
-      download(`${title}.mmd`, mermaid, "text/plain");
+      void exporting().then(({ download }) => {
+        download(`${title}.mmd`, mermaid, "text/plain");
+      });
     },
   };
 
@@ -310,12 +427,13 @@ function Canvas({
   }
   return (
     <div className="relative h-full min-h-[28rem] w-full" data-testid="diagram-canvas">
+      {er ? <RelationMarkers /> : null}
       <ReactFlow
         nodes={nodes}
-        edges={lines}
+        edges={shown.lines}
         nodeTypes={NODE_TYPES}
         onNodeClick={(_, node) => {
-          if (node.type === "band") return;
+          if (node.type === "row") return;
           onSelect(spec.nodes.find((n) => n.id === node.id) ?? null);
         }}
         onPaneClick={() => {
@@ -332,27 +450,32 @@ function Canvas({
         aria-label="Diagram"
       >
         <Background variant={BackgroundVariant.Dots} gap={18} size={1} color="var(--line-strong)" />
-        <MiniMap
-          pannable
-          zoomable
-          nodeColor={(node) =>
-            node.type === "band"
-              ? "transparent"
-              : laneOf((node.data as BlueprintData).node.layer).color
-          }
-          className="!bg-surface-2"
-          // What is outside the view, dimmed in the theme's own background (React Flow's default
-          // is a light grey, a pale block on the dark theme).
-          maskColor="color-mix(in oklch, var(--bg) 65%, transparent)"
-          ariaLabel="Minimap"
-        />
+        {/* A small diagram is all in view: no minimap over its boxes. */}
+        {spec.nodes.length > MINIMAP_FROM ? (
+          <MiniMap
+            pannable
+            zoomable
+            nodeColor={(node) => {
+              if (node.type === "row") return "transparent";
+              const held = (node.data as { node: SpecNode }).node;
+              if (node.type === "system") return colorOf(held);
+              if (node.type === "table") return laneOf("db").color;
+              return laneOf(held.layer).color;
+            }}
+            className="!bg-surface-2"
+            // What is outside the view, dimmed in the theme's own background (React Flow's default
+            // is a light grey, a pale block on the dark theme).
+            maskColor="color-mix(in oklch, var(--bg) 65%, transparent)"
+            ariaLabel="Minimap"
+          />
+        ) : null}
       </ReactFlow>
       <div
         className="absolute top-3 left-1/2 flex -translate-x-1/2 items-center gap-0.5 rounded-lg border border-line bg-surface-1/80 p-1 shadow-sm backdrop-blur"
         role="toolbar"
         aria-label="Diagram tools"
       >
-        {architecture ? null : (
+        {architecture || er ? null : (
           <Button
             size="icon-sm"
             variant="ghost"

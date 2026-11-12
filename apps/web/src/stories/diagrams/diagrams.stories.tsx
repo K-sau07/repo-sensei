@@ -4,6 +4,7 @@ import { expect, fn, userEvent, waitFor } from "storybook/test";
 import { BlueprintCard } from "@/components/diagrams/blueprint-node";
 import { DiagramCanvas } from "@/components/diagrams/diagram-canvas";
 import type { Spec } from "@/lib/api/diagrams";
+import { appArchitecture, appSchema } from "@/mocks/app-architecture";
 
 const SPEC: Spec = {
   title: "Signing in",
@@ -220,19 +221,57 @@ export const Sequence: Story = {
   },
 };
 
-/** The same diagram as an entity diagram: a band per layer, each part a card with its members. */
-export const ArchitectureEntities: Story = {
+/** The same diagram as a system: a row per layer, top to bottom, the table a cylinder. */
+export const ArchitectureSystem: Story = {
   args: { view: "architecture" },
   play: async ({ canvas }) => {
-    await waitFor(() => expect(canvas.getAllByTestId("entity-node")).toHaveLength(5), {
+    await waitFor(() => expect(canvas.getAllByTestId("system-node")).toHaveLength(5), {
       timeout: 5000,
     });
-    await expect(canvas.getAllByTestId("layer-band").length).toBeGreaterThanOrEqual(4);
-    const members = canvas.getByRole("list", { name: "user's members" });
-    await expect(members).toHaveTextContent("hashed_password");
-    await expect(members).toHaveTextContent("+3 more");
-    await expect(canvas.getByRole("list", { name: "Login's members" })).toHaveTextContent(
-      "useAuth",
+    await expect(canvas.getAllByTestId("system-row").map((row) => row.textContent)).toEqual([
+      "Frontend",
+      "API",
+      "Services",
+      "Data",
+    ]);
+    const table = canvas.getAllByTestId("system-node").find((n) => n.dataset.store === "true");
+    await expect(table).toHaveTextContent("user");
+  },
+};
+
+const WHOLE_APP = appArchitecture("Architecture of fastapi/full-stack-fastapi-template");
+const SCHEMA = appSchema("Schema of fastapi/full-stack-fastapi-template");
+
+/** A whole app's architecture, as the API draws it: its users, its parts named, the systems
+ * outside it. */
+export const WholeApp: Story = {
+  args: { spec: WHOLE_APP, edges: WHOLE_APP.edges, mermaid: "" },
+  play: async ({ canvas }) => {
+    await waitFor(() => expect(canvas.getAllByTestId("system-node")).toHaveLength(9), {
+      timeout: 5000,
+    });
+    // React Flow shows a node once it has measured it.
+    await waitFor(() => expect(canvas.getByText("Auth & security")).toBeVisible(), {
+      timeout: 5000,
+    });
+    await expect(canvas.getByText("Settings, password hashing and access tokens.")).toBeVisible();
+  },
+};
+
+/** A schema as an ER diagram: tables with their keys, types and the relation between rows. */
+export const EntityRelationship: Story = {
+  args: { spec: SCHEMA, edges: SCHEMA.edges, mermaid: "" },
+  play: async ({ canvas }) => {
+    await waitFor(() => expect(canvas.getAllByTestId("table-node")).toHaveLength(2), {
+      timeout: 5000,
+    });
+    const item = await waitFor(() => canvas.getByRole("list", { name: "item's columns" }), {
+      timeout: 5000,
+    });
+    await expect(item).toHaveTextContent("owner_id");
+    await expect(item).toHaveTextContent("a foreign key to");
+    await expect(canvas.getByRole("list", { name: "user's columns" })).toHaveTextContent(
+      "Primary key id",
     );
   },
 };

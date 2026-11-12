@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { elkGraph, layerColumn, layout, positionsOf } from "@/lib/diagrams/elk-layout";
-import { exportSvg } from "@/lib/diagrams/export";
+import { elkGraph, layout, positionsOf } from "@/lib/diagrams/elk-layout";
+import { erGraph, relationEnds, tableHeight } from "@/lib/diagrams/er-layout";
+import { exportErSvg, exportSvg, exportSystemSvg } from "@/lib/diagrams/export";
+import { layoutSystem, rowOf } from "@/lib/diagrams/system-layout";
+import { appArchitecture, appSchema } from "@/mocks/app-architecture";
 
 import {
   citationLabel,
@@ -12,6 +15,7 @@ import {
   specDiff,
   specOf,
   verifiedPercent,
+  viewsOf,
   type Diagram,
   type Spec,
 } from "./diagrams";
@@ -106,22 +110,74 @@ describe("a diagram's spec", () => {
       from_trace: fromTrace,
       kind: "sequence",
     });
+    expect(redrawInput({ ...base, prompt: { whole_schema: true } })).toEqual({
+      whole_schema: true,
+      kind: "er",
+    });
     expect(redrawInput(base)).toBeNull();
   });
 });
 
 describe("its layout and exports", () => {
-  it("is laid out by ELK, an architecture one in columns by layer", async () => {
+  it("is laid out by ELK", async () => {
     const graph = elkGraph(SPEC, SPEC.edges, "RIGHT");
     expect(graph.children?.map((c) => c.id)).toEqual(["a", "b", "c"]);
     expect(graph.edges).toHaveLength(2);
     const laid = positionsOf(await layout(graph));
     expect(Object.keys(laid)).toEqual(["a", "b", "c"]);
     expect(laid.a?.x ?? 0).toBeLessThan(laid.b?.x ?? 0); // left to right
-    const columns = elkGraph({ ...SPEC, kind: "architecture" }, SPEC.edges, "RIGHT");
-    expect(columns.children?.[0]?.layoutOptions?.["elk.partitioning.partition"]).toBe("0");
-    expect(layerColumn("db")).toBe(6);
-    expect(layerColumn("nonsense")).toBe(8);
+  });
+
+  it("draws an architecture in rows, top to bottom, as on a whiteboard", () => {
+    const spec = appArchitecture("Architecture");
+    const placed = layoutSystem(spec, spec.edges);
+    expect(placed.rows.map((r) => r.row.row)).toEqual([
+      "actor",
+      "frontend",
+      "api",
+      "service",
+      "data",
+      "outside",
+    ]);
+    const y = (id: string) => placed.at[id]?.y ?? -1;
+    expect(y("actor:user")).toBeLessThan(y("part:web-app"));
+    expect(y("part:web-app")).toBeLessThan(y("part:rest-api"));
+    expect(y("part:data-models")).toBeLessThan(y("outside:postgresql"));
+    // Each row centered, its boxes apart.
+    const front = placed.rows.find((r) => r.row.row === "frontend");
+    expect(front?.ids).toHaveLength(2);
+    const [a, b] = (front?.ids ?? []).map((id) => placed.at[id]?.x ?? 0);
+    expect((a ?? 0) + (b ?? 0) + 224).toBeCloseTo(0); // symmetric round 0
+    // A flow's code nodes by their layer.
+    expect(rowOf(PAGE).row).toBe("frontend");
+    expect(rowOf(ENDPOINT).row).toBe("api");
+    expect(rowOf({ ...SERVICE, layer: "nonsense" }).row).toBe("other");
+    const svg = exportSystemSvg(spec, spec.edges, placed);
+    expect(svg).toContain("PostgreSQL");
+    expect(svg).toContain('stroke-dasharray="6 4"'); // the user's line, inferred
+  });
+
+  it("draws an ER diagram's relations from the key's row to the named column", () => {
+    const spec = appSchema("Schema");
+    const [item, user] = spec.nodes;
+    const [owner] = spec.edges;
+    if (!item || !user || !owner) throw new Error("the mock's schema");
+    expect(tableHeight(item)).toBe(44 + 5 * 26 + 8);
+    expect(relationEnds(owner, user)).toEqual({
+      sourceHandle: "out:owner_id",
+      targetHandle: "in:id",
+    });
+    expect(relationEnds({ ...owner, label: "owner_id → uuid" }, user).targetHandle).toBe("in:head");
+    expect(erGraph(spec, spec.edges).edges).toHaveLength(1);
+    const svg = exportErSvg(spec, spec.edges, {
+      "table item": { x: 0, y: 0 },
+      "table user": { x: 400, y: 0 },
+    });
+    expect(svg).toContain("FK owner_id");
+    expect(svg).toContain("PK id");
+    expect(svg).toContain("str?"); // nullable
+    expect(viewsOf("er")).toEqual(["er"]);
+    expect(viewsOf("flowchart")).toEqual(["flowchart", "sequence", "architecture"]);
   });
 
   it("exports an SVG with its labels escaped", () => {

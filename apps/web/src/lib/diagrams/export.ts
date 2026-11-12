@@ -1,13 +1,17 @@
 /**
- * A diagram's exports (6.6): SVG drawn from its laid-out spec (cards, layer stripes, edges,
- * solid or dashed, with their labels; the architecture view's layer bands; the sequence view's
- * lifelines and numbered messages), PNG rendered from that SVG, and a file download.
- * Colors are fixed (a light blueprint), so an export reads the same wherever it is pasted.
+ * A diagram's exports (6.6): SVG drawn from its laid-out spec (a flowchart's cards, layer
+ * stripes and edges, solid or dashed, with their labels; the architecture view's boxes and
+ * cylinders in their rows, the lines square; an ER diagram's tables with their columns and the
+ * relations between their rows; the sequence view's lifelines and numbered messages), PNG
+ * rendered from that SVG, and a file download. Colors are fixed (a light blueprint), so an
+ * export reads the same wherever it is pasted.
  */
 import { edgeWords, type Spec, type SpecEdge, type SpecNode } from "@/lib/api/diagrams";
 
-import { NODE_HEIGHT, NODE_WIDTH, type Band, type Placed } from "./elk-layout";
+import { NODE_HEIGHT, NODE_WIDTH, type Placed } from "./elk-layout";
+import { COLUMN_ROW, TABLE_HEAD, TABLE_WIDTH, tableHeight } from "./er-layout";
 import { CARD_HEIGHT, CARD_WIDTH, LOOP, sequenceOf } from "./sequence";
+import { isStore, rowOf, sizeOf, type PlacedSystem } from "./system-layout";
 
 const PAD = 24;
 const LANE_COLORS: Record<string, string> = {
@@ -35,11 +39,142 @@ interface Sized {
 }
 const CARD: Sized = { width: () => NODE_WIDTH, height: () => NODE_HEIGHT };
 
+function frame(width: number, height: number, minX: number, minY: number): string[] {
+  return [
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${String(width)}" height="${String(height)}" viewBox="${String(minX)} ${String(minY)} ${String(width)} ${String(height)}" font-family="ui-sans-serif, system-ui, sans-serif">`,
+    `<rect x="${String(minX)}" y="${String(minY)}" width="${String(width)}" height="${String(height)}" fill="#ffffff"/>`,
+    `<defs><marker id="arrow" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#6b7280"/></marker></defs>`,
+  ];
+}
+
+const ROW_COLORS: Record<string, string> = {
+  ui: "#7c5cff",
+  route: "#1f8fff",
+  service: "#0aa37f",
+  db: "#e0a000",
+  other: "#8a8f98",
+};
+
+/** The architecture view as SVG: its rows' boxes (a store a cylinder), the lines square from a
+ * box's bottom to the next one's top. */
+export function exportSystemSvg(
+  spec: Spec,
+  edges: readonly SpecEdge[],
+  placed: PlacedSystem,
+): string {
+  const byId = new Map(spec.nodes.map((n) => [n.id, n]));
+  const box = (id: string) => {
+    const node = byId.get(id);
+    const at = placed.at[id] ?? { x: 0, y: 0 };
+    const size = node ? sizeOf(node) : { width: NODE_WIDTH, height: NODE_HEIGHT };
+    return { ...at, ...size };
+  };
+  const all = spec.nodes.map((n) => box(n.id));
+  const minX = Math.min(0, ...all.map((b) => b.x)) - PAD;
+  const minY = Math.min(0, ...all.map((b) => b.y)) - PAD;
+  const width = Math.max(0, ...all.map((b) => b.x + b.width)) + PAD - minX;
+  const height = Math.max(0, ...all.map((b) => b.y + b.height)) + PAD - minY;
+  const parts = frame(width, height, minX, minY);
+  for (const edge of edges) {
+    const a = box(edge.from);
+    const b = box(edge.to);
+    const x1 = a.x + a.width / 2;
+    const y1 = a.y + a.height;
+    const x2 = b.x + b.width / 2;
+    const y2 = b.y;
+    const mid = (y1 + y2) / 2;
+    const dash = edge.verified ? "" : ' stroke-dasharray="6 4"';
+    const color = edge.verified ? "#6b7280" : "#d97706";
+    parts.push(
+      `<path d="M${String(x1)},${String(y1)} V${String(mid)} H${String(x2)} V${String(y2)}" fill="none" stroke="${color}" stroke-width="1.5"${dash} marker-end="url(#arrow)"/>`,
+    );
+    if (edge.label) {
+      parts.push(
+        `<text x="${String((x1 + x2) / 2)}" y="${String(mid - 4)}" font-size="10" fill="#4b5563" text-anchor="middle">${escape(edge.label)}</text>`,
+      );
+    }
+  }
+  for (const node of spec.nodes) {
+    const { x, y, width: w, height: h } = box(node.id);
+    const lane = node.layer === "outside" ? (isStore(node) ? "db" : "route") : rowOf(node).lane;
+    const color = ROW_COLORS[lane] ?? ROW_COLORS.other ?? "#8a8f98";
+    if (isStore(node)) {
+      parts.push(
+        `<path d="M${String(x)},${String(y + 14)} C${String(x)},${String(y + 6)} ${String(x + w)},${String(y + 6)} ${String(x + w)},${String(y + 14)} L${String(x + w)},${String(y + h - 14)} C${String(x + w)},${String(y + h - 6)} ${String(x)},${String(y + h - 6)} ${String(x)},${String(y + h - 14)} Z" fill="${color}" fill-opacity="0.12" stroke="${color}"/>`,
+        `<path d="M${String(x)},${String(y + 14)} C${String(x)},${String(y + 22)} ${String(x + w)},${String(y + 22)} ${String(x + w)},${String(y + 14)}" fill="none" stroke="${color}"/>`,
+        `<text x="${String(x + w / 2)}" y="${String(y + h / 2 + 8)}" font-size="13" font-weight="600" fill="#111827" text-anchor="middle">${escape(node.label)}</text>`,
+      );
+      continue;
+    }
+    parts.push(
+      `<rect x="${String(x)}" y="${String(y)}" width="${String(w)}" height="${String(h)}" rx="12" fill="${color}" fill-opacity="0.1" stroke="${color}" stroke-opacity="0.6"/>`,
+      `<text x="${String(x + 16)}" y="${String(y + 32)}" font-size="13" font-weight="600" fill="#111827">${escape(node.label)}</text>`,
+      node.note
+        ? `<text x="${String(x + 16)}" y="${String(y + 50)}" font-size="10" fill="#4b5563">${escape(node.note.slice(0, 40))}</text>`
+        : "",
+    );
+  }
+  parts.push("</svg>");
+  return parts.join("");
+}
+
+/** An ER diagram as SVG: its tables' cards with their columns, each relation from its key's row
+ * to the table it names. */
+export function exportErSvg(
+  spec: Spec,
+  edges: readonly SpecEdge[],
+  placed: Readonly<Record<string, Placed>>,
+): string {
+  const at = (id: string) => placed[id] ?? { x: 0, y: 0 };
+  const byId = new Map(spec.nodes.map((n) => [n.id, n]));
+  const minX = Math.min(0, ...spec.nodes.map((n) => at(n.id).x)) - PAD;
+  const minY = Math.min(0, ...spec.nodes.map((n) => at(n.id).y)) - PAD;
+  const width = Math.max(0, ...spec.nodes.map((n) => at(n.id).x + TABLE_WIDTH)) + PAD - minX;
+  const height = Math.max(0, ...spec.nodes.map((n) => at(n.id).y + tableHeight(n))) + PAD - minY;
+  const parts = frame(width, height, minX, minY);
+  const rowY = (node: SpecNode | undefined, name: string) => {
+    const i = node?.members?.findIndex((m) => m.name === name) ?? -1;
+    return i < 0 ? TABLE_HEAD / 2 : TABLE_HEAD + i * COLUMN_ROW + COLUMN_ROW / 2;
+  };
+  for (const edge of edges) {
+    const [column = "", named = ""] = (edge.label ?? "").split(" → ");
+    const a = at(edge.from);
+    const b = at(edge.to);
+    const x1 = a.x + TABLE_WIDTH;
+    const y1 = a.y + rowY(byId.get(edge.from), column);
+    const x2 = b.x;
+    const y2 = b.y + rowY(byId.get(edge.to), named);
+    const mid = (x1 + x2) / 2;
+    parts.push(
+      `<path d="M${String(x1)},${String(y1)} H${String(mid)} V${String(y2)} H${String(x2)}" fill="none" stroke="#6b7280" stroke-width="1.5" marker-end="url(#arrow)"/>`,
+    );
+  }
+  for (const node of spec.nodes) {
+    const { x, y } = at(node.id);
+    const h = tableHeight(node);
+    parts.push(
+      `<rect x="${String(x)}" y="${String(y)}" width="${String(TABLE_WIDTH)}" height="${String(h)}" rx="8" fill="#ffffff" stroke="#d1d5db"/>`,
+      `<rect x="${String(x)}" y="${String(y)}" width="${String(TABLE_WIDTH)}" height="${String(TABLE_HEAD)}" rx="8" fill="#e0a000" fill-opacity="0.14"/>`,
+      `<text x="${String(x + 14)}" y="${String(y + 27)}" font-size="13" font-weight="600" fill="#111827">${escape(node.label)}</text>`,
+      ...(node.members ?? []).map((member, i) => {
+        const top = y + TABLE_HEAD + i * COLUMN_ROW;
+        const mark = member.kind === "pk" ? "PK " : member.ref ? "FK " : "";
+        return [
+          `<text x="${String(x + 14)}" y="${String(top + 17)}" font-size="11" font-family="ui-monospace, monospace" fill="#111827">${escape(mark + member.name)}</text>`,
+          `<text x="${String(x + TABLE_WIDTH - 14)}" y="${String(top + 17)}" font-size="11" font-family="ui-monospace, monospace" fill="#6b7280" text-anchor="end">${escape((member.type ?? "") + (member.nullable ? "?" : ""))}</text>`,
+        ].join("");
+      }),
+    );
+  }
+  parts.push("</svg>");
+  return parts.join("");
+}
+
 export function exportSvg(
   spec: Spec,
   edges: readonly SpecEdge[],
   placed: Readonly<Record<string, Placed>>,
-  { sized = CARD, bands = [] }: { sized?: Sized; bands?: readonly Band[] } = {},
+  { sized = CARD }: { sized?: Sized } = {},
 ): string {
   const at = (id: string) => placed[id] ?? { x: 0, y: 0 };
   const byId = new Map(spec.nodes.map((n) => [n.id, n]));
@@ -51,32 +186,11 @@ export function exportSvg(
     const node = byId.get(id);
     return node ? sized.height(node) : NODE_HEIGHT;
   };
-  const xs = [...spec.nodes.map((n) => at(n.id).x), ...bands.map((b) => b.x)];
-  const ys = [...spec.nodes.map((n) => at(n.id).y), ...bands.map((b) => b.y)];
-  const rights = [
-    ...spec.nodes.map((n) => at(n.id).x + w(n.id)),
-    ...bands.map((b) => b.x + b.width),
-  ];
-  const bottoms = [
-    ...spec.nodes.map((n) => at(n.id).y + h(n.id)),
-    ...bands.map((b) => b.y + b.height),
-  ];
-  const minX = Math.min(0, ...xs) - PAD;
-  const minY = Math.min(0, ...ys) - PAD;
-  const width = Math.max(0, ...rights) + PAD - minX;
-  const height = Math.max(0, ...bottoms) + PAD - minY;
-  const parts: string[] = [
-    `<svg xmlns="http://www.w3.org/2000/svg" width="${String(width)}" height="${String(height)}" viewBox="${String(minX)} ${String(minY)} ${String(width)} ${String(height)}" font-family="ui-sans-serif, system-ui, sans-serif">`,
-    `<rect x="${String(minX)}" y="${String(minY)}" width="${String(width)}" height="${String(height)}" fill="#ffffff"/>`,
-    `<defs><marker id="arrow" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#6b7280"/></marker></defs>`,
-  ];
-  for (const band of bands) {
-    const color = LANE_COLORS[band.tier.lane] ?? LANE_COLORS.other ?? "#8a8f98";
-    parts.push(
-      `<rect x="${String(band.x)}" y="${String(band.y)}" width="${String(band.width)}" height="${String(band.height)}" rx="12" fill="${color}" fill-opacity="0.06" stroke="${color}" stroke-opacity="0.45" stroke-dasharray="5 4"/>`,
-      `<text x="${String(band.x + 16)}" y="${String(band.y + 24)}" font-size="12" font-weight="600" fill="${color}">${escape(band.tier.label.toUpperCase())}</text>`,
-    );
-  }
+  const minX = Math.min(0, ...spec.nodes.map((n) => at(n.id).x)) - PAD;
+  const minY = Math.min(0, ...spec.nodes.map((n) => at(n.id).y)) - PAD;
+  const width = Math.max(0, ...spec.nodes.map((n) => at(n.id).x + w(n.id))) + PAD - minX;
+  const height = Math.max(0, ...spec.nodes.map((n) => at(n.id).y + h(n.id))) + PAD - minY;
+  const parts = frame(width, height, minX, minY);
   for (const edge of edges) {
     const a = at(edge.from);
     const b = at(edge.to);

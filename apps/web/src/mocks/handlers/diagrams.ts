@@ -2,14 +2,15 @@
  * The mock diagrams (6.1, 6.6): drawn from the mock snapshot's Login trace (its path's hops,
  * each edge the trace's: verified), plus, for a question, one edge the graph can't show, marked
  * inferred with its reason, as the real validator would keep it. A question with "nothing" in it
- * finds nothing (`404 diagram_nothing_found`). The whole app's architecture is the template's
- * (app-architecture.ts). Kept in the mock database per repository.
+ * finds nothing (`404 diagram_nothing_found`). The whole app's architecture and schema are the
+ * template's (app-architecture.ts), as is an ER diagram asked of a question. Kept in the mock
+ * database per repository.
  */
 import { http, HttpResponse } from "msw";
 
 import type { Diagram, DiagramSummary, Spec } from "@/lib/api/diagrams";
 import { mermaid, ratio, specOfTrace, TEMPLATE_MEMBERS } from "@/lib/diagrams/from-trace";
-import { appArchitecture } from "@/mocks/app-architecture";
+import { appArchitecture, appSchema } from "@/mocks/app-architecture";
 import { db, saveDb, type MockRepo } from "@/mocks/db";
 import { LOGIN_ENTRY, mockTraces } from "@/mocks/trace";
 
@@ -50,27 +51,44 @@ export const diagramHandlers = [
       question?: string | null;
       from_trace?: { from: string } | null;
       whole_app?: boolean;
+      whole_schema?: boolean;
       kind?: Spec["kind"];
     };
-    const given = [Boolean(body.question), Boolean(body.from_trace), Boolean(body.whole_app)];
+    const given = [
+      Boolean(body.question),
+      Boolean(body.from_trace),
+      Boolean(body.whole_app),
+      Boolean(body.whole_schema),
+    ];
     if (given.filter(Boolean).length !== 1) {
-      return apiError(422, "diagram_source", "Give one of from_trace, a question or whole_app.");
+      return apiError(
+        422,
+        "diagram_source",
+        "Give one of from_trace, a question, whole_app or whole_schema.",
+      );
     }
-    if (body.whole_app) {
-      const spec = appArchitecture(`Architecture of ${repo.full_name}`);
+    const schema = body.whole_schema === true || (body.kind === "er" && !body.whole_app);
+    if (body.whole_app || schema) {
+      const spec = body.whole_app
+        ? appArchitecture(`Architecture of ${repo.full_name}`)
+        : appSchema(body.question ? `Tables of ${body.question}` : `Schema of ${repo.full_name}`);
       const made: Diagram = {
         id: crypto.randomUUID(),
         title: spec.title,
-        kind: "architecture",
-        source: "repo",
+        kind: spec.kind,
+        source: body.question ? "question" : "repo",
         commit_sha: repo.last_indexed_sha ?? "",
-        verified_ratio: 1,
+        verified_ratio: ratio(spec),
         nodes: spec.nodes.length,
         edges: spec.edges.length,
         created_by: null,
         shared: false,
         created_at: new Date().toISOString(),
-        prompt: { whole_app: true },
+        prompt: body.whole_app
+          ? { whole_app: true }
+          : body.question
+            ? { question: body.question }
+            : { whole_schema: true },
         spec: spec as unknown as Diagram["spec"],
         mermaid: mermaid(spec),
       };

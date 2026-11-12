@@ -2,7 +2,8 @@
  * Diagrams (6.1, 6.6): a flow drawn from the code graph and checked against it. The API's spec
  * as the canvas reads it, and what the canvas works out of it: how much the graph proves, the
  * edges shown when the unverified ones are hidden, the citations to check for staleness, and
- * what a regenerated diagram added and took away.
+ * what a regenerated diagram added and took away. An ER diagram is a schema's (its tables,
+ * their columns and foreign keys); the others are views of a flow, each drawable as another.
  */
 import type { Schemas } from "./types";
 
@@ -11,13 +12,26 @@ export type DiagramSummary = Schemas["DiagramSummary"];
 export type DiagramKind = Diagram["kind"];
 export type DiagramInput = Schemas["DiagramIn"];
 
-export const DIAGRAM_KINDS: readonly DiagramKind[] = ["flowchart", "sequence", "architecture"];
+export const DIAGRAM_KINDS: readonly DiagramKind[] = [
+  "flowchart",
+  "sequence",
+  "architecture",
+  "er",
+];
+/** The views a flow can be drawn in (an ER diagram is drawn only as one). */
+export const FLOW_VIEWS: readonly DiagramKind[] = ["flowchart", "sequence", "architecture"];
 
 export const KIND_LABELS: Record<DiagramKind, string> = {
   flowchart: "Flowchart",
   sequence: "Sequence",
   architecture: "Architecture",
+  er: "ER diagram",
 };
+
+/** The views a diagram can be shown in: a flow's three, an ER diagram's own. */
+export function viewsOf(kind: DiagramKind): readonly DiagramKind[] {
+  return kind === "er" ? ["er"] : FLOW_VIEWS;
+}
 
 export interface Citation {
   path: string;
@@ -28,7 +42,11 @@ export interface Citation {
 /** Something a node holds or uses, as an entity diagram lists it. */
 export interface SpecMember {
   name: string;
-  kind: string; // method, function, variable, class, column, hook, renders
+  /** method, function, variable, class, column, hook, renders, module; a table's pk, fk. */
+  kind: string;
+  type?: string; // a column's
+  ref?: string; // the column a foreign key names: "user.id"
+  nullable?: boolean;
 }
 
 export interface SpecNode {
@@ -40,6 +58,10 @@ export interface SpecNode {
   /** Its members (diagrams drawn before 6.6.2 have none). */
   members?: SpecMember[];
   more_members?: number;
+  /** An architecture's part: what it does, its icon, how much code it is. */
+  note?: string;
+  icon?: string;
+  size?: number;
 }
 
 export interface SpecEdge {
@@ -58,6 +80,8 @@ export interface Spec {
   kind: DiagramKind;
   nodes: SpecNode[];
   edges: SpecEdge[];
+  /** What the system does, in a sentence (a whole app's architecture). */
+  summary?: string;
 }
 
 /** The spec as the API sends it (an object of any shape, typed by its writer). */
@@ -68,6 +92,7 @@ export function specOf(diagram: Pick<Diagram, "spec">): Spec {
     kind: raw.kind ?? "flowchart",
     nodes: raw.nodes ?? [],
     edges: raw.edges ?? [],
+    ...(raw.summary ? { summary: raw.summary } : {}),
   };
 }
 
@@ -124,8 +149,10 @@ export function redrawInput(diagram: Diagram): DiagramInput | null {
     question?: string;
     from_trace?: DiagramInput["from_trace"];
     whole_app?: boolean;
+    whole_schema?: boolean;
   };
   if (prompt.whole_app) return { whole_app: true, kind: "architecture" };
+  if (prompt.whole_schema) return { whole_schema: true, kind: "er" };
   if (prompt.question) return { question: prompt.question, kind: diagram.kind };
   if (prompt.from_trace) return { from_trace: prompt.from_trace, kind: diagram.kind };
   return null;

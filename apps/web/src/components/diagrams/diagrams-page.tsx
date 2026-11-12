@@ -7,7 +7,7 @@
  * "New diagram": a question ("How does login work?") or, from a trace's "Open as diagram"
  * (``?from=`` its entry, ``&path=`` which path), its flow, drawn from the graph and opened.
  */
-import { Network, ShieldCheck, Workflow } from "lucide-react";
+import { Network, ShieldCheck, Table2, Workflow } from "lucide-react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
@@ -121,20 +121,35 @@ function Diagrams() {
   );
 }
 
-/** The whole app's architecture, a click away: drawn from the graph, so nothing is spent. */
+/** The whole app, a click away: its architecture (its parts named by the model, every line the
+ * graph's) and its schema (an ER diagram of its tables, from the graph alone: nothing spent). */
 function WholeApp() {
   const { org, repo } = useRepoSlug();
   const router = useRouter();
   const search = useSearchParams();
   const create = useCreateDiagram();
   const [error, setError] = useState<string | null>(null);
-  const draw = async () => {
+  const [drawing, setDrawing] = useState<"app" | "schema" | null>(null);
+  const draw = async (what: "app" | "schema") => {
     setError(null);
+    setDrawing(what);
     try {
-      const made = await create.draw({ whole_app: true, kind: "architecture" });
+      const made = await create.draw(
+        what === "app"
+          ? { whole_app: true, kind: "architecture" }
+          : { whole_schema: true, kind: "er" },
+      );
       router.push(repoPath(org, repo, `diagrams/${made.id}`));
     } catch (caught) {
-      setError(caught instanceof ApiError ? caught.message : "The architecture couldn't be drawn.");
+      setError(
+        caught instanceof ApiError
+          ? caught.message
+          : what === "app"
+            ? "The architecture couldn't be drawn."
+            : "The schema couldn't be drawn.",
+      );
+    } finally {
+      setDrawing(null);
     }
   };
   // The overview's "Open as an architecture diagram" (``?whole=1``): drawn once, the address
@@ -145,34 +160,64 @@ function WholeApp() {
     if (!asked || started.current) return;
     started.current = true;
     window.history.replaceState(null, "", window.location.pathname);
-    void draw();
+    void draw("app");
     // Once, for the address.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [asked]);
   return (
-    <section
-      aria-labelledby="whole-app-heading"
-      className="flex flex-wrap items-center gap-4 rounded-lg border border-line bg-surface-1 p-4"
-    >
-      <Network aria-hidden className="size-8 shrink-0 text-signal" />
-      <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-        <h2 id="whole-app-heading" className="text-sm font-medium">
-          The whole app&apos;s architecture
-        </h2>
-        <p className="text-xs text-fg-muted">
-          How this repository is built: its parts by tier (frontend, API, services, data), what each
-          holds, and how they connect. From the code graph, so every line is real.
-        </p>
-      </div>
-      <Button disabled={create.isPending} onClick={() => void draw()}>
-        {create.isPending ? "Mapping…" : "Map the architecture"}
-      </Button>
+    <div className="grid gap-3 md:grid-cols-2">
+      <section
+        aria-labelledby="whole-app-heading"
+        className="flex flex-col gap-3 rounded-lg border border-line bg-surface-1 p-4"
+      >
+        <div className="flex items-start gap-3">
+          <Network aria-hidden className="size-7 shrink-0 text-signal" />
+          <div className="flex min-w-0 flex-col gap-0.5">
+            <h2 id="whole-app-heading" className="text-sm font-medium">
+              The whole app&apos;s architecture
+            </h2>
+            <p className="text-xs text-fg-muted">
+              How it is built, as you&apos;d draw it on a whiteboard: who uses it, its frontend, API
+              and services, the databases and services it uses. AI names the parts; every line
+              between them is the code&apos;s own.
+            </p>
+          </div>
+        </div>
+        <Button className="self-start" disabled={create.isPending} onClick={() => void draw("app")}>
+          {drawing === "app" ? "Mapping…" : "Map the architecture"}
+        </Button>
+      </section>
+      <section
+        aria-labelledby="whole-schema-heading"
+        className="flex flex-col gap-3 rounded-lg border border-line bg-surface-1 p-4"
+      >
+        <div className="flex items-start gap-3">
+          <Table2 aria-hidden className="size-7 shrink-0 text-layer-db" />
+          <div className="flex min-w-0 flex-col gap-0.5">
+            <h2 id="whole-schema-heading" className="text-sm font-medium">
+              The data model (ER diagram)
+            </h2>
+            <p className="text-xs text-fg-muted">
+              Every table with its columns, keys and types, and how they relate, as the models and
+              migrations declare them. Read from the code: free, and exact.
+            </p>
+          </div>
+        </div>
+        <Button
+          className="self-start"
+          variant="outline"
+          disabled={create.isPending}
+          onClick={() => void draw("schema")}
+        >
+          {drawing === "schema" ? "Mapping…" : "Map the schema"}
+        </Button>
+      </section>
       {error ? (
-        <p role="alert" className="w-full text-sm text-danger">
+        <p role="alert" className="text-sm text-danger md:col-span-2">
           {error}
         </p>
       ) : null}
-    </section>
+    </div>
   );
 }
 

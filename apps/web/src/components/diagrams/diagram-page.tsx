@@ -8,6 +8,7 @@
  * it all as text. A node opens its code, a question about it and its trace beside the canvas.
  */
 import { History, List, RefreshCw, Share2, ShieldCheck, Trash2, Workflow } from "lucide-react";
+import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { parseAsString, parseAsStringLiteral, useQueryState } from "nuqs";
@@ -35,7 +36,9 @@ import {
   specDiff,
   specOf,
   verifiedPercent,
+  viewsOf,
   type Diagram,
+  type DiagramKind,
   type SpecNode,
 } from "@/lib/api/diagrams";
 import { ApiError } from "@/lib/api/errors";
@@ -43,7 +46,10 @@ import { isStale } from "@/lib/api/refs";
 import { repoPath } from "@/lib/routes";
 
 import { DiagramCanvas } from "./diagram-canvas";
-import { NodePanel } from "./node-panel";
+// A node's panel (its code, the code viewer with it) loads when one is picked.
+const NodePanel = dynamic(() => import("./node-panel").then((m) => m.NodePanel), {
+  loading: () => <p className="p-3 text-xs text-fg-faint">Loading…</p>,
+});
 import { useCreateDiagram, useDiagram, useDiagramActions } from "./use-diagrams";
 
 export function DiagramPage() {
@@ -80,9 +86,11 @@ function Loaded({ diagram }: { diagram: Diagram }) {
   const [showOutline, setShowOutline] = useState(false);
   const [selected, setSelected] = useState<SpecNode | null>(null);
   const [since] = useQueryState("since", parseAsString);
-  // Any diagram in any of the three views (6.6.2): drawn as its kind until another is picked.
+  // A flow in any of its three views (6.6.2): drawn as its kind until another is picked. An ER
+  // diagram is drawn only as one.
   const [picked, setView] = useQueryState("view", parseAsStringLiteral(DIAGRAM_KINDS));
-  const view = picked ?? diagram.kind;
+  const views = viewsOf(diagram.kind);
+  const view = picked && views.includes(picked) ? picked : diagram.kind;
   const before = useDiagram(since ?? "", since !== null);
   const diff = since && before.data ? specDiff(specOf(before.data), spec) : null;
   const cited = citedFiles(spec, diagram.commit_sha);
@@ -135,20 +143,26 @@ function Loaded({ diagram }: { diagram: Diagram }) {
           /
         </span>
         <Title diagram={diagram} />
-        <ToggleGroup
-          aria-label="View as"
-          value={[view]}
-          onValueChange={(value: string[]) => {
-            const next = DIAGRAM_KINDS.find((kind) => kind === value[0]);
-            if (next) void setView(next === diagram.kind ? null : next);
-          }}
-        >
-          {DIAGRAM_KINDS.map((kind) => (
-            <ToggleGroupItem key={kind} value={kind} size="sm">
-              {KIND_LABELS[kind]}
-            </ToggleGroupItem>
-          ))}
-        </ToggleGroup>
+        {views.length > 1 ? (
+          <ToggleGroup
+            aria-label="View as"
+            value={[view]}
+            onValueChange={(value: string[]) => {
+              const next = views.find((kind) => kind === value[0]);
+              if (next) void setView(next === diagram.kind ? null : next);
+            }}
+          >
+            {views.map((kind) => (
+              <ToggleGroupItem key={kind} value={kind} size="sm">
+                {KIND_LABELS[kind]}
+              </ToggleGroupItem>
+            ))}
+          </ToggleGroup>
+        ) : (
+          <span className="rounded-full border border-line px-2 py-0.5 text-xs text-fg-muted">
+            {KIND_LABELS[diagram.kind]}
+          </span>
+        )}
         <Tooltip>
           <TooltipTrigger
             render={
@@ -208,6 +222,14 @@ function Loaded({ diagram }: { diagram: Diagram }) {
           <Actions diagram={diagram} />
         </div>
       </header>
+      {spec.summary ? (
+        <p
+          className="border-b border-line px-6 py-2 text-sm text-fg-muted"
+          data-testid="diagram-summary"
+        >
+          {spec.summary}
+        </p>
+      ) : null}
       {diff ? <Changes added={diff.added.size} removed={diff.removed} /> : null}
       <div className="grid min-h-0 flex-1 grid-cols-1 md:grid-cols-[minmax(0,1fr)_24rem]">
         <div className="min-h-[28rem]">
@@ -244,7 +266,7 @@ function Loaded({ diagram }: { diagram: Diagram }) {
           ) : showOutline ? (
             <Outline steps={outline({ ...spec, edges })} />
           ) : (
-            <Outline steps={outline({ ...spec, edges })} compact />
+            <Outline steps={outline({ ...spec, edges })} compact kind={diagram.kind} />
           )}
         </div>
       </div>
@@ -378,7 +400,23 @@ function Changes({ added, removed }: { added: number; removed: readonly SpecNode
   );
 }
 
-function Outline({ steps, compact = false }: { steps: string[]; compact?: boolean }) {
+/** What the outline lists, by the diagram's kind. */
+const LISTED: Record<DiagramKind, string> = {
+  flowchart: "Steps",
+  sequence: "Messages",
+  architecture: "Connections",
+  er: "Relations",
+};
+
+function Outline({
+  steps,
+  compact = false,
+  kind = "flowchart",
+}: {
+  steps: string[];
+  compact?: boolean;
+  kind?: DiagramKind;
+}) {
   return (
     <section
       aria-label="Outline"
@@ -386,7 +424,7 @@ function Outline({ steps, compact = false }: { steps: string[]; compact?: boolea
       data-testid="diagram-outline"
     >
       <h2 className="border-b border-line px-3 py-2 text-xs font-medium text-fg-muted">
-        {compact ? "Steps (pick a node for its code)" : "Outline"}
+        {compact ? `${LISTED[kind]} (pick a box for more)` : "Outline"}
       </h2>
       <ol className="min-h-0 flex-1 list-decimal overflow-auto py-2 pr-3 pl-8 text-xs">
         {steps.map((step, i) => (

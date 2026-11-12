@@ -1,36 +1,10 @@
 /**
- * The mock whole-app architecture (6.6): the full-stack template's modules as the API draws them
- * from its graph (each a folder, in the tier most of its code is in, with what it holds), and the
- * graph's edges between them, counted. Every line is the graph's: verified.
+ * The mock whole app (6.6): the full-stack template's architecture as the API draws it (its
+ * modules grouped and named into parts, each a box with its icon and what it does; the outside
+ * systems its code imports; the graph's lines between them, counted; the user's line inferred),
+ * and its schema as an ER diagram (its tables, columns, keys and the foreign key between them).
  */
 import type { Spec, SpecEdge, SpecMember, SpecNode } from "@/lib/api/diagrams";
-
-function part(id: string, layer: string, members: SpecMember[], more = 0): SpecNode {
-  return {
-    id,
-    label: id,
-    layer,
-    kind: "module",
-    citation: null,
-    members,
-    more_members: more,
-  };
-}
-
-const m = (name: string, kind: string): SpecMember => ({ name, kind });
-
-function line(from: string, to: string, type: string, count: number, verb: string): SpecEdge {
-  return {
-    from,
-    to,
-    type,
-    label: count > 1 ? `${String(count)} ${verb}` : verb,
-    verified: true,
-    confidence: 0.9,
-    provenance: "graph",
-    inferred: null,
-  };
-}
 
 const ROUTES = "frontend/src/routes";
 const ITEMS_UI = "frontend/src/components/Items";
@@ -40,60 +14,181 @@ const API = "backend/app/api/routes";
 const CORE = "backend/app/core";
 const APP = "backend/app";
 
+const folders = (...names: string[]): SpecMember[] =>
+  names.map((name) => ({ name, kind: "module" }));
+
+function part(
+  id: string,
+  label: string,
+  layer: string,
+  icon: string,
+  note: string,
+  modules: SpecMember[],
+): SpecNode {
+  return { id, label, layer, kind: layer, citation: null, members: modules, note, icon };
+}
+
+function outside(id: string, label: string, kind: string): SpecNode {
+  return { id, label, layer: "outside", kind, citation: null };
+}
+
+function line(from: string, to: string, type: string, label: string): SpecEdge {
+  return {
+    from,
+    to,
+    type,
+    label,
+    verified: true,
+    confidence: 0.9,
+    provenance: "graph",
+    inferred: null,
+  };
+}
+
 export function appArchitecture(title: string): Spec {
   return {
     title,
     kind: "architecture",
+    summary:
+      "A full-stack items app: a React frontend calls a FastAPI backend that signs users in and keeps their items in PostgreSQL.",
     nodes: [
-      part(ROUTES, "ui", [
-        m("Login", "component"),
-        m("SignUp", "component"),
-        m("Items", "component"),
-        m("Admin", "component"),
-        m("RecoverPassword", "component"),
-      ]),
-      part(ITEMS_UI, "ui", [
-        m("AddItem", "component"),
-        m("EditItem", "component"),
-        m("DeleteItem", "component"),
-      ]),
-      part(HOOKS, "state", [m("useAuth", "hook"), m("useCustomToast", "hook")]),
-      part(CLIENT, "client", [
-        m("LoginService", "class"),
-        m("ItemsService", "class"),
-        m("UsersService", "class"),
-      ]),
+      {
+        id: "actor:user",
+        label: "User",
+        layer: "actor",
+        kind: "actor",
+        citation: null,
+        icon: "user",
+      },
       part(
-        API,
-        "route",
-        [
-          m("POST /api/v1/login/access-token", "endpoint"),
-          m("GET /api/v1/items/", "endpoint"),
-          m("POST /api/v1/items/", "endpoint"),
-          m("PUT /api/v1/items/{id}", "endpoint"),
-          m("GET /api/v1/users/me", "endpoint"),
-          m("POST /api/v1/users/signup", "endpoint"),
-        ],
-        9,
+        "part:web-app",
+        "Web app",
+        "frontend",
+        "monitor",
+        "Pages to sign in, sign up, and manage items and users.",
+        folders(ROUTES, ITEMS_UI, HOOKS),
       ),
-      part(CORE, "service", [m("Settings", "class"), m("create_access_token", "function")]),
-      part(APP, "db", [
-        m("user", "table"),
-        m("item", "table"),
-        m("User", "model"),
-        m("Item", "model"),
-      ]),
+      part(
+        "part:api-client",
+        "API client",
+        "frontend",
+        "plug",
+        "Generated services the pages call the backend through.",
+        folders(CLIENT),
+      ),
+      part(
+        "part:rest-api",
+        "REST API",
+        "api",
+        "server",
+        "Endpoints for login, users, items and password recovery.",
+        folders(API),
+      ),
+      part(
+        "part:auth-security",
+        "Auth & security",
+        "service",
+        "shield",
+        "Settings, password hashing and access tokens.",
+        folders(CORE),
+      ),
+      part(
+        "part:data-models",
+        "Data models",
+        "data",
+        "database",
+        "User and Item models and the code that reads and writes them.",
+        folders(APP),
+      ),
+      outside("outside:postgresql", "PostgreSQL", "database"),
+      outside("outside:email-smtp", "Email (SMTP)", "email"),
+      outside("outside:sentry", "Sentry", "monitoring"),
     ],
     edges: [
-      line(ROUTES, ITEMS_UI, "renders", 6, "renders"),
-      line(ROUTES, HOOKS, "uses_hook", 5, "uses"),
-      line(HOOKS, CLIENT, "calls", 4, "calls"),
-      line(ROUTES, CLIENT, "calls", 3, "calls"),
-      line(ITEMS_UI, CLIENT, "calls", 3, "calls"),
-      line(CLIENT, API, "targets", 18, "requests"),
-      line(API, APP, "calls", 14, "calls"),
-      line(API, CORE, "injects", 7, "injects"),
-      line(CORE, APP, "reads", 3, "reads"),
+      {
+        from: "actor:user",
+        to: "part:web-app",
+        type: null,
+        label: "uses",
+        verified: false,
+        confidence: null,
+        provenance: null,
+        inferred: { reason: "people use the app through its pages" },
+      },
+      line("part:web-app", "part:api-client", "calls", "7 calls"),
+      line("part:api-client", "part:rest-api", "targets", "18 HTTP requests"),
+      line("part:rest-api", "part:data-models", "calls", "14 calls"),
+      line("part:rest-api", "part:auth-security", "injects", "7 injects"),
+      line("part:auth-security", "part:data-models", "reads", "3 reads"),
+      line("part:data-models", "outside:postgresql", "reads", "11 reads and writes"),
+      line("part:auth-security", "outside:email-smtp", "imports", "imports"),
+      line("part:rest-api", "outside:sentry", "imports", "imports"),
+    ],
+  };
+}
+
+const column = (name: string, type: string, extra: Partial<SpecMember> = {}): SpecMember => ({
+  name,
+  kind: "column",
+  type,
+  ...extra,
+});
+
+function table(id: string, label: string, members: SpecMember[], line: number): SpecNode {
+  return {
+    id,
+    label,
+    layer: "db",
+    kind: "table",
+    citation: { path: "backend/app/models.py", start_line: line, end_line: line + 12 },
+    members,
+  };
+}
+
+/** The template's schema, as the ER diagram draws it. */
+export function appSchema(title: string): Spec {
+  return {
+    title,
+    kind: "er",
+    nodes: [
+      table(
+        "table item",
+        "item",
+        [
+          { name: "id", kind: "pk", type: "UUID", nullable: false },
+          column("title", "str", { nullable: false }),
+          column("description", "str", { nullable: true }),
+          column("created_at", "datetime", { nullable: true }),
+          { name: "owner_id", kind: "fk", type: "UUID", ref: "user.id", nullable: false },
+        ],
+        93,
+      ),
+      table(
+        "table user",
+        "user",
+        [
+          { name: "id", kind: "pk", type: "UUID", nullable: false },
+          column("email", "EmailStr", { nullable: false }),
+          column("is_active", "bool", { nullable: false }),
+          column("is_superuser", "bool", { nullable: false }),
+          column("full_name", "str", { nullable: true }),
+          column("hashed_password", "str", { nullable: false }),
+          column("created_at", "datetime", { nullable: true }),
+        ],
+        44,
+      ),
+    ],
+    edges: [
+      {
+        from: "table item",
+        to: "table user",
+        type: "many_to_one",
+        label: "owner_id → id",
+        verified: true,
+        confidence: 1,
+        provenance: "contract",
+        inferred: null,
+      },
     ],
   };
 }
