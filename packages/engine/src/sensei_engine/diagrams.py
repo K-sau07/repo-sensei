@@ -52,8 +52,10 @@ from sensei_engine.llm.anthropic_client import (
 log = get_logger(__name__)
 
 PROMPT_VERSION = "diagram.v1"
-DiagramKind = Literal["sequence", "flowchart", "architecture"]
+DiagramKind = Literal["sequence", "flowchart", "architecture", "er"]
+# What a model labels (an ER diagram is the schema's, from the graph: :mod:`sensei_engine.er`).
 KINDS: tuple[DiagramKind, ...] = ("sequence", "flowchart", "architecture")
+ALL_KINDS: tuple[DiagramKind, ...] = (*KINDS, "er")
 
 MAX_DEPTH = 4  # a question's walk, in hops from what it names
 FAN_OUT = 8  # children followed from each node
@@ -205,7 +207,26 @@ class Member:
     """Something a node holds or uses, as its card lists it."""
 
     name: str
-    kind: str  # method, function, variable, class, column, hook, renders
+    kind: str  # method, function, variable, class, column, hook, renders; a table's pk, fk
+    type: str | None = None  # a column's
+    ref: str | None = None  # the column a foreign key names ("user.id")
+    nullable: bool | None = None
+
+    def as_json(self) -> dict[str, Any]:
+        found: dict[str, Any] = {"name": self.name, "kind": self.kind}
+        for key in ("type", "ref", "nullable"):
+            value = getattr(self, key)
+            if value is not None:
+                found[key] = value
+        return found
+
+    @classmethod
+    def from_json(cls, raw: Mapping[str, Any]) -> Member:
+        nullable = raw.get("nullable")
+        return cls(
+            str(raw.get("name", "")), str(raw.get("kind", "")), _text(raw.get("type")),
+            _text(raw.get("ref")), nullable if isinstance(nullable, bool) else None,
+        )  # fmt: skip
 
 
 @dataclass(frozen=True, slots=True)
@@ -219,9 +240,18 @@ class SpecNode:
     end_line: int
     members: tuple[Member, ...] = ()
     more: int = 0  # members past MAX_MEMBERS, not listed
+    # An architecture's part: what it does (a line), its icon, how much code it is.
+    note: str | None = None
+    icon: str | None = None
+    size: int = 0
 
     def as_json(self) -> dict[str, Any]:
-        return {
+        extra: dict[str, Any] = {
+            k: v for k, v in (("note", self.note), ("icon", self.icon)) if v is not None
+        }
+        if self.size:
+            extra["size"] = self.size
+        return extra | {
             "id": self.id,
             "label": self.label,
             "layer": self.layer,
@@ -231,7 +261,7 @@ class SpecNode:
                 if self.path
                 else None
             ),
-            "members": [{"name": m.name, "kind": m.kind} for m in self.members],
+            "members": [m.as_json() for m in self.members],
             "more_members": self.more,
         }
 
@@ -266,6 +296,7 @@ class DiagramSpec:
     kind: DiagramKind
     nodes: list[SpecNode]
     edges: list[SpecEdge] = field(default_factory=list[SpecEdge])
+    summary: str | None = None  # what the system does, in a sentence (an architecture's)
 
     @property
     def verified_ratio(self) -> float:
@@ -275,12 +306,15 @@ class DiagramSpec:
         return sum(1 for e in self.edges if e.verified) / len(self.edges)
 
     def as_json(self) -> dict[str, Any]:
-        return {
+        found: dict[str, Any] = {
             "title": self.title,
             "kind": self.kind,
             "nodes": [n.as_json() for n in self.nodes],
             "edges": [e.as_json() for e in self.edges],
         }
+        if self.summary:
+            found["summary"] = self.summary
+        return found
 
     @classmethod
     def from_json(cls, data: Mapping[str, Any]) -> DiagramSpec:
@@ -288,16 +322,14 @@ class DiagramSpec:
         nodes: list[SpecNode] = []
         for raw in _items(data.get("nodes")):
             cited = _object(raw.get("citation"))
-            members = tuple(
-                Member(str(m.get("name", "")), str(m.get("kind", "")))
-                for m in _items(raw.get("members"))
-            )
+            members = tuple(Member.from_json(m) for m in _items(raw.get("members")))
             nodes.append(
                 SpecNode(
                     str(raw.get("id", "")), str(raw.get("label", "")), str(raw.get("layer", "")),
                     str(raw.get("kind", "")), _text(cited.get("path")),
                     int(cited.get("start_line") or 0), int(cited.get("end_line") or 0),
-                    members, int(raw.get("more_members") or 0),
+                    members, int(raw.get("more_members") or 0), _text(raw.get("note")),
+                    _text(raw.get("icon")), int(raw.get("size") or 0),
                 )
             )  # fmt: skip
         edges: list[SpecEdge] = []
@@ -313,10 +345,10 @@ class DiagramSpec:
             )  # fmt: skip
         kind = str(data.get("kind", "flowchart"))
         shown: DiagramKind = "flowchart"
-        for one in KINDS:
+        for one in ALL_KINDS:
             if one == kind:
                 shown = one
-        return cls(str(data.get("title", "")), shown, nodes, edges)
+        return cls(str(data.get("title", "")), shown, nodes, edges, _text(data.get("summary")))
 
 
 def _items(value: object) -> list[Mapping[str, Any]]:
@@ -676,12 +708,57 @@ def _label(text: str) -> str:
 
 
 def mermaid(spec: DiagramSpec, *, link: Callable[[SpecNode], str | None] | None = None) -> str:
-    """The spec as Mermaid: a sequence diagram, or a flowchart (an architecture one grouped by
-    layer); inferred edges dashed, each node linked to its code when ``link`` gives a URL."""
+    """The spec as Mermaid: a sequence diagram, an ER diagram (a schema's), or a flowchart (an
+    architecture one grouped by layer); inferred edges dashed, each node linked to its code when
+    ``link`` gives a URL."""
     ids = {node.id: f"n{i + 1}" for i, node in enumerate(spec.nodes)}
     urls = {node.id: url for node in spec.nodes if link and (url := link(node))}
-    lines = _sequence(spec, ids, urls) if spec.kind == "sequence" else _flowchart(spec, ids, urls)
+    if spec.kind == "sequence":
+        lines = _sequence(spec, ids, urls)
+    elif spec.kind == "er":
+        lines = _er(spec, ids)
+    else:
+        lines = _flowchart(spec, ids, urls)
     return "\n".join(lines) + "\n"
+
+
+_ER_NAME = re.compile(r"[^A-Za-z0-9_]")
+# A relation's ends in Mermaid's crow's feet: many (or one) of the table holding the key to one
+# of the table it names, which may be none when the key may be null.
+_ER_ENDS = {
+    ("many_to_one", False): "}o--||", ("many_to_one", True): "}o--o|",
+    ("one_to_one", False): "|o--||", ("one_to_one", True): "|o--o|",
+}  # fmt: skip
+
+
+def _er(spec: DiagramSpec, ids: Mapping[str, str]) -> list[str]:
+    """``erDiagram``: each table with its columns (type, PK, FK), each foreign key a relation."""
+    names: dict[str, str] = {}
+    for node in spec.nodes:
+        name = _ER_NAME.sub("_", node.label) or ids[node.id]
+        names[node.id] = name if name not in names.values() else f"{name}_{ids[node.id]}"
+    lines = ["erDiagram"]
+    for node in spec.nodes:
+        lines.append(f"  {names[node.id]} {{")
+        for member in node.members:
+            kind = _ER_NAME.sub("_", member.type or "") or "column"
+            keys = ",".join(
+                k for k, on in (("PK", member.kind == "pk"), ("FK", bool(member.ref))) if on
+            )
+            lines.append(
+                f"    {kind} {_ER_NAME.sub('_', member.name) or '_'}{' ' + keys if keys else ''}"
+            )
+        lines.append("  }")
+    nullable = {
+        (node.id, m.name): bool(m.nullable) for node in spec.nodes for m in node.members if m.ref
+    }
+    for edge in spec.edges:
+        if edge.src not in names or edge.dst not in names:
+            continue
+        column = (edge.label or "").split(" ", 1)[0]
+        ends = _ER_ENDS.get((edge.type or "", nullable.get((edge.src, column), False)), "}o--||")
+        lines.append(f'  {names[edge.src]} {ends} {names[edge.dst]} : "{_label(edge.label or "")}"')
+    return lines
 
 
 def _href(url: str) -> str:

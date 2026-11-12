@@ -30,6 +30,7 @@ class DiagramKind(enum.StrEnum):
     SEQUENCE = "sequence"
     FLOWCHART = "flowchart"
     ARCHITECTURE = "architecture"
+    ER = "er"  # a schema's tables and the foreign keys between them
 
 
 class DiagramSource(enum.StrEnum):
