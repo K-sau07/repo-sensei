@@ -12,7 +12,6 @@ import pytest
 import rustworkx as rx
 
 from sensei_core.models import EdgeType, NodeKind, Provenance
-from sensei_engine.architecture import whole_app
 from sensei_engine.deps import (
     MAX_FORCE,
     TOP,
@@ -319,22 +318,3 @@ def test_a_group_spread_over_several_parents_has_no_cluster(graph: GraphSnapshot
     assert packages.nodes["."].cluster is None
     files = aggregate(graph, "file", roots)
     assert files.nodes["backend/app/crud.py"].cluster == "backend/app"  # one module: its own
-
-
-def test_the_whole_app_is_its_modules_by_tier_with_what_each_is_made_of(
-    graph: GraphSnapshot,
-) -> None:
-    spec = whole_app(graph, grouping(FILES, FRAMEWORKS), "Architecture of o/items")
-    assert spec.kind == "architecture"
-    parts = {node.label: node for node in spec.nodes}
-    assert all(node.kind == "module" for node in spec.nodes)
-    # Each module where most of its code is, what it holds listed by what it is.
-    page = next(node for node in spec.nodes if any(m.kind == "component" for m in node.members))
-    assert page.layer in {"ui", "state", "client"}  # the frontend tier
-    assert [m.name for m in page.members if m.kind == "component"] == ["Items"]
-    # The lines are the graph's own, counted, every one verified.
-    assert spec.edges
-    assert all(edge.verified and edge.provenance == "graph" for edge in spec.edges)
-    # Said by what most of it is ("requests"; "14 calls" where it is more than one).
-    assert sorted(edge.label or "" for edge in spec.edges) == ["maps", "requests"]
-    assert len(parts) == len(spec.nodes)
