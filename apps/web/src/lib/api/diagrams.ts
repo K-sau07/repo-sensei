@@ -64,6 +64,14 @@ export interface SpecNode {
   size?: number;
 }
 
+/** One of the code's own edges behind an architecture's line: what calls what, and where. */
+export interface SpecSample {
+  from: string;
+  to: string;
+  path: string | null;
+  line: number | null;
+}
+
 export interface SpecEdge {
   from: string;
   to: string;
@@ -73,6 +81,16 @@ export interface SpecEdge {
   confidence: number | null;
   provenance: string | null;
   inferred: { reason: string } | null;
+  /** An architecture's line: how many of the code's edges it stands for, and some of them. */
+  count?: number;
+  samples?: SpecSample[];
+}
+
+/** A step of an architecture's walkthrough: one of its lines, said as what happens. */
+export interface SpecStep {
+  from: string;
+  to: string;
+  text: string;
 }
 
 export interface Spec {
@@ -82,6 +100,8 @@ export interface Spec {
   edges: SpecEdge[];
   /** What the system does, in a sentence (a whole app's architecture). */
   summary?: string;
+  /** How it works, a step per line (a whole app's architecture). */
+  steps?: SpecStep[];
 }
 
 /** The spec as the API sends it (an object of any shape, typed by its writer). */
@@ -93,6 +113,7 @@ export function specOf(diagram: Pick<Diagram, "spec">): Spec {
     nodes: raw.nodes ?? [],
     edges: raw.edges ?? [],
     ...(raw.summary ? { summary: raw.summary } : {}),
+    ...(raw.steps?.length ? { steps: raw.steps } : {}),
   };
 }
 

@@ -98,7 +98,22 @@ test.describe("diagrams", () => {
       canvas.locator('[data-store="true"]').filter({ hasText: "PostgreSQL" }),
     ).toBeVisible();
     await expect(canvas.locator(".react-flow__edge.inferred")).toHaveCount(1);
-    // A part opens as the folders it is made of.
+    // Read before anything is picked (a pick dims the rest: a focus aid, not content).
+    const audit = await new AxeBuilder({ page }).include("main").analyze();
+    expect(audit.violations).toEqual([]);
+
+    // How it works, a step per line: a step lights up its line and opens it.
+    const how = page.getByTestId("how-it-works");
+    await expect(how).toContainText("checks the session through");
+    await how.getByRole("button", { name: /REST API.*Data models/ }).click();
+    const connection = page.getByTestId("connection-panel");
+    await expect(connection).toContainText("reads and saves items");
+    await expect(connection).toContainText("Read from the code: 14 edges");
+    await expect(
+      connection.getByRole("link", { name: "backend/app/api/routes/login.py:31" }),
+    ).toHaveAttribute("href", /code\/backend\/app\/api\/routes\/login\.py\?ref=.*&L=31/);
+
+    // A part opens with what it holds, its folders and who it talks to.
     await canvas.getByTestId("system-node").filter({ hasText: "REST API" }).click();
     const panel = page.getByTestId("node-panel");
     await expect(panel.getByRole("link", { name: "backend/app/api/routes" })).toHaveAttribute(
@@ -106,10 +121,13 @@ test.describe("diagrams", () => {
       /\/acme\/api\/code\/backend\/app\/api\/routes\?ref=/,
     );
     await expect(panel).toContainText("Endpoints for login");
+    await expect(panel.getByRole("region", { name: "What REST API holds" })).toContainText(
+      "POST /api/v1/items/",
+    );
     await expect(panel.getByRole("link", { name: "Trace from here" })).toHaveCount(0);
-
-    const audit = await new AxeBuilder({ page }).include("main").analyze();
-    expect(audit.violations).toEqual([]);
+    const talks = panel.getByTestId("talks-to");
+    await talks.getByRole("button", { name: /Auth & security/ }).click();
+    await expect(page.getByTestId("connection-panel")).toContainText("checks the session");
   });
 
   test("the schema as an ER diagram: tables, keys, and the relation between their rows", async ({
@@ -129,12 +147,11 @@ test.describe("diagrams", () => {
       "Primary key id",
     );
     await expect(canvas.locator(".react-flow__edge.relation")).toHaveCount(1);
+    const audit = await new AxeBuilder({ page }).include("main").analyze();
+    expect(audit.violations).toEqual([]);
     // A table opens its model's code.
     await canvas.getByTestId("table-node").filter({ hasText: "user" }).first().click();
     await expect(page.getByTestId("node-panel")).toContainText("models.py");
-
-    const audit = await new AxeBuilder({ page }).include("main").analyze();
-    expect(audit.violations).toEqual([]);
   });
 
   test("a question drawn as an ER diagram: the tables its code reaches", async ({ page }) => {

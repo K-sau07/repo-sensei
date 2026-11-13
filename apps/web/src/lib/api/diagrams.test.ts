@@ -3,7 +3,14 @@ import { describe, expect, it } from "vitest";
 import { elkGraph, layout, positionsOf } from "@/lib/diagrams/elk-layout";
 import { erGraph, relationEnds, tableHeight } from "@/lib/diagrams/er-layout";
 import { exportErSvg, exportSvg, exportSystemSvg } from "@/lib/diagrams/export";
-import { layoutSystem, rowOf } from "@/lib/diagrams/system-layout";
+import { focusOf } from "@/lib/diagrams/focus";
+import {
+  labelPoint,
+  placedSystem,
+  rowOf,
+  roundedPath,
+  systemGraph,
+} from "@/lib/diagrams/system-layout";
 import { appArchitecture, appSchema } from "@/mocks/app-architecture";
 
 import {
@@ -128,9 +135,9 @@ describe("its layout and exports", () => {
     expect(laid.a?.x ?? 0).toBeLessThan(laid.b?.x ?? 0); // left to right
   });
 
-  it("draws an architecture in rows, top to bottom, as on a whiteboard", () => {
+  it("draws an architecture in rows, top to bottom, its lines routed round the boxes", async () => {
     const spec = appArchitecture("Architecture");
-    const placed = layoutSystem(spec, spec.edges);
+    const placed = placedSystem(spec, await layout(systemGraph(spec, spec.edges)));
     expect(placed.rows.map((r) => r.row.row)).toEqual([
       "actor",
       "frontend",
@@ -143,11 +150,23 @@ describe("its layout and exports", () => {
     expect(y("actor:user")).toBeLessThan(y("part:web-app"));
     expect(y("part:web-app")).toBeLessThan(y("part:rest-api"));
     expect(y("part:data-models")).toBeLessThan(y("outside:postgresql"));
-    // Each row centered, its boxes apart.
-    const front = placed.rows.find((r) => r.row.row === "frontend");
-    expect(front?.ids).toHaveLength(2);
-    const [a, b] = (front?.ids ?? []).map((id) => placed.at[id]?.x ?? 0);
-    expect((a ?? 0) + (b ?? 0) + 224).toBeCloseTo(0); // symmetric round 0
+    // Every line has its route, start to end.
+    expect(Object.keys(placed.routes)).toHaveLength(spec.edges.length);
+    expect(placed.routes.e0?.length).toBeGreaterThanOrEqual(2);
+    expect(
+      roundedPath([
+        { x: 0, y: 0 },
+        { x: 0, y: 50 },
+        { x: 40, y: 50 },
+      ]),
+    ).toContain("Q0,50");
+    expect(
+      labelPoint([
+        { x: 0, y: 0 },
+        { x: 0, y: 10 },
+        { x: 100, y: 10 },
+      ]),
+    ).toEqual({ x: 50, y: 10 });
     // A flow's code nodes by their layer.
     expect(rowOf(PAGE).row).toBe("frontend");
     expect(rowOf(ENDPOINT).row).toBe("api");
@@ -155,6 +174,16 @@ describe("its layout and exports", () => {
     const svg = exportSystemSvg(spec, spec.edges, placed);
     expect(svg).toContain("PostgreSQL");
     expect(svg).toContain('stroke-dasharray="6 4"'); // the user's line, inferred
+    // A picked box lights up its lines and their ends.
+    const focus = focusOf(spec.edges, "part:rest-api", null);
+    expect([...(focus?.nodes ?? [])].sort()).toEqual([
+      "outside:sentry",
+      "part:api-client",
+      "part:auth-security",
+      "part:data-models",
+      "part:rest-api",
+    ]);
+    expect(focusOf(spec.edges, null, 1)?.edges).toEqual(new Set([1]));
   });
 
   it("draws an ER diagram's relations from the key's row to the named column", () => {

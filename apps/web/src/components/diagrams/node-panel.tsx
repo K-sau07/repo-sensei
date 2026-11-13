@@ -19,11 +19,13 @@ import { useFileAt } from "@/components/code/use-code";
 import { useRepoSlug } from "@/components/repo/use-repo";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { citationLabel, type SpecNode } from "@/lib/api/diagrams";
+import { citationLabel, type Spec, type SpecNode } from "@/lib/api/diagrams";
+import { rowOf } from "@/lib/diagrams/system-layout";
 import { repoPath } from "@/lib/routes";
 import { traceHref } from "@/lib/trace/url-state";
 
 import { laneOf } from "./blueprint-node";
+import { TalksTo } from "./connection-panel";
 import { kindWords } from "./system-node";
 
 export function NodePanel({
@@ -32,12 +34,17 @@ export function NodePanel({
   onClose,
   onExpand,
   expanding,
+  spec,
+  onPickLine,
 }: {
   node: SpecNode;
   sha: string;
   onClose: () => void;
   onExpand?: ((node: SpecNode) => void) | undefined;
   expanding?: boolean;
+  /** The diagram (its lines): an architecture's part lists what it talks to. */
+  spec?: Spec | undefined;
+  onPickLine?: ((index: number) => void) | undefined;
 }) {
   const { org, repo } = useRepoSlug();
   const router = useRouter();
@@ -46,7 +53,8 @@ export function NodePanel({
   const file = useFileAt(cited?.path ?? "", sha, cited !== null);
   const content = cited && file.data && "content" in file.data ? file.data.content : null;
   const language = file.data && "language" in file.data ? (file.data.language ?? null) : null;
-  const lane = laneOf(node.layer);
+  // An architecture's part is in its row's lane (its layer is a row: api, service, data).
+  const lane = node.id.startsWith("part:") ? laneOf(rowOf(node).lane) : laneOf(node.layer);
   const isModule = node.kind === "module"; // a module's id is its folder
   const part = node.id.startsWith("part:"); // an architecture's part: its members are folders
   const outside = node.layer === "outside" || node.layer === "actor"; // not the repository's
@@ -76,14 +84,11 @@ export function NodePanel({
         <div className="flex min-w-0 flex-1 flex-col gap-0.5">
           <span className={`text-[10px] tracking-wide uppercase ${lane.text}`}>
             <span aria-hidden>{lane.glyph} </span>
-            {lane.label}
+            {node.id.startsWith("part:") ? rowOf(node).label : lane.label}
           </span>
           <h2 className="truncate text-sm font-semibold">{node.label}</h2>
           <span className="truncate font-mono text-[11px] text-fg-muted" title={node.id}>
-            {citationLabel(cited) ??
-              (part
-                ? `${node.layer} · ${String(node.members?.length ?? 0)} folders`
-                : kindWords(node.kind))}
+            {citationLabel(cited) ?? (part ? folderCount(node) : kindWords(node.kind))}
           </span>
         </div>
         <Button size="icon-sm" variant="ghost" aria-label="Close" onClick={onClose}>
@@ -145,15 +150,25 @@ export function NodePanel({
       </form>
       <div className="min-h-0 flex-1 overflow-auto">
         {folders ? (
-          <ModuleParts node={node} sha={sha} />
+          <div className="flex flex-col gap-3 p-3">
+            <ModuleParts node={node} sha={sha} />
+            {spec && onPickLine ? (
+              <TalksTo node={node} nodes={spec.nodes} edges={spec.edges} onPick={onPickLine} />
+            ) : null}
+          </div>
         ) : outside ? (
-          <p className="p-3 text-xs text-fg-muted">
-            {node.layer === "actor"
-              ? "Who uses the app: not in its code. The line to it is inferred, and says why."
-              : `Outside the repository: the code reaches ${node.label} through the packages it imports${
-                  node.kind === "database" ? ", and reads and writes its tables there" : ""
-                }. Each line to it is the graph's.`}
-          </p>
+          <div className="flex flex-col gap-3 p-3">
+            <p className="text-xs text-fg-muted">
+              {node.layer === "actor"
+                ? "Who uses the app: not in its code. The line to it is inferred, and says why."
+                : `Outside the repository: the code reaches ${node.label} through the packages it imports${
+                    node.kind === "database" ? ", and reads and writes its tables there" : ""
+                  }. Each line to it is the graph's.`}
+            </p>
+            {spec && onPickLine ? (
+              <TalksTo node={node} nodes={spec.nodes} edges={spec.edges} onPick={onPickLine} />
+            ) : null}
+          </div>
         ) : cited && content !== null ? (
           <CodeViewer
             path={cited.path}
@@ -188,24 +203,47 @@ function ModuleParts({ node, sha }: { node: SpecNode; sha: string }) {
   const { org, repo } = useRepoSlug();
   const members = node.members ?? [];
   const more = node.more_members ?? 0;
-  if (members.length > 0 && members.every((member) => member.kind === "module")) {
+  const folders = members.filter((member) => member.kind === "module");
+  if (folders.length > 0) {
+    const held = members.filter((member) => member.kind !== "module");
+    const kinds = [...new Set(held.map((member) => member.kind))];
     return (
-      <div className="flex flex-col gap-2 p-3">
+      <div className="flex flex-col gap-3">
         {node.note ? <p className="text-xs text-fg-muted">{node.note}</p> : null}
-        <ul className="flex flex-col gap-1" aria-label={`The folders ${node.label} is made of`}>
-          {members.map((member) => (
-            <li key={member.name}>
-              <Link
-                href={`${repoPath(org, repo, `code/${member.name}`)}?ref=${sha}` as Route}
-                className="inline-flex items-center gap-1.5 font-mono text-xs text-fg hover:underline"
-              >
-                <FolderOpen aria-hidden className="size-3.5 text-fg-faint" />
-                {member.name}
-              </Link>
-            </li>
-          ))}
-          {more > 0 ? <li className="text-xs text-fg-faint">and {more} more</li> : null}
-        </ul>
+        {held.length > 0 ? (
+          <section className="flex flex-col gap-1" aria-label={`What ${node.label} holds`}>
+            <h3 className="text-xs font-medium text-fg-muted">What it holds</h3>
+            {kinds.map((kind) => (
+              <div key={kind} className="flex items-baseline gap-2 text-xs">
+                <span className="w-20 shrink-0 text-fg-faint">{plural(kindWords(kind))}</span>
+                <span className="flex min-w-0 flex-wrap gap-x-2 gap-y-0.5 font-mono text-[11px] text-fg">
+                  {held
+                    .filter((member) => member.kind === kind)
+                    .map((member) => (
+                      <span key={member.name}>{member.name}</span>
+                    ))}
+                </span>
+              </div>
+            ))}
+            {more > 0 ? <p className="text-xs text-fg-faint">and {more} more</p> : null}
+          </section>
+        ) : null}
+        <section className="flex flex-col gap-1">
+          <h3 className="text-xs font-medium text-fg-muted">Folders</h3>
+          <ul className="flex flex-col gap-1" aria-label={`The folders ${node.label} is made of`}>
+            {folders.map((member) => (
+              <li key={member.name}>
+                <Link
+                  href={`${repoPath(org, repo, `code/${member.name}`)}?ref=${sha}` as Route}
+                  className="inline-flex items-center gap-1.5 font-mono text-xs text-fg hover:underline"
+                >
+                  <FolderOpen aria-hidden className="size-3.5 text-fg-faint" />
+                  {member.name}
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </section>
       </div>
     );
   }
@@ -228,4 +266,13 @@ function ModuleParts({ node, sha }: { node: SpecNode; sha: string }) {
       {more > 0 ? <li className="text-xs text-fg-faint">and {more} more</li> : null}
     </ul>
   );
+}
+
+function plural(word: string): string {
+  return word.endsWith("s") ? word : word.endsWith("y") ? `${word.slice(0, -1)}ies` : `${word}s`;
+}
+
+function folderCount(node: SpecNode): string {
+  const n = (node.members ?? []).filter((member) => member.kind === "module").length;
+  return `${String(n)} ${n === 1 ? "folder" : "folders"}`;
 }

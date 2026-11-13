@@ -1,7 +1,7 @@
 /**
  * A diagram's exports (6.6): SVG drawn from its laid-out spec (a flowchart's cards, layer
  * stripes and edges, solid or dashed, with their labels; the architecture view's boxes and
- * cylinders in their rows, the lines square; an ER diagram's tables with their columns and the
+ * cylinders in their rows, the lines along their routes; an ER diagram's tables with their columns and the
  * relations between their rows; the sequence view's lifelines and numbered messages), PNG
  * rendered from that SVG, and a file download. Colors are fixed (a light blueprint), so an
  * export reads the same wherever it is pasted.
@@ -11,7 +11,14 @@ import { edgeWords, type Spec, type SpecEdge, type SpecNode } from "@/lib/api/di
 import { NODE_HEIGHT, NODE_WIDTH, type Placed } from "./elk-layout";
 import { COLUMN_ROW, TABLE_HEAD, TABLE_WIDTH, tableHeight } from "./er-layout";
 import { CARD_HEIGHT, CARD_WIDTH, LOOP, sequenceOf } from "./sequence";
-import { isStore, rowOf, sizeOf, type PlacedSystem } from "./system-layout";
+import {
+  isStore,
+  labelPoint,
+  roundedPath,
+  rowOf,
+  sizeOf,
+  type PlacedSystem,
+} from "./system-layout";
 
 const PAD = 24;
 const LANE_COLORS: Record<string, string> = {
@@ -75,25 +82,25 @@ export function exportSystemSvg(
   const width = Math.max(0, ...all.map((b) => b.x + b.width)) + PAD - minX;
   const height = Math.max(0, ...all.map((b) => b.y + b.height)) + PAD - minY;
   const parts = frame(width, height, minX, minY);
-  for (const edge of edges) {
+  edges.forEach((edge, i) => {
     const a = box(edge.from);
     const b = box(edge.to);
-    const x1 = a.x + a.width / 2;
-    const y1 = a.y + a.height;
-    const x2 = b.x + b.width / 2;
-    const y2 = b.y;
-    const mid = (y1 + y2) / 2;
+    const points = placed.routes[`e${String(i)}`] ?? [
+      { x: a.x + a.width / 2, y: a.y + a.height },
+      { x: b.x + b.width / 2, y: b.y },
+    ];
     const dash = edge.verified ? "" : ' stroke-dasharray="6 4"';
     const color = edge.verified ? "#6b7280" : "#d97706";
     parts.push(
-      `<path d="M${String(x1)},${String(y1)} V${String(mid)} H${String(x2)} V${String(y2)}" fill="none" stroke="${color}" stroke-width="1.5"${dash} marker-end="url(#arrow)"/>`,
+      `<path d="${roundedPath(points)}" fill="none" stroke="${color}" stroke-width="1.5"${dash} marker-end="url(#arrow)"/>`,
     );
     if (edge.label) {
+      const at = labelPoint(points);
       parts.push(
-        `<text x="${String((x1 + x2) / 2)}" y="${String(mid - 4)}" font-size="10" fill="#4b5563" text-anchor="middle">${escape(edge.label)}</text>`,
+        `<text x="${String(at.x)}" y="${String(at.y - 4)}" font-size="10" fill="#4b5563" text-anchor="middle">${escape(edge.label)}</text>`,
       );
     }
-  }
+  });
   for (const node of spec.nodes) {
     const { x, y, width: w, height: h } = box(node.id);
     const lane = node.layer === "outside" ? (isStore(node) ? "db" : "route") : rowOf(node).lane;

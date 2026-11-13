@@ -28,6 +28,7 @@ import {
   useReactFlow,
   type Edge,
   type Node,
+  type EdgeTypes,
   type NodeTypes,
 } from "@xyflow/react";
 import type { ElkNode } from "elkjs/lib/elk-api";
@@ -57,7 +58,8 @@ import {
   type Placed,
 } from "@/lib/diagrams/elk-layout";
 import { erGraph, relationEnds } from "@/lib/diagrams/er-layout";
-import { layoutSystem, sidesOf } from "@/lib/diagrams/system-layout";
+import { focusOf } from "@/lib/diagrams/focus";
+import { placedSystem, systemGraph } from "@/lib/diagrams/system-layout";
 
 import { BlueprintNode, laneOf, type BlueprintData } from "./blueprint-node";
 import {
@@ -69,9 +71,11 @@ import {
   type TableData,
 } from "./diagram-nodes";
 import { RelationMarkers, relationMarkers } from "./er-markers";
+import { RouteEdge } from "./route-edge";
 import { SequenceView } from "./sequence-view";
 import { colorOf } from "./system-color";
 
+const EDGE_TYPES: EdgeTypes = { route: RouteEdge };
 const NODE_TYPES: NodeTypes = {
   blueprint: BlueprintNode,
   system: SystemNode,
@@ -94,17 +98,17 @@ export function edgeStyle(edge: SpecEdge) {
 
 /** A graph laid out by ELK: each node's place (none until it is done). ``key`` says when the
  * input changed. */
-function useElk(key: string, graph: () => ElkNode, on: boolean): Record<string, Placed> | null {
-  const [placed, setPlaced] = useState<Record<string, Placed> | null>(null);
+function useLaid(key: string, graph: () => ElkNode, on: boolean): ElkNode | null {
+  const [laid, setLaid] = useState<ElkNode | null>(null);
   useEffect(() => {
     if (!on) return;
     let live = true;
     void layout(graph()).then(
-      (laid) => {
-        if (live) setPlaced(positionsOf(laid));
+      (done) => {
+        if (live) setLaid(done);
       },
       () => {
-        if (live) setPlaced({});
+        if (live) setLaid({ id: "root", children: [] });
       },
     );
     return () => {
@@ -113,8 +117,15 @@ function useElk(key: string, graph: () => ElkNode, on: boolean): Record<string, 
     // The key says when the layout's input changed.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key, on]);
-  return placed;
+  return laid;
 }
+
+function useElk(key: string, graph: () => ElkNode, on: boolean): Record<string, Placed> | null {
+  const laid = useLaid(key, graph, on);
+  return useMemo(() => (laid ? positionsOf(laid) : null), [laid]);
+}
+
+const DIM = 0.18;
 
 interface CanvasProps {
   spec: Spec;
@@ -124,6 +135,9 @@ interface CanvasProps {
   selected: string | null;
   onSelect: (node: SpecNode | null) => void;
   added?: ReadonlySet<string> | undefined;
+  /** A line picked (by its index in ``edges``): it and its ends light up, the rest dims. */
+  selectedEdge?: number | null;
+  onSelectEdge?: ((index: number | null) => void) | undefined;
   /** Which view (the diagram's own kind unless said). */
   view?: DiagramKind | undefined;
   /** Which way a flowchart is laid out first (top to bottom unless said). */
@@ -202,28 +216,32 @@ function ExportMenu({
 
 const FIXED = { draggable: false, connectable: false } as const;
 
-/** The architecture view's nodes and lines (see the module). */
+/** The architecture view's nodes and lines (see the module), laid out by ELK by rows. */
 function useSystem(
   spec: Spec,
   edges: readonly SpecEdge[],
   on: boolean,
   added?: ReadonlySet<string>,
 ) {
-  const placed = useMemo(() => (on ? layoutSystem(spec, edges) : null), [on, spec, edges]);
+  const key = useMemo(
+    () =>
+      JSON.stringify([spec.nodes.map((n) => [n.id, n.layer]), edges.map((e) => [e.from, e.to])]),
+    [spec.nodes, edges],
+  );
+  const laid = useLaid(key, () => systemGraph(spec, edges), on);
+  const placed = useMemo(() => (laid ? placedSystem(spec, laid) : null), [laid, spec]);
   const nodes = useMemo((): Node[] => {
     if (!placed) return [];
-    const left = -placed.width / 2 - ROW_LABEL_WIDTH - ROW_LABEL_GAP;
-    const labels: Node<RowLabelData>[] = placed.rows
-      .filter((row, i, all) => all.findIndex((r) => r.row.row === row.row.row) === i)
-      .map((row) => ({
-        id: `row:${row.row.row}`,
-        type: "row",
-        position: { x: left, y: row.y },
-        data: { row: row.row, height: row.height },
-        selectable: false,
-        focusable: false,
-        ...FIXED,
-      }));
+    const left = placed.left - ROW_LABEL_WIDTH - ROW_LABEL_GAP;
+    const labels: Node<RowLabelData>[] = placed.rows.map((row) => ({
+      id: `row:${row.row.row}`,
+      type: "row",
+      position: { x: left, y: row.y },
+      data: { row: row.row, height: row.height },
+      selectable: false,
+      focusable: false,
+      ...FIXED,
+    }));
     const boxes: Node<SystemData>[] = spec.nodes.map((node) => ({
       id: node.id,
       type: "system",
@@ -239,14 +257,14 @@ function useSystem(
         id: `e${String(i)}`,
         source: edge.from,
         target: edge.to,
-        ...(placed ? sidesOf(placed, edge.from, edge.to) : {}),
-        type: "smoothstep",
-        pathOptions: { borderRadius: 10, offset: 18 },
-        label: edge.label ?? (edge.verified ? undefined : edge.inferred?.reason),
+        type: "route",
+        data: {
+          points: placed?.routes[`e${String(i)}`] ?? [],
+          label: edge.label ?? (edge.verified ? undefined : edge.inferred?.reason),
+          verified: edge.verified,
+        },
         style: edgeStyle(edge),
         markerEnd: { type: MarkerType.ArrowClosed, color: edge.verified ? VERIFIED : INFERRED },
-        labelStyle: { fill: "var(--text-muted)", fontSize: 10 },
-        labelBgStyle: { fill: "var(--surface-1)" },
         className: edge.verified ? "verified" : "inferred",
       })),
     [edges, placed],
@@ -360,6 +378,8 @@ function Canvas({
   selected,
   onSelect,
   added,
+  selectedEdge = null,
+  onSelectEdge,
   view = "flowchart",
   initialDirection = "DOWN",
 }: CanvasProps) {
@@ -373,9 +393,39 @@ function Canvas({
   const placed = shown.placed;
   const flow = useReactFlow();
   const vertical = direction === "DOWN";
+  // A picked box or line lights up with what it touches; the rest dims (the architecture's and
+  // the schema's: a flowchart's steps all stay in view).
+  const focus = useMemo(
+    () => (architecture || er ? focusOf(edges, selected, selectedEdge) : null),
+    [architecture, er, edges, selected, selectedEdge],
+  );
   const nodes = useMemo(
-    () => shown.nodes.map((node) => (node.id === selected ? { ...node, selected: true } : node)),
-    [shown.nodes, selected],
+    () =>
+      shown.nodes.map((node) => {
+        const lit = !focus || node.type === "row" || focus.nodes.has(node.id);
+        const picked = node.id === selected;
+        return picked || !lit
+          ? {
+              ...node,
+              ...(picked ? { selected: true } : {}),
+              ...(lit ? {} : { style: { ...node.style, opacity: DIM } }),
+            }
+          : node;
+      }),
+    [shown.nodes, selected, focus],
+  );
+  const lines = useMemo(
+    () =>
+      shown.lines.map((line, i) => {
+        if (!focus) return line;
+        const lit = focus.edges.has(i);
+        return {
+          ...line,
+          style: { ...line.style, opacity: lit ? 1 : DIM, ...(lit ? { strokeWidth: 2.25 } : {}) },
+          zIndex: lit ? 1 : 0,
+        };
+      }),
+    [shown.lines, focus],
   );
   useEffect(() => {
     // Again whenever the layout changes (turned), once the nodes are drawn where it put them.
@@ -430,14 +480,23 @@ function Canvas({
       {er ? <RelationMarkers /> : null}
       <ReactFlow
         nodes={nodes}
-        edges={shown.lines}
+        edges={lines}
         nodeTypes={NODE_TYPES}
+        edgeTypes={EDGE_TYPES}
         onNodeClick={(_, node) => {
           if (node.type === "row") return;
+          onSelectEdge?.(null);
           onSelect(spec.nodes.find((n) => n.id === node.id) ?? null);
+        }}
+        onEdgeClick={(_, edge) => {
+          const index = Number(edge.id.slice(1));
+          if (!onSelectEdge || !Number.isInteger(index)) return;
+          onSelect(null);
+          onSelectEdge(index);
         }}
         onPaneClick={() => {
           onSelect(null);
+          onSelectEdge?.(null);
         }}
         nodesDraggable={false}
         nodesConnectable={false}

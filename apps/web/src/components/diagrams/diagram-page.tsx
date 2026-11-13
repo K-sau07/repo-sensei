@@ -45,6 +45,7 @@ import { ApiError } from "@/lib/api/errors";
 import { isStale } from "@/lib/api/refs";
 import { repoPath } from "@/lib/routes";
 
+import { ConnectionPanel, HowItWorks } from "./connection-panel";
 import { DiagramCanvas } from "./diagram-canvas";
 // A node's panel (its code, the code viewer with it) loads when one is picked.
 const NodePanel = dynamic(() => import("./node-panel").then((m) => m.NodePanel), {
@@ -85,6 +86,7 @@ function Loaded({ diagram }: { diagram: Diagram }) {
   const [hide, setHide] = useState(false);
   const [showOutline, setShowOutline] = useState(false);
   const [selected, setSelected] = useState<SpecNode | null>(null);
+  const [line, setLine] = useState<number | null>(null);
   const [since] = useQueryState("since", parseAsString);
   // A flow in any of its three views (6.6.2): drawn as its kind until another is picked. An ER
   // diagram is drawn only as one.
@@ -203,7 +205,11 @@ function Loaded({ diagram }: { diagram: Diagram }) {
             <Switch
               id="hide-unverified"
               checked={hide}
-              onCheckedChange={setHide}
+              onCheckedChange={(on) => {
+                // A line is picked by its place among those shown: hiding some moves them.
+                setLine(null);
+                setHide(on);
+              }}
               aria-label="Hide unverified edges"
             />
             <span aria-hidden>Hide unverified</span>
@@ -247,6 +253,8 @@ function Loaded({ diagram }: { diagram: Diagram }) {
               title={diagram.title}
               selected={selected?.id ?? null}
               onSelect={setSelected}
+              selectedEdge={line}
+              onSelectEdge={setLine}
               added={diff?.added}
               view={view}
             />
@@ -262,6 +270,50 @@ function Loaded({ diagram }: { diagram: Diagram }) {
               }}
               onExpand={(node) => void expand(node)}
               expanding={create.isPending}
+              spec={{ ...spec, edges }}
+              onPickLine={(index) => {
+                setSelected(null);
+                setLine(index);
+              }}
+            />
+          ) : line !== null && edges[line] && !showOutline && !spec.steps?.length ? (
+            <ConnectionPanel
+              edge={edges[line]}
+              nodes={spec.nodes}
+              sha={diagram.commit_sha}
+              onClose={() => {
+                setLine(null);
+              }}
+            />
+          ) : line !== null && edges[line] && spec.steps?.length && !showOutline ? (
+            <div className="flex h-full min-h-0 flex-col">
+              <div className="max-h-[55%] min-h-0 overflow-auto">
+                <ConnectionPanel
+                  edge={edges[line]}
+                  nodes={spec.nodes}
+                  sha={diagram.commit_sha}
+                  onClose={() => {
+                    setLine(null);
+                  }}
+                />
+              </div>
+              <div className="min-h-0 flex-1 border-t border-line">
+                <HowItWorks
+                  steps={spec.steps}
+                  nodes={spec.nodes}
+                  edges={edges}
+                  picked={line}
+                  onPick={setLine}
+                />
+              </div>
+            </div>
+          ) : spec.steps?.length && !showOutline ? (
+            <HowItWorks
+              steps={spec.steps}
+              nodes={spec.nodes}
+              edges={edges}
+              picked={line}
+              onPick={setLine}
             />
           ) : showOutline ? (
             <Outline steps={outline({ ...spec, edges })} />
