@@ -289,7 +289,11 @@ async def test_the_whole_apps_architecture_is_named_by_the_model_and_lined_by_th
 
     def reply(request: httpx2.Request) -> httpx2.Response:
         sent.append(json.loads(request.content))
-        return httpx2.Response(200, json=message(json.dumps(answer)))
+        if len(sent) == 1:
+            return httpx2.Response(200, json=message(json.dumps(answer)))
+        lines = {"from": "part:items-api", "to": "part:items-service", "label": "saves new items"}
+        step = {"from": "part:items-api", "to": "part:items-service", "text": "Saves it."}
+        return httpx2.Response(200, json=message(json.dumps({"lines": [lines], "steps": [step]})))
 
     api_app.state.ask_client = FakeAnthropic(routes={"/v1/messages": reply}).client()
     made = await client.post(f"{url}/diagrams", json={"whole_app": True}, headers=headers)
@@ -299,7 +303,7 @@ async def test_the_whole_apps_architecture_is_named_by_the_model_and_lined_by_th
         "repo", "architecture", {"whole_app": True},
     )  # fmt: skip
     assert body["title"] == "Architecture of o/items"
-    assert len(sent) == 1
+    assert len(sent) == 2  # the parts, then what their lines do
     assert "backend/app/api/routes [" in sent[0]["messages"][0]["content"]  # its modules, shown
     spec = body["spec"]
     assert spec["summary"] == "Creates items."
@@ -312,13 +316,16 @@ async def test_the_whole_apps_architecture_is_named_by_the_model_and_lined_by_th
     lines = {(e["from"], e["to"]): e for e in spec["edges"]}
     api, service = nodes["Items API"]["id"], nodes["Items service"]["id"]
     assert lines[(api, service)]["verified"] is True  # the graph's call
+    assert lines[(api, service)]["label"] == "saves new items"
+    assert lines[(api, service)]["samples"][0]["to"].endswith("create_item")
+    assert spec["steps"] == [{"from": api, "to": service, "text": "Saves it."}]
     client_line = lines[("actor:user", api)]
     assert (client_line["verified"], client_line["inferred"]["reason"]) == (
         False, "clients call its endpoints over HTTP",
     )  # fmt: skip
     # Its use is in the ledger, as a diagram's.
     events = (await db_session.scalars(select(UsageEvent))).all()
-    assert [e.ref_type for e in events] == ["diagram"]
+    assert [e.ref_type for e in events] == ["diagram", "diagram"]
     both = await client.post(
         f"{url}/diagrams", json={"whole_app": True, "question": "items"}, headers=headers
     )

@@ -267,6 +267,19 @@ class SpecNode:
 
 
 @dataclass(frozen=True, slots=True)
+class Sample:
+    """One of the code's own edges behind a line: what calls what, and where."""
+
+    src: str  # the caller's name ("DonationController.create")
+    dst: str
+    path: str | None
+    line: int | None
+
+    def as_json(self) -> dict[str, Any]:
+        return {"from": self.src, "to": self.dst, "path": self.path, "line": self.line}
+
+
+@dataclass(frozen=True, slots=True)
 class SpecEdge:
     src: str  # symbol keys
     dst: str
@@ -276,9 +289,12 @@ class SpecEdge:
     confidence: float | None
     provenance: str | None
     inferred: str | None  # why, when the graph doesn't show it
+    # An architecture's line: how many of the code's edges it stands for, and some of them.
+    count: int = 0
+    samples: tuple[Sample, ...] = ()
 
     def as_json(self) -> dict[str, Any]:
-        return {
+        found: dict[str, Any] = {
             "from": self.src,
             "to": self.dst,
             "type": self.type,
@@ -288,6 +304,23 @@ class SpecEdge:
             "provenance": self.provenance,
             "inferred": {"reason": self.inferred} if self.inferred is not None else None,
         }
+        if self.count:
+            found["count"] = self.count
+        if self.samples:
+            found["samples"] = [sample.as_json() for sample in self.samples]
+        return found
+
+
+@dataclass(frozen=True, slots=True)
+class Step:
+    """A step of an architecture's walkthrough: one of its lines, said as what happens."""
+
+    src: str
+    dst: str
+    text: str
+
+    def as_json(self) -> dict[str, Any]:
+        return {"from": self.src, "to": self.dst, "text": self.text}
 
 
 @dataclass(slots=True)
@@ -297,6 +330,7 @@ class DiagramSpec:
     nodes: list[SpecNode]
     edges: list[SpecEdge] = field(default_factory=list[SpecEdge])
     summary: str | None = None  # what the system does, in a sentence (an architecture's)
+    steps: list[Step] = field(default_factory=list[Step])  # how it works, line by line
 
     @property
     def verified_ratio(self) -> float:
@@ -314,6 +348,8 @@ class DiagramSpec:
         }
         if self.summary:
             found["summary"] = self.summary
+        if self.steps:
+            found["steps"] = [step.as_json() for step in self.steps]
         return found
 
     @classmethod
@@ -341,14 +377,28 @@ class DiagramSpec:
                     _text(raw.get("label")), bool(raw.get("verified")),
                     float(confidence) if isinstance(confidence, (int, float)) else None,
                     _text(raw.get("provenance")), _text(_object(raw.get("inferred")).get("reason")),
+                    int(raw.get("count") or 0),
+                    tuple(
+                        Sample(
+                            str(x.get("from", "")), str(x.get("to", "")), _text(x.get("path")),
+                            int(x["line"]) if isinstance(x.get("line"), int) else None,
+                        )
+                        for x in _items(raw.get("samples"))
+                    ),
                 )
             )  # fmt: skip
+        steps = [
+            Step(str(x.get("from", "")), str(x.get("to", "")), str(x.get("text", "")))
+            for x in _items(data.get("steps"))
+        ]
         kind = str(data.get("kind", "flowchart"))
         shown: DiagramKind = "flowchart"
         for one in ALL_KINDS:
             if one == kind:
                 shown = one
-        return cls(str(data.get("title", "")), shown, nodes, edges, _text(data.get("summary")))
+        return cls(
+            str(data.get("title", "")), shown, nodes, edges, _text(data.get("summary")), steps
+        )
 
 
 def _items(value: object) -> list[Mapping[str, Any]]:

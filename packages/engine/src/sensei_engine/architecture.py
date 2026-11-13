@@ -21,7 +21,13 @@ one part, by its id; what it gets wrong is sent back once, then the plain groupi
 (:func:`plain`: a part per module, named by its folder) stands for what is left. The lines
 between parts are the modules' lines (each verified: the graph's), a part's line to an outside
 system its imports (verified), and the people using it, drawn above, reach its frontend (or
-its API, with none): that one line is inferred, and says why.
+its API, with none): that one line is inferred, and says why. Each line keeps the code's own
+edges behind it (:class:`~sensei_engine.diagrams.Sample`: caller, callee, where), and each part
+its folders, what they hold and their code most joined to other modules'.
+
+A second call (:func:`explain`) says what each line does, from the code behind it ("places
+donations"), and walks through how the app works, a step per line; a label or step for a line
+the diagram doesn't have is left out. Tooling, scripts and docs (role ``other``) aren't drawn.
 """
 
 from __future__ import annotations
@@ -29,7 +35,7 @@ from __future__ import annotations
 import re
 from collections import Counter, defaultdict
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from importlib import resources
 from typing import Any, Literal
 
@@ -39,8 +45,16 @@ from sensei_core.logging import get_logger
 from sensei_core.models import EdgeType, NodeKind, Provenance
 from sensei_core.orgs.model_choices import StepChoice
 from sensei_engine.deps import DEPENDS, MIN_CONF, Grouping, group_of
-from sensei_engine.diagrams import MAX_MEMBERS, DiagramSpec, Member, SpecEdge, SpecNode
-from sensei_engine.graph.snapshot import Edge, GraphSnapshot
+from sensei_engine.diagrams import (
+    MAX_MEMBERS,
+    DiagramSpec,
+    Member,
+    Sample,
+    SpecEdge,
+    SpecNode,
+    Step,
+)
+from sensei_engine.graph.snapshot import Edge, GraphSnapshot, Node
 from sensei_engine.graph.trace import layer_of
 from sensei_engine.llm.anthropic_client import (
     AnthropicClient,
@@ -55,6 +69,7 @@ from sensei_engine.third_party import usage
 log = get_logger(__name__)
 
 PROMPT_VERSION = "architecture.v1"
+FLOW_PROMPT_VERSION = "architecture-flow.v1"
 MAX_PARTS = 24  # modules shown to the model
 MAX_PLAIN = 12  # parts drawn without one
 MAX_LINES = 60
@@ -66,6 +81,13 @@ MAX_NOTE = 100
 MAX_SUMMARY = 240
 MAX_TOKENS = 4_000
 MAX_RETRIES = 1
+MAX_SAMPLES = 6  # of the code's edges kept on a line
+MAX_KEY = 8  # a module's most connected code, listed
+MAX_PART_MEMBERS = 24  # a part's folders and what they hold
+MAX_PHRASE = 40
+MAX_STEP = 200
+MAX_STEPS = 10
+KEY_KINDS = frozenset({"class", "function", "method", "component", "hook"})
 Role = Literal["frontend", "api", "service", "worker", "data", "other"]
 ROLES: tuple[Role, ...] = ("frontend", "api", "service", "worker", "data", "other")
 ICONS: tuple[str, ...] = (
@@ -199,6 +221,7 @@ class Part:
     size: int
     members: tuple[Member, ...]
     more: int
+    key: tuple[Member, ...] = ()  # its code most joined to other modules'
 
 
 @dataclass(slots=True)
@@ -207,6 +230,17 @@ class Line:
     dst: str
     types: Counter[str]
     confidence: float
+    # (caller, callee) → how often, and the first place it is seen.
+    pairs: Counter[tuple[str, str]] = field(default_factory=Counter[tuple[str, str]])
+    seen: dict[tuple[str, str], tuple[str | None, int | None]] = field(
+        default_factory=dict[tuple[str, str], tuple[str | None, int | None]]
+    )
+
+    def samples(self, limit: int = MAX_SAMPLES) -> tuple[Sample, ...]:
+        return tuple(
+            Sample(src, dst, *self.seen.get((src, dst), (None, None)))
+            for (src, dst), _ in self.pairs.most_common(limit)
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -347,7 +381,41 @@ def _lines(graph: GraphSnapshot, member: list[str | None], kept: set[str]) -> li
             line = joined[(src, dst)] = Line(src, dst, Counter(), 0.0)
         line.types[edge.type.value] += 1
         line.confidence = max(line.confidence, edge.confidence)
+        pair = (_said(graph.nodes[a]), _said(graph.nodes[b]))
+        line.pairs[pair] += 1
+        line.seen.setdefault(pair, (edge.evidence_path, edge.evidence_line))
     return sorted(joined.values(), key=lambda line: (-sum(line.types.values()), line.src, line.dst))
+
+
+def _said(node: Node) -> str:
+    """A node as a line's sample says it: its qualified name (``ItemService.create``)."""
+    return (node.qualified_name or node.name).rstrip(".")[: MAX_NAME * 2]
+
+
+def _key_code(
+    graph: GraphSnapshot, member: list[str | None], kept: set[str]
+) -> dict[str, tuple[Member, ...]]:
+    """Each kept module's code most joined to other modules' (a method by its class): what the
+    module is, for whoever opens it."""
+    weight: defaultdict[str, Counter[tuple[str, str]]] = defaultdict(Counter)
+    for a, b, index in graph.graph.weighted_edge_list():
+        src, dst = member[a], member[b]
+        if src == dst or not _counts(graph.edges[index]):
+            continue
+        for at, module in ((a, src), (b, dst)):
+            if module not in kept:
+                continue
+            node = graph.nodes[at]
+            if node.kind not in KEY_KINDS:
+                continue
+            name, kind = node.qualified_name or node.name, node.kind
+            if kind == "method" and "." in name.rstrip("."):
+                name, kind = name.rstrip(".").rsplit(".", 1)[0], "class"
+            weight[module or ""][(name.rstrip(".")[: MAX_NAME * 2], kind)] += 1
+    return {
+        module: tuple(Member(name, kind) for (name, kind), _ in held.most_common(MAX_KEY))
+        for module, held in weight.items()
+    }
 
 
 def _outside(graph: GraphSnapshot, kept: set[str]) -> list[Outside]:
@@ -374,8 +442,10 @@ def _outside(graph: GraphSnapshot, kept: set[str]) -> list[Outside]:
 def facts_of(graph: GraphSnapshot, roots: Grouping) -> Facts:
     """The modules, their lines and the outside systems (see the module)."""
     member = modules_of(graph, roots)
-    parts = _parts(graph, member)
-    kept = {part.id for part in parts}
+    found = _parts(graph, member)
+    kept = {part.id for part in found}
+    keys = _key_code(graph, member, kept)
+    parts = [replace(part, key=keys.get(part.id, ())) for part in found]
     data_users: Counter[str] = Counter()
     tables = {NodeKind.TABLE.value, NodeKind.ORM_MODEL.value}
     for a, b, index in graph.graph.weighted_edge_list():
@@ -449,7 +519,8 @@ def render(facts: Facts, repo: str) -> str:
     for part in facts.parts:
         held = ", ".join(f"{m.kind} {m.name}" for m in part.members)
         more = f" and {part.more} more" if part.more else ""
-        out.append(f"{part.id} [{part.tier}] {part.size}: {held or '(code)'}{more}")
+        key = "; its main code: " + ", ".join(m.name for m in part.key) if part.key else ""
+        out.append(f"{part.id} [{part.tier}] {part.size}: {held or '(code)'}{more}{key}")
     out += ["", "Dependencies (from -> to: what):"]
     for line in facts.lines[:MAX_LINES]:
         said = ", ".join(f"{n} {t}" for t, n in line.types.most_common(3))
@@ -556,7 +627,7 @@ def _part_nodes(
     facts: Facts, components: Sequence[Component]
 ) -> tuple[list[SpecNode], dict[str, str]]:
     """A node per component, and each module's component (its node's id)."""
-    sizes = {p.id: p.size for p in facts.parts}
+    parts = {p.id: p for p in facts.parts}
     owner: dict[str, str] = {}
     nodes: list[SpecNode] = []
     ids: Counter[str] = Counter()
@@ -566,13 +637,19 @@ def _part_nodes(
         key = base if ids[base] == 1 else f"{base}-{ids[base]}"
         for module in component.modules:
             owner[module] = key
+        # Its folders, then what they hold (endpoints, tables, components) and their main code.
         held = [Member(module, "module") for module in component.modules]
+        inside = [
+            m for module in component.modules if module in parts for m in parts[module].members
+        ]
+        inside += [m for module in component.modules if module in parts for m in parts[module].key]
+        listed = list(dict.fromkeys([*held, *inside]))
         nodes.append(
             SpecNode(
                 key, component.name, component.role, component.role, None, 0, 0,
-                tuple(held[:MAX_MEMBERS]), max(0, len(held) - MAX_MEMBERS),
+                tuple(listed[:MAX_PART_MEMBERS]), max(0, len(listed) - MAX_PART_MEMBERS),
                 note=component.note, icon=component.icon,
-                size=sum(sizes.get(m, 0) for m in component.modules),
+                size=sum(parts[m].size for m in component.modules if m in parts),
             )
         )  # fmt: skip
     return nodes, owner
@@ -580,18 +657,26 @@ def _part_nodes(
 
 def _part_lines(facts: Facts, owner: Mapping[str, str]) -> list[SpecEdge]:
     """The modules' lines between components, joined and counted (the graph's: verified)."""
-    joined: dict[tuple[str, str], tuple[Counter[str], float]] = {}
+    joined: dict[tuple[str, str], Line] = {}
     for line in facts.lines:
         src, dst = owner.get(line.src), owner.get(line.dst)
         if src is None or dst is None or src == dst:
             continue
-        counts, confidence = joined.get((src, dst), (Counter[str](), 0.0))
-        joined[(src, dst)] = (counts + line.types, max(confidence, line.confidence))
-    ranked = sorted(joined.items(), key=lambda item: -sum(item[1][0].values()))[:MAX_LINES]
+        held = joined.get((src, dst))
+        if held is None:
+            held = joined[(src, dst)] = Line(src, dst, Counter(), 0.0)
+        held.types += line.types
+        held.confidence = max(held.confidence, line.confidence)
+        held.pairs += line.pairs
+        for pair, where in line.seen.items():
+            held.seen.setdefault(pair, where)
+    ranked = sorted(joined.values(), key=lambda line: -sum(line.types.values()))[:MAX_LINES]
     return [
-        SpecEdge(src, dst, counts.most_common(1)[0][0], _verb(counts), True, confidence, "graph",
-                 None)
-        for (src, dst), (counts, confidence) in ranked
+        SpecEdge(
+            line.src, line.dst, line.types.most_common(1)[0][0], _verb(line.types), True,
+            line.confidence, "graph", None, sum(line.types.values()), line.samples(),
+        )
+        for line in ranked
     ]  # fmt: skip
 
 
@@ -663,7 +748,10 @@ def _people(
 def spec_of(
     facts: Facts, components: Sequence[Component], title: str, summary: str | None
 ) -> DiagramSpec:
-    """The diagram: the people using it, its parts, the outside systems; the lines between."""
+    """The diagram: the people using it, its parts, the outside systems; the lines between.
+    Tooling, scripts and docs (role ``other``) are left out of an app that has more."""
+    if any(c.role != "other" for c in components):
+        components = [c for c in components if c.role != "other"]
     nodes, owner = _part_nodes(facts, components)
     edges = _part_lines(facts, owner)
     outside, used = _outside_parts(facts, owner)
@@ -678,6 +766,123 @@ def whole_app(graph: GraphSnapshot, roots: Grouping, title: str) -> DiagramSpec:
     """The architecture without a model: a part per module, named by its folder."""
     facts = facts_of(graph, roots)
     return spec_of(facts, plain(facts), title, None)
+
+
+# ---------------------------------------------------------------- how it works
+
+
+class DraftLine(BaseModel):
+    source: str = Field(alias="from")
+    target: str = Field(alias="to")
+    label: str = Field(max_length=200)
+
+
+class DraftStep(BaseModel):
+    source: str = Field(alias="from")
+    target: str = Field(alias="to")
+    text: str = Field(max_length=1000)
+
+
+class FlowDraft(BaseModel):
+    lines: list[DraftLine]
+    steps: list[DraftStep]
+
+
+def flow_schema() -> dict[str, Any]:
+    def pair(extra: str) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "from": {"type": "string"},
+                "to": {"type": "string"},
+                extra: {"type": "string"},
+            },
+            "required": ["from", "to", extra],
+            "additionalProperties": False,
+        }
+
+    return {
+        "type": "object",
+        "properties": {
+            "lines": {"type": "array", "items": pair("label")},
+            "steps": {"type": "array", "items": pair("text")},
+        },
+        "required": ["lines", "steps"],
+        "additionalProperties": False,
+    }
+
+
+def flow_prompt() -> str:
+    path = resources.files("sensei_engine.llm").joinpath("prompts", f"{FLOW_PROMPT_VERSION}.md")
+    return path.read_text(encoding="utf-8")
+
+
+def render_flow(spec: DiagramSpec) -> str:
+    """What the model is shown to explain the system: its parts and its lines with the code's
+    own edges behind them."""
+    out = [f"System: {spec.summary or spec.title}", "", "Parts (id: name [role] what it does):"]
+    for node in spec.nodes:
+        held = [m.name for m in node.members if m.kind != "module"][:10]
+        holds = f"; holds {', '.join(held)}" if held else ""
+        out.append(f"{node.id}: {node.label} [{node.layer}] {node.note or node.kind}{holds}")
+    out += ["", "Lines (from -> to: how many; some of the code behind it):"]
+    for edge in spec.edges:
+        code = "; ".join(f"{x.src} → {x.dst}" for x in edge.samples[:3])
+        said = edge.inferred or code or (edge.label or "")
+        out.append(f"{edge.src} -> {edge.dst}: {edge.count or 1}; {said}")
+    return "\n".join(out)
+
+
+def explain(spec: DiagramSpec, draft: FlowDraft) -> tuple[DiagramSpec, list[str]]:
+    """``spec`` with the model's labels on its lines and its walkthrough, checked: a line or a
+    step that isn't one of the spec's is left out, and said."""
+    lines = {(e.src, e.dst) for e in spec.edges}
+    problems: list[str] = []
+    labels: dict[tuple[str, str], str] = {}
+    for raw in draft.lines:
+        key = (raw.source, raw.target)
+        label = _clean(raw.label, MAX_PHRASE)
+        if key not in lines:
+            problems.append(f"{raw.source} -> {raw.target} is not one of the lines")
+        elif label:
+            labels[key] = label
+    steps: list[Step] = []
+    for raw in draft.steps[:MAX_STEPS]:
+        key = (raw.source, raw.target)
+        text = _clean(raw.text, MAX_STEP)
+        if key not in lines:
+            problems.append(f"step {raw.source} -> {raw.target} is not one of the lines")
+        elif text:
+            steps.append(Step(raw.source, raw.target, text))
+    edges = [replace(e, label=labels.get((e.src, e.dst), e.label)) for e in spec.edges]
+    return replace(spec, edges=edges, steps=steps), problems
+
+
+async def _explained(
+    client: AnthropicClient,
+    spec: DiagramSpec,
+    *,
+    tier: Tier,
+    effort: Any,
+    on_usage: LLMUsageSink | None,
+) -> DiagramSpec:
+    """The spec with its lines said and its walkthrough (as it was, when the model fails)."""
+    if not spec.edges:
+        return spec
+    request = LLMRequest(
+        render_flow(spec), system=flow_prompt(), tier=tier, max_tokens=MAX_TOKENS,
+        effort=effort, schema=flow_schema(), cache_system=True,
+    )  # fmt: skip
+    try:
+        result = await client.complete(request, on_usage=on_usage)
+        draft = FlowDraft.model_validate(result.data)
+    except (LLMError, ValidationError) as exc:
+        log.warning("architecture walkthrough unusable", error=str(exc))
+        return spec
+    explained, problems = explain(spec, draft)
+    if problems:
+        log.info("architecture walkthrough checked", problems=len(problems))
+    return explained
 
 
 @dataclass(frozen=True, slots=True)
@@ -739,4 +944,6 @@ async def draw(
     left = [p.id for p in facts.parts if p.id not in placed]
     if left:
         components = [*components, *plain(facts, left)]
-    return Drawn(spec_of(facts, components, title, summary), tries, problems)
+    spec = spec_of(facts, components, title, summary)
+    spec = await _explained(client, spec, tier=tier, effort=effort, on_usage=on_usage)
+    return Drawn(spec, tries, problems)

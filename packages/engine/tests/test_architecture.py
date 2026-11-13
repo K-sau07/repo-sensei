@@ -12,8 +12,8 @@ import httpx2
 import pytest
 
 from sensei_core.models import EdgeType, NodeKind, Provenance
-from sensei_engine.architecture import Draft as ArchitectureDraft
 from sensei_engine.architecture import (
+    Component,
     Facts,
     Line,
     Part,
@@ -24,6 +24,7 @@ from sensei_engine.architecture import (
     spec_of,
     whole_app,
 )
+from sensei_engine.architecture import Draft as ArchitectureDraft
 from sensei_engine.deps import grouping
 from sensei_engine.diagrams import DiagramSpec
 from sensei_engine.graph.snapshot import Edge, GraphSnapshot, Node
@@ -167,9 +168,27 @@ async def test_the_model_names_the_parts_and_what_it_gets_wrong_is_sent_back(
             _component("Data models", "data", ["backend/app"], "database"),
         ],
     }  # fmt: skip
-    fake, sent = _answers(wrong, right)
+    flow = {
+        "lines": [
+            {"from": "part:web-app", "to": "part:items-api", "label": "posts new items"},
+            {"from": "part:web-app", "to": "part:nowhere", "label": "invented"},
+        ],
+        "steps": [
+            {"from": "actor:user", "to": "part:web-app", "text": "A user opens the items page."},
+            {"from": "part:web-app", "to": "part:items-api", "text": "It posts the new item."},
+            {"from": "part:items-api", "to": "part:web-app", "text": "Backwards: not a line."},
+        ],
+    }
+    fake, sent = _answers(wrong, right, flow)
     made = await draw(fake.client(), facts, "Architecture of o/items", "o/items")
     assert (made.tries, made.problems) == (2, [])
+    # The model said what the lines do, and walked through them: only the diagram's own.
+    said = {(e.src, e.dst): e.label for e in made.spec.edges}
+    assert said[("part:web-app", "part:items-api")] == "posts new items"
+    assert [(x.src, x.dst) for x in made.spec.steps] == [
+        ("actor:user", "part:web-app"), ("part:web-app", "part:items-api"),
+    ]  # fmt: skip
+    assert "create → save" in sent[2]["messages"][0]["content"]  # the code behind lines
     feedback = sent[1]["messages"][0]["content"]
     assert "'frontend/src/no' is not one of the module ids" in feedback
     assert "these modules are in no component: backend/app" in feedback
@@ -179,7 +198,14 @@ async def test_the_model_names_the_parts_and_what_it_gets_wrong_is_sent_back(
     assert (parts["Web app"].layer, parts["Web app"].icon, parts["Web app"].note) == (
         "frontend", "monitor", "The Web app.",
     )  # fmt: skip
-    assert [m.name for m in parts["Data models"].members] == ["backend/app"]
+    held = [(m.name, m.kind) for m in parts["Data models"].members]
+    assert held[0] == ("backend/app", "module")  # its folders, then what they hold
+    assert ("Item", "model") in held
+    assert ("save", "function") in held  # its code joined to other modules'
+    # A line keeps the code's own edges behind it.
+    api_line = next(e for e in spec.edges if e.src == parts["Items API"].id and e.count)
+    assert api_line.count == 2
+    assert [(x.src, x.dst) for x in api_line.samples] == [("create", "save")]
     lines = {(parts_of(spec, e.src), parts_of(spec, e.dst)) for e in spec.edges}
     assert ("Web app", "Items API") in lines
     assert ("Items API", "Data models") in lines
@@ -195,7 +221,7 @@ async def test_what_the_model_leaves_out_is_drawn_by_its_folder(facts: Facts) ->
         "name": "Items", "summary": "",
         "components": [_component("Web app", "frontend", ["frontend/src/pages"], "monitor")],
     }  # fmt: skip
-    fake, _ = _answers(partial, partial)
+    fake, _ = _answers(partial, partial, {"lines": [], "steps": []})
     made = await draw(fake.client(), facts, "t", "o/items")
     labels = {n.label for n in made.spec.nodes if n.layer not in ("actor", "outside")}
     assert labels == {"Web app", "API", "App"}  # the model's, then by folder
@@ -239,3 +265,13 @@ def test_a_frontend_folder_named_api_is_the_frontends() -> None:
     graph = GraphSnapshot(nodes, [])
     facts = facts_of(graph, grouping(["web/package.json"], [{"framework": "react", "root": "web"}]))
     assert [(p.id, p.tier) for p in facts.parts] == [("web/src/pages/api", "frontend")]
+
+
+def test_tooling_is_left_out_of_an_app_that_has_more(facts: Facts) -> None:
+    docs = Component("Javadoc scripts", "other", "file", None, ("backend/app",))
+    web = Component("Web app", "frontend", "monitor", None, ("frontend/src/pages",))
+    labels = {n.label for n in spec_of(facts, [web, docs], "t", None).nodes}
+    assert "Javadoc scripts" not in labels
+    assert "Web app" in labels
+    # Nothing but tooling: it is drawn.
+    assert "Javadoc scripts" in {n.label for n in spec_of(facts, [docs], "t", None).nodes}
