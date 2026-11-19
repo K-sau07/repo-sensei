@@ -5124,6 +5124,8 @@ export interface components {
             avatar_url: string | null;
             /** Email */
             email: string | null;
+            /** Fixes Enabled */
+            fixes_enabled: boolean;
             /**
              * Id
              * Format: uuid

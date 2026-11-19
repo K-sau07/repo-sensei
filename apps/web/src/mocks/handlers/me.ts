@@ -25,6 +25,9 @@ export function meOf(user: MockUser): Me {
     is_staff: user.id === OCTO, // the mock's signed-in user is staff; Hubot isn't
     orgs,
     last_org_slug: orgs.some((org) => org.slug === last) ? last : null,
+    // A deployment without a sandbox host: localStorage.setItem("sensei.mock.fixes", "off").
+    fixes_enabled:
+      typeof localStorage === "undefined" || localStorage.getItem("sensei.mock.fixes") !== "off",
   };
 }
 

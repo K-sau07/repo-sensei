@@ -9,7 +9,9 @@ from fastapi import Depends, Request
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from sensei_core.config import Settings
 from sensei_core.db import Database
+from sensei_core.errors import UnavailableError
 from sensei_core.limits import require_writable
 
 
@@ -46,3 +48,18 @@ async def writable(redis: RedisClient) -> None:
 
 
 Writable = Depends(writable)
+
+
+def fixes_on(request: Request) -> None:
+    """Refuses (503 ``fixes_unavailable``) where fixes are off (``SENSEI_FIXER_ENABLED``): a
+    deployment with no sandbox host to run their stages."""
+    settings: Settings = request.app.state.settings
+    if not settings.fixer.enabled:
+        raise UnavailableError(
+            "Fix isn't available on this deployment: it runs a repository's tests in a sandbox "
+            "this server doesn't have.",
+            code="fixes_unavailable",
+        )
+
+
+FixesOn = Depends(fixes_on)

@@ -11,6 +11,7 @@ const me = (overrides: Partial<Me> = {}): Me => ({
   email: null,
   avatar_url: null,
   is_staff: false,
+  fixes_enabled: true,
   last_org_slug: "beta",
   orgs: [
     { slug: "acme", name: "Acme", role: "owner" },

@@ -203,3 +203,30 @@ async def test_editing_a_changes_plan_plans_it_again(
     [request] = found["plan"]["requests"]
     assert (request["comment"], request["edits"]) == ("Keys, not IPs.", edits)
     assert app.state.fix_jobs.sent == [(str(run.id), "plan")]
+
+
+async def test_where_fixes_are_off_neither_a_fix_nor_a_change_starts(
+    app: FastAPI, client: httpx.AsyncClient, db_session: AsyncSession
+) -> None:
+    owner, _ = await _org(app, db_session)
+    _, headers = await sign_in(app, client, db_session, owner)
+    me = await client.get(f"{API}/me", headers=headers)
+    assert me.json()["fixes_enabled"] is True
+    settings: Settings = app.state.settings
+    app.state.settings = settings.model_copy(
+        update={"fixer": settings.fixer.model_copy(update={"enabled": False})}
+    )
+    change = await client.post(
+        f"{API}/orgs/acme/repos/items/changes", json={"request": "Add a limit."}, headers=headers
+    )
+    fix = await client.post(
+        f"{API}/orgs/acme/repos/items/fixes",
+        json={"source": "paste", "text": "KeyError: 'id'"},
+        headers=headers,
+    )
+    for refused in (change, fix):
+        assert refused.status_code == 503, refused.text
+        assert refused.json()["error"]["code"] == "fixes_unavailable"
+    assert app.state.fix_jobs.sent == []  # nothing queued for no one to run
+    me = await client.get(f"{API}/me", headers=headers)
+    assert me.json()["fixes_enabled"] is False  # the web app says so before anyone tries

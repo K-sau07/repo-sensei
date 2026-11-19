@@ -442,6 +442,9 @@ class FixerSettings(BaseSettings):
 
     model_config = _config("SENSEI_FIXER_")
 
+    # Off where no sandbox host runs the fix stages (a deployment without gVisor): a fix or a
+    # change is refused (503 ``fixes_unavailable``) rather than queued for no one to run.
+    enabled: bool = True
     max_turns: int = Field(default=120, ge=1)
     max_cost_usd: Decimal = Field(default=Decimal("3.00"), ge=0)
     max_sandbox_minutes: float = Field(default=30.0, gt=0)

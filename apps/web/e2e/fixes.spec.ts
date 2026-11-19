@@ -8,6 +8,24 @@ const TRACE = `Traceback (most recent call last):
 ZeroDivisionError: integer division or modulo by zero`;
 
 test.describe("fixes", () => {
+  test("a deployment without a sandbox says Fix and Changes aren't available here", async ({
+    page,
+    context,
+  }) => {
+    await context.addInitScript(() => {
+      localStorage.setItem("sensei.mock.fixes", "off");
+    });
+    await page.goto("/acme/api/fixes/new");
+    await expect(
+      page.getByRole("region", { name: "Fix isn't available on this deployment" }),
+    ).toBeVisible();
+    await expect(page.getByRole("textbox")).toHaveCount(0);
+    await page.goto("/acme/api/changes/new");
+    await expect(
+      page.getByRole("region", { name: "Changes aren't available on this deployment" }),
+    ).toBeVisible();
+  });
+
   test("the list is filtered by status, source and risk, kept in the address", async ({ page }) => {
     await page.goto("/acme/api/fixes");
     await expect(page.getByTestId("fix-row")).toHaveCount(6);

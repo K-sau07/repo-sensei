@@ -33,6 +33,7 @@ import { ApiError } from "@/lib/api/errors";
 import { looksLikeIssue } from "@/lib/api/fixes";
 import { repoPath } from "@/lib/routes";
 
+import { FixesOff } from "./fixes-off";
 import { TracePreview } from "./trace-preview";
 import { useCreateFix, useFixes, useParsedTrace, useSentry, useStartFix } from "./use-fixes";
 
@@ -59,7 +60,9 @@ export function NewFixPage() {
           approves the plan, and the result is a draft pull request, never a merge.
         </p>
       </div>
-      {!roleAtLeast(role, "member") ? (
+      {me.data?.fixes_enabled === false ? (
+        <FixesOff what="fix" />
+      ) : !roleAtLeast(role, "member") ? (
         <PermissionState
           requiredRole="member"
           {...(role ? { yourRole: role } : {})}

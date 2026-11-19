@@ -6444,6 +6444,10 @@
             ],
             "title": "Email"
           },
+          "fixes_enabled": {
+            "title": "Fixes Enabled",
+            "type": "boolean"
+          },
           "id": {
             "format": "uuid",
             "title": "Id",
@@ -6495,7 +6499,8 @@
           "avatar_url",
           "is_staff",
           "orgs",
-          "last_org_slug"
+          "last_org_slug",
+          "fixes_enabled"
         ],
         "title": "MeResponse",
         "type": "object"

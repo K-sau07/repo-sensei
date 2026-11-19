@@ -10,6 +10,7 @@ import { useRouter } from "next/navigation";
 import { useId, useState, type SubmitEvent } from "react";
 
 import { PermissionState } from "@/components/feedback/permission-state";
+import { FixesOff } from "@/components/fixes/fixes-off";
 import { useRepoSlug } from "@/components/repo/use-repo";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -44,7 +45,9 @@ export function NewChangePage() {
           a merge.
         </p>
       </div>
-      {roleAtLeast(role, "member") ? (
+      {me.data?.fixes_enabled === false ? (
+        <FixesOff what="change" />
+      ) : roleAtLeast(role, "member") ? (
         <Describe />
       ) : (
         <PermissionState requiredRole="member" {...(role ? { yourRole: role } : {})} />

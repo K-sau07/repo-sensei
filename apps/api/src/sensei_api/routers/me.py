@@ -18,6 +18,7 @@ from sensei_api.auth import (
 from sensei_api.deps import DbSession
 from sensei_api.errors import NotFound
 from sensei_api.orgs import OrgServiceDep
+from sensei_core.config import Settings
 from sensei_core.errors import InvalidError
 from sensei_core.models import Role, User
 from sensei_core.orgs import lifecycle
@@ -41,6 +42,8 @@ class MeResponse(BaseModel):
     is_staff: bool
     orgs: list[MyOrg]
     last_org_slug: str | None
+    # Whether this deployment runs fixes and changes (off with no sandbox host for them).
+    fixes_enabled: bool
 
 
 class MeUpdate(BaseModel):
@@ -57,7 +60,12 @@ class SessionInfo(BaseModel):
 
 
 async def _me(
-    user: User, db: DbSession, orgs: OrgService, only: uuid.UUID | None = None
+    user: User,
+    db: DbSession,
+    orgs: OrgService,
+    *,
+    fixes: bool,
+    only: uuid.UUID | None = None,
 ) -> MeResponse:
     """The user and their orgs; through an API key or token, only the org it is for (another
     looks like none)."""
@@ -74,25 +82,32 @@ async def _me(
         is_staff=user.is_staff,
         orgs=[MyOrg(slug=org.slug, name=org.name, role=role) for org, role in memberships],
         last_org_slug=user.last_org_slug if user.last_org_slug in slugs else None,
+        fixes_enabled=fixes,
     )
+
+
+def _fixes(request: Request) -> bool:
+    settings: Settings = request.app.state.settings
+    return settings.fixer.enabled
 
 
 @router.get("", response_model=MeResponse)
 async def get_me(
-    user: CurrentUser, bearer: OptionalBearer, db: DbSession, orgs: OrgServiceDep
+    request: Request, user: CurrentUser, bearer: OptionalBearer, db: DbSession, orgs: OrgServiceDep
 ) -> MeResponse:
-    return await _me(user, db, orgs, only=bearer.org_id if bearer is not None else None)
+    only = bearer.org_id if bearer is not None else None
+    return await _me(user, db, orgs, fixes=_fixes(request), only=only)
 
 
 @router.patch("", response_model=MeResponse)
 async def update_me(
-    body: MeUpdate, user: CurrentUser, db: DbSession, orgs: OrgServiceDep
+    request: Request, body: MeUpdate, user: CurrentUser, db: DbSession, orgs: OrgServiceDep
 ) -> MeResponse:
     if body.last_org_slug is not None:
         access = await orgs.access(db, user, body.last_org_slug)  # must be a member
         user.last_org_slug = access.org.slug
         await db.flush()
-    return await _me(user, db, orgs)
+    return await _me(user, db, orgs, fixes=_fixes(request))
 
 
 @router.get("/sessions", response_model=list[SessionInfo])

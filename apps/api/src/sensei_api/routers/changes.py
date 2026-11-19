@@ -17,7 +17,7 @@ from fastapi import APIRouter, BackgroundTasks, Query, Request, status
 from pydantic import BaseModel, Field
 from sse_starlette import EventSourceResponse
 
-from sensei_api.deps import DbSession, RedisClient, Writable
+from sensei_api.deps import DbSession, FixesOn, RedisClient, Writable
 from sensei_api.orgs import OrgAccessDep
 from sensei_api.repos import RepoAccessDep, RepoDep
 from sensei_api.routers.fixes import (
@@ -66,7 +66,7 @@ def ticket_of(body: ChangeIn) -> Ticket:
     "/repos/{repo}/changes",
     response_model=FixOut,
     status_code=status.HTTP_201_CREATED,
-    dependencies=[Writable],
+    dependencies=[Writable, FixesOn],
 )
 async def create_change(
     *,

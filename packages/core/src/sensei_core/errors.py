@@ -44,6 +44,11 @@ class InvalidError(DomainError):
     code = "validation_failed"
 
 
+class UnavailableError(DomainError):
+    status_code = 503
+    code = "unavailable"
+
+
 class RateLimitedError(DomainError):
     status_code = 429
     code = "rate_limited"
