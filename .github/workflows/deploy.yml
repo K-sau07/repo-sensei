@@ -74,3 +74,23 @@ jobs:
           SERVICE: ${{ matrix.service }}
           SHA: ${{ github.sha }}
         run: railway up --ci --service "$SERVICE" --message "$SERVICE @ ${SHA::7}"
+
+      # `up --ci` can stop following the build early and still exit 0: wait for what Railway says.
+      - name: ${{ matrix.service }} is live
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          SERVICE: ${{ matrix.service }}
+          SHA: ${{ github.sha }}
+        run: |
+          for _ in $(seq 1 60); do
+            status=$(railway deployment list --service "$SERVICE" --json \
+              | jq -r --arg m "$SERVICE @ ${SHA::7}" '[.[] | select(.meta.cliMessage == $m)][0].status // "NONE"')
+            echo "$SERVICE: $status"
+            case "$status" in
+              SUCCESS) exit 0 ;;
+              FAILED | CRASHED | REMOVED | SKIPPED) echo "::error::$SERVICE deploy $status"; exit 1 ;;
+            esac
+            sleep 20
+          done
+          echo "::error::$SERVICE wasn't live after 20 minutes"
+          exit 1
