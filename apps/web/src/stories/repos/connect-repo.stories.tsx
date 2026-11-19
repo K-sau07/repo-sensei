@@ -135,3 +135,29 @@ export const CostCapExceeded: Story = {
     await expect(await canvas.findByText(/An admin can raise the limit/)).toBeVisible();
   },
 };
+
+export const TrialUsed: Story = {
+  parameters: {
+    msw: [
+      http.post("*/api/v1/orgs/:org/repos/import", () =>
+        apiError(
+          403,
+          "trial_limit_reached",
+          "The free trial covers 1 repository, and it's been used. Indexing more takes a subscription.",
+          { trial_repos: 1 },
+        ),
+      ),
+      ...handlers,
+    ],
+  },
+  play: async ({ canvas }) => {
+    await paste(canvas, "https://github.com/langflow-ai/langflow");
+    await canvas.findByRole("region", { name: /Estimate for/ });
+    await userEvent.click(canvas.getByRole("button", { name: "Connect and index" }));
+    await expect(await canvas.findByText(/free trial covers 1 repository/)).toBeVisible();
+    await expect(canvas.getByRole("link", { name: "See plans" })).toHaveAttribute(
+      "href",
+      "/pricing",
+    );
+  },
+};

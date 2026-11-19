@@ -3,6 +3,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { cn } from "cn";
 import { ExternalLink, Lock, RefreshCw, Search, Star } from "lucide-react";
+import type { Route } from "next";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { parseAsStringLiteral, useQueryState } from "nuqs";
@@ -49,6 +50,9 @@ export function connectProblem(org: string, error: unknown) {
       link: slug ? { href: repoPath(org, slug), label: "Open it" } : null,
     };
   }
+  if (error.code === "trial_limit_reached") {
+    return { message: error.message, link: { href: "/pricing" as Route, label: "See plans" } };
+  }
   if (error.code === "cost_cap_reached") {
     return {
       message: `${error.message} An admin can raise the limit.`,
@@ -58,7 +62,8 @@ export function connectProblem(org: string, error: unknown) {
   return { message: error.message, link: null };
 }
 
-function Problem({ org, error }: { org: string; error: unknown }) {
+/** Why connecting didn't work, with the link to the next step when there is one. */
+export function ConnectProblem({ org, error }: { org: string; error: unknown }) {
   const { message, link } = connectProblem(org, error);
   return (
     <p role="alert" className="text-sm text-danger">
@@ -199,7 +204,7 @@ function GitHubRow({ org, repo }: { org: string; repo: AvailableRepo }) {
           </Button>
         )}
       </div>
-      {error !== null && <Problem org={org} error={error} />}
+      {error !== null && <ConnectProblem org={org} error={error} />}
     </li>
   );
 }
@@ -375,9 +380,9 @@ function UrlTab({ org }: { org: string }) {
       {estimate.isFetching && !estimate.data && (
         <Skeleton aria-label="Estimating" className="h-36" />
       )}
-      {estimate.isError && <Problem org={org} error={estimate.error} />}
+      {estimate.isError && <ConnectProblem org={org} error={estimate.error} />}
       {estimate.isSuccess && typed && <EstimateCard estimate={estimate.data} />}
-      {error !== null && <Problem org={org} error={error} />}
+      {error !== null && <ConnectProblem org={org} error={error} />}
       <div>
         <Button type="submit" disabled={!estimate.isSuccess || busy}>
           {busy ? <DelayedSpinner active label="Connecting" /> : "Connect and index"}

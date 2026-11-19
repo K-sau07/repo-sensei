@@ -154,6 +154,19 @@ function adminOf(org: string) {
   return access;
 }
 
+/** A free plan's trial of one repository, used: localStorage.setItem("sensei.mock.trial", "on"). */
+function trialUsed(org: string): Response | null {
+  const on =
+    typeof localStorage !== "undefined" && localStorage.getItem("sensei.mock.trial") === "on";
+  if (!on || reposOf(org).length < 1) return null;
+  return apiError(
+    403,
+    "trial_limit_reached",
+    "The free trial covers 1 repository, and it's been used. Indexing more takes a subscription.",
+    { trial_repos: 1 },
+  );
+}
+
 const TERMINAL = new Set(["done", "failed", "cancelled"]);
 /** The org stream's event for a run that ended, by how it ended. */
 const END_EVENT: Record<IndexJob["status"], string> = {
@@ -419,6 +432,8 @@ export const repoHandlers = [
         slug: existing.slug,
       });
     }
+    const trial = trialUsed(params.org);
+    if (trial) return trial;
     const repo = connect(params.org, {
       full_name: name,
       source: "public_url",
@@ -449,6 +464,8 @@ export const repoHandlers = [
         slug: existing.slug,
       });
     }
+    const trial = trialUsed(params.org);
+    if (trial) return trial;
     const repo = connect(params.org, {
       full_name: found.full_name,
       languages: { [found.language ?? "Text"]: 240_000 },

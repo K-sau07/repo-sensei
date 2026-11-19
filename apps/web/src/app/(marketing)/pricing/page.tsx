@@ -4,7 +4,8 @@ import Link from "next/link";
 
 import { buttonVariants } from "@/components/ui/button";
 
-const DESCRIPTION = "repo-sensei is free while it is in early access. Nothing is billed today.";
+const DESCRIPTION =
+  "Try repo-sensei free on one repository. Pro, for more repositories, is coming soon.";
 
 export const metadata: Metadata = {
   title: "Pricing",
@@ -14,7 +15,7 @@ export const metadata: Metadata = {
 };
 
 const FREE = [
-  "Private repositories through the GitHub App, public ones by URL",
+  "One repository, private through the GitHub App or public by URL, kept up to date",
   "Ask, Trace, Diagrams, Dependencies and Impact",
   "Fixes and changes, verified in a sandbox",
   "MCP for your editor, and the command line",
@@ -35,12 +36,13 @@ export default function PricingPage() {
         >
           <div className="flex flex-col gap-1">
             <h2 id="plan-free" className="text-xl font-semibold">
-              Early access
+              Free trial
             </h2>
             <p className="text-3xl font-semibold">Free</p>
             <p className="text-sm text-fg-muted">
-              Within the limits this server sets: questions a day, a daily spending cap, the size of
-              public imports. Your organization&apos;s Usage settings show them.
+              One repository, once: disconnecting it doesn&apos;t free up another. Within the limits
+              this server sets: questions a day, a daily spending cap, the size of public imports.
+              Your organization&apos;s Usage settings show them.
             </p>
           </div>
           <ul className="flex flex-col gap-2 text-sm">
@@ -63,11 +65,11 @@ export default function PricingPage() {
             <h2 id="plan-pro" className="text-xl font-semibold">
               Pro
             </h2>
-            <p className="text-3xl font-semibold text-fg-muted">Planned</p>
+            <p className="text-3xl font-semibold text-fg-muted">Coming soon</p>
             <p className="text-sm text-fg-muted">
-              For teams that need more than early access allows. Its price and what it includes will
-              be announced here before early access ends, and nothing changes for you without
-              notice.
+              More repositories, for you and your team. Its price and what it includes will be
+              announced here. Until then, to index more than one repository, open an issue on GitHub
+              and ask.
             </p>
           </div>
         </section>

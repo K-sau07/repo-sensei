@@ -12,8 +12,8 @@ import { EmptyState } from "@/components/feedback/empty-state";
 import { ErrorState } from "@/components/feedback/error-state";
 import { DelayedSpinner } from "@/components/primitives/delayed-spinner";
 import {
+  ConnectProblem,
   ConnectRepo,
-  connectProblem,
   EstimateCard,
   installUrl,
 } from "@/components/repos/connect-repo";
@@ -159,6 +159,8 @@ function PickStep({ org }: { org: string }) {
           });
           first ??= data?.slug ?? null;
         } catch (error) {
+          // Past the trial with one connected already: go to it; the rest need a plan.
+          if (first && error instanceof ApiError && error.code === "trial_limit_reached") break;
           if (!(error instanceof ApiError && error.code === "repo_already_connected")) throw error;
           first ??= connectedSlug(error);
         }
@@ -237,11 +239,7 @@ function PickStep({ org }: { org: string }) {
           ))}
         </ul>
       )}
-      {problem !== null && (
-        <p role="alert" className="text-sm text-danger">
-          {connectProblem(org, problem).message}
-        </p>
-      )}
+      {problem !== null && <ConnectProblem org={org} error={problem} />}
       <div className="flex flex-wrap items-center gap-3">
         <Button disabled={selected.size === 0 || busy} onClick={() => void connect()}>
           {busy ? (
