@@ -14,6 +14,7 @@ from sqlalchemy import (
     Boolean,
     DateTime,
     ForeignKey,
+    Integer,
     LargeBinary,
     String,
     Text,
@@ -36,6 +37,8 @@ class User(IdMixin, TimestampMixin, Base):
     avatar_url: Mapped[str | None] = mapped_column(Text)
     is_staff: Mapped[bool] = mapped_column(Boolean, server_default=text("false"))
     last_org_slug: Mapped[str | None] = mapped_column(CITEXT)
+    # Repositories connected to orgs on the free plan, ever: the trial's (LimitsSettings).
+    trial_repos: Mapped[int] = mapped_column(Integer, server_default=text("0"))
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 

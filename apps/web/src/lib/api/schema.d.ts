@@ -1532,7 +1532,8 @@ export interface paths {
          * Connect Repo
          * @description Connect a repository one of the org's installations covers and the admin can read on
          *     GitHub (admins). Indexing starts right away unless the repository's settings say not to (a
-         *     run of the person's day, 10.1: connecting again and again is no way around it).
+         *     run of the person's day, 10.1: connecting again and again is no way around it). Past the
+         *     free plan's trial, 403 ``trial_limit_reached``.
          */
         post: operations["connect_repo_api_v1_orgs__org__repos_post"];
         delete?: never;
@@ -1575,8 +1576,9 @@ export interface paths {
          * @description Import a public GitHub repository by URL (admins): the free tier (10.1). Private ones
          *     answer 422 ``repo_not_public``: they connect through the GitHub App. One over the tier's
          *     lines answers 422 ``too_large_for_public``, a blocked one 403 ``repo_blocked``, past the
-         *     person's imports for the day 429 ``quota_exceeded``. Indexing starts right away unless the
-         *     repository's settings say not to.
+         *     person's imports for the day 429 ``quota_exceeded``, past the free plan's trial 403
+         *     ``trial_limit_reached``. Indexing starts right away unless the repository's settings say
+         *     not to.
          */
         post: operations["import_repo_api_v1_orgs__org__repos_import_post"];
         delete?: never;

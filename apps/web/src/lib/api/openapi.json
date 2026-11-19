@@ -15320,7 +15320,7 @@
         ]
       },
       "post": {
-        "description": "Connect a repository one of the org's installations covers and the admin can read on\nGitHub (admins). Indexing starts right away unless the repository's settings say not to (a\nrun of the person's day, 10.1: connecting again and again is no way around it).",
+        "description": "Connect a repository one of the org's installations covers and the admin can read on\nGitHub (admins). Indexing starts right away unless the repository's settings say not to (a\nrun of the person's day, 10.1: connecting again and again is no way around it). Past the\nfree plan's trial, 403 ``trial_limit_reached``.",
         "operationId": "connect_repo_api_v1_orgs__org__repos_post",
         "parameters": [
           {
@@ -15430,7 +15430,7 @@
     },
     "/api/v1/orgs/{org}/repos/import": {
       "post": {
-        "description": "Import a public GitHub repository by URL (admins): the free tier (10.1). Private ones\nanswer 422 ``repo_not_public``: they connect through the GitHub App. One over the tier's\nlines answers 422 ``too_large_for_public``, a blocked one 403 ``repo_blocked``, past the\nperson's imports for the day 429 ``quota_exceeded``. Indexing starts right away unless the\nrepository's settings say not to.",
+        "description": "Import a public GitHub repository by URL (admins): the free tier (10.1). Private ones\nanswer 422 ``repo_not_public``: they connect through the GitHub App. One over the tier's\nlines answers 422 ``too_large_for_public``, a blocked one 403 ``repo_blocked``, past the\nperson's imports for the day 429 ``quota_exceeded``, past the free plan's trial 403\n``trial_limit_reached``. Indexing starts right away unless the repository's settings say\nnot to.",
         "operationId": "import_repo_api_v1_orgs__org__repos_import_post",
         "parameters": [
           {

@@ -486,6 +486,10 @@ class LimitsSettings(BaseSettings):
     global_daily_spend_cap_usd: Decimal = Field(default=Decimal(0), ge=0)
     # Repositories nobody may import by URL ("owner/name", any case).
     blocked_repos: list[str] = Field(default_factory=list[str])
+    # The free plan's trial: how many repositories a person may connect to orgs on it, once
+    # (disconnecting one gives none back), and how many such an org holds (0: no trial, every
+    # plan unlimited). An org on any other plan has no limit.
+    free_trial_repos: int = Field(default=0, ge=0)
 
 
 class ExploreSettings(BaseSettings):

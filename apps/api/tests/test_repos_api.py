@@ -550,6 +550,59 @@ async def test_a_public_import_is_the_free_tier(
     assert (closed.status_code, closed.json()["error"]["code"]) == (503, "read_only")
 
 
+async def test_the_free_plan_trial_is_one_repository_once(
+    app: FastAPI, client: httpx.AsyncClient, db_session: AsyncSession, fake: FakeGitHub
+) -> None:
+    # 10.14: a person connects one repository to orgs on the free plan, ever; the org holds one.
+    admin, headers = await _admin_org(app, client, db_session)
+    fake.user_can_read[f"ghu_{admin.login}"] = {101, 102, 103, 104}
+    settings: Settings = app.state.settings
+    app.state.settings = settings.model_copy(update={"limits": LimitsSettings(free_trial_repos=1)})
+
+    def connect(repo_id: int, org: str = "acme") -> Awaitable[httpx.Response]:
+        return client.post(f"{API}/orgs/{org}/repos", json={"github_repo_id": repo_id},
+                           headers=headers)  # fmt: skip
+
+    first = await connect(101)
+    assert first.status_code == 201, first.text
+    again = await connect(101)  # the same one again is still "already connected", not the trial
+    assert again.json()["error"]["code"] == "repo_already_connected"
+    second = await connect(102)
+    assert (second.status_code, second.json()["error"]["code"]) == (403, "trial_limit_reached")
+    assert second.json()["error"]["details"] == {"trial_repos": 1}
+
+    # Disconnecting gives none back, and another org starts no new trial (nor does an import).
+    assert (await client.delete(f"{API}/orgs/acme/repos/api", headers=headers)).status_code == 204
+    after = await connect(102)
+    assert (after.status_code, after.json()["error"]["code"]) == (403, "trial_limit_reached")
+    created = await client.post(f"{API}/orgs", json={"name": "Beta", "slug": "beta"},
+                                headers=headers)  # fmt: skip
+    assert created.status_code == 201, created.text
+    imported = await client.post(
+        f"{API}/orgs/beta/repos/import",
+        json={"url": "https://github.com/langflow-ai/langflow"},
+        headers=headers,
+    )
+    assert (imported.status_code, imported.json()["error"]["code"]) == (
+        403,
+        "trial_limit_reached",
+    )
+    used = await db_session.scalar(select(User.trial_repos).where(User.id == admin.id))
+    assert used == 1  # the refusals took none
+
+    # An org on another plan has no limit; nor has any org with the trial off.
+    org = await db_session.scalar(select(Org).where(Org.slug == "acme"))
+    assert org is not None
+    org.plan = "pro"
+    await db_session.flush()
+    assert (await connect(102)).status_code == 201
+    assert (await connect(103)).status_code == 201
+    org.plan = "free"
+    await db_session.flush()
+    app.state.settings = settings
+    assert (await connect(104)).status_code == 201
+
+
 async def _device_token(
     app: FastAPI, client: httpx.AsyncClient, db: AsyncSession, user: User, scope: str
 ) -> str:

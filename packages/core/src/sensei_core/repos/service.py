@@ -15,7 +15,7 @@ from typing import Any
 from urllib.parse import quote
 
 from pydantic import BaseModel, Field, ValidationError, field_validator
-from sqlalchemy import select
+from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -31,7 +31,7 @@ from sensei_core.errors import (
 from sensei_core.github.app import GitHubApp
 from sensei_core.github.client import Credential, GitHubClient, GitHubError, RateLimited, as_object
 from sensei_core.logging import get_logger
-from sensei_core.models import GitHubInstallation, Repo, RepoSource, RepoStatus, Role
+from sensei_core.models import GitHubInstallation, Org, Repo, RepoSource, RepoStatus, Role, User
 from sensei_core.orgs.service import OrgAccess, require_role
 from sensei_core.repos.access import open_to_all
 from sensei_core.repos.estimate import (
@@ -336,11 +336,17 @@ class RepoService:
     # ------------------------------------------------------------------ connect / import
 
     async def connect(
-        self, db: AsyncSession, access: OrgAccess, github_repo_id: int, viewer: Credential
+        self,
+        db: AsyncSession,
+        access: OrgAccess,
+        github_repo_id: int,
+        viewer: Credential,
+        *,
+        trial_repos: int = 0,
     ) -> Repo:
         require_role(access, Role.ADMIN)
         facts = await self._facts_via_installation(db, access, github_repo_id, viewer)
-        return await self._save(db, access, facts, RepoSource.GITHUB_APP)
+        return await self._save(db, access, facts, RepoSource.GITHUB_APP, trial_repos=trial_repos)
 
     async def import_public(
         self,
@@ -352,12 +358,13 @@ class RepoService:
     ) -> Repo:
         """Connect a public repository by its URL: the free tier (10.1, ``limits``): not one
         that's blocked, nor one larger than the tier's lines (as far as GitHub's language bytes
-        tell; the index run counts them and stops one over)."""
+        tell; the index run counts them and stops one over); within the free plan's trial."""
         require_role(access, Role.ADMIN)
         facts = await self._facts_public(url, viewer)
         if limits is not None:
             within_public_tier(facts, limits)
-        return await self._save(db, access, facts, RepoSource.PUBLIC_URL)
+        trial_repos = limits.free_trial_repos if limits is not None else 0
+        return await self._save(db, access, facts, RepoSource.PUBLIC_URL, trial_repos=trial_repos)
 
     async def estimate(
         self,
@@ -417,8 +424,46 @@ class RepoService:
                 return candidate[:201]
         raise ConflictError("Too many repositories with that name.", code="repo_slug_taken")
 
+    async def _take_trial(self, db: AsyncSession, access: OrgAccess, trial_repos: int) -> None:
+        """One of the free plan's trial repositories (10.14), or 403 ``trial_limit_reached``: an
+        org on it holds ``trial_repos`` at most, and a person connects that many to such orgs
+        once, ever (disconnecting one gives none back; another org starts no new trial). Taken in
+        the connect's transaction, so a refused or failed connect takes none. 0: no trial."""
+        if trial_repos <= 0 or access.org.plan != "free":
+            return
+        refused = ForbiddenError(
+            f"The free trial covers {trial_repos} "
+            f"{'repository' if trial_repos == 1 else 'repositories'}, and it's been used. "
+            "Indexing more takes a subscription.",
+            code="trial_limit_reached",
+            details={"trial_repos": trial_repos},
+        )
+        # One connect at a time in the org, so two can't both see room for one more.
+        await db.execute(select(Org.id).where(Org.id == access.org.id).with_for_update())
+        held = await db.scalar(
+            select(func.count())
+            .select_from(Repo)
+            .where(Repo.org_id == access.org.id, Repo.deleted_at.is_(None))
+        )
+        if (held or 0) >= trial_repos:
+            raise refused
+        taken = await db.scalar(
+            update(User)
+            .where(User.id == access.user.id, User.trial_repos < trial_repos)
+            .values(trial_repos=User.trial_repos + 1)
+            .returning(User.trial_repos)
+        )
+        if taken is None:
+            raise refused
+
     async def _save(
-        self, db: AsyncSession, access: OrgAccess, facts: RepoFacts, source: RepoSource
+        self,
+        db: AsyncSession,
+        access: OrgAccess,
+        facts: RepoFacts,
+        source: RepoSource,
+        *,
+        trial_repos: int = 0,
     ) -> Repo:
         body = facts.body
         github_repo_id = int(body["id"])
@@ -437,6 +482,7 @@ class RepoService:
                 code="repo_already_connected",
                 details={"slug": existing.slug},
             )
+        await self._take_trial(db, access, trial_repos)
         # Always a new row: one disconnected earlier keeps waiting for its purge, so nothing of
         # its snapshots, jobs or settings comes back.
         repo = Repo(org_id=access.org.id, github_repo_id=github_repo_id)
