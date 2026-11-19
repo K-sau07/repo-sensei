@@ -1,0 +1,76 @@
+name: deploy
+
+# Every push to main goes to Railway once the rest of CI has passed on that commit: the API, the
+# worker and the web app, each built from its Dockerfile in infra/docker. RAILWAY_TOKEN is a
+# Railway project token for the production environment.
+
+on:
+  push:
+    branches: [main]
+    paths-ignore: ["**/*.md"]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  ci:
+    name: CI passed
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    steps:
+      - name: Wait for every other workflow on this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: |
+          sleep 20
+          for _ in $(seq 1 90); do
+            runs=$(gh api "repos/$REPO/actions/runs?head_sha=$SHA&per_page=100" \
+              --jq '[.workflow_runs[] | select(.name != "deploy") | {name, status, conclusion}]')
+            failed=$(jq -r '[.[] | select(.status == "completed" and ((.conclusion | IN("success", "skipped", "neutral")) | not)) | .name] | unique | join(", ")' <<<"$runs")
+            if [ -n "$failed" ]; then
+              echo "::error::CI did not pass on this commit: $failed"
+              exit 1
+            fi
+            if [ "$(jq '[.[] | select(.status != "completed")] | length' <<<"$runs")" = 0 ]; then
+              jq -r '.[].name' <<<"$runs" | sort -u | sed 's/^/passed: /'
+              exit 0
+            fi
+            sleep 30
+          done
+          echo "::error::CI was still running after 45 minutes"
+          exit 1
+
+  deploy:
+    needs: ci
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [api, worker, web]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Railway's builder refuses BuildKit cache mounts without its own ids; it caches layers itself.
+      - name: Drop the cache mounts
+        run: sed -E -i 's/--mount=type=cache,[^ ]+ //g' infra/docker/*.Dockerfile
+
+      - name: Install the Railway CLI
+        run: npm install --global @railway/cli@5.75.0
+
+      - name: Deploy ${{ matrix.service }}
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          SERVICE: ${{ matrix.service }}
+          SHA: ${{ github.sha }}
+        run: railway up --ci --service "$SERVICE" --message "$SERVICE @ ${SHA::7}"
