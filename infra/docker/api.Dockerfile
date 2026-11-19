@@ -65,4 +65,6 @@ HEALTHCHECK --interval=15s --timeout=5s --start-period=20s --retries=3 \
     CMD ["python", "/app/scripts/healthcheck.py"]
 # Forwarded headers are not trusted (any client can send them); the client address comes from the
 # header the platform's proxy sets itself (SENSEI_API_CLIENT_IP_HEADER, e.g. fly-client-ip).
-CMD ["sh", "-c", "exec uvicorn sensei_api.app:create_app --factory --host 0.0.0.0 --port \"$PORT\" --workers \"$SENSEI_API_WORKERS\" --no-proxy-headers --no-server-header"]
+# SENSEI_MIGRATE_ON_START=1 runs the migrations first (a platform with no release step of its own:
+# Railway); a failed migration stops the start.
+CMD ["sh", "-c", "if [ \"$SENSEI_MIGRATE_ON_START\" = 1 ]; then alembic -c packages/core/alembic.ini upgrade head || exit 1; fi; exec uvicorn sensei_api.app:create_app --factory --host 0.0.0.0 --port \"$PORT\" --workers \"$SENSEI_API_WORKERS\" --no-proxy-headers --no-server-header"]

@@ -62,4 +62,6 @@ USER sensei
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
     CMD ["python", "/app/scripts/worker_healthcheck.py"]
 # Warm shutdown on SIGTERM: running tasks finish; unacknowledged ones return to the queue.
-CMD ["sh", "-c", "exec celery -A sensei_workers.app worker --loglevel=INFO --queues=\"$SENSEI_WORKER_QUEUES\" --concurrency=\"$SENSEI_WORKER_CONCURRENCY\" --hostname=\"worker@%h\" --without-gossip --without-mingle"]
+# SENSEI_WORKER_BEAT=1 runs the scheduler inside this worker (one machine, no beat of its own:
+# a small deployment; never on more than one worker).
+CMD ["sh", "-c", "if [ \"$SENSEI_WORKER_BEAT\" = 1 ]; then set -- -B --schedule=/tmp/celerybeat-schedule; fi; exec celery -A sensei_workers.app worker --loglevel=INFO --queues=\"$SENSEI_WORKER_QUEUES\" --concurrency=\"$SENSEI_WORKER_CONCURRENCY\" --hostname=\"worker@%h\" --without-gossip --without-mingle \"$@\""]

@@ -92,8 +92,8 @@ class ObjectStorage:
                 aws_secret_access_key=self._settings.secret_key.get_secret_value(),
                 config=Config(
                     signature_version="s3v4",
-                    # Path-style works everywhere (SeaweedFS and R2 need it for custom endpoints).
-                    s3={"addressing_style": "path"},
+                    # Path-style by default (SeaweedFS and R2 need it for custom endpoints).
+                    s3={"addressing_style": self._settings.addressing_style},
                     retries={"max_attempts": 5, "mode": "standard"},
                 ),
             ),

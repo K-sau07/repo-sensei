@@ -161,6 +161,9 @@ class S3Settings(BaseSettings):
     region: str = "us-east-1"
     bucket_snapshots: str = "sensei-snapshots"
     bucket_artifacts: str = "sensei-artifacts"
+    # Path-style URLs work with SeaweedFS and R2; a store that only takes virtual-hosted ones
+    # (Railway's buckets) sets "virtual".
+    addressing_style: Literal["path", "virtual", "auto"] = "path"
 
 
 class ApiSettings(BaseSettings):
