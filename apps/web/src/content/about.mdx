@@ -4,10 +4,20 @@ Boston.
 
 ## Why I built it
 
-Reading a codebase you didn't write is slow, and what AI tools say about code is hard to check.
-repo-sensei indexes a repository, then answers questions with citations to the lines they come
-from. It traces a feature from the screen down to the data it touches, draws diagrams checked
-against the code, and works in your editor through MCP.
+repo-sensei started with another project. In March I built
+[OpenLens](https://openlens-ten.vercel.app), a guide to your first open-source contribution:
+paste a repository, answer five questions about your experience, and it reads the repository's
+issues and merged pull requests to find an issue that fits you, the files you'll probably touch,
+and how the maintainers like their PRs.
+
+It got you to the starting line. Picking an issue is the easy part, though. The hard part is the
+hour after: reading a codebase you've never seen to find where the feature lives and what
+touches it. OpenLens never read the code, so it couldn't help with that.
+
+That gap became repo-sensei. It indexes the code itself, links the screen to the API to the
+database, and answers questions with citations to the lines they stand on, so you can check every
+claim instead of trusting it. It traces a feature from the screen down to the data it touches,
+draws diagrams checked against the code, and works in your editor through MCP.
 
 It's measured in the open. The [benchmarks](/benchmarks) show where it does well and where it
 doesn't yet.
