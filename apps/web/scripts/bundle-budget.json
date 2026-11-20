@@ -54,6 +54,7 @@
   "/(internal)/internal/admin": 305,
   "/(internal)/internal/evals/[run]": 301,
   "/(marketing)": 458,
+  "/(marketing)/about": 248,
   "/(marketing)/benchmarks": 248,
   "/(marketing)/blog": 248,
   "/(marketing)/blog/[slug]": 248,
