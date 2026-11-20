@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 
 import { DOC_SECTIONS, DOCS, docPath } from "@/content/docs-index";
+import { SITE_CARD } from "@/lib/site/author";
 
 const DESCRIPTION =
   "How to connect repositories, ask, trace, and use repo-sensei from your editor.";
@@ -10,7 +11,12 @@ export const metadata: Metadata = {
   title: "Docs",
   description: DESCRIPTION,
   alternates: { canonical: "/docs" },
-  openGraph: { title: "Docs · repo-sensei", description: DESCRIPTION, url: "/docs" },
+  openGraph: {
+    title: "Docs · repo-sensei",
+    description: DESCRIPTION,
+    url: "/docs",
+    images: [SITE_CARD],
+  },
 };
 
 export default function DocsIndexPage() {

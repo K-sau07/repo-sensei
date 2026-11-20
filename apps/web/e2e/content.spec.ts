@@ -7,6 +7,7 @@ const PAGES = [
   ["/docs/getting-started", "Getting started"],
   ["/docs/mcp", "MCP in your editor"],
   ["/docs/security-model", "Security model"],
+  ["/about", "About"],
   ["/pricing", "Pricing"],
   ["/changelog", "Changelog"],
   ["/blog", "Blog"],

@@ -14,6 +14,7 @@ export const PUBLIC_PREFIXES = [
   "/logout",
   "/invite",
   "/explore",
+  "/about",
   "/product",
   "/benchmarks",
   "/pricing",
@@ -26,6 +27,9 @@ export const PUBLIC_PREFIXES = [
   "/s",
   "/d",
   "/maintenance",
+  // The site's social cards, fetched by link previews.
+  "/opengraph-image",
+  "/twitter-image",
 ];
 
 export function isPublicPath(pathname: string): boolean {

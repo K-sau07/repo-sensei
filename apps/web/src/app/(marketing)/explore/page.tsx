@@ -5,6 +5,7 @@ import { Suspense } from "react";
 import { Gallery } from "@/components/explore/gallery";
 import { Skeleton } from "@/components/ui/skeleton";
 import { publicRepos } from "@/lib/api/explore-server";
+import { SITE_CARD } from "@/lib/site/author";
 
 const DESCRIPTION =
   "Open-source repositories, indexed by repo-sensei: what each one does, how it's laid out, and answers that cite their lines.";
@@ -13,7 +14,12 @@ export const metadata: Metadata = {
   title: "Explore",
   description: DESCRIPTION,
   alternates: { canonical: "/explore" },
-  openGraph: { title: "Explore · repo-sensei", description: DESCRIPTION, url: "/explore" },
+  openGraph: {
+    title: "Explore · repo-sensei",
+    description: DESCRIPTION,
+    url: "/explore",
+    images: [SITE_CARD],
+  },
 };
 
 export default function ExplorePage() {

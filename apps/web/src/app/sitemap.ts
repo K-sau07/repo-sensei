@@ -30,10 +30,12 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
       url: `${origin}${path}`,
       changeFrequency: "weekly" as const,
     })),
-    ...["/pricing", "/benchmarks", "/changelog", "/security", "/privacy", "/terms"].map((path) => ({
-      url: `${origin}${path}`,
-      changeFrequency: "monthly" as const,
-    })),
+    ...["/about", "/pricing", "/benchmarks", "/changelog", "/security", "/privacy", "/terms"].map(
+      (path) => ({
+        url: `${origin}${path}`,
+        changeFrequency: "monthly" as const,
+      }),
+    ),
     ...repos.map((repo) => ({
       url: `${origin}${explorePath(repo.owner, repo.name)}`,
       ...(repo.indexed_at ? { lastModified: repo.indexed_at } : {}),

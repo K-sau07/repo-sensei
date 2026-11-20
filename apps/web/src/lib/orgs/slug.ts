@@ -7,6 +7,7 @@
 export const SLUG_RE = /^[a-z0-9][a-z0-9-]{1,37}[a-z0-9]$/;
 
 export const RESERVED_SLUGS = new Set([
+  "about",
   "admin",
   "api",
   "app",
@@ -29,6 +30,7 @@ export const RESERVED_SLUGS = new Set([
   "new",
   "oauth",
   "onboarding",
+  "opengraph-image",
   "pricing",
   "privacy",
   "product",
@@ -41,6 +43,7 @@ export const RESERVED_SLUGS = new Set([
   "status",
   "support",
   "terms",
+  "twitter-image",
   "www",
 ]);
 
