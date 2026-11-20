@@ -19,6 +19,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { featuredRepo, humanCheck } from "@/lib/api/explore-server";
 import { heroSky } from "@/lib/demo/hero-sky";
 import { DEMO_REPO, DEMO_SHA, storyHops } from "@/lib/demo/product-demo";
+import { SITE_CARD } from "@/lib/site/author";
 
 const DESCRIPTION =
   "Ask a codebase anything and get answers that cite the lines they stand on. Trace features across layers, draw verified diagrams, and fix bugs with tests that prove it.";
@@ -27,7 +28,7 @@ export const metadata: Metadata = {
   title: { absolute: "repo-sensei: understand any codebase" },
   description: DESCRIPTION,
   alternates: { canonical: "/" },
-  openGraph: { title: "repo-sensei", description: DESCRIPTION, url: "/" },
+  openGraph: { title: "repo-sensei", description: DESCRIPTION, url: "/", images: [SITE_CARD] },
 };
 
 export default function LandingPage() {

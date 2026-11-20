@@ -1,13 +1,15 @@
 /** The public site's footer (10.3, 10.5): the header's links, the rest of the public pages,
- * and where the code is. */
+ * where the code is, and who builds it. */
 import type { Route } from "next";
 import Link from "next/link";
 
 import { Brand } from "@/components/brand/logo";
+import { AUTHOR, REPO_URL } from "@/lib/site/author";
 
 import { SITE_LINKS } from "./site-header";
 
 const MORE: readonly { href: Route; label: string }[] = [
+  { href: "/about", label: "About" },
   { href: "/benchmarks", label: "Benchmarks" },
   { href: "/blog", label: "Blog" },
   { href: "/changelog", label: "Changelog" },
@@ -23,6 +25,20 @@ export function SiteFooter() {
         <div className="flex flex-col gap-2">
           <Brand />
           <p>Understand any codebase, with answers you can verify.</p>
+          <p>
+            Built by{" "}
+            <Link href="/about" className="text-fg hover:underline">
+              {AUTHOR.name}
+            </Link>{" "}
+            ·{" "}
+            <a href={AUTHOR.linkedin} className="hover:text-fg" rel="me noreferrer noopener">
+              LinkedIn
+            </a>{" "}
+            ·{" "}
+            <a href={AUTHOR.github} className="hover:text-fg" rel="me noreferrer noopener">
+              GitHub
+            </a>
+          </p>
         </div>
         <nav aria-label="Footer">
           <ul className="flex flex-wrap items-center gap-5">
@@ -34,12 +50,8 @@ export function SiteFooter() {
               </li>
             ))}
             <li>
-              <a
-                href="https://github.com/K-sau07/repo-sensei"
-                className="hover:text-fg"
-                rel="noreferrer noopener"
-              >
-                GitHub
+              <a href={REPO_URL} className="hover:text-fg" rel="noreferrer noopener">
+                Source
               </a>
             </li>
           </ul>

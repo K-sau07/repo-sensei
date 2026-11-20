@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 
 import { LongPage } from "@/components/marketing/long-page";
 import { POSTS, postPath } from "@/content/blog-index";
+import { SITE_CARD } from "@/lib/site/author";
 
 type Props = PageProps<"/blog/[slug]">;
 
@@ -21,7 +22,12 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
     title: post.title,
     description: post.description,
     alternates: { canonical: postPath(post.slug) },
-    openGraph: { title: post.title, description: post.description, type: "article" },
+    openGraph: {
+      title: post.title,
+      description: post.description,
+      type: "article",
+      images: [SITE_CARD],
+    },
   };
 }
 

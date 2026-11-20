@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 
 import { PRODUCT_PAGES } from "@/components/marketing/product/product-page";
+import { SITE_CARD } from "@/lib/site/author";
 
 const DESCRIPTION =
   "One index of a codebase: ask it, trace features through it, draw it, fix it, and use it from your editor.";
@@ -10,7 +11,12 @@ export const metadata: Metadata = {
   title: "Product",
   description: DESCRIPTION,
   alternates: { canonical: "/product" },
-  openGraph: { title: "Product · repo-sensei", description: DESCRIPTION, url: "/product" },
+  openGraph: {
+    title: "Product · repo-sensei",
+    description: DESCRIPTION,
+    url: "/product",
+    images: [SITE_CARD],
+  },
 };
 
 export default function ProductIndexPage() {

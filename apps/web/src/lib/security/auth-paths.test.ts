@@ -12,6 +12,8 @@ describe("isPublicPath", () => {
     "/s/xyz",
     "/d/xyz",
     "/docs/getting-started",
+    "/about",
+    "/opengraph-image",
   ])("%s is public", (path) => {
     expect(isPublicPath(path)).toBe(true);
   });

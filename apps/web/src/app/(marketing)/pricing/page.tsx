@@ -3,6 +3,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 
 import { buttonVariants } from "@/components/ui/button";
+import { SITE_CARD } from "@/lib/site/author";
 
 const DESCRIPTION =
   "Try repo-sensei free on one repository. Pro, for more repositories, is coming soon.";
@@ -11,7 +12,12 @@ export const metadata: Metadata = {
   title: "Pricing",
   description: DESCRIPTION,
   alternates: { canonical: "/pricing" },
-  openGraph: { title: "Pricing · repo-sensei", description: DESCRIPTION, url: "/pricing" },
+  openGraph: {
+    title: "Pricing · repo-sensei",
+    description: DESCRIPTION,
+    url: "/pricing",
+    images: [SITE_CARD],
+  },
 };
 
 const FREE = [

@@ -4,6 +4,7 @@ import { notFound } from "next/navigation";
 
 import { DOCS, docBySlug, docPath } from "@/content/docs-index";
 import { DOC_PAGES } from "@/content/docs-pages";
+import { SITE_CARD } from "@/lib/site/author";
 
 type Props = PageProps<"/docs/[slug]">;
 
@@ -22,7 +23,11 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
     title: doc.title,
     description: doc.description,
     alternates: { canonical: docPath(doc.slug) },
-    openGraph: { title: `${doc.title} · repo-sensei docs`, description: doc.description },
+    openGraph: {
+      title: `${doc.title} · repo-sensei docs`,
+      description: doc.description,
+      images: [SITE_CARD],
+    },
   };
 }
 

@@ -1,6 +1,7 @@
 # repo-sensei
 
 repo-sensei reads a codebase the way a careful engineer would, then answers for what it says.
+Try it at [reposensei.com](https://reposensei.com).
 
 - **Ask** a question in words and get an answer whose every claim cites the lines that show it.
   Each claim is checked against those lines before you see it, and an answer it can't stand
@@ -112,6 +113,14 @@ make test-int     # integration tests against the local stack
 Deploying: `infra/single-server/` puts everything on one machine (an Oracle Cloud Always Free VM
 works) behind a Cloudflare Tunnel, for $0 beyond the models; `infra/fly/README.md` splits it
 across Fly.io and a sandbox host (`infra/sandbox-host/`), with point-in-time restore either way.
+
+## Who builds it
+
+repo-sensei is built by Saurabh Kashyap, a software engineer with 3+ years of building backend
+services, web apps and developer tools, and an M.S. in Computer Software Engineering from
+Northeastern University. Find him on [GitHub](https://github.com/K-sau07) and
+[LinkedIn](https://www.linkedin.com/in/saurabh-kashyap-b5a4ab22a/), or read more on
+[reposensei.com/about](https://reposensei.com/about).
 
 ## License
 
