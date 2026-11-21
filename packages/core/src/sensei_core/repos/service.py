@@ -178,6 +178,20 @@ def within_public_tier(facts: RepoFacts, limits: LimitsSettings) -> None:
         )
 
 
+def within_trial(facts: RepoFacts, max_loc: int | None) -> None:
+    """A repository on the free plan's trial is one of up to ``max_loc`` lines (10.14; None: no
+    cap), as far as GitHub's bytes per language tell; the index run counts them and stops one
+    over."""
+    lines = estimated_lines(facts)
+    if max_loc is not None and lines > max_loc:
+        raise InvalidError(
+            f"{facts.body.get('full_name')} has about {lines:,} lines of code; the free trial "
+            f"indexes a repository of up to {max_loc:,}.",
+            code="too_large_for_trial",
+            details={"estimated_lines": lines, "max_lines": max_loc},
+        )
+
+
 def _languages(body: object) -> dict[str, int]:
     raw = as_object(body) or {}
     return {str(k): int(v) for k, v in raw.items() if isinstance(v, int)}
@@ -343,9 +357,11 @@ class RepoService:
         viewer: Credential,
         *,
         trial_repos: int = 0,
+        trial_max_loc: int | None = None,
     ) -> Repo:
         require_role(access, Role.ADMIN)
         facts = await self._facts_via_installation(db, access, github_repo_id, viewer)
+        within_trial(facts, trial_max_loc)
         return await self._save(db, access, facts, RepoSource.GITHUB_APP, trial_repos=trial_repos)
 
     async def import_public(
@@ -355,6 +371,8 @@ class RepoService:
         url: str,
         viewer: Credential | None,
         limits: LimitsSettings | None = None,
+        *,
+        trial_max_loc: int | None = None,
     ) -> Repo:
         """Connect a public repository by its URL: the free tier (10.1, ``limits``): not one
         that's blocked, nor one larger than the tier's lines (as far as GitHub's language bytes
@@ -363,6 +381,7 @@ class RepoService:
         facts = await self._facts_public(url, viewer)
         if limits is not None:
             within_public_tier(facts, limits)
+        within_trial(facts, trial_max_loc)
         trial_repos = limits.free_trial_repos if limits is not None else 0
         return await self._save(db, access, facts, RepoSource.PUBLIC_URL, trial_repos=trial_repos)
 

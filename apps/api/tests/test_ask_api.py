@@ -42,6 +42,7 @@ from sensei_core.models import (
     MessageFeedback,
     Notification,
     NotificationKind,
+    Org,
     Repo,
     RepoFile,
     RepoSource,
@@ -408,6 +409,37 @@ async def test_a_persons_questions_for_the_day_are_counted(
     assert second.status_code == 429
     assert second.json()["error"]["code"] == "quota_exceeded"
     assert second.json()["error"]["details"]["quota"] == "asks"
+
+
+async def test_the_free_plan_is_a_few_questions_on_the_standard_model(
+    app: FastAPI, client: httpx.AsyncClient, db_session: AsyncSession, model: _Model
+) -> None:
+    # 10.14: a person's questions in orgs on the free plan, ever, in fast mode on Sonnet.
+    org, headers = await _setup(app, client, db_session)
+    settings = app.state.settings
+    app.state.settings = settings.model_copy(
+        update={"limits": settings.limits.model_copy(update={"free_plan": True, "free_asks": 2})}
+    )
+    deep, _ = await _ask(app, client, org, headers, message="How is the whole app put together?",
+                         mode="deep")  # fmt: skip
+    assert deep.status_code == 200, deep.text
+    used = {turn["model"] for turn in model.turns}
+    assert used == {settings.anthropic.standard_model}  # not Opus, though deep was asked for
+    second, _ = await _ask(app, client, org, headers, message="Where are items saved?")
+    assert second.status_code == 200, second.text
+    third = await client.post(
+        f"{org}/repos/items/ask", json={"message": "And deleted?"}, headers=headers
+    )
+    assert (third.status_code, third.json()["error"]["code"]) == (403, "trial_limit_reached")
+    assert third.json()["error"]["details"] == {"trial": "asks", "limit": 2}
+    # A refused question takes none, and an org on another plan has no such limit.
+    assert await db_session.scalar(select(func.max(User.trial_asks))) == 2
+    found = await db_session.scalar(select(Org).where(Org.slug == org.rsplit("/", 1)[-1]))
+    assert found is not None
+    found.plan = "pro"
+    await db_session.flush()
+    paid, _ = await _ask(app, client, org, headers, message="And deleted?")
+    assert paid.status_code == 200, paid.text
 
 
 async def test_an_org_past_its_daily_cap_starts_no_run(

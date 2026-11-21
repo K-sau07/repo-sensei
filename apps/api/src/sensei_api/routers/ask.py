@@ -43,6 +43,7 @@ from sensei_api.sharing import new_share_token, share_token_hash
 from sensei_api.spend import draw, hold, release, remaining_today
 from sensei_api.streams import HEADERS, HEARTBEAT_SECONDS, READ_BLOCK_MS, last_event_id
 from sensei_api.ui_stream import DONE, HEADER, UIStream, confidence_data, replayed, text_of
+from sensei_core import plans
 from sensei_core.audit import AuditAction, audit
 from sensei_core.config import Settings
 from sensei_core.db.tenancy import set_org_context, set_user_context
@@ -291,7 +292,8 @@ async def ask(
     redis: RedisClient,
     body: AskRequest,
 ) -> EventSourceResponse:
-    """Ask a question about the repository: its answer, streamed as it is written."""
+    """Ask a question about the repository: its answer, streamed as it is written. On the free
+    plan, 403 ``trial_limit_reached`` past the person's questions (10.14)."""
     settings: Settings = request.app.state.settings
     bucket = TokenBucket(redis, name="ask", per_minute=settings.agent.ask_per_minute)
     wait = await bucket.take(str(access.user.id))
@@ -310,6 +312,10 @@ async def ask(
     snapshot = await resolve_snapshot(db, repo, body.ref)
     if snapshot.symbol_count is None or snapshot.chunk_count is None:
         raise ConflictError("This repository isn't indexed for questions yet.", code="not_indexed")
+    # The free plan (10.14): a person's few questions, ever, on the standard model in fast mode.
+    free = plans.limited(access.org, limits)
+    await plans.take(db, access, limits, "asks")
+    mode = Mode.FAST if free else body.mode
     user = access.user
     if body.conversation_id is None:
         conversation = Conversation(
@@ -330,8 +336,9 @@ async def ask(
     await count_quota(redis, "asks", access.user.id)
     return await _respond(
         request, db, redis, repo=repo, snapshot=snapshot, conversation=conversation,
-        message=body.message, mode=body.mode, earlier=earlier, scope=scope, user_id=user.id,
+        message=body.message, mode=mode, earlier=earlier, scope=scope, user_id=user.id,
         cap=_capped(Budget().max_cost_usd, remaining), held=remaining is not None, keep=True,
+        floored=not free, standard_only=free,
     )  # fmt: skip
 
 
@@ -398,12 +405,14 @@ async def _respond(
     held: bool,
     keep: bool,
     floored: bool = True,
+    standard_only: bool = False,
 ) -> EventSourceResponse:
     """The question stored and its answer streamed: a kept one (a first question, not scoped),
     or a run's, started once the response is, spending up to ``cap`` (``held``: set aside from
     the org's day while it runs; ``keep``: whether its answer may be kept; ``floored``: on the
     org's floor for answers, else as recommended: a public page's question, whose small cap a
-    larger model would cut short)."""
+    larger model would cut short; ``standard_only``: the free plan's, never above Sonnet at
+    medium)."""
     asked: list[dict[str, Any]] = [{"type": "text", "text": message}]
     if scope is not None:
         asked.append({"type": "data-scope", "id": "scope", "data": scope})
@@ -473,6 +482,7 @@ async def _respond(
         question=_scoped(message, scope),
         mode=mode,
         floor=floor,
+        standard_only=standard_only,
         cached_as=cached_as,
         earlier=earlier,
         repo_name=f"{repo.owner}/{repo.name}",
@@ -726,6 +736,7 @@ class _Run:
     cap: Decimal | None  # what the run may spend (held from the org's day while it runs)
     embedding: list[float] | None  # the question's, for the answer cache (a first question's)
     keep: bool  # whether the answer may be kept in the cache (a first question, not scoped)
+    standard_only: bool = False  # the free plan's (10.14): never above Sonnet at medium
 
     async def _scoped(self, db: AsyncSession) -> None:
         if self.user_id is not None:
@@ -867,6 +878,7 @@ class _Run:
             on_usage=usage,
             reranker=ctx.search.reranker,
             floor=self.floor,
+            standard_only=self.standard_only,
         )
 
     async def _publish(self, key: str, parts: list[dict[str, Any]]) -> None:

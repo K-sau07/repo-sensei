@@ -603,6 +603,83 @@ async def test_the_free_plan_trial_is_one_repository_once(
     assert (await connect(104)).status_code == 201
 
 
+async def test_the_free_plan_indexes_a_small_repository_and_a_few_runs(
+    app: FastAPI,
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    fake: FakeGitHub,
+) -> None:
+    # 10.14: on the free plan a repository has a cap on its lines (as GitHub's bytes tell, before
+    # anything is indexed), and is indexed once and again only so many times by hand.
+    admin, headers = await _admin_org(app, client, db_session)
+    fake.user_can_read[f"ghu_{admin.login}"] = {101, 102}
+    settings: Settings = app.state.settings
+
+    def limits(**changes: object) -> None:
+        app.state.settings = settings.model_copy(
+            update={"limits": settings.limits.model_copy(update={"free_plan": True, **changes})}
+        )
+
+    limits(free_max_loc=100)
+    large = await client.post(f"{API}/orgs/acme/repos", json={"github_repo_id": 101},
+                              headers=headers)  # fmt: skip
+    assert (large.status_code, large.json()["error"]["code"]) == (422, "too_large_for_trial")
+    assert large.json()["error"]["details"] == {"estimated_lines": 222, "max_lines": 100}
+    imported = await client.post(f"{API}/orgs/acme/repos/import",
+                                 json={"url": "https://github.com/langflow-ai/langflow"},
+                                 headers=headers)  # fmt: skip
+    assert (imported.status_code, imported.json()["error"]["code"]) == (
+        422,
+        "too_large_for_trial",
+    )
+
+    limits(free_reindexes=1)
+    created = await client.post(f"{API}/orgs/acme/repos", json={"github_repo_id": 101},
+                                headers=headers)  # fmt: skip
+    assert created.status_code == 201, created.text
+    org_id = await _org_id(db_session, "acme")
+    await set_org_context(db_session, org_id)
+
+    async def finish_runs() -> None:
+        for job in await db_session.scalars(select(IndexJob)):
+            job.status = JobStatus.SUCCEEDED
+        await db_session.flush()
+
+    await finish_runs()
+    again = await client.post(f"{API}/orgs/acme/repos/api/reindex", headers=headers)
+    assert again.status_code == 202, again.text
+    await finish_runs()
+    over = await client.post(f"{API}/orgs/acme/repos/api/reindex", headers=headers)
+    assert (over.status_code, over.json()["error"]["code"]) == (403, "trial_limit_reached")
+    assert over.json()["error"]["details"] == {"trial": "reindexes", "limit": 1}
+    org = await db_session.get(Org, org_id)
+    assert org is not None
+    org.plan = "pro"
+    await db_session.flush()
+    assert (
+        await client.post(f"{API}/orgs/acme/repos/api/reindex", headers=headers)
+    ).status_code == 202
+
+
+async def test_the_free_plan_searches_so_many_times_a_day(
+    app: FastAPI, client: httpx.AsyncClient, db_session: AsyncSession, fake: FakeGitHub
+) -> None:
+    # 10.14: a person's searches a day on the free plan, counted once one is let through.
+    settings: Settings = app.state.settings
+    app.state.settings = settings.model_copy(
+        update={"limits": settings.limits.model_copy(
+            update={"free_plan": True, "free_searches_per_day": 1}
+        )}
+    )  # fmt: skip
+    _, headers, _ = await _connected(app, client, db_session, fake)
+    url = f"{API}/orgs/acme/repos/api/search"
+    first = await client.post(url, json={"q": "items"}, headers=headers)
+    assert first.status_code != 429, first.text  # not indexed yet, but let through
+    second = await client.post(url, json={"q": "items"}, headers=headers)
+    assert (second.status_code, second.json()["error"]["code"]) == (429, "quota_exceeded")
+    assert second.json()["error"]["details"]["quota"] == "searches"
+
+
 async def _device_token(
     app: FastAPI, client: httpx.AsyncClient, db: AsyncSession, user: User, scope: str
 ) -> str:

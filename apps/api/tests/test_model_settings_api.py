@@ -109,3 +109,27 @@ def test_answers_made_on_a_raised_floor_are_cached_apart() -> None:
     assert _cached_as(Mode.DEEP, StepChoice(effort="medium")) == "deep+rm"
     assert all(len(_cached_as(mode, StepChoice(tier="deep", effort="medium"))) <= 16
                for mode in Mode)  # fmt: skip
+
+
+async def test_the_free_plan_keeps_the_recommended_models(
+    api_app: FastAPI, client: httpx.AsyncClient, db_session: AsyncSession
+) -> None:
+    # 10.14: an org on the free plan can't raise a step; an org on another plan can.
+    _, headers = await sign_in(api_app, client, db_session)
+    made = await client.post(f"{API}/orgs", json={"name": "Models", "slug": "models-org"},
+                             headers=headers)  # fmt: skip
+    assert made.status_code == 201
+    settings = api_app.state.settings
+    api_app.state.settings = settings.model_copy(
+        update={"limits": settings.limits.model_copy(update={"free_plan": True})}
+    )
+    raised = await client.patch(MODELS, json={"answers": {"tier": "deep", "effort": "high"}},
+                                headers=headers)  # fmt: skip
+    assert (raised.status_code, raised.json()["error"]["code"]) == (403, "plan_required")
+    org = await db_session.get(Org, made.json()["id"])
+    assert org is not None
+    org.plan = "pro"
+    await db_session.flush()
+    raised = await client.patch(MODELS, json={"answers": {"tier": "deep", "effort": "high"}},
+                                headers=headers)  # fmt: skip
+    assert raised.status_code == 200, raised.text

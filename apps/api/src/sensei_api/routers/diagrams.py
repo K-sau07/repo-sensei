@@ -42,6 +42,7 @@ from sensei_api.routers.deps import snapshot_roots
 from sensei_api.routers.graph import limit_graph
 from sensei_api.sharing import new_share_token, share_token_hash
 from sensei_api.spend import remaining_today
+from sensei_core import plans
 from sensei_core.audit import AuditAction, audit
 from sensei_core.config import Settings
 from sensei_core.errors import ForbiddenError, InvalidError, NotFoundError, RateLimitedError
@@ -58,6 +59,7 @@ from sensei_core.models import (
     Snapshot,
 )
 from sensei_core.orgs import model_choices
+from sensei_core.orgs.model_choices import RECOMMENDED
 from sensei_core.orgs.service import OrgAccess
 from sensei_core.storage import ObjectStorage
 from sensei_engine.architecture import draw, facts_of
@@ -267,6 +269,10 @@ async def create_diagram(
         warn_in=lambda: streams.short_session(request),
     )  # fmt: skip
     snapshot = await resolve_snapshot(db, repo, ref)
+    # The free plan (10.14): a person's few diagrams drawn by a model, ever, on the recommended
+    # models (an ER diagram is drawn without one, so it's free).
+    free = plans.limited(access.org, settings.limits)
+    await plans.take(db, access, settings.limits, "diagrams")
     store: GraphStore = request.app.state.graph_store
     storage: ObjectStorage = request.app.state.storage
     graph = await store.get(db, storage, snapshot)
@@ -284,7 +290,7 @@ async def create_diagram(
         return diagram_out(found, access.org.slug, repo)
     sub, source = await asyncio.to_thread(_subgraph, graph, body)
     try:
-        floor = (await model_choices.load(db, repo.org_id)).diagrams
+        floor = RECOMMENDED if free else (await model_choices.load(db, repo.org_id)).diagrams
         made = await generate(
             _client(request), sub, graph, body.kind.value, on_usage=note, floor=floor
         )
@@ -351,7 +357,8 @@ async def _whole_app(
             code="diagram_nothing_found",
         )
     title = body.title or f"Architecture of {repo.full_name}"
-    floor = (await model_choices.load(db, repo.org_id)).diagrams
+    free = plans.limited(access.org, request.app.state.settings.limits)
+    floor = RECOMMENDED if free else (await model_choices.load(db, repo.org_id)).diagrams
     made = await draw(
         _client(request), facts, title, repo.full_name, on_usage=on_usage, floor=floor
     )

@@ -26,6 +26,7 @@ from sqlalchemy import func, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from sensei_core import plans
 from sensei_core.audit import AuditAction, audit
 from sensei_core.db import rowcount
 from sensei_core.db.base import new_id
@@ -157,6 +158,7 @@ class HandlerContext:
     delivery: WebhookDelivery
     app: InstallationSource | None = None
     timers: PushTimers | None = None  # what starts a push's run later (None: pushes are noted)
+    free_plan: bool = False  # the free plan's limits on (10.14): its orgs' pushes index nothing
 
     @property
     def payload(self) -> dict[str, Any]:
@@ -394,7 +396,8 @@ async def _pull_request(ctx: HandlerContext) -> DeliveryStatus:
 
 async def _pushed_repos(ctx: HandlerContext) -> list[Repo]:
     """The live repositories the delivery's installation reads that are its repository (in a
-    live org: a deleted one's, waiting for its purge, index nothing)."""
+    live org: a deleted one's, waiting for its purge, index nothing; nor, with the free plan's
+    limits on, one on it)."""
     repository = as_object(ctx.payload.get("repository")) or {}
     github_repo_id = repository.get("id")
     if not isinstance(github_repo_id, int) or ctx.delivery.installation_id is None:
@@ -408,6 +411,8 @@ async def _pushed_repos(ctx: HandlerContext) -> list[Repo]:
             Repo.deleted_at.is_(None),
             Org.deleted_at.is_(None),
             GitHubInstallation.installation_id == ctx.delivery.installation_id,
+            # On the free plan (10.14) a repository is indexed when connected and by hand.
+            *([Org.plan != plans.FREE] if ctx.free_plan else []),
         )
     )
     return list(found)
@@ -440,8 +445,10 @@ async def process_delivery(
     *,
     app: InstallationSource | None = None,
     timers: PushTimers | None = None,
+    free_plan: bool = False,
 ) -> ProcessResult:
-    """Run the handler for one delivery, at most once to completion.
+    """Run the handler for one delivery, at most once to completion. ``free_plan``: the free
+    plan's limits are on (its orgs' pushes and pull requests index nothing, 10.14).
 
     The row is locked (``SKIP LOCKED``: a concurrent worker skips it), finished deliveries are
     left alone, and a failing handler is rolled back to a savepoint and recorded as ``failed`` with
@@ -466,8 +473,9 @@ async def process_delivery(
         try:
             async with db.begin_nested():
                 context = HandlerContext(
-                    db=db, redis=redis, delivery=delivery, app=app, timers=timers
-                )
+                    db=db, redis=redis, delivery=delivery, app=app, timers=timers,
+                    free_plan=free_plan,
+                )  # fmt: skip
                 status = await handler(context)
         except Exception as exc:
             status, error = DeliveryStatus.FAILED, exc

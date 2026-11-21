@@ -45,9 +45,11 @@ from sensei_api.routers.browse import (
     _grep,  # pyright: ignore[reportPrivateUsage] - the exact search's own runner
     searchable,
 )
+from sensei_core import plans
 from sensei_core.config import Settings
 from sensei_core.errors import ConflictError, DomainError, InvalidError, RateLimitedError
 from sensei_core.indexing.snapshots import resolve_snapshot
+from sensei_core.limits import check_quota, count_quota
 from sensei_core.logging import get_logger
 from sensei_core.models import Repo, Snapshot
 from sensei_core.orgs.service import OrgAccess
@@ -531,6 +533,11 @@ async def search(
         raise RateLimitedError(
             "Too many searches; try again in a moment.", headers={"Retry-After": str(wait)}
         )
+    # The free plan (10.14): a person's searches a day, counted once one is let through.
+    if plans.limited(access.org, settings.limits):
+        await check_quota(redis, "searches", access.user.id, settings.limits.free_searches_per_day,
+                          what="searches")  # fmt: skip
+        await count_quota(redis, "searches", access.user.id)
 
     snapshot = await resolve_snapshot(db, repo, body.ref)
     if snapshot.chunk_count is None or snapshot.chunk_generation is None:

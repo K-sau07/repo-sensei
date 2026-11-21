@@ -39,6 +39,9 @@ class User(IdMixin, TimestampMixin, Base):
     last_org_slug: Mapped[str | None] = mapped_column(CITEXT)
     # Repositories connected to orgs on the free plan, ever: the trial's (LimitsSettings).
     trial_repos: Mapped[int] = mapped_column(Integer, server_default=text("0"))
+    # Questions asked and diagrams drawn by a model in orgs on the free plan, ever (10.14).
+    trial_asks: Mapped[int] = mapped_column(Integer, server_default=text("0"))
+    trial_diagrams: Mapped[int] = mapped_column(Integer, server_default=text("0"))
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 

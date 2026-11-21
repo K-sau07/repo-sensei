@@ -12,9 +12,10 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from sensei_api.deps import DbSession
 from sensei_api.orgs import OrgAccessDep
+from sensei_core import plans
 from sensei_core.audit import AuditAction, audit
 from sensei_core.config import Settings
-from sensei_core.errors import InvalidError
+from sensei_core.errors import ForbiddenError, InvalidError
 from sensei_core.models import Role
 from sensei_core.orgs import model_choices
 from sensei_core.orgs.model_choices import (
@@ -82,8 +83,14 @@ async def get_models(request: Request, access: OrgAccessDep, db: DbSession) -> M
 async def update_models(
     body: ModelsUpdate, request: Request, access: OrgAccessDep, db: DbSession
 ) -> ModelsOut:
-    """Raise (or put back) the model and effort of the steps given."""
+    """Raise (or put back) the model and effort of the steps given. On the free plan, 403
+    ``plan_required``: its questions and diagrams run on the recommended models (10.14)."""
     require_role(access, Role.ADMIN)
+    if plans.limited(access.org, request.app.state.settings.limits):
+        raise ForbiddenError(
+            "Choosing models takes a subscription; the free trial runs on the recommended ones.",
+            code="plan_required",
+        )
     before = await model_choices.load(db, access.org.id, lock=True)
     changed: dict[str, StepChoice] = {}
     for step in Step:

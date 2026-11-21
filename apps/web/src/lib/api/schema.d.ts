@@ -676,7 +676,11 @@ export interface paths {
         /** List My Orgs */
         get: operations["list_my_orgs_api_v1_orgs_get"];
         put?: never;
-        /** Create Org */
+        /**
+         * Create Org
+         * @description Create an org, its creator its owner. On a deployment with the free plan's limits, 403
+         *     ``org_limit_reached`` past the orgs a person may own.
+         */
         post: operations["create_org_api_v1_orgs_post"];
         delete?: never;
         options?: never;
@@ -1533,7 +1537,7 @@ export interface paths {
          * @description Connect a repository one of the org's installations covers and the admin can read on
          *     GitHub (admins). Indexing starts right away unless the repository's settings say not to (a
          *     run of the person's day, 10.1: connecting again and again is no way around it). Past the
-         *     free plan's trial, 403 ``trial_limit_reached``.
+         *     free plan's trial, 403 ``trial_limit_reached``; over its lines, 422 ``too_large_for_trial``.
          */
         post: operations["connect_repo_api_v1_orgs__org__repos_post"];
         delete?: never;
@@ -1624,7 +1628,8 @@ export interface paths {
         put?: never;
         /**
          * Ask
-         * @description Ask a question about the repository: its answer, streamed as it is written.
+         * @description Ask a question about the repository: its answer, streamed as it is written. On the free
+         *     plan, 403 ``trial_limit_reached`` past the person's questions (10.14).
          */
         post: operations["ask_api_v1_orgs__org__repos__repo__ask_post"];
         delete?: never;
@@ -2258,7 +2263,8 @@ export interface paths {
          * Reindex
          * @description Index the repository again at its branch's current commit (admins). 409
          *     ``index_job_running`` while a run is queued or running; 429 ``quota_exceeded`` past the
-         *     person's runs for the day.
+         *     person's runs for the day; on the free plan, 403 ``trial_limit_reached`` past its re-indexes
+         *     (10.14).
          */
         post: operations["reindex_api_v1_orgs__org__repos__repo__reindex_post"];
         delete?: never;
@@ -2472,7 +2478,8 @@ export interface paths {
         head?: never;
         /**
          * Update Models
-         * @description Raise (or put back) the model and effort of the steps given.
+         * @description Raise (or put back) the model and effort of the steps given. On the free plan, 403
+         *     ``plan_required``: its questions and diagrams run on the recommended models (10.14).
          */
         patch: operations["update_models_api_v1_orgs__org__settings_models_patch"];
         trace?: never;

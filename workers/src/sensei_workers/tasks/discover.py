@@ -24,10 +24,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
+from sensei_core import plans
 from sensei_core.jobs import TaskName
 from sensei_core.logging import get_logger
 from sensei_core.models import (
     ACTIVE_JOB_STATUSES,
+    Org,
     Repo,
     RepoSource,
     Snapshot,
@@ -66,7 +68,7 @@ class Target:
     snapshot_id: uuid.UUID
     commit_sha: str
     ignore_globs: tuple[str, ...]
-    max_loc: int | None = None  # a public repository's (the free tier's) cap on lines
+    max_loc: int | None = None  # the free tier's or the free plan's cap on lines (_max_loc)
 
 
 class SnapshotRef(Protocol):
@@ -114,12 +116,18 @@ async def _begin(task: SenseiTask, org_id: str, job_id: uuid.UUID) -> Target | N
             snapshot_id=snapshot.id,
             commit_sha=snapshot.commit_sha,
             ignore_globs=tuple(settings.ignore_globs),
-            max_loc=(
-                get_runtime().settings.limits.public_max_loc
-                if repo.source is RepoSource.PUBLIC_URL
-                else None
-            ),
+            max_loc=_max_loc(repo, await db.get(Org, repo.org_id)),
         )
+
+
+def _max_loc(repo: Repo, org: Org | None) -> int | None:
+    """A repository's cap on lines: a public one imported by URL is the free tier's (10.1), one
+    in an org held to the free plan its trial's (10.14), the smaller when both; else none."""
+    limits = get_runtime().settings.limits
+    caps = [limits.public_max_loc] if repo.source is RepoSource.PUBLIC_URL else []
+    if org is not None and plans.limited(org, limits):
+        caps.append(limits.free_max_loc)
+    return min(caps) if caps else None
 
 
 async def _known_ids(task: SenseiTask, target: Target) -> dict[str, uuid.UUID]:
@@ -313,8 +321,8 @@ _NOT_CODE = frozenset({
 
 
 def _too_large(target: Target, files: Sequence[DiscoveredFile]) -> str | None:
-    """Why a public repository is too large for the free tier (None: it isn't): its lines of
-    code, without generated, vendored, binary or documentation files, nor data and lockfiles."""
+    """Why a repository is too large for its cap (None: it isn't): its lines of code, without
+    generated, vendored, binary or documentation files, nor data and lockfiles."""
     lines = sum(
         file.loc or 0
         for file in files
@@ -323,9 +331,9 @@ def _too_large(target: Target, files: Sequence[DiscoveredFile]) -> str | None:
     if target.max_loc is None or lines <= target.max_loc:
         return None
     return (
-        f"The repository has {lines:,} lines to index; a public repository imported by its URL "
-        f"may have up to {target.max_loc:,}. Add ignore patterns in the repository settings to "
-        "leave generated or vendored code out."
+        f"The repository has {lines:,} lines to index; it may have up to {target.max_loc:,} "
+        "here. Add ignore patterns in the repository settings to leave generated or vendored "
+        "code out."
     )
 
 

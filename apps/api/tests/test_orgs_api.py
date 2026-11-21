@@ -47,6 +47,29 @@ async def test_create_and_list_orgs(
     assert me["last_org_slug"] == "acme-inc"
 
 
+async def test_a_person_owns_a_few_orgs_on_the_free_plan(
+    api_app: FastAPI, api_client: httpx.AsyncClient, db_session: AsyncSession
+) -> None:
+    # 10.14: each new org is on the free plan, so a person may own only so many (staff aside).
+    user, headers = await sign_in(api_app, api_client, db_session)
+    settings = api_app.state.settings
+    api_app.state.settings = settings.model_copy(
+        update={"limits": settings.limits.model_copy(
+            update={"free_plan": True, "free_orgs_per_person": 2}
+        )}
+    )  # fmt: skip
+    await _create_org(api_client, headers, "one-org")
+    await _create_org(api_client, headers, "two-org")
+    third = await api_client.post(
+        f"{API}/orgs", json={"name": "Three", "slug": "three-org"}, headers=headers
+    )
+    assert (third.status_code, third.json()["error"]["code"]) == (403, "org_limit_reached")
+    assert third.json()["error"]["details"] == {"limit": 2}
+    user.is_staff = True
+    await db_session.flush()
+    await _create_org(api_client, headers, "three-org")
+
+
 async def test_create_org_requires_csrf(
     api_app: FastAPI, api_client: httpx.AsyncClient, db_session: AsyncSession
 ) -> None:

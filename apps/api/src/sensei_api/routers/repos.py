@@ -17,6 +17,7 @@ from sensei_api.deps import DbSession, RedisClient, Writable
 from sensei_api.orgs import OrgAccessDep
 from sensei_api.repos import RepoAccessDep, RepoDep, RepoServiceDep, ViewerDep, checked
 from sensei_api.routers.index_jobs import dispatch_index
+from sensei_core import plans
 from sensei_core.auth.api_keys import Scope
 from sensei_core.config import ExploreSettings, LimitsSettings
 from sensei_core.indexing.events import JobOutbox
@@ -251,14 +252,20 @@ async def connect_repo(
     """Connect a repository one of the org's installations covers and the admin can read on
     GitHub (admins). Indexing starts right away unless the repository's settings say not to (a
     run of the person's day, 10.1: connecting again and again is no way around it). Past the
-    free plan's trial, 403 ``trial_limit_reached``."""
+    free plan's trial, 403 ``trial_limit_reached``; over its lines, 422 ``too_large_for_trial``."""
     limits: LimitsSettings = request.app.state.settings.limits
     await check_quota(redis, "index_runs", access.user.id, limits.index_runs_per_day,
                       what="index runs")  # fmt: skip
     repo = await repos.connect(
-        db, access, body.github_repo_id, viewer, trial_repos=limits.free_trial_repos
-    )
+        db, access, body.github_repo_id, viewer, trial_repos=limits.free_trial_repos,
+        trial_max_loc=_trial_max_loc(access, limits),
+    )  # fmt: skip
     return await _first_index(request, db, access, repo, redis=redis, background=background)
+
+
+def _trial_max_loc(access: OrgAccess, limits: LimitsSettings) -> int | None:
+    """The free plan's cap on a repository's lines (10.14), for an org held to it."""
+    return limits.free_max_loc if plans.limited(access.org, limits) else None
 
 
 async def _first_index(
@@ -313,7 +320,9 @@ async def import_repo(
     limits: LimitsSettings = request.app.state.settings.limits
     await check_quota(redis, "public_imports", access.user.id, limits.public_imports_per_day,
                       what="imports by URL")  # fmt: skip
-    repo = await repos.import_public(db, access, body.url, viewer, limits)
+    repo = await repos.import_public(
+        db, access, body.url, viewer, limits, trial_max_loc=_trial_max_loc(access, limits)
+    )
     await count_quota(redis, "public_imports", access.user.id)  # imported (not refused)
     return await _first_index(request, db, access, repo, redis=redis, background=background)
 

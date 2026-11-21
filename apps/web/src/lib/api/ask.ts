@@ -85,6 +85,21 @@ export type AskData = {
 export type AskMessage = UIMessage<unknown, AskData>;
 type Part = AskMessage["parts"][number];
 
+/** What a refused question says: the API's error, which the chat transport hands over as the
+ * response's body (its JSON envelope), or the error's own words. */
+export function askProblem(error: Error): { message: string; code: string | null } {
+  try {
+    const body = JSON.parse(error.message) as { error?: { code?: unknown; message?: unknown } };
+    const { code, message } = body.error ?? {};
+    if (typeof message === "string") {
+      return { message, code: typeof code === "string" ? code : null };
+    }
+  } catch {
+    // not the API's envelope: a network failure, or a stream cut short
+  }
+  return { message: error.message, code: null };
+}
+
 export function askEndpoint(org: string, repo: string): string {
   return `/api/v1/orgs/${encodeURIComponent(org)}/repos/${encodeURIComponent(repo)}/ask`;
 }

@@ -21,11 +21,11 @@ export const metadata: Metadata = {
 };
 
 const FREE = [
-  "One repository, private through the GitHub App or public by URL, kept up to date",
-  "Ask, Trace, Diagrams, Dependencies and Impact",
-  "Fixes and changes, verified in a sandbox",
-  "MCP for your editor, and the command line",
-  "Your team, with roles and an audit log",
+  "One repository of up to 50,000 lines, private through the GitHub App or public by URL",
+  "Two questions answered with citations, and two diagrams drawn by the model",
+  "Search 50 times a day; trace, dependencies, impact and the schema diagram as much as you like",
+  "MCP for your editor, and the command line, within the same limits",
+  "Re-index it twice by hand (pushes don't re-index on the trial)",
 ] as const;
 
 export default function PricingPage() {
@@ -46,9 +46,8 @@ export default function PricingPage() {
             </h2>
             <p className="text-3xl font-semibold">Free</p>
             <p className="text-sm text-fg-muted">
-              One repository, once: disconnecting it doesn&apos;t free up another. Within the limits
-              this server sets: questions a day, a daily spending cap, the size of public imports.
-              Your organization&apos;s Usage settings show them.
+              Enough to see every part of it work. The trial is yours once: disconnecting the
+              repository or making a new organization doesn&apos;t start another.
             </p>
           </div>
           <ul className="flex flex-col gap-2 text-sm">
