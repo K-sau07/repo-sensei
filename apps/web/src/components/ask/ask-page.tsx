@@ -24,6 +24,7 @@ import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { MD, useMediaQuery } from "@/hooks/use-media-query";
 import {
   answerText,
+  askProblem,
   citationsOf,
   draftKey,
   runOf,
@@ -234,11 +235,7 @@ function Ask({ onNamed }: { onNamed: (id: string) => void }) {
                 />
               ),
             )}
-            {chat.error ? (
-              <p role="alert" className="text-sm text-danger">
-                The answer couldn&apos;t be written: {chat.error.message}
-              </p>
-            ) : null}
+            {chat.error ? <AskProblem error={chat.error} /> : null}
             <div ref={end} />
           </div>
         </div>
@@ -440,5 +437,25 @@ function CitedCode({ citation, onClose }: { citation: CitationData; onClose: () 
         )}
       </div>
     </aside>
+  );
+}
+
+/** Why a question wasn't answered, with the way on when there is one (the free trial's plans). */
+function AskProblem({ error }: { error: Error }) {
+  const { message, code } = askProblem(error);
+  if (code === "trial_limit_reached") {
+    return (
+      <p role="alert" className="text-sm text-danger">
+        {message}{" "}
+        <Link href="/pricing" className="text-fg underline underline-offset-4">
+          See plans
+        </Link>
+      </p>
+    );
+  }
+  return (
+    <p role="alert" className="text-sm text-danger">
+      The answer couldn&apos;t be written: {message}
+    </p>
   );
 }

@@ -50,7 +50,7 @@ export function connectProblem(org: string, error: unknown) {
       link: slug ? { href: repoPath(org, slug), label: "Open it" } : null,
     };
   }
-  if (error.code === "trial_limit_reached") {
+  if (error.code === "trial_limit_reached" || error.code === "too_large_for_trial") {
     return { message: error.message, link: { href: "/pricing" as Route, label: "See plans" } };
   }
   if (error.code === "cost_cap_reached") {
