@@ -340,6 +340,34 @@ def _schema_node(snapshot: Snapshot, kind: str, key: str, name: str, **attrs: An
     )  # fmt: skip
 
 
+async def test_the_free_plan_draws_a_few_diagrams_and_any_number_of_schemas(
+    api_app: FastAPI, client: httpx.AsyncClient, db_session: AsyncSession, tmp_path: Path
+) -> None:
+    # 10.14: a person's diagrams drawn by a model, ever; an ER diagram needs none, so it's free.
+    url, snapshot, headers = await _indexed(api_app, client, db_session, tmp_path)
+    settings = api_app.state.settings
+    api_app.state.settings = settings.model_copy(
+        update={
+            "limits": settings.limits.model_copy(update={"free_plan": True, "free_diagrams": 1})
+        }
+    )
+    asked = {"from_trace": {"from": "create_item_route", "direction": "down"}}
+    first = await client.post(f"{url}/diagrams", json=asked, headers=headers)
+    assert first.status_code == 201, first.text
+    again = await client.post(f"{url}/diagrams", json=asked, headers=headers)
+    assert (again.status_code, again.json()["error"]["code"]) == (403, "trial_limit_reached")
+    assert again.json()["error"]["details"] == {"trial": "diagrams", "limit": 1}
+    schema = await client.post(f"{url}/diagrams", json={"whole_schema": True}, headers=headers)
+    assert schema.status_code != 403, schema.text
+    repo = await db_session.get(Repo, snapshot.repo_id)
+    assert repo is not None
+    org = await db_session.get(Org, repo.org_id)
+    assert org is not None
+    org.plan = "pro"
+    await db_session.flush()
+    assert (await client.post(f"{url}/diagrams", json=asked, headers=headers)).status_code == 201
+
+
 @pytest.mark.integration
 async def test_the_whole_schema_is_an_er_diagram_from_the_graph_alone(
     api_app: FastAPI, client: httpx.AsyncClient, db_session: AsyncSession, tmp_path: Path

@@ -18,6 +18,7 @@ from sensei_api.deps import DbSession, RedisClient, Writable
 from sensei_api.orgs import OrgAccessDep
 from sensei_api.repos import RepoDep
 from sensei_api.routers.auth import GitHubOAuthDep
+from sensei_core import plans
 from sensei_core.config import LimitsSettings
 from sensei_core.db.tenancy import set_org_context
 from sensei_core.indexing.events import TERMINAL, EventType, JobOutbox, job_stream, org_stream
@@ -165,10 +166,12 @@ async def reindex(
 ) -> IndexJobOut:
     """Index the repository again at its branch's current commit (admins). 409
     ``index_job_running`` while a run is queued or running; 429 ``quota_exceeded`` past the
-    person's runs for the day."""
+    person's runs for the day; on the free plan, 403 ``trial_limit_reached`` past its re-indexes
+    (10.14)."""
     limits: LimitsSettings = request.app.state.settings.limits
     await check_quota(redis, "index_runs", access.user.id, limits.index_runs_per_day,
                       what="index runs")  # fmt: skip
+    await plans.check_reindex(db, access, repo, limits)
     outbox = JobOutbox()
     job = await _service(request).start(db, access, repo, outbox)
     await count_quota(redis, "index_runs", access.user.id)  # started (not refused)

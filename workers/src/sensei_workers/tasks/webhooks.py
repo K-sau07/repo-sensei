@@ -35,6 +35,7 @@ def process_github_webhook(self: SenseiTask, *, delivery_id: str) -> str | None:
                 uuid.UUID(delivery_id),
                 app=runtime.github_app,
                 timers=CeleryPushTimers(celery_app),
+                free_plan=runtime.settings.limits.free_plan,
             )
 
     # The delivery's status (failed, with the error) is committed before deciding on a retry.

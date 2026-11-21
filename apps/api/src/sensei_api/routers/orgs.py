@@ -12,8 +12,9 @@ from pydantic import BaseModel, Field
 from sensei_api.auth import CurrentUser
 from sensei_api.deps import DbSession, RedisClient
 from sensei_api.orgs import OrgAccessDep, OrgServiceDep
+from sensei_core import plans
 from sensei_core.audit import MAX_PAGE_SIZE, AuditAction, list_org_audit
-from sensei_core.config import Settings
+from sensei_core.config import LimitsSettings, Settings
 from sensei_core.errors import InvalidError
 from sensei_core.limits import check_quota, count_quota
 from sensei_core.models import ActorType, Org, Role
@@ -119,8 +120,12 @@ async def list_my_orgs(user: CurrentUser, db: DbSession, orgs: OrgServiceDep) ->
 
 @router.post("", response_model=OrgOut, status_code=status.HTTP_201_CREATED)
 async def create_org(
-    body: OrgCreate, user: CurrentUser, db: DbSession, orgs: OrgServiceDep
+    body: OrgCreate, request: Request, user: CurrentUser, db: DbSession, orgs: OrgServiceDep
 ) -> OrgOut:
+    """Create an org, its creator its owner. On a deployment with the free plan's limits, 403
+    ``org_limit_reached`` past the orgs a person may own."""
+    limits: LimitsSettings = request.app.state.settings.limits
+    plans.check_new_org(user, await orgs.list_for_user(db, user), limits)
     access = await orgs.create(db, user, name=body.name, slug=body.slug)
     return OrgOut.build(access.org, access.role)
 

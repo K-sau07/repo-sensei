@@ -490,6 +490,18 @@ class LimitsSettings(BaseSettings):
     # (disconnecting one gives none back), and how many such an org holds (0: no trial, every
     # plan unlimited). An org on any other plan has no limit.
     free_trial_repos: int = Field(default=0, ge=0)
+    # The rest of the free plan's limits (10.14), on orgs on the free plan, once ``free_plan`` is
+    # on (off: a deployment that's one person's or a team's). A person's questions and AI-drawn
+    # diagrams on it, ever; a repository's lines and its index runs after the first; searches a
+    # day; orgs a person may own. On the free plan, too: questions run on the standard model
+    # and effort (no deep mode, the org's model choices aside), and pushes index nothing.
+    free_plan: bool = False
+    free_asks: int = Field(default=2, ge=0)
+    free_diagrams: int = Field(default=2, ge=0)
+    free_max_loc: int = Field(default=50_000, gt=0)
+    free_reindexes: int = Field(default=2, ge=0)
+    free_searches_per_day: int = Field(default=50, ge=0)
+    free_orgs_per_person: int = Field(default=3, ge=1)
 
 
 class ExploreSettings(BaseSettings):

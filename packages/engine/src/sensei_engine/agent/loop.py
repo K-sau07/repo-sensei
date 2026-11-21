@@ -273,15 +273,22 @@ class Plan:
 
 
 def plan_for(
-    route: Route, mode: Mode, *, escalate: bool = False, floor: StepChoice | None = None
+    route: Route,
+    mode: Mode,
+    *,
+    escalate: bool = False,
+    floor: StepChoice | None = None,
+    standard_only: bool = False,
 ) -> Plan:
     """Sonnet, at low effort for a lookup; Opus at high for deep mode, an escalation and a
-    question across layers. ``floor``: the org's for answers (10.7.2), raising either."""
-    if mode is Mode.DEEP or escalate or route.query_class in CROSS_CUTTING:
+    question across layers. ``floor``: the org's for answers (10.7.2), raising either.
+    ``standard_only``: never above Sonnet at medium (the free plan's, 10.14), whatever the
+    question, the mode or the floor."""
+    if (mode is Mode.DEEP or escalate or route.query_class in CROSS_CUTTING) and not standard_only:
         plan = Plan(Tier.DEEP, "high", escalated=True)
     else:
         plan = Plan(Tier.STANDARD, "low" if route.query_class in LOOKUPS else "medium", False)
-    if floor is None:
+    if floor is None or standard_only:
         return plan
     tier, effort = at_floor(floor, plan.tier, plan.effort)
     return Plan(tier, effort or plan.effort, plan.escalated)
@@ -365,6 +372,7 @@ class AskAgent:
         on_rerank_usage: RerankUsageSink | None = None,
         verify: bool = True,
         floor: StepChoice | None = None,
+        standard_only: bool = False,
     ) -> None:
         self.client = client
         self.budget = budget or Budget()
@@ -375,6 +383,7 @@ class AskAgent:
         self.on_rerank_usage = on_rerank_usage
         self.verify = verify  # 4.5's checks (False: the answer as it came)
         self.floor = floor  # the org's for answers (10.7.2): the answer's turns, not the checks
+        self.standard_only = standard_only  # the free plan's (10.14): see plan_for
 
     def _counted(self, run: _Run) -> LLMUsageSink:
         """Where a check's usage goes (the support check, the whole-answer check, the evidence
@@ -408,7 +417,9 @@ class AskAgent:
         escalate: bool = False,
     ) -> AsyncIterator[AgentEvent]:
         route = classify(question).route
-        plan = plan_for(route, mode, escalate=escalate, floor=self.floor)
+        plan = plan_for(
+            route, mode, escalate=escalate, floor=self.floor, standard_only=self.standard_only
+        )
         run = _Run(
             plan,
             self.client.model_for(plan.tier),

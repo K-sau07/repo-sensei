@@ -12437,6 +12437,7 @@
         ]
       },
       "post": {
+        "description": "Create an org, its creator its owner. On a deployment with the free plan's limits, 403\n``org_limit_reached`` past the orgs a person may own.",
         "operationId": "create_org_api_v1_orgs_post",
         "requestBody": {
           "content": {
@@ -15320,7 +15321,7 @@
         ]
       },
       "post": {
-        "description": "Connect a repository one of the org's installations covers and the admin can read on\nGitHub (admins). Indexing starts right away unless the repository's settings say not to (a\nrun of the person's day, 10.1: connecting again and again is no way around it). Past the\nfree plan's trial, 403 ``trial_limit_reached``.",
+        "description": "Connect a repository one of the org's installations covers and the admin can read on\nGitHub (admins). Indexing starts right away unless the repository's settings say not to (a\nrun of the person's day, 10.1: connecting again and again is no way around it). Past the\nfree plan's trial, 403 ``trial_limit_reached``; over its lines, 422 ``too_large_for_trial``.",
         "operationId": "connect_repo_api_v1_orgs__org__repos_post",
         "parameters": [
           {
@@ -15654,7 +15655,7 @@
     },
     "/api/v1/orgs/{org}/repos/{repo}/ask": {
       "post": {
-        "description": "Ask a question about the repository: its answer, streamed as it is written.",
+        "description": "Ask a question about the repository: its answer, streamed as it is written. On the free\nplan, 403 ``trial_limit_reached`` past the person's questions (10.14).",
         "operationId": "ask_api_v1_orgs__org__repos__repo__ask_post",
         "parameters": [
           {
@@ -18824,7 +18825,7 @@
     },
     "/api/v1/orgs/{org}/repos/{repo}/reindex": {
       "post": {
-        "description": "Index the repository again at its branch's current commit (admins). 409\n``index_job_running`` while a run is queued or running; 429 ``quota_exceeded`` past the\nperson's runs for the day.",
+        "description": "Index the repository again at its branch's current commit (admins). 409\n``index_job_running`` while a run is queued or running; 429 ``quota_exceeded`` past the\nperson's runs for the day; on the free plan, 403 ``trial_limit_reached`` past its re-indexes\n(10.14).",
         "operationId": "reindex_api_v1_orgs__org__repos__repo__reindex_post",
         "parameters": [
           {
@@ -19932,7 +19933,7 @@
         ]
       },
       "patch": {
-        "description": "Raise (or put back) the model and effort of the steps given.",
+        "description": "Raise (or put back) the model and effort of the steps given. On the free plan, 403\n``plan_required``: its questions and diagrams run on the recommended models (10.14).",
         "operationId": "update_models_api_v1_orgs__org__settings_models_patch",
         "parameters": [
           {

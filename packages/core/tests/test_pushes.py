@@ -106,11 +106,13 @@ async def _deliver(
     timers: Timers,
     payload: dict[str, Any],
     event: str = "push",
+    *,
+    free_plan: bool = False,
 ) -> tuple[str, DeliveryStatus | None]:
     delivery_id = uuid.uuid4().hex
     row = await record_delivery(db, delivery_id=delivery_id, event=event, payload=payload)
     assert row is not None
-    result = await process_delivery(db, redis, row, timers=timers)
+    result = await process_delivery(db, redis, row, timers=timers, free_plan=free_plan)
     return delivery_id, result.status
 
 
@@ -262,6 +264,26 @@ async def test_no_push_indexes_a_repository_of_a_deleted_org(
     )
     assert status is DeliveryStatus.IGNORED
     assert timers.set == []
+
+
+@pytest.mark.integration
+async def test_no_push_indexes_a_repository_on_the_free_plan(
+    system_session: AsyncSession, fake_redis: FakeAsyncRedis
+) -> None:
+    # 10.14: with the free plan's limits on, its repositories are indexed on connect and by hand.
+    repo = await _repo(system_session)
+    timers = Timers()
+    push = _push("refs/heads/main", SHA[0], SHA[1])
+    _, status = await _deliver(system_session, fake_redis, timers, push, free_plan=True)
+    assert status is DeliveryStatus.IGNORED
+    assert timers.set == []
+    org = await system_session.get(Org, repo.org_id)
+    assert org is not None
+    org.plan = "pro"
+    await system_session.flush()
+    _, status = await _deliver(system_session, fake_redis, timers, push, free_plan=True)
+    assert status is DeliveryStatus.PROCESSED
+    assert len(timers.set) == 1
 
 
 @pytest.mark.integration
