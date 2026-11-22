@@ -12,6 +12,14 @@ export interface Post {
 
 export const POSTS: readonly Post[] = [
   {
+    slug: "tracer-gap",
+    title: "95% of the path on the repo I tuned it on. On repos it never saw, about a quarter.",
+    date: "2026-11-22",
+    description:
+      "What a public benchmark showed about repo-sensei's tracer: near whole on the code it was tuned on, lost after a hop or two on code it had never seen, and why.",
+    load: () => import("./blog/tracer-gap.mdx"),
+  },
+  {
     slug: "what-went-wrong",
     title: "What went wrong",
     date: "2026-11-10",
