@@ -13,6 +13,10 @@ const PAGES = [
   ["/blog", "Blog"],
   ["/blog/how-an-answer-is-checked", "How an answer is checked"],
   ["/blog/what-went-wrong", "What went wrong"],
+  [
+    "/blog/tracer-gap",
+    "95% of the path on the repo I tuned it on. On repos it never saw, about a quarter.",
+  ],
   ["/security", "Security"],
   ["/privacy", "Privacy"],
   ["/terms", "Terms"],

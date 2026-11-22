@@ -1,0 +1,92 @@
+I'm building repo-sensei, a tool that answers questions about a codebase and cites the lines
+behind every answer. One part of it is a tracer: give it a starting point in the UI, and it
+follows the feature down through the client, the API route, the services and the database model,
+one hop at a time.
+
+It started with an earlier project, OpenLens, a guide to your first open-source PR. It could
+point you at the right issue and the files to touch, but it never read the code, so it couldn't
+tell you how those files connect. The tracer is my answer to that: where does this button's data
+actually come from?
+
+On the two projects I developed it against, it looked great. So I built a benchmark to prove it.
+The benchmark showed me something else.
+
+## How the tracer works
+
+It's rules plus a graph, with no model calls. Indexing parses every file with tree-sitter into
+symbols, then links them: calls, imports, and HTTP requests. A `fetch("/api/items")` in
+TypeScript is matched to the Python or Java handler that serves that route, and on to the ORM
+model it reads. The tracer walks that graph from a UI entry point and labels every hop as
+verified from the code, inferred by a rule, or unresolved.
+
+That makes it cheap, deterministic, and easy to audit. It also means it misses anything its rules
+don't cover.
+
+## The benchmark
+
+CrossLayerBench v1 is 101 flows, labelled by hand, over five open-source full-stack repositories:
+
+| Repository       | Stack                        |
+| ---------------- | ---------------------------- |
+| fastapi-template | React, FastAPI, SQLModel     |
+| langflow         | React, FastAPI, SQLModel     |
+| redash           | React, Flask, SQLAlchemy, RQ |
+| umami            | Next.js, Prisma              |
+| jhipster-react   | React, Spring Boot, JPA      |
+
+Each flow is the path a correct trace takes, from a UI entry point down to the data it reads or
+writes. Every hop is a definition: a file, a symbol, and a line span at the repository's pinned
+commit. I tuned the tracer on fastapi-template and langflow. The other three it had never seen.
+
+Two extra checks:
+
+- **Renamed copies.** Every project-defined identifier in the Python and TypeScript repos is
+  renamed, then the tracer runs again. If scores drop, part of the "tracing" was matching names.
+- **A held-out split.** 20 more flows are kept private, so a gain on the public flows can be
+  checked against flows nobody tuned on.
+
+## The results
+
+Hop recall is the share of a flow's hops the tracer reached. Exact@3 is whether one of its three
+offered paths is exactly right.
+
+| Repository                  | Hop recall | Exact@3 |
+| --------------------------- | ---------- | ------- |
+| fastapi-template (tuned on) | 0.95       | 1.00    |
+| langflow (tuned on)         | 0.70       | 0.41    |
+| redash                      | 0.23       | 0.00    |
+| umami                       | 0.33       | 0.00    |
+| jhipster-react              | 0.28       | 0.00    |
+
+On the repos it never saw, it reached a quarter to a third of the hops, and it never produced an
+exact path. The renamed copies made it worse: langflow fell from 0.70 to 0.23, and even
+fastapi-template fell from 0.95 to 0.70.
+
+## Why it lost the path
+
+The misses weren't random. Most came from four patterns:
+
+1. An API helper that builds its URLs at run time, so there's no string to match a route to.
+2. Next.js handlers that are found by where the file sits, not by a registration call.
+3. Flask-RESTful resources registered as plain statements.
+4. Redux thunks between the component and the request.
+
+Each one is a rule the tracer doesn't have yet. The renamed copies point at the bigger problem:
+when names stop lining up, a graph built partly on name matching loses its way after a hop or
+two.
+
+## What I'm doing with it
+
+The numbers are on the [benchmarks page](/benchmarks), including the bad
+ones. The flows are public under CC BY 4.0 at
+[github.com/K-sau07/crosslayerbench](https://github.com/K-sau07/crosslayerbench), so you can run
+your own tracer against them. The held-out 20 stay private.
+
+Next is the four patterns above, measured against the unseen repos, not the ones I tuned on.
+
+If you build code tools, I'd like to know how you test generalization. The easy number is the one
+on the repo you've been staring at for a month.
+
+_Saurabh Kashyap builds repo-sensei. He has an M.S. in Computer Software Engineering from
+Northeastern and 3+ years building software. [GitHub](https://github.com/K-sau07) ·
+[LinkedIn](https://www.linkedin.com/in/saurabh-kashyap-b5a4ab22a/)_
